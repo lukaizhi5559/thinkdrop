@@ -1,0 +1,349 @@
+import { useEffect, useState, useRef } from 'react';
+import { getVSCodeBridge } from '../services/vscodebridge';
+import { RichContentRenderer } from './rich-content';
+
+const ipcRenderer = (window as any).electron?.ipcRenderer;
+
+export default function ResultsWindow() {
+  console.log('🎨 [RESULTS_WINDOW] Component rendering');
+  
+  const [promptText, setPromptText] = useState<string>('');
+  const contentRef = useRef<HTMLDivElement>(null);
+  
+  const [streamingResponse, setStreamingResponse] = useState<string>('');
+  const [isStreaming, setIsStreaming] = useState(false);
+  const [isThinking, setIsThinking] = useState(false);
+  
+  const [isDragging, setIsDragging] = useState(false);
+  const dragOffset = useRef({ x: 0, y: 0 });
+  
+  const [isCopied, setIsCopied] = useState(false);
+
+  useEffect(() => {
+    console.log('🔄 [RESULTS_WINDOW] Updating VS Code Bridge callbacks');
+    
+    const bridge = getVSCodeBridge();
+    bridge.config.onStreamToken = (token: string) => {
+      console.log('💬 [RESULTS_WINDOW] Stream token:', token);
+      setIsThinking(false);
+      setIsStreaming(true);
+      setStreamingResponse(prev => prev + token);
+    };
+    
+    bridge.config.onMessage = (message: any) => {
+      console.log('📨 [RESULTS_WINDOW] Message received:', message);
+      
+      if (message.type === 'stream_end') {
+        setIsStreaming(false);
+        console.log('✅ [RESULTS_WINDOW] Streaming complete');
+      }
+    };
+    
+    bridge.config.onError = (error: string) => {
+      console.error('❌ [RESULTS_WINDOW] Error:', error);
+      setIsThinking(false);
+      setIsStreaming(false);
+      setStreamingResponse(`❌ Error: ${error}`);
+    };
+
+    console.log('✅ [RESULTS_WINDOW] Callbacks updated');
+  }, []);
+
+  useEffect(() => {
+    if (!ipcRenderer) return;
+
+    const handleDisplayError = (_event: any, errorMessage: string) => {
+      console.log('⚠️ [RESULTS_WINDOW] Displaying error message:', errorMessage);
+      setIsThinking(false);
+      setIsStreaming(false);
+      setStreamingResponse(errorMessage);
+    };
+
+    const handlePromptText = async (_event: any, text: string) => {
+      console.log('📝 [RESULTS_WINDOW] Received prompt text:', text);
+      
+      if (!text || text.trim().length === 0) {
+        console.warn('⚠️ [RESULTS_WINDOW] Empty message ignored');
+        return;
+      }
+      
+      setPromptText(text);
+      setStreamingResponse('');
+      setIsStreaming(false);
+      setIsThinking(true);
+    };
+
+    ipcRenderer.on('results-window:display-error', handleDisplayError);
+    ipcRenderer.on('results-window:set-prompt', handlePromptText);
+    ipcRenderer.send('results-window:show');
+
+    return () => {
+      if (ipcRenderer.removeListener) {
+        ipcRenderer.removeListener('results-window:display-error', handleDisplayError);
+        ipcRenderer.removeListener('results-window:set-prompt', handlePromptText);
+      }
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!contentRef.current || !ipcRenderer) return;
+    
+    if (isStreaming || streamingResponse) {
+      console.log('⏭️ [RESULTS_WINDOW] Skipping general resize - streaming is active');
+      return;
+    }
+
+    const resizeWindow = () => {
+      const headerHeight = 52;
+      const padding = 32;
+      const minHeight = 100;
+      const maxHeight = 800;
+      
+      const minWidth = 400;
+      const maxWidth = 600;
+      const estimatedWidth = Math.min(Math.max(promptText.length * 8, minWidth), maxWidth);
+      
+      let totalHeight;
+      if (isThinking) {
+        totalHeight = minHeight;
+      } else {
+        const contentHeight = contentRef.current?.scrollHeight || 0;
+        totalHeight = Math.min(Math.max(contentHeight + headerHeight + padding, minHeight), maxHeight);
+        console.log('📏 [RESULTS_WINDOW] Non-streaming resize:', { width: estimatedWidth, height: totalHeight, contentHeight });
+      }
+      
+      ipcRenderer.send('results-window:resize', { width: estimatedWidth, height: totalHeight });
+    };
+
+    const timeoutId = setTimeout(resizeWindow, 100);
+    
+    const observer = new MutationObserver(() => {
+      if (!isStreaming && !streamingResponse) {
+        resizeWindow();
+      }
+    });
+    
+    observer.observe(contentRef.current, {
+      childList: true,
+      subtree: true,
+      characterData: true,
+      attributes: true
+    });
+    
+    return () => {
+      clearTimeout(timeoutId);
+      observer.disconnect();
+    };
+  }, [promptText, isStreaming, streamingResponse, isThinking]);
+
+  useEffect(() => {
+    if (!contentRef.current || !ipcRenderer || !isStreaming) return;
+    
+    const resizeForStreaming = () => {
+      const headerHeight = 52;
+      const padding = 32;
+      const minHeight = 100;
+      const maxHeight = 800;
+      const minWidth = 400;
+      const maxWidth = 600;
+      
+      const contentHeight = contentRef.current?.scrollHeight || 0;
+      const totalHeight = Math.min(Math.max(contentHeight + headerHeight + padding, minHeight), maxHeight);
+      const estimatedWidth = Math.min(Math.max(promptText.length * 8, minWidth), maxWidth);
+      
+      console.log('📏 [RESULTS_WINDOW] Streaming resize:', { width: estimatedWidth, height: totalHeight, contentHeight });
+      ipcRenderer.send('results-window:resize', { width: estimatedWidth, height: totalHeight });
+    };
+    
+    const rafId = requestAnimationFrame(resizeForStreaming);
+    
+    return () => cancelAnimationFrame(rafId);
+  }, [streamingResponse, isStreaming, promptText]);
+
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        console.log('⌨️  [RESULTS_WINDOW] ESC pressed - closing results window');
+        if (ipcRenderer) {
+          ipcRenderer.send('results-window:close');
+        }
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, []);
+
+  const handleClose = () => {
+    console.log('❌ [RESULTS_WINDOW] Close button clicked');
+    if (ipcRenderer) {
+      ipcRenderer.send('results-window:close');
+    }
+  };
+
+  const handleCopy = async () => {
+    const contentToCopy = streamingResponse;
+    if (!contentToCopy) return;
+    
+    try {
+      await navigator.clipboard.writeText(contentToCopy);
+      setIsCopied(true);
+      setTimeout(() => setIsCopied(false), 2000);
+      console.log('✅ [RESULTS_WINDOW] Content copied to clipboard');
+    } catch (error) {
+      console.error('❌ [RESULTS_WINDOW] Failed to copy:', error);
+    }
+  };
+
+  const handleMouseDown = (e: React.MouseEvent) => {
+    if ((e.target as HTMLElement).closest('button')) return;
+    
+    setIsDragging(true);
+    const bounds = (e.currentTarget as HTMLElement).getBoundingClientRect();
+    dragOffset.current = {
+      x: e.clientX - bounds.left,
+      y: e.clientY - bounds.top
+    };
+    
+    console.log('🖱️ [RESULTS_WINDOW] Drag started');
+  };
+
+  useEffect(() => {
+    if (!isDragging) return;
+
+    const handleMouseMove = (e: MouseEvent) => {
+      if (!ipcRenderer) return;
+      
+      const newX = e.screenX - dragOffset.current.x;
+      const newY = e.screenY - dragOffset.current.y;
+      
+      ipcRenderer.send('results-window:move', { x: newX, y: newY });
+    };
+
+    const handleMouseUp = () => {
+      setIsDragging(false);
+      console.log('🖱️ [RESULTS_WINDOW] Drag ended');
+    };
+
+    document.addEventListener('mousemove', handleMouseMove);
+    document.addEventListener('mouseup', handleMouseUp);
+
+    return () => {
+      document.removeEventListener('mousemove', handleMouseMove);
+      document.removeEventListener('mouseup', handleMouseUp);
+    };
+  }, [isDragging]);
+
+  const renderResults = () => {
+    if (isThinking) {
+      return (
+        <div className="flex items-center gap-3">
+          <div className="flex gap-1">
+            <div className="w-2 h-2 rounded-full bg-blue-500 animate-pulse" style={{ animationDelay: '0ms' }} />
+            <div className="w-2 h-2 rounded-full bg-blue-500 animate-pulse" style={{ animationDelay: '150ms' }} />
+            <div className="w-2 h-2 rounded-full bg-blue-500 animate-pulse" style={{ animationDelay: '300ms' }} />
+          </div>
+          <span className="text-gray-400 text-sm">Thinking...</span>
+        </div>
+      );
+    }
+
+    return (
+      <div className="space-y-4">
+        {streamingResponse && (
+          <div className="relative">
+            <RichContentRenderer 
+              content={streamingResponse}
+              animated={!isStreaming}
+              className="text-sm"
+            />
+            {isStreaming && (
+              <span className="inline-block w-1.5 h-4 bg-blue-500 animate-pulse ml-1" />
+            )}
+          </div>
+        )}
+
+        {!isThinking && !streamingResponse && (
+          <div className="text-gray-400 text-sm text-center">
+            Waiting for response...
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  return (
+    <div 
+      className="w-full h-full flex flex-col"
+      style={{
+        backgroundColor: 'rgba(23, 23, 23, 0.95)',
+      }}
+    >
+      <div 
+        className="flex items-center justify-between px-4 py-3 border-b"
+        onMouseDown={handleMouseDown}
+        style={{
+          borderColor: 'rgba(255, 255, 255, 0.1)',
+          flexShrink: 0,
+          cursor: isDragging ? 'grabbing' : 'grab',
+          userSelect: 'none',
+        }}
+      >
+        <div 
+          className="text-sm font-medium truncate flex-1 mr-2"
+          style={{ color: '#e5e7eb' }}
+          title={promptText}
+        >
+          {promptText || 'Results'}
+        </div>
+        <div className="flex items-center gap-2">
+          {streamingResponse && (
+            <button
+              onClick={handleCopy}
+              className="w-6 h-6 flex items-center justify-center rounded hover:bg-gray-700 transition-colors flex-shrink-0"
+              style={{
+                backgroundColor: isCopied ? 'rgba(34, 197, 94, 0.2)' : 'rgba(255, 255, 255, 0.1)',
+                border: '1px solid rgba(255, 255, 255, 0.2)',
+                color: isCopied ? '#22c55e' : '#9ca3af',
+                fontSize: '12px',
+                cursor: 'pointer',
+              }}
+              title={isCopied ? 'Copied!' : 'Copy response'}
+            >
+              {isCopied ? (
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <polyline points="20 6 9 17 4 12"></polyline>
+                </svg>
+              ) : (
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+                  <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+                </svg>
+              )}
+            </button>
+          )}
+          <button
+            onClick={handleClose}
+            className="w-6 h-6 flex items-center justify-center rounded-full hover:bg-gray-700 transition-colors flex-shrink-0"
+            style={{
+              backgroundColor: 'rgba(255, 255, 255, 0.1)',
+              border: '1px solid rgba(255, 255, 255, 0.2)',
+              color: '#9ca3af',
+              fontSize: '14px',
+              cursor: 'pointer',
+            }}
+            title="Close (ESC)"
+          >
+            ×
+          </button>
+        </div>
+      </div>
+      
+      <div className="flex-1 overflow-y-auto overflow-x-hidden p-4">
+        <div ref={contentRef}>
+          {renderResults()}
+        </div>
+      </div>
+    </div>
+  );
+}
