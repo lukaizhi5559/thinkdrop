@@ -1345,8 +1345,8 @@ __metadata:
 
 "@thinkdrop/stategraph@github:lukaizhi5559/thinkdrop-stategraph-module":
   version: 1.0.0
-  resolution: "@thinkdrop/stategraph@https://github.com/lukaizhi5559/thinkdrop-stategraph-module.git#commit=2a09441a4ae6f9ad15a040ef4e5241435e5437a2"
-  checksum: 2c1d75b616b91dd5457344cb5a803872222aad4f242f7a5c0dfe3e10fa8b6b29b161ee63331db2952dba12ac4e8bfa42cf7d06d2099999ed9973eadabd9ea4e5
+  resolution: "@thinkdrop/stategraph@https://github.com/lukaizhi5559/thinkdrop-stategraph-module.git#commit=e858c5db59aebe0335d483065201f39eda1294a9"
+  checksum: 9cf60f782c05665a4c48ad773eec6bdb5c6231dedd6f7393a2b37bfe98496a66c1c7099bbdcd6f3496677c5a9a149bc3c318b227b1d2716f059a172c43c336b4
   languageName: node
   linkType: hard
 
@@ -5941,7 +5941,7 @@ __metadata:
   languageName: node
   linkType: hard
 
-"rollup@npm:^4.20.0":
+"rollup@npm:^4.20.0, rollup@npm:^4.58.0":
   version: 4.58.0
   resolution: "rollup@npm:4.58.0"
   dependencies:
@@ -6302,44 +6302,6 @@ __metadata:
   languageName: node
   linkType: hard
 
-"standalone-copilot-app@workspace:.":
-  version: 0.0.0-use.local
-  resolution: "standalone-copilot-app@workspace:."
-  dependencies:
-    "@nut-tree-fork/nut-js": 4.2.6
-    "@radix-ui/react-slot": ^1.0.0
-    "@thinkdrop/stategraph": "github:lukaizhi5559/thinkdrop-stategraph-module"
-    "@types/node": ^20.0.0
-    "@types/react": ^18.2.0
-    "@types/react-dom": ^18.2.0
-    "@types/react-syntax-highlighter": ^15.5.13
-    "@vitejs/plugin-react": ^4.0.0
-    autoprefixer: ^10.4.0
-    class-variance-authority: ^0.7.0
-    clsx: ^2.0.0
-    concurrently: ^8.0.0
-    electron: ^28.0.0
-    electron-builder: ^24.0.0
-    lucide-react: ^0.263.0
-    node-fetch: ^2.7.0
-    postcss: ^8.4.0
-    react: ^18.2.0
-    react-dom: ^18.2.0
-    react-markdown: ^9.0.0
-    react-syntax-highlighter: ^15.5.0
-    remark-breaks: ^4.0.0
-    remark-gfm: ^4.0.0
-    screenshot-desktop: ^1.15.1
-    tailwind-merge: ^2.0.0
-    tailwindcss: ^3.3.0
-    tailwindcss-animate: ^1.0.7
-    tesseract.js: ^7.0.0
-    typescript: ^5.0.0
-    vite: ^5.0.0
-    ws: ^8.19.0
-  languageName: unknown
-  linkType: soft
-
 "stat-mode@npm:^1.0.0":
   version: 1.0.0
   resolution: "stat-mode@npm:1.0.0"
@@ -6465,6 +6427,13 @@ __metadata:
   dependencies:
     debug: ^4.1.0
   checksum: 31ba7a62c889236b5b07f75b5c250d481158a1ca061b8f234fca0457bdbe48a20e5011c12c715343dc577e111463dc3d9e721b98015a445a2a88c35e0c9f0f91
+  languageName: node
+  linkType: hard
+
+"supports-color@npm:^10.2.2":
+  version: 10.2.2
+  resolution: "supports-color@npm:10.2.2"
+  checksum: bd132705fc07213a4024131fb061f0a46a48b49ecaf434bb029c0a5aa0339b969236d496d63969e3c248a90fdcac16d4f9c5bf187e7be0bfb5e804ed13bef6b0
   languageName: node
   linkType: hard
 
@@ -6630,6 +6599,46 @@ __metadata:
   checksum: 84e1b804bfec49f3531215f17b4a6e50fd4397b5f7c1bccc427b9c656e1ecfb13ea79d899930184f78bc2f57285c54d9a50a590c8868f4f0cef5c1d9f898b05e
   languageName: node
   linkType: hard
+
+"thinkdrop@workspace:.":
+  version: 0.0.0-use.local
+  resolution: "thinkdrop@workspace:."
+  dependencies:
+    "@nut-tree-fork/nut-js": 4.2.6
+    "@radix-ui/react-slot": ^1.0.0
+    "@thinkdrop/stategraph": "github:lukaizhi5559/thinkdrop-stategraph-module"
+    "@types/node": ^20.0.0
+    "@types/react": ^18.2.0
+    "@types/react-dom": ^18.2.0
+    "@types/react-syntax-highlighter": ^15.5.13
+    "@vitejs/plugin-react": ^4.0.0
+    autoprefixer: ^10.4.0
+    class-variance-authority: ^0.7.0
+    clsx: ^2.0.0
+    concurrently: ^8.0.0
+    electron: ^28.0.0
+    electron-builder: ^24.0.0
+    lucide-react: ^0.263.0
+    node-fetch: ^2.7.0
+    postcss: ^8.4.0
+    react: ^18.2.0
+    react-dom: ^18.2.0
+    react-markdown: ^9.0.0
+    react-syntax-highlighter: ^15.5.0
+    remark-breaks: ^4.0.0
+    remark-gfm: ^4.0.0
+    rollup: ^4.58.0
+    screenshot-desktop: ^1.15.1
+    supports-color: ^10.2.2
+    tailwind-merge: ^2.0.0
+    tailwindcss: ^3.3.0
+    tailwindcss-animate: ^1.0.7
+    tesseract.js: ^7.0.0
+    typescript: ^5.0.0
+    vite: ^5.0.0
+    ws: ^8.19.0
+  languageName: unknown
+  linkType: soft
 
 "timm@npm:^1.6.1":
   version: 1.7.1

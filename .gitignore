@@ -6,3 +6,4 @@ dist-renderer/
 .env
 .env.local
 .yarn
+.service-pids

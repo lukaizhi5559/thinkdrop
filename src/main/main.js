@@ -13,6 +13,7 @@ let stateGraph = null;
 let mcpClient = null;
 let mcpAdapter = null;
 let llmBackend = null;
+let currentSessionId = null; // Persists across prompts for conversation continuity
 
 function initStateGraph() {
   try {
@@ -380,11 +381,16 @@ app.whenReady().then(() => {
         selectedText,
         streamCallback,
         context: {
-          sessionId,
+          sessionId: sessionId || currentSessionId,
           userId,
           source: 'thinkdrop_electron'
         }
       });
+
+      // Persist resolved session for next prompt
+      if (finalState.resolvedSessionId) {
+        currentSessionId = finalState.resolvedSessionId;
+      }
 
       // Signal stream end
       if (resultsWindow && !resultsWindow.isDestroyed()) {
@@ -517,7 +523,6 @@ app.whenReady().then(() => {
     if (resultsWindow && !resultsWindow.isDestroyed()) {
       const clampedWidth = Math.min(Math.max(width, 400), 600);
       const clampedHeight = Math.min(Math.max(height, 300), 800);
-      console.log(` [RESULTS_WINDOW] Resizing window to ${clampedWidth}x${clampedHeight}`);
       const currentBounds = resultsWindow.getBounds();
       const primaryDisplay = screen.getPrimaryDisplay();
       const { width: screenWidth, height: screenHeight } = primaryDisplay.workAreaSize;
@@ -532,8 +537,6 @@ app.whenReady().then(() => {
         height: clampedHeight
       }, true);
       resultsWindowInitialHeight = clampedHeight  
-      console.log(` [RESULTS_WINDOW] Window resized to ${clampedWidth}x${clampedHeight}, growing upward from fixed bottom`);
-      
     }
   });
 

@@ -1,15 +1,18 @@
 {
-  "name": "standalone-copilot-app",
+  "name": "thinkdrop",
   "version": "1.0.0",
   "description": "Lightweight Electron app that communicates with VS Code Copilot via extension bridge",
   "main": "src/main/main.js",
   "type": "commonjs",
   "scripts": {
-    "dev": "concurrently \"npm run dev:main\" \"npm run dev:renderer\"",
+    "dev": "concurrently \"yarn dev:main\" \"yarn dev:renderer\"",
     "dev:main": "electron src/main/main.js",
-    "dev:renderer": "vite",
-    "build": "npm run build:renderer && electron-builder",
-    "build:renderer": "vite build"
+    "dev:renderer": "NODE_NO_WARNINGS=1 vite",
+    "build": "yarn build:renderer && electron-builder",
+    "build:renderer": "vite build",
+    "start:services": "bash scripts/start-services.sh",
+    "stop:services": "bash scripts/stop-services.sh",
+    "restart:services": "yarn stop:services && sleep 2 && yarn start:services"
   },
   "keywords": [
     "electron",
@@ -29,6 +32,7 @@
     "electron": "^28.0.0",
     "electron-builder": "^24.0.0",
     "postcss": "^8.4.0",
+    "rollup": "^4.58.0",
     "tailwindcss": "^3.3.0",
     "typescript": "^5.0.0",
     "vite": "^5.0.0"
@@ -49,6 +53,7 @@
     "remark-breaks": "^4.0.0",
     "remark-gfm": "^4.0.0",
     "screenshot-desktop": "^1.15.1",
+    "supports-color": "^10.2.2",
     "tailwind-merge": "^2.0.0",
     "tailwindcss-animate": "^1.0.7",
     "tesseract.js": "^7.0.0",
