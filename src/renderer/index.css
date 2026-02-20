@@ -69,3 +69,14 @@ body {
     --ring: 212.7 26.8% 83.9%;
   }
 }
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}

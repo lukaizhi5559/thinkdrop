@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
-import { getVSCodeBridge, hasBridge } from '../services/vscodebridge';
+import { createWorker } from 'tesseract.js';
+import { processOcrOutput } from '../utils'
 
 const ipcRenderer = (window as any).electron?.ipcRenderer;
 
@@ -11,6 +12,56 @@ export default function StandalonePromptCapture() {
   
   const [isDragging, setIsDragging] = useState(false);
   const dragOffset = useRef({ x: 0, y: 0 });
+
+  const handleScreenshotCapture = async () => {
+    ipcRenderer.send('prompt-capture:capture-screenshot');   
+  };
+
+  const handleScreenshotResult = async (_event: any, data: { imageBase64: string }) => {
+    console.log('📥 [STANDALONE_PROMPT] Received screenshot result, starting OCR');
+    
+    try {
+      // Initialize Tesseract worker - download language files from CDN
+      const worker = await createWorker('eng');
+      
+      // Convert base64 to data URL for Tesseract
+      const imageDataUrl = `data:image/png;base64,${data.imageBase64}`;
+      
+      // Recognize text from image data URL
+      const { data: { text } } = await worker.recognize(imageDataUrl);
+      
+      await worker.terminate();
+      
+      if (text.trim()) {
+        const {
+          files,
+          codeSnippets,
+          additionalCleanedText
+        } = processOcrOutput(text);
+        const joined = [...files, ...codeSnippets, additionalCleanedText].join('\n');
+        handleAddHighlight(null, joined);
+        ipcRenderer.send('results-window:show');
+      } else {
+        console.log('⚠️ [STANDALONE_PROMPT] No text detected in screenshot');
+      }
+    } catch (error) {
+      console.error('❌ [STANDALONE_PROMPT] OCR failed:', error);
+    }
+  }
+
+  const handleAddHighlight = (_event: any, text: string) => {
+    console.log('📥 [STANDALONE_PROMPT] Received highlight:', text);
+    
+    setHighlights(prev => {
+      if (prev.includes(text)) {
+        console.log('⏭️ [STANDALONE_PROMPT] Duplicate highlight ignored');
+        return prev;
+      }
+      
+      setTimeout(() => requestWindowResize(), 100);
+      return [...prev, text];
+    });
+  };
 
   useEffect(() => {
     if (!ipcRenderer) return;
@@ -24,30 +75,18 @@ export default function StandalonePromptCapture() {
       setTimeout(() => {
         textareaRef.current?.focus();
         console.log('✅ [STANDALONE_PROMPT] Textarea focused');
-      }, 100);
-    };
-
-    const handleAddHighlight = (_event: any, text: string) => {
-      console.log('📥 [STANDALONE_PROMPT] Received highlight:', text.substring(0, 50));
-      
-      setHighlights(prev => {
-        if (prev.includes(text)) {
-          console.log('⏭️ [STANDALONE_PROMPT] Duplicate highlight ignored');
-          return prev;
-        }
-        
-        setTimeout(() => requestWindowResize(), 100);
-        return [...prev, text];
-      });
+      }, 300);
     };
 
     ipcRenderer.on('prompt-capture:show', handleShow);
     ipcRenderer.on('prompt-capture:add-highlight', handleAddHighlight);
+    ipcRenderer.on('prompt-capture:screenshot-result', handleScreenshotResult);
 
     return () => {
       if (ipcRenderer.removeListener) {
         ipcRenderer.removeListener('prompt-capture:show', handleShow);
         ipcRenderer.removeListener('prompt-capture:add-highlight', handleAddHighlight);
+        ipcRenderer.removeListener('prompt-capture:screenshot-result', handleScreenshotResult);
       }
     };
   }, []);
@@ -91,33 +130,22 @@ export default function StandalonePromptCapture() {
     }
     
     console.log('📤 [STANDALONE_PROMPT] Final prompt to send:', finalPrompt.trim());
+    console.log('🔍 [STANDALONE_PROMPT] ipcRenderer available?', !!ipcRenderer);
     
     if (ipcRenderer) {
+      // Send to ResultsWindow to display
+      console.log('📨 [STANDALONE_PROMPT] Sending to results-window:set-prompt');
       ipcRenderer.send('results-window:set-prompt', finalPrompt.trim());
-    }
-    
-    if (hasBridge()) {
-      try {
-        console.log('📤 [STANDALONE_PROMPT] Sending via VS Code Bridge');
-        const bridge = getVSCodeBridge();
-        
-        // let screenshot: string | undefined;
-        // try {
-        //   const screenshotBase64 = await ipcRenderer.invoke('capture-screenshot');
-        //   screenshot = screenshotBase64;
-        //   console.log('📸 [STANDALONE_PROMPT] Screenshot captured');
-        // } catch (error) {
-        //   console.warn('⚠️ [STANDALONE_PROMPT] Screenshot capture failed:', error);
-        // }
-        
-        const screenshot = undefined; // Screenshot disabled for now
-        await bridge.sendMessage(finalPrompt.trim(), screenshot);
-        console.log('✅ [STANDALONE_PROMPT] Message sent successfully');
-      } catch (error) {
-        console.error('❌ [STANDALONE_PROMPT] Failed to send message:', error);
-      }
+      
+      // Send to VS Code extension via bridge
+      console.log('🚀 [STANDALONE_PROMPT] Sending via IPC to VS Code Bridge');
+      ipcRenderer.send('vscode-bridge:send-message', {
+        prompt: finalPrompt.trim(),
+        selectedText: '',
+      });
+      console.log('✅ [STANDALONE_PROMPT] Message sent to VS Code Bridge');
     } else {
-      console.error('❌ [STANDALONE_PROMPT] VS Code Bridge not available!');
+      console.error('❌ [STANDALONE_PROMPT] ipcRenderer is not available!');
     }
     
     setPromptText('');
@@ -364,6 +392,9 @@ export default function StandalonePromptCapture() {
             zIndex: 10,
           }}
         >
+          <button onClick={handleScreenshotCapture}>
+            <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" className="lucide lucide-camera-icon lucide-camera"><path d="M13.997 4a2 2 0 0 1 1.76 1.05l.486.9A2 2 0 0 0 18.003 7H20a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V9a2 2 0 0 1 2-2h1.997a2 2 0 0 0 1.759-1.048l.489-.904A2 2 0 0 1 10.004 4z"/><circle cx="12" cy="13" r="3"/></svg>
+          </button>
           <span><span style={{ fontWeight: 500 }}>Highlight and Cmd+C: </span>Tag(s)</span>
           <span>•</span>
           <span><span style={{ fontWeight: 500 }}>Esc:</span> Close</span>

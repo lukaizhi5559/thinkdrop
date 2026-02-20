@@ -1,5 +1,4 @@
 import { useEffect, useState, useRef } from 'react';
-import { getVSCodeBridge } from '../services/vscodebridge';
 import { RichContentRenderer } from './rich-content';
 
 const ipcRenderer = (window as any).electron?.ipcRenderer;
@@ -18,35 +17,60 @@ export default function ResultsWindow() {
   const dragOffset = useRef({ x: 0, y: 0 });
   
   const [isCopied, setIsCopied] = useState(false);
+  const [showTrigger, setShowTrigger] = useState(0);
 
   useEffect(() => {
-    console.log('🔄 [RESULTS_WINDOW] Updating VS Code Bridge callbacks');
-    
-    const bridge = getVSCodeBridge();
-    bridge.config.onStreamToken = (token: string) => {
-      console.log('💬 [RESULTS_WINDOW] Stream token:', token);
-      setIsThinking(false);
-      setIsStreaming(true);
-      setStreamingResponse(prev => prev + token);
+    if (!ipcRenderer) return;
+
+    console.log('🔄 [RESULTS_WINDOW] Setting up VS Code Bridge IPC listeners');
+
+    const handleBridgeConnected = () => {
+      console.log('✅ [RESULTS_WINDOW] VS Code Bridge connected');
     };
-    
-    bridge.config.onMessage = (message: any) => {
-      console.log('📨 [RESULTS_WINDOW] Message received:', message);
+
+    const handleBridgeDisconnected = () => {
+      console.log('🔌 [RESULTS_WINDOW] VS Code Bridge disconnected');
+    };
+
+    const handleBridgeMessage = (_event: any, message: any) => {
+      console.log('📨 [RESULTS_WINDOW] Bridge message:', message.type);
       
-      if (message.type === 'stream_end') {
+      if (message.type === 'chunk') {
+        console.log('💬 [RESULTS_WINDOW] Stream token:', message.text);
+        setIsThinking(false);
+        setIsStreaming(true);
+        setStreamingResponse(prev => prev + message.text);
+      } else if (message.type === 'done') {
         setIsStreaming(false);
         console.log('✅ [RESULTS_WINDOW] Streaming complete');
+      } else if (message.type === 'ready') {
+        console.log('✅ [RESULTS_WINDOW] VS Code extension ready');
       }
     };
-    
-    bridge.config.onError = (error: string) => {
-      console.error('❌ [RESULTS_WINDOW] Error:', error);
+
+    const handleBridgeError = (_event: any, error: string) => {
+      console.error('❌ [RESULTS_WINDOW] Bridge error:', error);
       setIsThinking(false);
       setIsStreaming(false);
       setStreamingResponse(`❌ Error: ${error}`);
     };
 
-    console.log('✅ [RESULTS_WINDOW] Callbacks updated');
+    ipcRenderer.on('vscode-bridge:connected', handleBridgeConnected);
+    ipcRenderer.on('vscode-bridge:disconnected', handleBridgeDisconnected);
+    ipcRenderer.on('vscode-bridge:message', handleBridgeMessage);
+    ipcRenderer.on('vscode-bridge:error', handleBridgeError);
+
+    // Request connection on mount
+    ipcRenderer.send('vscode-bridge:connect');
+
+    return () => {
+      if (ipcRenderer.removeListener) {
+        ipcRenderer.removeListener('vscode-bridge:connected', handleBridgeConnected);
+        ipcRenderer.removeListener('vscode-bridge:disconnected', handleBridgeDisconnected);
+        ipcRenderer.removeListener('vscode-bridge:message', handleBridgeMessage);
+        ipcRenderer.removeListener('vscode-bridge:error', handleBridgeError);
+      }
+    };
   }, []);
 
   useEffect(() => {
@@ -67,98 +91,58 @@ export default function ResultsWindow() {
         return;
       }
       
+      // Just display the prompt - StandalonePromptCapture already sent it to VS Code bridge
       setPromptText(text);
       setStreamingResponse('');
       setIsStreaming(false);
       setIsThinking(true);
+      
+      console.log('✅ [RESULTS_WINDOW] Ready to receive response for:', text.substring(0, 50));
+    };
+
+    // When the window is re-shown, bump showTrigger to re-measure content height
+    const handleWindowShow = () => {
+      console.log('📐 [RESULTS_WINDOW] Window shown - triggering content resize');
+      setShowTrigger(prev => prev + 1);
     };
 
     ipcRenderer.on('results-window:display-error', handleDisplayError);
     ipcRenderer.on('results-window:set-prompt', handlePromptText);
-    ipcRenderer.send('results-window:show');
-
+    ipcRenderer.on('results-window:show', handleWindowShow);
+  
     return () => {
       if (ipcRenderer.removeListener) {
         ipcRenderer.removeListener('results-window:display-error', handleDisplayError);
         ipcRenderer.removeListener('results-window:set-prompt', handlePromptText);
+        ipcRenderer.removeListener('results-window:show', handleWindowShow);
       }
     };
   }, []);
 
+  // Dynamically resize window based on content at all times
   useEffect(() => {
     if (!contentRef.current || !ipcRenderer) return;
-    
-    if (isStreaming || streamingResponse) {
-      console.log('⏭️ [RESULTS_WINDOW] Skipping general resize - streaming is active');
-      return;
-    }
 
-    const resizeWindow = () => {
+    const resizeForContent = () => {
       const headerHeight = 52;
       const padding = 32;
       const minHeight = 100;
       const maxHeight = 800;
-      
-      const minWidth = 400;
-      const maxWidth = 600;
-      const estimatedWidth = Math.min(Math.max(promptText.length * 8, minWidth), maxWidth);
-      
-      let totalHeight;
-      if (isThinking) {
-        totalHeight = minHeight;
-      } else {
-        const contentHeight = contentRef.current?.scrollHeight || 0;
-        totalHeight = Math.min(Math.max(contentHeight + headerHeight + padding, minHeight), maxHeight);
-        console.log('📏 [RESULTS_WINDOW] Non-streaming resize:', { width: estimatedWidth, height: totalHeight, contentHeight });
-      }
-      
-      ipcRenderer.send('results-window:resize', { width: estimatedWidth, height: totalHeight });
-    };
 
-    const timeoutId = setTimeout(resizeWindow, 100);
-    
-    const observer = new MutationObserver(() => {
-      if (!isStreaming && !streamingResponse) {
-        resizeWindow();
-      }
-    });
-    
-    observer.observe(contentRef.current, {
-      childList: true,
-      subtree: true,
-      characterData: true,
-      attributes: true
-    });
-    
-    return () => {
-      clearTimeout(timeoutId);
-      observer.disconnect();
-    };
-  }, [promptText, isStreaming, streamingResponse, isThinking]);
-
-  useEffect(() => {
-    if (!contentRef.current || !ipcRenderer || !isStreaming) return;
-    
-    const resizeForStreaming = () => {
-      const headerHeight = 52;
-      const padding = 32;
-      const minHeight = 100;
-      const maxHeight = 800;
-      const minWidth = 400;
-      const maxWidth = 600;
-      
       const contentHeight = contentRef.current?.scrollHeight || 0;
       const totalHeight = Math.min(Math.max(contentHeight + headerHeight + padding, minHeight), maxHeight);
-      const estimatedWidth = Math.min(Math.max(promptText.length * 8, minWidth), maxWidth);
-      
-      console.log('📏 [RESULTS_WINDOW] Streaming resize:', { width: estimatedWidth, height: totalHeight, contentHeight });
-      ipcRenderer.send('results-window:resize', { width: estimatedWidth, height: totalHeight });
+
+      console.log('📏 [RESULTS_WINDOW] Content resize:', { height: totalHeight, contentHeight });
+      // Ensure integers for Electron
+      const width = 400;
+      const height = Math.round(totalHeight);
+      ipcRenderer.send('results-window:resize', { width, height });
     };
-    
-    const rafId = requestAnimationFrame(resizeForStreaming);
-    
+
+    const rafId = requestAnimationFrame(resizeForContent);
+
     return () => cancelAnimationFrame(rafId);
-  }, [streamingResponse, isStreaming, promptText]);
+  }, [streamingResponse, isStreaming, promptText, isThinking, showTrigger]);
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {

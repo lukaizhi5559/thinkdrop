@@ -67,7 +67,10 @@ const RichContentRenderer: React.FC<RichContentRendererProps> = ({
   className = ''
 }) => {
   return (
-    <div className={`rich-content-container prose prose-invert prose-sm max-w-none ${className}`}>
+    <div
+      className={`rich-content-container prose prose-invert prose-sm max-w-none ${animated ? 'animate-fade-in' : ''} ${className}`}
+      style={animated ? { animation: 'fadeIn 0.3s ease-in-out' } : undefined}
+    >
       <ReactMarkdown
         remarkPlugins={[remarkGfm, remarkBreaks]}
         components={{

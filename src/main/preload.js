@@ -7,14 +7,16 @@ contextBridge.exposeInMainWorld('electron', {
         'prompt-capture:hide',
         'prompt-capture:resize',
         'prompt-capture:move',
+        'prompt-capture:capture-screenshot',
+        'prompt-capture:screenshot-result',
         'results-window:show',
         'results-window:close',
         'results-window:resize',
         'results-window:move',
         'results-window:set-prompt',
         'results-window:show-error',
-        'test-overlay:show',
-        'test-overlay:hide',
+        'vscode-bridge:send-message',
+        'vscode-bridge:connect',
       ];
       if (validChannels.includes(channel)) {
         ipcRenderer.send(channel, data);
@@ -23,12 +25,14 @@ contextBridge.exposeInMainWorld('electron', {
     on: (channel, func) => {
       const validChannels = [
         'prompt-capture:show',
+        'prompt-capture:capture-screenshot',
+        'prompt-capture:screenshot-result',
         'results-window:show',
         'prompt-capture:add-highlight',
         'results-window:set-prompt',
         'results-window:display-error',
-        'test-overlay:shown',
-        'test-overlay:hidden',
+        'vscode-bridge:message',
+        'vscode-bridge:error',
       ];
       if (validChannels.includes(channel)) {
         ipcRenderer.on(channel, (event, ...args) => func(event, ...args));
@@ -38,6 +42,8 @@ contextBridge.exposeInMainWorld('electron', {
       const validChannels = [
         'prompt-capture:show',
         'prompt-capture:add-highlight',
+        'prompt-capture:capture-screenshot',
+        'prompt-capture:screenshot-result',
         'results-window:set-prompt',
         'results-window:display-error',
       ];
