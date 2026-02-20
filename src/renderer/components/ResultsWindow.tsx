@@ -35,12 +35,20 @@ export default function ResultsWindow() {
     const handleBridgeMessage = (_event: any, message: any) => {
       console.log('📨 [RESULTS_WINDOW] Bridge message:', message.type);
       
-      if (message.type === 'chunk') {
-        console.log('💬 [RESULTS_WINDOW] Stream token:', message.text);
+      // if (message.type === 'llm_stream_start') {
+      //   setIsThinking(true);
+      //   setIsStreaming(false);
+      //   setStreamingResponse('');
+      // }
+
+      if (message.type === 'chunk' || message.type === 'llm_stream_chunk') {
+        console.log('💬 [RESULTS_WINDOW] Stream token:', message);
         setIsThinking(false);
         setIsStreaming(true);
-        setStreamingResponse(prev => prev + message.text);
-      } else if (message.type === 'done') {
+
+        const msgText = message?.text || message.payload?.text || '';
+        setStreamingResponse(prev => prev + msgText);
+      } else if (message.type === 'done' || message.type === 'llm_stream_end') {
         setIsStreaming(false);
         console.log('✅ [RESULTS_WINDOW] Streaming complete');
       } else if (message.type === 'ready') {
@@ -55,21 +63,25 @@ export default function ResultsWindow() {
       setStreamingResponse(`❌ Error: ${error}`);
     };
 
-    ipcRenderer.on('vscode-bridge:connected', handleBridgeConnected);
-    ipcRenderer.on('vscode-bridge:disconnected', handleBridgeDisconnected);
-    ipcRenderer.on('vscode-bridge:message', handleBridgeMessage);
-    ipcRenderer.on('vscode-bridge:error', handleBridgeError);
+    // Remove any stale listeners before adding new ones (handles React StrictMode double-invoke)
+    ipcRenderer.removeAllListeners('ws-bridge:connected');
+    ipcRenderer.removeAllListeners('ws-bridge:disconnected');
+    ipcRenderer.removeAllListeners('ws-bridge:message');
+    ipcRenderer.removeAllListeners('ws-bridge:error');
+
+    ipcRenderer.on('ws-bridge:connected', handleBridgeConnected);
+    ipcRenderer.on('ws-bridge:disconnected', handleBridgeDisconnected);
+    ipcRenderer.on('ws-bridge:message', handleBridgeMessage);
+    ipcRenderer.on('ws-bridge:error', handleBridgeError);
 
     // Request connection on mount
-    ipcRenderer.send('vscode-bridge:connect');
+    ipcRenderer.send('ws-bridge:connect');
 
     return () => {
-      if (ipcRenderer.removeListener) {
-        ipcRenderer.removeListener('vscode-bridge:connected', handleBridgeConnected);
-        ipcRenderer.removeListener('vscode-bridge:disconnected', handleBridgeDisconnected);
-        ipcRenderer.removeListener('vscode-bridge:message', handleBridgeMessage);
-        ipcRenderer.removeListener('vscode-bridge:error', handleBridgeError);
-      }
+      ipcRenderer.removeAllListeners('ws-bridge:connected');
+      ipcRenderer.removeAllListeners('ws-bridge:disconnected');
+      ipcRenderer.removeAllListeners('ws-bridge:message');
+      ipcRenderer.removeAllListeners('ws-bridge:error');
     };
   }, []);
 

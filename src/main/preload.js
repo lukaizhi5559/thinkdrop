@@ -15,8 +15,8 @@ contextBridge.exposeInMainWorld('electron', {
         'results-window:move',
         'results-window:set-prompt',
         'results-window:show-error',
-        'vscode-bridge:send-message',
-        'vscode-bridge:connect',
+        'ws-bridge:send-message',
+        'ws-bridge:connect',
       ];
       if (validChannels.includes(channel)) {
         ipcRenderer.send(channel, data);
@@ -31,11 +31,31 @@ contextBridge.exposeInMainWorld('electron', {
         'prompt-capture:add-highlight',
         'results-window:set-prompt',
         'results-window:display-error',
-        'vscode-bridge:message',
-        'vscode-bridge:error',
+        'ws-bridge:connected',
+        'ws-bridge:disconnected',
+        'ws-bridge:message',
+        'ws-bridge:error',
       ];
       if (validChannels.includes(channel)) {
-        ipcRenderer.on(channel, (event, ...args) => func(event, ...args));
+        ipcRenderer.on(channel, func);
+      }
+    },
+    removeAllListeners: (channel) => {
+      const validChannels = [
+        'prompt-capture:show',
+        'prompt-capture:add-highlight',
+        'prompt-capture:capture-screenshot',
+        'prompt-capture:screenshot-result',
+        'results-window:show',
+        'results-window:set-prompt',
+        'results-window:display-error',
+        'ws-bridge:connected',
+        'ws-bridge:disconnected',
+        'ws-bridge:message',
+        'ws-bridge:error',
+      ];
+      if (validChannels.includes(channel)) {
+        ipcRenderer.removeAllListeners(channel);
       }
     },
     removeListener: (channel, func) => {
@@ -44,8 +64,13 @@ contextBridge.exposeInMainWorld('electron', {
         'prompt-capture:add-highlight',
         'prompt-capture:capture-screenshot',
         'prompt-capture:screenshot-result',
+        'results-window:show',
         'results-window:set-prompt',
         'results-window:display-error',
+        'ws-bridge:connected',
+        'ws-bridge:disconnected',
+        'ws-bridge:message',
+        'ws-bridge:error',
       ];
       if (validChannels.includes(channel)) {
         ipcRenderer.removeListener(channel, func);

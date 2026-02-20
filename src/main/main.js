@@ -1,3 +1,4 @@
+require('dotenv').config();
 const { app, BrowserWindow, ipcMain, screen, globalShortcut, clipboard } = require('electron');
 const screenshot = require('screenshot-desktop');
 const path = require('path');
@@ -7,61 +8,85 @@ let promptCaptureWindow = null;
 let resultsWindow = null;
 
 // VS Code Bridge WebSocket
-let vscodeWs = null;
+let bridgeWs = null;
 let vscodeConnected = false;
+let reconnectAttempts = 0;
+const MAX_RECONNECT_ATTEMPTS = 5;
+const RECONNECT_BASE_DELAY = 2000;
 
-function connectToVSCode() {
-  if (vscodeWs && vscodeWs.readyState === WebSocket.OPEN) {
-    console.log('[VS Code Bridge] Already connected');
+function connectToSocket() {
+  if (bridgeWs && (bridgeWs.readyState === WebSocket.OPEN || bridgeWs.readyState === WebSocket.CONNECTING)) {
+    console.log('[VS Code Bridge] Already connected or connecting');
     return;
   }
 
-  console.log('[VS Code Bridge] Connecting to ws://127.0.0.1:17373');
-  vscodeWs = new WebSocket('ws://127.0.0.1:17373');
+  // Clean up any stale socket before creating a new one
+  if (bridgeWs) {
+    bridgeWs.removeAllListeners();
+    bridgeWs.terminate();
+    bridgeWs = null;
+  }
 
-  vscodeWs.on('open', () => {
+  if (reconnectAttempts >= MAX_RECONNECT_ATTEMPTS) {
+    console.warn(`[VS Code Bridge] Max reconnect attempts (${MAX_RECONNECT_ATTEMPTS}) reached. Giving up.`);
+    return;
+  }
+
+  const wsUrl = new URL(process.env.WEBSOCKET_URL);
+  wsUrl.searchParams.set('apiKey', process.env.BIBSCRIP_API_KEY || '');
+  wsUrl.searchParams.set('userId', 'thinkdrop_electron');
+  wsUrl.searchParams.set('clientId', `thinkdrop_${Date.now()}`);
+
+  console.log(`Connecting to ${wsUrl.toString()}`);
+  bridgeWs = new WebSocket(wsUrl.toString());
+
+  bridgeWs.on('open', () => {
     console.log('✅ [VS Code Bridge] Connected');
     vscodeConnected = true;
+    reconnectAttempts = 0;
     if (resultsWindow && !resultsWindow.isDestroyed()) {
-      resultsWindow.webContents.send('vscode-bridge:connected');
+      resultsWindow.webContents.send('ws-bridge:connected');
     }
   });
 
-  vscodeWs.on('message', (data) => {
+  bridgeWs.on('message', (data) => {
     try {
       const message = JSON.parse(data.toString());
       console.log('[VS Code Bridge] Message received:', message.type);
       
       // Forward all messages to ResultsWindow
       if (resultsWindow && !resultsWindow.isDestroyed()) {
-        resultsWindow.webContents.send('vscode-bridge:message', message);
+        resultsWindow.webContents.send('ws-bridge:message', message);
       }
     } catch (error) {
       console.error('[VS Code Bridge] Failed to parse message:', error);
     }
   });
 
-  vscodeWs.on('error', (error) => {
+  bridgeWs.on('error', (error) => {
     console.error('[VS Code Bridge] Error:', error.message);
     vscodeConnected = false;
     if (resultsWindow && !resultsWindow.isDestroyed()) {
-      resultsWindow.webContents.send('vscode-bridge:error', error.message);
+      resultsWindow.webContents.send('ws-bridge:error', error.message);
     }
   });
 
-  vscodeWs.on('close', () => {
+  bridgeWs.on('close', () => {
     console.log('[VS Code Bridge] Disconnected');
     vscodeConnected = false;
-    vscodeWs = null;
+    bridgeWs = null;
     if (resultsWindow && !resultsWindow.isDestroyed()) {
-      resultsWindow.webContents.send('vscode-bridge:disconnected');
+      resultsWindow.webContents.send('ws-bridge:disconnected');
     }
-    
-    // Attempt reconnect after delay
-    setTimeout(() => {
-      console.log('[VS Code Bridge] Attempting to reconnect...');
-      connectToVSCode();
-    }, 2000);
+
+    if (reconnectAttempts < MAX_RECONNECT_ATTEMPTS) {
+      reconnectAttempts++;
+      const delay = RECONNECT_BASE_DELAY * Math.pow(2, reconnectAttempts - 1);
+      console.log(`[VS Code Bridge] Reconnect attempt ${reconnectAttempts}/${MAX_RECONNECT_ATTEMPTS} in ${delay}ms...`);
+      setTimeout(() => connectToSocket(), delay);
+    } else {
+      console.warn('[VS Code Bridge] Max reconnect attempts reached. Server may be unavailable.');
+    }
   });
 }
 
@@ -280,7 +305,7 @@ app.whenReady().then(() => {
   createResultsWindow();
 
   // Connect to VS Code extension
-  setTimeout(() => connectToVSCode(), 1000);
+  setTimeout(() => connectToSocket(), 1000);
 
   globalShortcut.register('CommandOrControl+Shift+Space', () => {
     if (promptCaptureWindow) {
@@ -394,32 +419,18 @@ app.whenReady().then(() => {
       const primaryDisplay = screen.getPrimaryDisplay();
       const { width: screenWidth, height: screenHeight } = primaryDisplay.workAreaSize;
       const margin  = 20;
-
-      // If this is a minimal height (100-150px), it's likely a new search - reposition to bottom-right
-      // if (clampedHeight <= 150 && (!resultsWindowInitialHeight || resultsWindowInitialHeight > 150)) {
-      //   console.log(' [RESULTS_WINDOW] New search detected - repositioning to bottom-right');
-      //   const newY = screenHeight - clampedHeight - margin;
-      //   const newX = screenWidth - clampedWidth - margin;
-      //   resultsWindow.setBounds({
-      //   x: newX,
-      //   y: newY,
-      //   width: clampedWidth,
-      //   height: clampedHeight
-      //   }, true);
-      //   resultsWindowInitialHeight = clampedHeight;
-      // } 
-      // else {
-        // Content is growing - resize from bottom up (keep fixed margin from bottom)
-        const newY = screenHeight - clampedHeight - margin;
-        resultsWindow.setBounds({
-          x: currentBounds.x,
-          y: newY, // Maintain fixed distance from bottom
-          width: clampedWidth,
-          height: clampedHeight
-        }, true);
-        resultsWindowInitialHeight = clampedHeight  
-        console.log(` [RESULTS_WINDOW] Window resized to ${clampedWidth}x${clampedHeight}, growing upward from fixed bottom`);
-      // }
+     
+      // Content is growing - resize from bottom up (keep fixed margin from bottom)
+      const newY = screenHeight - clampedHeight - margin;
+      resultsWindow.setBounds({
+        x: currentBounds.x,
+        y: newY, // Maintain fixed distance from bottom
+        width: clampedWidth,
+        height: clampedHeight
+      }, true);
+      resultsWindowInitialHeight = clampedHeight  
+      console.log(` [RESULTS_WINDOW] Window resized to ${clampedWidth}x${clampedHeight}, growing upward from fixed bottom`);
+      
     }
   });
 
@@ -452,12 +463,12 @@ app.whenReady().then(() => {
         console.log('[Results Window] Still loading content, waiting to show.');
         resultsWindow.webContents.once('did-finish-load', () => {
           console.log('[Results Window] Finished loading, now showing window.');
+          resultsWindow.webContents.send('results-window:set-prompt', text);
           resultsWindow.show();
           resultsWindow.focus();
         });
       } else {
         console.log('[Results Window] Content already loaded, showing window immediately.');
-        resultsWindow.webContents.send('results-window:set-prompt', text);
         resultsWindow.focus();
         resultsWindow.moveTop();
         console.log('[Results Window] Prompt text set and window shown.');
@@ -499,52 +510,58 @@ app.whenReady().then(() => {
     } catch (error) {
       console.error('Screenshot capture failed:', error);
       if (resultsWindow && !resultsWindow.isDestroyed()) {
-        resultsWindow.webContents.send('vscode-bridge:error', event.returnValue.error);
+        resultsWindow.webContents.send('ws-bridge:error', event.returnValue.error);
       }
     }
   });
 
   // VS Code Bridge IPC handlers
-  ipcMain.on('vscode-bridge:send-message', (event, { prompt, selectedText = '' }) => {
-    console.log('📥 [MAIN] Received vscode-bridge:send-message IPC event');
+  ipcMain.on('ws-bridge:send-message', (event, { prompt, selectedText = '' }) => {
+    console.log(' [MAIN] Received ws-bridge:send-message IPC event');
     console.log('[VS Code Bridge] Sending message:', prompt.substring(0, 50));
     
-    if (!vscodeWs || vscodeWs.readyState !== WebSocket.OPEN) {
+    if (!bridgeWs || bridgeWs.readyState !== WebSocket.OPEN) {
       console.error('[VS Code Bridge] Not connected');
       if (resultsWindow && !resultsWindow.isDestroyed()) {
-        resultsWindow.webContents.send('vscode-bridge:error', 'Not connected to VS Code extension');
+        resultsWindow.webContents.send('ws-bridge:error', 'Not connected to VS Code extension');
       }
       // Try to reconnect
-      connectToVSCode();
+      connectToSocket();
       return;
     }
 
     const id = `req_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
     const payload = {
-      type: 'ask',
+      type: 'llm_request',
       id,
-      prompt,
-      selectedText,
-      mode: 'general',
+      payload: {
+        prompt,
+        provider: 'openai',
+        options: { temperature: 0.7, stream: true, taskType: 'ask' },
+        context: { selectedText }
+      },
+      timestamp: Date.now(),
+      metadata: { source: 'thinkdrop_electron' }
     };
 
     try {
-      vscodeWs.send(JSON.stringify(payload));
+      bridgeWs.send(JSON.stringify(payload));
       console.log('[VS Code Bridge] Message sent with id:', id);
     } catch (error) {
       console.error('[VS Code Bridge] Failed to send message:', error);
       if (resultsWindow && !resultsWindow.isDestroyed()) {
-        resultsWindow.webContents.send('vscode-bridge:error', error.message);
+        resultsWindow.webContents.send('ws-bridge:error', error.message);
       }
     }
   });
 
-  ipcMain.on('vscode-bridge:connect', () => {
+  ipcMain.on('ws-bridge:connect', () => {
     console.log('[VS Code Bridge] Connect requested');
-    connectToVSCode();
+    reconnectAttempts = 0;
+    connectToSocket();
   });
 
-  ipcMain.handle('vscode-bridge:is-connected', () => {
+  ipcMain.handle('ws-bridge:is-connected', () => {
     return vscodeConnected;
   });
 });
