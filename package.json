@@ -36,6 +36,7 @@
   "dependencies": {
     "@nut-tree-fork/nut-js": "4.2.6",
     "@radix-ui/react-slot": "^1.0.0",
+    "@thinkdrop/stategraph": "github:lukaizhi5559/thinkdrop-stategraph-module",
     "@types/react-syntax-highlighter": "^15.5.13",
     "class-variance-authority": "^0.7.0",
     "clsx": "^2.0.0",

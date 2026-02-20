@@ -133,17 +133,13 @@ export default function StandalonePromptCapture() {
     console.log('🔍 [STANDALONE_PROMPT] ipcRenderer available?', !!ipcRenderer);
     
     if (ipcRenderer) {
-      // Send to ResultsWindow to display
-      console.log('📨 [STANDALONE_PROMPT] Sending to results-window:set-prompt');
-      ipcRenderer.send('results-window:set-prompt', finalPrompt.trim());
-      
-      // Send to VS Code extension via bridge
-      console.log('🚀 [STANDALONE_PROMPT] Sending via IPC to VS Code Bridge');
-      ipcRenderer.send('ws-bridge:send-message', {
+      // Route through StateGraph pipeline (intent → MCP services → LLM answer)
+      console.log('🧠 [STANDALONE_PROMPT] Sending to StateGraph pipeline');
+      ipcRenderer.send('stategraph:process', {
         prompt: finalPrompt.trim(),
         selectedText: '',
       });
-      console.log('✅ [STANDALONE_PROMPT] Message sent to VS Code Bridge');
+      console.log('✅ [STANDALONE_PROMPT] Message sent to StateGraph');
     } else {
       console.error('❌ [STANDALONE_PROMPT] ipcRenderer is not available!');
     }

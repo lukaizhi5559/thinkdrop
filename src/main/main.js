@@ -4,6 +4,43 @@ const screenshot = require('screenshot-desktop');
 const path = require('path');
 const WebSocket = require('ws');
 
+// StateGraph integration
+const { StateGraphBuilder, RealMCPAdapter, VSCodeLLMBackend } = require('@thinkdrop/stategraph');
+const ThinkDropMCPClient = require('./ThinkDropMCPClient');
+
+// Singleton StateGraph instance (created once on app ready)
+let stateGraph = null;
+let mcpClient = null;
+let mcpAdapter = null;
+let llmBackend = null;
+
+function initStateGraph() {
+  try {
+    mcpClient = new ThinkDropMCPClient({ logger: console });
+    mcpAdapter = new RealMCPAdapter(mcpClient, { logger: console });
+
+    llmBackend = new VSCodeLLMBackend({
+      wsUrl:            process.env.WEBSOCKET_URL     || 'ws://localhost:4000/ws/stream',
+      apiKey:           process.env.BIBSCRIP_API_KEY  || process.env.WEBSOCKET_API_KEY || '',
+      userId:           'thinkdrop_electron',
+      connectTimeoutMs: 5000,
+      responseTimeoutMs: 60000,
+    });
+
+    stateGraph = StateGraphBuilder.full({
+      mcpAdapter,
+      llmBackend,
+      debug: process.env.NODE_ENV === 'development',
+      logger: console,
+    });
+
+    console.log('✅ [StateGraph] Initialized with full graph (all nodes)');
+  } catch (err) {
+    console.error('❌ [StateGraph] Failed to initialize:', err.message);
+    stateGraph = null;
+  }
+}
+
 let promptCaptureWindow = null;
 let resultsWindow = null;
 
@@ -304,8 +341,74 @@ app.whenReady().then(() => {
   createPromptCaptureWindow();
   createResultsWindow();
 
-  // Connect to VS Code extension
+  // Initialize StateGraph pipeline
+  initStateGraph();
+
+  // Connect to VS Code extension (kept for legacy/fallback)
   setTimeout(() => connectToSocket(), 1000);
+
+  // ─── StateGraph: Process prompt through full pipeline ────────────────────
+  ipcMain.on('stategraph:process', async (event, { prompt, selectedText = '', sessionId = null, userId = 'default_user' }) => {
+    console.log('🧠 [StateGraph] Processing prompt:', prompt.substring(0, 80));
+
+    if (!stateGraph) {
+      console.error('❌ [StateGraph] Not initialized');
+      if (resultsWindow && !resultsWindow.isDestroyed()) {
+        resultsWindow.webContents.send('ws-bridge:error', 'StateGraph not initialized');
+      }
+      return;
+    }
+
+    // Show ResultsWindow and set prompt display
+    if (resultsWindow && !resultsWindow.isDestroyed()) {
+      resultsWindow.webContents.send('results-window:set-prompt', prompt);
+    }
+
+    // Stream callback: forward each token to ResultsWindow as it arrives
+    const streamCallback = (token) => {
+      if (resultsWindow && !resultsWindow.isDestroyed()) {
+        resultsWindow.webContents.send('ws-bridge:message', {
+          type: 'chunk',
+          text: token
+        });
+      }
+    };
+
+    try {
+      const finalState = await stateGraph.execute({
+        message: prompt,
+        selectedText,
+        streamCallback,
+        context: {
+          sessionId,
+          userId,
+          source: 'thinkdrop_electron'
+        }
+      });
+
+      // Signal stream end
+      if (resultsWindow && !resultsWindow.isDestroyed()) {
+        resultsWindow.webContents.send('ws-bridge:message', { type: 'done' });
+      }
+
+      // Print full trace to console
+      const traceLines = (finalState.trace || []).map((t, i) => {
+        const status = t.success ? '✅' : '❌';
+        const err = t.error ? ` — ${t.error}` : '';
+        return `  ${i + 1}. ${status} [${t.node}] ${t.duration}ms${err}`;
+      }).join('\n');
+      console.log(
+        `✅ [StateGraph] Done in ${finalState.elapsedMs}ms | Intent: ${finalState.intent?.type} (${finalState.intent?.confidence?.toFixed(2)})\n` +
+        `📍 Trace (${finalState.trace?.length} nodes):\n${traceLines}`
+      );
+
+    } catch (err) {
+      console.error('❌ [StateGraph] Execution error:', err.message);
+      if (resultsWindow && !resultsWindow.isDestroyed()) {
+        resultsWindow.webContents.send('ws-bridge:error', err.message);
+      }
+    }
+  });
 
   globalShortcut.register('CommandOrControl+Shift+Space', () => {
     if (promptCaptureWindow) {

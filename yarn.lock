@@ -1334,19 +1334,19 @@ __metadata:
   languageName: node
   linkType: hard
 
-"@socket.io/component-emitter@npm:~3.1.0":
-  version: 3.1.2
-  resolution: "@socket.io/component-emitter@npm:3.1.2"
-  checksum: 89888f00699eb34e3070624eb7b8161fa29f064aeb1389a48f02195d55dd7c52a504e52160016859f6d6dffddd54324623cdd47fd34b3d46f9ed96c18c456edc
-  languageName: node
-  linkType: hard
-
 "@szmarczak/http-timer@npm:^4.0.5":
   version: 4.0.6
   resolution: "@szmarczak/http-timer@npm:4.0.6"
   dependencies:
     defer-to-connect: ^2.0.0
   checksum: c29df3bcec6fc3bdec2b17981d89d9c9fc9bd7d0c9bcfe92821dc533f4440bc890ccde79971838b4ceed1921d456973c4180d7175ee1d0023ad0562240a58d95
+  languageName: node
+  linkType: hard
+
+"@thinkdrop/stategraph@github:lukaizhi5559/thinkdrop-stategraph-module":
+  version: 1.0.0
+  resolution: "@thinkdrop/stategraph@https://github.com/lukaizhi5559/thinkdrop-stategraph-module.git#commit=2a09441a4ae6f9ad15a040ef4e5241435e5437a2"
+  checksum: 2c1d75b616b91dd5457344cb5a803872222aad4f242f7a5c0dfe3e10fa8b6b29b161ee63331db2952dba12ac4e8bfa42cf7d06d2099999ed9973eadabd9ea4e5
   languageName: node
   linkType: hard
 
@@ -2534,7 +2534,7 @@ __metadata:
   languageName: node
   linkType: hard
 
-"debug@npm:4, debug@npm:^4.0.0, debug@npm:^4.1.0, debug@npm:^4.1.1, debug@npm:^4.3.1, debug@npm:^4.3.4, debug@npm:~4.4.1":
+"debug@npm:4, debug@npm:^4.0.0, debug@npm:^4.1.0, debug@npm:^4.1.1, debug@npm:^4.3.1, debug@npm:^4.3.4":
   version: 4.4.3
   resolution: "debug@npm:4.4.3"
   dependencies:
@@ -2819,26 +2819,6 @@ __metadata:
   dependencies:
     once: ^1.4.0
   checksum: 1e0cfa6e7f49887544e03314f9dfc56a8cb6dde910cbb445983ecc2ff426fc05946df9d75d8a21a3a64f2cecfe1bf88f773952029f46756b2ed64a24e95b1fb8
-  languageName: node
-  linkType: hard
-
-"engine.io-client@npm:~6.6.1":
-  version: 6.6.4
-  resolution: "engine.io-client@npm:6.6.4"
-  dependencies:
-    "@socket.io/component-emitter": ~3.1.0
-    debug: ~4.4.1
-    engine.io-parser: ~5.2.1
-    ws: ~8.18.3
-    xmlhttprequest-ssl: ~2.1.1
-  checksum: f7ebf7bc58f0b145d82f936c7d417dbf06232e667fb8288d0ece54c18d533e8a766e1fa314e5c7be8dcaa891b48004bba695cd578f8618ca8132ac66ad8adbd0
-  languageName: node
-  linkType: hard
-
-"engine.io-parser@npm:~5.2.1":
-  version: 5.2.3
-  resolution: "engine.io-parser@npm:5.2.3"
-  checksum: a76d998b794ce8bbcade833064d949715781fdb9e9cf9b33ecf617d16355ddfd7772f12bb63aaec0f497d63266c6db441129c5aa24c60582270f810c696a6cf8
   languageName: node
   linkType: hard
 
@@ -6240,28 +6220,6 @@ __metadata:
   languageName: node
   linkType: hard
 
-"socket.io-client@npm:^4.8.3":
-  version: 4.8.3
-  resolution: "socket.io-client@npm:4.8.3"
-  dependencies:
-    "@socket.io/component-emitter": ~3.1.0
-    debug: ~4.4.1
-    engine.io-client: ~6.6.1
-    socket.io-parser: ~4.2.4
-  checksum: d5b4b5bf78e2196927103c4bbbafe5f426c6dc162a2d8ec8e5c53272abf4557613aa37fb95b294fe6a475971f2f60e8bbd22b12a5ce3ca6824848da664c7e528
-  languageName: node
-  linkType: hard
-
-"socket.io-parser@npm:~4.2.4":
-  version: 4.2.5
-  resolution: "socket.io-parser@npm:4.2.5"
-  dependencies:
-    "@socket.io/component-emitter": ~3.1.0
-    debug: ~4.4.1
-  checksum: 85f3741fd323b8dccf045aee3409e0bd30eb85cb8c7e215107ecedaaa1502ee1794e4f33b73afec21b680a0acb01ff14cd8639bec03f248db2ef453f4248b586
-  languageName: node
-  linkType: hard
-
 "socks-proxy-agent@npm:^8.0.3":
   version: 8.0.5
   resolution: "socks-proxy-agent@npm:8.0.5"
@@ -6350,6 +6308,7 @@ __metadata:
   dependencies:
     "@nut-tree-fork/nut-js": 4.2.6
     "@radix-ui/react-slot": ^1.0.0
+    "@thinkdrop/stategraph": "github:lukaizhi5559/thinkdrop-stategraph-module"
     "@types/node": ^20.0.0
     "@types/react": ^18.2.0
     "@types/react-dom": ^18.2.0
@@ -6371,7 +6330,6 @@ __metadata:
     remark-breaks: ^4.0.0
     remark-gfm: ^4.0.0
     screenshot-desktop: ^1.15.1
-    socket.io-client: ^4.8.3
     tailwind-merge: ^2.0.0
     tailwindcss: ^3.3.0
     tailwindcss-animate: ^1.0.7
@@ -7156,21 +7114,6 @@ __metadata:
   languageName: node
   linkType: hard
 
-"ws@npm:~8.18.3":
-  version: 8.18.3
-  resolution: "ws@npm:8.18.3"
-  peerDependencies:
-    bufferutil: ^4.0.1
-    utf-8-validate: ">=5.0.2"
-  peerDependenciesMeta:
-    bufferutil:
-      optional: true
-    utf-8-validate:
-      optional: true
-  checksum: d64ef1631227bd0c5fe21b3eb3646c9c91229402fb963d12d87b49af0a1ef757277083af23a5f85742bae1e520feddfb434cb882ea59249b15673c16dc3f36e0
-  languageName: node
-  linkType: hard
-
 "xhr@npm:^2.0.1":
   version: 2.6.0
   resolution: "xhr@npm:2.6.0"
@@ -7211,13 +7154,6 @@ __metadata:
   version: 11.0.1
   resolution: "xmlbuilder@npm:11.0.1"
   checksum: 7152695e16f1a9976658215abab27e55d08b1b97bca901d58b048d2b6e106b5af31efccbdecf9b07af37c8377d8e7e821b494af10b3a68b0ff4ae60331b415b0
-  languageName: node
-  linkType: hard
-
-"xmlhttprequest-ssl@npm:~2.1.1":
-  version: 2.1.2
-  resolution: "xmlhttprequest-ssl@npm:2.1.2"
-  checksum: f8ecb894301dd024804669245888b3d5ceed2dfcdb4fddb0e38d811a07a2e3c227535f29b269eccf92005819457db3f270d2ff98df516abf95cfad1b9759512d
   languageName: node
   linkType: hard
 

@@ -17,6 +17,7 @@ contextBridge.exposeInMainWorld('electron', {
         'results-window:show-error',
         'ws-bridge:send-message',
         'ws-bridge:connect',
+        'stategraph:process',
       ];
       if (validChannels.includes(channel)) {
         ipcRenderer.send(channel, data);
