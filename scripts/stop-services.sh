@@ -47,6 +47,17 @@ for port in 3001 3002 3004 3005 3006 3007 3008; do
     lsof -ti:$port | xargs kill -9 2>/dev/null || true
 done
 
+# Force-kill any nodemon instances for user-memory-service (multiple restarts can leave orphans)
+pkill -9 -f "thinkdrop-user-memory-service/node_modules/nodemon" 2>/dev/null || true
+pkill -9 -f "thinkdrop-user-memory-service/src/server" 2>/dev/null || true
+
+# Release any remaining DuckDB lock holders
+DB_FILE="$PROJECT_ROOT/mcp-services/thinkdrop-user-memory-service/data/user_memory.duckdb"
+if [ -f "$DB_FILE" ]; then
+    lsof "$DB_FILE" 2>/dev/null | awk 'NR>1 {print $2}' | xargs kill -9 2>/dev/null || true
+fi
+sleep 1
+
 echo ""
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo "✅ All services stopped"

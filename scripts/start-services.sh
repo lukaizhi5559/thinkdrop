@@ -130,6 +130,19 @@ start_python_service() {
     cd "$PROJECT_ROOT"
 }
 
+# ── Pre-flight: kill ALL orphaned MCP service nodemon instances ───────────────
+# Multiple restarts leave nodemon orphans; kill them all before starting fresh
+for svc in thinkdrop-user-memory-service thinkdrop-phi4-service thinkdrop-web-search conversation-service command-service screen-intelligence-service; do
+    pkill -9 -f "${svc}/node_modules/nodemon" 2>/dev/null || true
+    pkill -9 -f "${svc}/src/server" 2>/dev/null || true
+done
+# Release any remaining DuckDB lock holders
+DB_FILE="$PROJECT_ROOT/mcp-services/thinkdrop-user-memory-service/data/user_memory.duckdb"
+if [ -f "$DB_FILE" ]; then
+    lsof "$DB_FILE" 2>/dev/null | awk 'NR>1 {print $2}' | xargs kill -9 2>/dev/null || true
+fi
+sleep 1
+
 # ── Start services in dependency order ──────────────────────────────────────
 
 # 1. User Memory Service — port 3001

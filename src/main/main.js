@@ -133,6 +133,7 @@ let clipboardMonitorActive = false;
 let lastClipboardContent = '';
 let clipboardCheckInterval = null;
 let sentHighlights = new Set();
+let recentlySubmittedPrompts = new Set(); // Track prompts sent via stategraph:process to avoid clipboard re-capture
 
 function createPromptCaptureWindow() {
   const windowWidth = 500;
@@ -315,6 +316,31 @@ function startClipboardMonitoring(checkInitial = false) {
     const currentClipboard = clipboard.readText();
     if (currentClipboard && currentClipboard !== lastClipboardContent && !sentHighlights.has(currentClipboard)) {
       if (!sentHighlights.has(currentClipboard)) {
+        // Skip if this was recently submitted as a prompt (user copied their own query)
+        if (recentlySubmittedPrompts.has(currentClipboard.trim())) {
+          console.log(`[Clipboard Monitor] Skipping recently submitted prompt from clipboard.`);
+          lastClipboardContent = currentClipboard;
+          return;
+        }
+        // Skip short single-line plain text — likely a typed query, not a highlight
+        const trimmed = currentClipboard.trim();
+        const lines = trimmed.split('\n');
+        const isShortPlainText = lines.length === 1 && trimmed.length < 200;
+        if (isShortPlainText) {
+          console.log(`[Clipboard Monitor] Skipping short plain text (likely a query, not a highlight).`);
+          lastClipboardContent = currentClipboard;
+          return;
+        }
+        // Skip JSON log content (error logs, structured logs copied from terminal)
+        const isJsonLog = lines.every(l => {
+          const t = l.trim();
+          return t === '' || (t.startsWith('{') && t.endsWith('}'));
+        }) && lines.filter(l => l.trim()).length > 0;
+        if (isJsonLog) {
+          console.log(`[Clipboard Monitor] Skipping JSON log content.`);
+          lastClipboardContent = currentClipboard;
+          return;
+        }
         console.log(`[Clipboard Monitor] New clipboard content detected: ${currentClipboard.substring(0, 100)}...`);
         promptCaptureWindow.webContents.send('prompt-capture:add-highlight', currentClipboard);
         sentHighlights.add(currentClipboard);
@@ -352,6 +378,10 @@ app.whenReady().then(() => {
   ipcMain.on('stategraph:process', async (event, { prompt, selectedText = '', sessionId = null, userId = 'default_user' }) => {
     console.log('🧠 [StateGraph] Processing prompt:', prompt.substring(0, 80));
 
+    // Track this prompt so clipboard monitor won't re-capture it as a highlight
+    recentlySubmittedPrompts.add(prompt.trim());
+    setTimeout(() => recentlySubmittedPrompts.delete(prompt.trim()), 60000);
+
     if (!stateGraph) {
       console.error('❌ [StateGraph] Not initialized');
       if (resultsWindow && !resultsWindow.isDestroyed()) {
@@ -360,9 +390,11 @@ app.whenReady().then(() => {
       return;
     }
 
-    // Show ResultsWindow and set prompt display
+    // Show ResultsWindow and set prompt display (without stealing focus from active app)
     if (resultsWindow && !resultsWindow.isDestroyed()) {
       resultsWindow.webContents.send('results-window:set-prompt', prompt);
+      resultsWindow.showInactive();
+      resultsWindow.moveTop();
     }
 
     // Stream callback: forward each token to ResultsWindow as it arrives
@@ -467,8 +499,7 @@ app.whenReady().then(() => {
             resultsWindow.setBounds({ x: newX, y: newY, width: windowWidth, height: windowHeight });
           }
 
-          resultsWindow.show();
-          resultsWindow.focus();
+          resultsWindow.showInactive();
           // Notify renderer to re-measure and resize based on current content
           resultsWindow.webContents.send('results-window:show', { position: { x, y } });
           console.log('[Results Window] Shown alongside Prompt Capture Window.');
@@ -570,12 +601,11 @@ app.whenReady().then(() => {
         resultsWindow.webContents.once('did-finish-load', () => {
           console.log('[Results Window] Finished loading, now showing window.');
           resultsWindow.webContents.send('results-window:set-prompt', text);
-          resultsWindow.show();
-          resultsWindow.focus();
+          resultsWindow.showInactive(); // show without stealing focus
         });
       } else {
         console.log('[Results Window] Content already loaded, showing window immediately.');
-        resultsWindow.focus();
+        resultsWindow.showInactive(); // show without stealing focus from active app
         resultsWindow.moveTop();
         console.log('[Results Window] Prompt text set and window shown.');
       }   
