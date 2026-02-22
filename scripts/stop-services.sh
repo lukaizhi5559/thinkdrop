@@ -43,7 +43,7 @@ fi
 # Final cleanup by port (catches orphaned child processes)
 echo ""
 echo "🧹 Cleaning up orphaned processes on service ports..."
-for port in 3001 3002 3004 3005 3006 3007 3008; do
+for port in 3001 3002 3004 3005 3006 3007 3008 3009; do
     lsof -ti:$port | xargs kill -9 2>/dev/null || true
 done
 

@@ -16,12 +16,16 @@ export default function ResultsWindow() {
 
   // Automation mode: tracked inside AutomationProgress itself
   const [isAutomationMode, setIsAutomationMode] = useState(false);
+  // Ref to prevent AutomationProgress from re-enabling automation mode once streaming starts
+  const streamingStartedRef = useRef(false);
   
   const [isDragging, setIsDragging] = useState(false);
   const dragOffset = useRef({ x: 0, y: 0 });
   
   const [isCopied, setIsCopied] = useState(false);
   const [showTrigger, setShowTrigger] = useState(0);
+  const scrollBottomRef = useRef<HTMLDivElement>(null);
+  const scrollContainerRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (!ipcRenderer) return;
@@ -49,6 +53,8 @@ export default function ResultsWindow() {
         console.log('💬 [RESULTS_WINDOW] Stream token:', message);
         setIsThinking(false);
         setIsStreaming(true);
+        // Mark streaming started — keeps AutomationProgress visible (steps stay shown above)
+        streamingStartedRef.current = true;
 
         const msgText = message?.text || message.payload?.text || '';
         setStreamingResponse(prev => prev + msgText);
@@ -108,6 +114,7 @@ export default function ResultsWindow() {
       }
       
       // Reset all state for new prompt
+      streamingStartedRef.current = false;
       setPromptText(text);
       setStreamingResponse('');
       setIsStreaming(false);
@@ -160,6 +167,13 @@ export default function ResultsWindow() {
 
     return () => cancelAnimationFrame(rafId);
   }, [streamingResponse, isStreaming, promptText, isThinking, showTrigger]);
+
+  // Auto-scroll to bottom only when new streaming content arrives (not on expand/collapse)
+  useEffect(() => {
+    if (streamingResponse) {
+      scrollBottomRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
+    }
+  }, [streamingResponse]);
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -236,7 +250,8 @@ export default function ResultsWindow() {
   }, [isDragging]);
 
   const renderResults = () => {
-    if (isAutomationMode) return null;
+    // In automation mode, only render if there's streaming content (synthesis answer below steps)
+    if (isAutomationMode && !streamingResponse) return null;
 
     if (isThinking) {
       return (
@@ -342,14 +357,19 @@ export default function ResultsWindow() {
         </div>
       </div>
       
-      <div className="flex-1 overflow-y-auto overflow-x-hidden p-4">
+      <div ref={scrollContainerRef} className="flex-1 overflow-y-auto overflow-x-hidden p-4">
         <div ref={contentRef}>
           {/* AutomationProgress is always mounted so its IPC listener is pre-registered */}
           <AutomationProgress
             onHeightChange={() => setShowTrigger(prev => prev + 1)}
-            onActiveChange={setIsAutomationMode}
+            onActiveChange={(active) => {
+              // Once streaming has started, don't let AutomationProgress re-enable automation mode
+              if (streamingStartedRef.current && active) return;
+              setIsAutomationMode(active);
+            }}
           />
           {renderResults()}
+          <div ref={scrollBottomRef} />
         </div>
       </div>
     </div>

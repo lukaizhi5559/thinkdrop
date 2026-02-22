@@ -427,6 +427,9 @@ app.whenReady().then(async () => {
   // Connect to VS Code extension (kept for legacy/fallback)
   setTimeout(() => connectToSocket(), 1000);
 
+  // Paused automation state — set when recoverSkill returns ASK_USER, cleared on resume or abort
+  let pausedAutomationState = null;
+
   // ─── StateGraph: Process prompt through full pipeline ────────────────────
   ipcMain.on('stategraph:process', async (event, { prompt, selectedText = '', sessionId = null, userId = 'default_user' }) => {
     console.log('🧠 [StateGraph] Processing prompt:', prompt.substring(0, 80));
@@ -471,17 +474,85 @@ app.whenReady().then(async () => {
     };
 
     try {
-      const finalState = await stateGraph.execute({
-        message: prompt,
-        selectedText,
-        streamCallback,
-        progressCallback,
-        context: {
-          sessionId: sessionId || currentSessionId,
-          userId,
-          source: 'thinkdrop_electron'
+      // If there's a paused automation waiting for user input, resume it
+      let initialState;
+      if (pausedAutomationState) {
+        const paused = pausedAutomationState;
+        pausedAutomationState = null;
+        const userReply = prompt.trim().toLowerCase();
+        const q = paused.pendingQuestion;
+        // Map numeric reply ("1", "2", "3") to option text
+        let chosenOption = prompt.trim();
+        if (q?.options?.length) {
+          const idx = parseInt(userReply, 10) - 1;
+          if (!isNaN(idx) && idx >= 0 && idx < q.options.length) {
+            chosenOption = q.options[idx];
+          }
         }
-      });
+        const wantsAbort = /abort|cancel|stop|no/i.test(chosenOption);
+        const wantsSkip = /skip/i.test(chosenOption);
+        if (wantsAbort) {
+          // User wants to abort — clear state and let it fall through as a fresh prompt
+          console.log('[StateGraph] ASK_USER resume: user chose abort — clearing paused state');
+          initialState = { message: prompt, selectedText, streamCallback, progressCallback, context: { sessionId: sessionId || currentSessionId, userId, source: 'thinkdrop_electron' } };
+        } else if (wantsSkip) {
+          // Skip the failed step and continue from the next one
+          console.log('[StateGraph] ASK_USER resume: user chose skip — advancing cursor and resuming plan');
+          initialState = {
+            ...paused,
+            message: paused.message,
+            streamCallback,
+            progressCallback,
+            failedStep: null,
+            pendingQuestion: null,
+            recoveryAction: null,
+            answer: undefined,
+            commandExecuted: false,
+            skillCursor: (paused.skillCursor || 0) + 1,  // skip the failed step
+            stepRetryCount: 0,
+            context: { ...paused.context, sessionId: sessionId || currentSessionId }
+          };
+        } else {
+          // User provided a custom answer — inject it as recoveryContext and replan
+          console.log('[StateGraph] ASK_USER resume: user provided answer — replanning with context');
+          initialState = {
+            ...paused,
+            message: paused.message,
+            streamCallback,
+            progressCallback,
+            failedStep: null,
+            pendingQuestion: null,
+            recoveryAction: 'replan',
+            recoveryContext: {
+              failedSkill: paused.failedStep?.skill || 'browser.act',
+              failedStep: paused.failedStep?.step || paused.skillCursor,
+              failureReason: paused.failedStep?.error || 'user requested change',
+              suggestion: `User replied: "${prompt}". Adjust the plan accordingly.`,
+              constraint: null
+            },
+            answer: undefined,
+            commandExecuted: false,
+            skillPlan: null,
+            skillCursor: 0,
+            stepRetryCount: 0,
+            context: { ...paused.context, sessionId: sessionId || currentSessionId }
+          };
+        }
+      } else {
+        initialState = {
+          message: prompt,
+          selectedText,
+          streamCallback,
+          progressCallback,
+          context: {
+            sessionId: sessionId || currentSessionId,
+            userId,
+            source: 'thinkdrop_electron'
+          }
+        };
+      }
+
+      const finalState = await stateGraph.execute(initialState);
 
       // Persist resolved session for next prompt
       if (finalState.resolvedSessionId) {
@@ -493,6 +564,9 @@ app.whenReady().then(async () => {
       const intentType = finalState.intent?.type;
       if (intentType === 'command_automate') {
         if (finalState.pendingQuestion?.question) {
+          // Persist the full state so the next user reply can resume the paused plan
+          pausedAutomationState = finalState;
+          console.log('[StateGraph] ASK_USER: pausing automation — next prompt will resume the plan');
           const q = finalState.pendingQuestion;
           let displayText = `**${q.question}**`;
           if (q.options?.length) {

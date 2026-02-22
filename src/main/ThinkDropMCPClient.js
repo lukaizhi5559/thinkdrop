@@ -58,7 +58,7 @@ class ThinkDropMCPClient {
    * @param {Object} payload     - Action-specific parameters
    * @returns {Promise<Object>}  - Response data (unwrapped from MCP envelope)
    */
-  async callService(serviceName, action, payload = {}) {
+  async callService(serviceName, action, payload = {}, options = {}) {
     const baseUrl = this.serviceUrls[serviceName];
     if (!baseUrl) {
       throw new Error(`[MCPClient] Unknown service: "${serviceName}". Add it to serviceUrls.`);
@@ -66,6 +66,7 @@ class ThinkDropMCPClient {
 
     const url = `${baseUrl}/${action}`;
     const requestId = `mcp_${Date.now()}_${Math.random().toString(36).substr(2, 8)}`;
+    const timeoutMs = options.timeoutMs || this.timeoutMs;
 
     const body = JSON.stringify({
       version: 'mcp.v1',
@@ -92,7 +93,7 @@ class ThinkDropMCPClient {
     this.logger.debug(`[MCPClient] ${serviceName}.${action} → ${url}`);
 
     try {
-      const responseText = await this._httpPost(url, headers, body);
+      const responseText = await this._httpPost(url, headers, body, timeoutMs);
       const response = JSON.parse(responseText);
 
       // Handle both MCP response envelope formats:
@@ -166,7 +167,8 @@ class ThinkDropMCPClient {
 
   // ─── Internal HTTP helpers ────────────────────────────────────────────────
 
-  _httpPost(url, headers, body) {
+  _httpPost(url, headers, body, timeoutMs) {
+    const effectiveTimeout = timeoutMs || this.timeoutMs;
     return new Promise((resolve, reject) => {
       const parsed = new URL(url);
       const lib = parsed.protocol === 'https:' ? https : http;
@@ -192,9 +194,9 @@ class ThinkDropMCPClient {
         }
       );
 
-      req.setTimeout(this.timeoutMs, () => {
+      req.setTimeout(effectiveTimeout, () => {
         req.destroy();
-        reject(new Error(`[MCPClient] Request timeout after ${this.timeoutMs}ms: ${url}`));
+        reject(new Error(`[MCPClient] Request timeout after ${effectiveTimeout}ms: ${url}`));
       });
 
       req.on('error', reject);

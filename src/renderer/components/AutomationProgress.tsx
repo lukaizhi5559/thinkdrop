@@ -128,6 +128,7 @@ export default function AutomationProgress({ onHeightChange, onActiveChange }: A
   const [totalCount, setTotalCount] = useState(0);
   const [globalError, setGlobalError] = useState<string | null>(null);
   const [expandedSteps, setExpandedSteps] = useState<Set<number>>(new Set());
+  const [synthesisAnswer, setSynthesisAnswer] = useState<string>('');
 
   // Notify parent to re-measure height whenever visible content changes
   useEffect(() => {
@@ -149,6 +150,7 @@ export default function AutomationProgress({ onHeightChange, onActiveChange }: A
       setGlobalError(null);
       setTotalCount(0);
       setExpandedSteps(new Set());
+      setSynthesisAnswer('');
     };
     ipcRenderer.on('results-window:set-prompt', handleNewPrompt);
 
@@ -204,6 +206,10 @@ export default function AutomationProgress({ onHeightChange, onActiveChange }: A
           ));
           break;
 
+        case 'synthesis_start':
+          // Keep phase as 'executing' — synthesize node emits step_done with answer as stdout
+          break;
+
         case 'all_done': {
           setPhase('done');
           setTotalCount(data.totalCount);
@@ -227,11 +233,21 @@ export default function AutomationProgress({ onHeightChange, onActiveChange }: A
       }
     };
 
+    // Capture streaming synthesis answer chunks
+    const handleBridgeMessage = (_event: any, message: any) => {
+      if (message.type === 'chunk' || message.type === 'llm_stream_chunk') {
+        const text = message?.text || message.payload?.text || '';
+        if (text) setSynthesisAnswer(prev => prev + text);
+      }
+    };
+
     ipcRenderer.on('automation:progress', handleProgress);
+    ipcRenderer.on('ws-bridge:message', handleBridgeMessage);
     return () => {
       if (ipcRenderer.removeListener) {
         ipcRenderer.removeListener('automation:progress', handleProgress);
         ipcRenderer.removeListener('results-window:set-prompt', handleNewPrompt);
+        ipcRenderer.removeListener('ws-bridge:message', handleBridgeMessage);
       }
     };
   }, []);
@@ -263,7 +279,7 @@ export default function AutomationProgress({ onHeightChange, onActiveChange }: A
             </span>
           </>
         )}
-        {(phase === 'executing' || phase === 'done') && (() => {
+        {(phase === 'executing' || phase === 'done') && (phase as string) !== 'synthesizing' && (() => {
           const allDone = phase === 'done' || (shownTotal > 0 && doneCount >= shownTotal);
           return (
             <>
@@ -313,8 +329,11 @@ export default function AutomationProgress({ onHeightChange, onActiveChange }: A
       {steps.length > 0 && (
         <div className="space-y-2">
           {steps.map((step) => {
-            const hasOutput = (step.stdout && step.stdout.trim().length > 0) ||
-                              (step.error && step.error.trim().length > 0);
+            const isSynthesize = step.skill === 'synthesize';
+            const hasOutput = isSynthesize
+              ? synthesisAnswer.length > 0
+              : (step.stdout && step.stdout.trim().length > 0) ||
+                (step.error && step.error.trim().length > 0);
             const isExpanded = expandedSteps.has(step.index);
 
             return (
@@ -379,32 +398,47 @@ export default function AutomationProgress({ onHeightChange, onActiveChange }: A
 
                 {/* Expanded output */}
                 {isExpanded && hasOutput && (
-                  <div className="ml-6.5 mt-1.5">
-                    {step.stdout && step.stdout.trim().length > 0 && (
-                      <pre className="text-xs rounded-lg px-3 py-2 overflow-x-auto whitespace-pre-wrap break-all"
+                  <div className="ml-6 mt-1.5">
+                    {isSynthesize ? (
+                      <div className="text-xs rounded-lg px-3 py-2 overflow-y-auto whitespace-pre-wrap"
                         style={{
                           backgroundColor: 'rgba(0,0,0,0.4)',
                           border: '1px solid rgba(255,255,255,0.08)',
-                          color: '#d1fae5',
-                          fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
-                          maxHeight: '200px',
-                          overflowY: 'auto',
+                          color: '#e5e7eb',
+                          maxHeight: '300px',
+                          lineHeight: '1.5',
                         }}>
-                        {step.stdout.trim()}
-                      </pre>
-                    )}
-                    {step.error && (
-                      <pre className="text-xs rounded-lg px-3 py-2 mt-1 overflow-x-auto whitespace-pre-wrap break-all"
-                        style={{
-                          backgroundColor: 'rgba(239,68,68,0.08)',
-                          border: '1px solid rgba(239,68,68,0.2)',
-                          color: '#fca5a5',
-                          fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
-                          maxHeight: '120px',
-                          overflowY: 'auto',
-                        }}>
-                        {step.error.trim()}
-                      </pre>
+                        {synthesisAnswer}
+                      </div>
+                    ) : (
+                      <>
+                        {step.stdout && step.stdout.trim().length > 0 && (
+                          <pre className="text-xs rounded-lg px-3 py-2 overflow-x-auto whitespace-pre-wrap break-all"
+                            style={{
+                              backgroundColor: 'rgba(0,0,0,0.4)',
+                              border: '1px solid rgba(255,255,255,0.08)',
+                              color: '#d1fae5',
+                              fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
+                              maxHeight: '200px',
+                              overflowY: 'auto',
+                            }}>
+                            {step.stdout.trim()}
+                          </pre>
+                        )}
+                        {step.error && (
+                          <pre className="text-xs rounded-lg px-3 py-2 mt-1 overflow-x-auto whitespace-pre-wrap break-all"
+                            style={{
+                              backgroundColor: 'rgba(239,68,68,0.08)',
+                              border: '1px solid rgba(239,68,68,0.2)',
+                              color: '#fca5a5',
+                              fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
+                              maxHeight: '120px',
+                              overflowY: 'auto',
+                            }}>
+                            {step.error.trim()}
+                          </pre>
+                        )}
+                      </>
                     )}
                   </div>
                 )}
