@@ -17,7 +17,7 @@ let currentSessionId = null; // Persists across prompts for conversation continu
 
 function initStateGraph() {
   try {
-    mcpClient = new ThinkDropMCPClient({ logger: console });
+    mcpClient = new ThinkDropMCPClient({ logger: console, timeoutMs: 60000 });
     mcpAdapter = new RealMCPAdapter(mcpClient, { logger: console });
 
     llmBackend = new VSCodeLLMBackend({
@@ -188,8 +188,20 @@ function createPromptCaptureWindow() {
     console.log('[PROMPT_CAPTURE] isVisible:', promptCaptureWindow.isVisible());
     
     // Open DevTools for debugging
-    promptCaptureWindow.webContents.openDevTools({ mode: 'detach' });
+    // promptCaptureWindow.webContents.openDevTools({ mode: 'detach' });
     console.log('[PROMPT_CAPTURE] isDestroyed:', promptCaptureWindow.isDestroyed());
+  });
+
+  promptCaptureWindow.webContents.on('did-fail-load', (event, errorCode, errorDescription) => {
+    console.error(`Prompt Capture Window failed to load: [${errorCode}] ${errorDescription}`);
+    if (errorCode === -102 || errorCode === -6) {
+      setTimeout(() => {
+        if (promptCaptureWindow && !promptCaptureWindow.isDestroyed()) {
+          console.log('[Prompt Capture] Retrying load...');
+          promptCaptureWindow.loadURL('http://localhost:5173/index.html?mode=promptcapture&cacheBust=' + Date.now());
+        }
+      }, 500);
+    }
   });
 
   promptCaptureWindow.on('closed', () => {
@@ -275,6 +287,15 @@ function createResultsWindow() {
 
   resultsWindow.webContents.on('did-fail-load', (event, errorCode, errorDescription) => {
     console.error(`Results Window failed to load: [${errorCode}] ${errorDescription}`);
+    if (errorCode === -102 || errorCode === -6) {
+      // ERR_CONNECTION_REFUSED / ERR_CONNECTION_RESET — Vite not ready yet, retry
+      setTimeout(() => {
+        if (resultsWindow && !resultsWindow.isDestroyed()) {
+          console.log('[Results Window] Retrying load...');
+          resultsWindow.loadURL('http://localhost:5173/index.html?mode=results&cacheBust=' + Date.now());
+        }
+      }, 500);
+    }
   });
 
   resultsWindow.on('closed', () => {
@@ -364,7 +385,39 @@ function stopClipboardMonitoring() {
   console.log('[Clipboard Monitor] Stopped monitoring.');
 }
 
-app.whenReady().then(() => {
+// Poll Vite dev server until it responds, then resolve
+function waitForVite(url = 'http://localhost:5173', maxWaitMs = 30000) {
+  return new Promise((resolve, reject) => {
+    const http = require('http');
+    const start = Date.now();
+    const check = () => {
+      http.get(url, (res) => {
+        res.resume();
+        resolve();
+      }).on('error', () => {
+        if (Date.now() - start > maxWaitMs) {
+          reject(new Error('Vite dev server did not start in time'));
+          return;
+        }
+        setTimeout(check, 300);
+      });
+    };
+    check();
+  });
+}
+
+app.whenReady().then(async () => {
+  // In dev mode, wait for Vite before creating windows to avoid ERR_CONNECTION_REFUSED
+  if (process.env.NODE_ENV === 'development') {
+    console.log('[App] Waiting for Vite dev server...');
+    try {
+      await waitForVite();
+      console.log('[App] Vite ready — creating windows');
+    } catch (err) {
+      console.warn('[App] Vite wait timed out, proceeding anyway:', err.message);
+    }
+  }
+
   createPromptCaptureWindow();
   createResultsWindow();
 
@@ -407,11 +460,22 @@ app.whenReady().then(() => {
       }
     };
 
+    // Progress callback: forward automation progress events to ResultsWindow
+    const progressCallback = (event) => {
+      console.log(`[ProgressCallback] Event: ${event.type}`, JSON.stringify(event).substring(0, 120));
+      if (resultsWindow && !resultsWindow.isDestroyed()) {
+        resultsWindow.webContents.send('automation:progress', event);
+      } else {
+        console.warn('[ProgressCallback] resultsWindow not available for event:', event.type);
+      }
+    };
+
     try {
       const finalState = await stateGraph.execute({
         message: prompt,
         selectedText,
         streamCallback,
+        progressCallback,
         context: {
           sessionId: sessionId || currentSessionId,
           userId,
@@ -424,7 +488,30 @@ app.whenReady().then(() => {
         currentSessionId = finalState.resolvedSessionId;
       }
 
-      // Signal stream end
+      // For command_automate, AutomationProgress handles the display via automation:progress events.
+      // Only forward pendingQuestion (recoverSkill ASK_USER) since that requires user interaction.
+      const intentType = finalState.intent?.type;
+      if (intentType === 'command_automate') {
+        if (finalState.pendingQuestion?.question) {
+          const q = finalState.pendingQuestion;
+          let displayText = `**${q.question}**`;
+          if (q.options?.length) {
+            displayText += '\n\n' + q.options.map((o, i) => `${i + 1}. ${o}`).join('\n');
+          }
+          if (resultsWindow && !resultsWindow.isDestroyed()) {
+            resultsWindow.webContents.send('ws-bridge:message', { type: 'chunk', text: displayText });
+          }
+        }
+        // Plan error not caught by progressCallback (e.g. no skillPlan at all)
+        else if (finalState.planError && !finalState.skillPlan) {
+          if (resultsWindow && !resultsWindow.isDestroyed()) {
+            resultsWindow.webContents.send('automation:progress', { type: 'plan_error', error: finalState.planError });
+          }
+        }
+        // Do NOT send ws-bridge:message for normal completion — AutomationProgress shows it
+      }
+
+      // Signal stream end (stops thinking spinner)
       if (resultsWindow && !resultsWindow.isDestroyed()) {
         resultsWindow.webContents.send('ws-bridge:message', { type: 'done' });
       }

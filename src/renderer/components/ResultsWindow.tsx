@@ -1,5 +1,6 @@
 import { useEffect, useState, useRef } from 'react';
 import { RichContentRenderer } from './rich-content';
+import AutomationProgress from './AutomationProgress';
 
 const ipcRenderer = (window as any).electron?.ipcRenderer;
 
@@ -12,6 +13,9 @@ export default function ResultsWindow() {
   const [streamingResponse, setStreamingResponse] = useState<string>('');
   const [isStreaming, setIsStreaming] = useState(false);
   const [isThinking, setIsThinking] = useState(false);
+
+  // Automation mode: tracked inside AutomationProgress itself
+  const [isAutomationMode, setIsAutomationMode] = useState(false);
   
   const [isDragging, setIsDragging] = useState(false);
   const dragOffset = useRef({ x: 0, y: 0 });
@@ -103,11 +107,12 @@ export default function ResultsWindow() {
         return;
       }
       
-      // Just display the prompt - StandalonePromptCapture already sent it to VS Code bridge
+      // Reset all state for new prompt
       setPromptText(text);
       setStreamingResponse('');
       setIsStreaming(false);
       setIsThinking(true);
+      setIsAutomationMode(false); // AutomationProgress will self-activate on 'planning' event
       
       console.log('✅ [RESULTS_WINDOW] Ready to receive response for:', text.substring(0, 50));
     };
@@ -231,6 +236,8 @@ export default function ResultsWindow() {
   }, [isDragging]);
 
   const renderResults = () => {
+    if (isAutomationMode) return null;
+
     if (isThinking) {
       return (
         <div className="flex items-center gap-3">
@@ -337,6 +344,11 @@ export default function ResultsWindow() {
       
       <div className="flex-1 overflow-y-auto overflow-x-hidden p-4">
         <div ref={contentRef}>
+          {/* AutomationProgress is always mounted so its IPC listener is pre-registered */}
+          <AutomationProgress
+            onHeightChange={() => setShowTrigger(prev => prev + 1)}
+            onActiveChange={setIsAutomationMode}
+          />
           {renderResults()}
         </div>
       </div>

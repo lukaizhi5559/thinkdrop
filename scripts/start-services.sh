@@ -130,6 +130,33 @@ start_python_service() {
     cd "$PROJECT_ROOT"
 }
 
+# Start a Node.js service directly via node (no npm/yarn wrapper)
+# Use this for stdio MCP servers where npm start exits immediately after spawning node
+start_node_direct_service() {
+    local service_name=$1
+    local service_path=$2
+    local entry_file=$3
+    local memory_limit=$4
+
+    echo "📦 Starting $service_name..."
+
+    cd "$service_path"
+    export NODE_OPTIONS="--max-old-space-size=$memory_limit"
+    node "$entry_file" > "$PROJECT_ROOT/logs/$service_name.log" 2>&1 &
+    local pid=$!
+    echo "$service_name:$pid" >> "$PIDS_FILE"
+    sleep 1
+
+    if kill -0 $pid 2>/dev/null; then
+        echo "   ✅ PID $pid"
+    else
+        echo "   ❌ Failed to start — check logs/$service_name.log"
+    fi
+
+    echo ""
+    cd "$PROJECT_ROOT"
+}
+
 # ── Pre-flight: kill ALL orphaned MCP service nodemon instances ───────────────
 # Multiple restarts leave nodemon orphans; kill them all before starting fresh
 for svc in thinkdrop-user-memory-service thinkdrop-phi4-service thinkdrop-web-search conversation-service command-service screen-intelligence-service; do
@@ -165,8 +192,8 @@ sleep 2
 start_node_service "phi4" "$PROJECT_ROOT/mcp-services/thinkdrop-phi4-service" 768
 sleep 3
 
-# 6. Command Service — port 3007 (uses npm start → node src/http-server.cjs, avoids nodemon)
-start_npm_start_service "command" "$PROJECT_ROOT/mcp-services/command-service" 256
+# 6. Command Service — stdio MCP server (node directly, no npm wrapper)
+start_node_direct_service "command" "$PROJECT_ROOT/mcp-services/command-service" "src/server.cjs" 256
 sleep 2
 
 # 7. Screen Intelligence Service — port 3008 (has own yarn.lock; must use npm)

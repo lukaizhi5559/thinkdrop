@@ -30,7 +30,7 @@ class ThinkDropMCPClient {
       'conversation':        process.env.MCP_CONVERSATION_URL        || 'http://localhost:3004',
       'user-memory':         process.env.MCP_USER_MEMORY_URL         || 'http://localhost:3001',
       'web-search':          process.env.MCP_WEB_SEARCH_URL          || 'http://localhost:3002',
-      'command':             process.env.MCP_COMMAND_URL             || 'http://localhost:3003',
+      'command':             process.env.MCP_COMMAND_URL             || 'http://localhost:3007',
       'screen-intelligence': process.env.MCP_SCREEN_INTELLIGENCE_URL || 'http://localhost:3008',
       'phi4':                process.env.MCP_PHI4_URL                || 'http://localhost:3005',
       'coreference':         process.env.MCP_COREFERENCE_URL         || 'http://localhost:3006',

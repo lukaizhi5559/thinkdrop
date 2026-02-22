@@ -36,6 +36,7 @@ contextBridge.exposeInMainWorld('electron', {
         'ws-bridge:disconnected',
         'ws-bridge:message',
         'ws-bridge:error',
+        'automation:progress',
       ];
       if (validChannels.includes(channel)) {
         ipcRenderer.on(channel, func);
@@ -54,6 +55,7 @@ contextBridge.exposeInMainWorld('electron', {
         'ws-bridge:disconnected',
         'ws-bridge:message',
         'ws-bridge:error',
+        'automation:progress',
       ];
       if (validChannels.includes(channel)) {
         ipcRenderer.removeAllListeners(channel);
@@ -72,6 +74,7 @@ contextBridge.exposeInMainWorld('electron', {
         'ws-bridge:disconnected',
         'ws-bridge:message',
         'ws-bridge:error',
+        'automation:progress',
       ];
       if (validChannels.includes(channel)) {
         ipcRenderer.removeListener(channel, func);

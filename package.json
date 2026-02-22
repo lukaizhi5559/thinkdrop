@@ -12,7 +12,9 @@
     "build:renderer": "vite build",
     "start:services": "bash scripts/start-services.sh",
     "stop:services": "bash scripts/stop-services.sh",
-    "restart:services": "yarn stop:services && sleep 2 && yarn start:services"
+    "restart:services": "yarn stop:services && sleep 2 && yarn start:services",
+    "sync:stategraph": "rsync -av --delete stategraph-module/src/ node_modules/@thinkdrop/stategraph/src/",
+    "dev:synced": "yarn sync:stategraph && yarn dev"
   },
   "keywords": [
     "electron",
