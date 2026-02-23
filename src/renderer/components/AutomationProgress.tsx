@@ -129,6 +129,7 @@ export default function AutomationProgress({ onHeightChange, onActiveChange }: A
   const [globalError, setGlobalError] = useState<string | null>(null);
   const [expandedSteps, setExpandedSteps] = useState<Set<number>>(new Set());
   const [synthesisAnswer, setSynthesisAnswer] = useState<string>('');
+  const [savedFilePaths, setSavedFilePaths] = useState<string[]>([]);
 
   // Notify parent to re-measure height whenever visible content changes
   useEffect(() => {
@@ -136,8 +137,9 @@ export default function AutomationProgress({ onHeightChange, onActiveChange }: A
   }, [phase, steps, expandedSteps]);
 
   // Notify parent when we become active/inactive
+  // Only active during planning/executing — done/failed/idle should NOT keep the glow on
   useEffect(() => {
-    onActiveChange?.(phase !== 'idle');
+    onActiveChange?.(phase === 'planning' || phase === 'executing');
   }, [phase]);
 
   useEffect(() => {
@@ -151,6 +153,7 @@ export default function AutomationProgress({ onHeightChange, onActiveChange }: A
       setTotalCount(0);
       setExpandedSteps(new Set());
       setSynthesisAnswer('');
+      setSavedFilePaths([]);
     };
     ipcRenderer.on('results-window:set-prompt', handleNewPrompt);
 
@@ -196,6 +199,13 @@ export default function AutomationProgress({ onHeightChange, onActiveChange }: A
           if (data.stdout && data.stdout.trim().length > 0) {
             setExpandedSteps(prev => new Set([...prev, data.stepIndex]));
           }
+          // Capture savedFilePath emitted by synthesize step_done
+          if (data.savedFilePath && data.savedFilePath.startsWith('/')) {
+            setSavedFilePaths(prev => {
+              if (prev.includes(data.savedFilePath)) return prev;
+              return [...prev, data.savedFilePath];
+            });
+          }
           break;
 
         case 'step_failed':
@@ -227,6 +237,10 @@ export default function AutomationProgress({ onHeightChange, onActiveChange }: A
                 exitCode: r.exitCode ?? s.exitCode,
               };
             }));
+          }
+          // Show clickable links for any files written during this plan
+          if (Array.isArray(data.savedFilePaths) && data.savedFilePaths.length > 0) {
+            setSavedFilePaths(data.savedFilePaths);
           }
           break;
         }
@@ -443,6 +457,43 @@ export default function AutomationProgress({ onHeightChange, onActiveChange }: A
                   </div>
                 )}
               </div>
+            );
+          })}
+        </div>
+      )}
+
+      {/* ── Saved file links ─────────────────────────────────────────────── */}
+      {phase === 'done' && savedFilePaths.length > 0 && (
+        <div className="space-y-1.5 mt-1">
+          {savedFilePaths.map((filePath) => {
+            const fileName = filePath.split('/').pop() || filePath;
+            return (
+              <button
+                key={filePath}
+                onClick={() => ipcRenderer?.send('shell:open-path', filePath)}
+                className="flex items-center gap-2 w-full text-left px-3 py-2 rounded-lg transition-colors"
+                style={{
+                  backgroundColor: 'rgba(59,130,246,0.08)',
+                  border: '1px solid rgba(59,130,246,0.2)',
+                  cursor: 'pointer',
+                }}
+                onMouseEnter={e => (e.currentTarget.style.backgroundColor = 'rgba(59,130,246,0.15)')}
+                onMouseLeave={e => (e.currentTarget.style.backgroundColor = 'rgba(59,130,246,0.08)')}
+                title={filePath}
+              >
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#60a5fa" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
+                  <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                  <polyline points="14 2 14 8 20 8" />
+                </svg>
+                <span className="text-xs font-medium truncate" style={{ color: '#93c5fd' }}>
+                  {fileName}
+                </span>
+                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="#6b7280" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0, marginLeft: 'auto' }}>
+                  <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
+                  <polyline points="15 3 21 3 21 9" />
+                  <line x1="10" y1="14" x2="21" y2="3" />
+                </svg>
+              </button>
             );
           })}
         </div>

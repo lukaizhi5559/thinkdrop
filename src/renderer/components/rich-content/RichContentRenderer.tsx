@@ -2,8 +2,10 @@ import React, { useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import remarkBreaks from 'remark-breaks';
-import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
+import { Prism as SyntaxHighlighterBase } from 'react-syntax-highlighter';
 import { vscDarkPlus } from 'react-syntax-highlighter/dist/esm/styles/prism';
+
+const SyntaxHighlighter = SyntaxHighlighterBase as any;
 
 // Code block wrapper with copy button
 const CodeBlockWithCopy: React.FC<{ code: string; language: string }> = ({ code, language }) => {
@@ -59,12 +61,14 @@ interface RichContentRendererProps {
   content: string;
   animated?: boolean;
   className?: string;
+  onFileLinkClick?: (filePath: string) => void;
 }
 
 const RichContentRenderer: React.FC<RichContentRendererProps> = ({
   content,
   animated = true,
-  className = ''
+  className = '',
+  onFileLinkClick,
 }) => {
   return (
     <div
@@ -87,18 +91,37 @@ const RichContentRenderer: React.FC<RichContentRendererProps> = ({
             );
           },
           a({ node, children, href, ...props }: any) {
+            const isFilePath = href?.startsWith('file://');
             return (
               <a
                 href={href}
                 onClick={(e) => {
                   e.preventDefault();
-                  if (href) {
+                  if (!href) return;
+                  if (isFilePath && onFileLinkClick) {
+                    const filePath = href.replace(/^file:\/\//, '');
+                    onFileLinkClick(filePath);
+                  } else {
                     window.open(href, '_blank');
                   }
                 }}
-                className="text-blue-400 hover:text-blue-300 underline cursor-pointer transition-colors"
+                className={isFilePath
+                  ? 'inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-xs font-mono cursor-pointer transition-colors'
+                  : 'text-blue-400 hover:text-blue-300 underline cursor-pointer transition-colors'
+                }
+                style={isFilePath ? {
+                  backgroundColor: 'rgba(59,130,246,0.12)',
+                  border: '1px solid rgba(59,130,246,0.3)',
+                  color: '#93c5fd',
+                } : undefined}
+                title={isFilePath ? href.replace(/^file:\/\//, '') : undefined}
                 {...props}
               >
+                {isFilePath && (
+                  <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
+                    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/>
+                  </svg>
+                )}
                 {children}
               </a>
             );

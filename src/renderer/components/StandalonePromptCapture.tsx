@@ -1,53 +1,17 @@
-import { useState, useEffect, useRef } from 'react';
-import { createWorker } from 'tesseract.js';
-import { processOcrOutput } from '../utils'
+import React, { useState, useEffect, useRef } from 'react';
 
 const ipcRenderer = (window as any).electron?.ipcRenderer;
 
 export default function StandalonePromptCapture() {
   const [promptText, setPromptText] = useState('');
   const [highlights, setHighlights] = useState<string[]>([]);
+  const [isDragOver, setIsDragOver] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   
   const [isDragging, setIsDragging] = useState(false);
   const dragOffset = useRef({ x: 0, y: 0 });
-
-  const handleScreenshotCapture = async () => {
-    ipcRenderer.send('prompt-capture:capture-screenshot');   
-  };
-
-  const handleScreenshotResult = async (_event: any, data: { imageBase64: string }) => {
-    console.log('📥 [STANDALONE_PROMPT] Received screenshot result, starting OCR');
-    
-    try {
-      // Initialize Tesseract worker - download language files from CDN
-      const worker = await createWorker('eng');
-      
-      // Convert base64 to data URL for Tesseract
-      const imageDataUrl = `data:image/png;base64,${data.imageBase64}`;
-      
-      // Recognize text from image data URL
-      const { data: { text } } = await worker.recognize(imageDataUrl);
-      
-      await worker.terminate();
-      
-      if (text.trim()) {
-        const {
-          files,
-          codeSnippets,
-          additionalCleanedText
-        } = processOcrOutput(text);
-        const joined = [...files, ...codeSnippets, additionalCleanedText].join('\n');
-        handleAddHighlight(null, joined);
-        ipcRenderer.send('results-window:show');
-      } else {
-        console.log('⚠️ [STANDALONE_PROMPT] No text detected in screenshot');
-      }
-    } catch (error) {
-      console.error('❌ [STANDALONE_PROMPT] OCR failed:', error);
-    }
-  }
+  const [isProcessing, setIsProcessing] = useState(false);
 
   const handleAddHighlight = (_event: any, text: string) => {
     console.log('📥 [STANDALONE_PROMPT] Received highlight:', text);
@@ -78,15 +42,25 @@ export default function StandalonePromptCapture() {
       }, 300);
     };
 
+    const handleProgress = (_event: any, data: any) => {
+      if (data?.type === 'all_done') setIsProcessing(false);
+    };
+
+    const handleBridgeMessage = (_event: any, msg: any) => {
+      if (msg?.type === 'done' || msg?.type === 'llm_stream_end') setIsProcessing(false);
+    };
+
     ipcRenderer.on('prompt-capture:show', handleShow);
     ipcRenderer.on('prompt-capture:add-highlight', handleAddHighlight);
-    ipcRenderer.on('prompt-capture:screenshot-result', handleScreenshotResult);
+    ipcRenderer.on('automation:progress', handleProgress);
+    ipcRenderer.on('ws-bridge:message', handleBridgeMessage);
 
     return () => {
       if (ipcRenderer.removeListener) {
         ipcRenderer.removeListener('prompt-capture:show', handleShow);
         ipcRenderer.removeListener('prompt-capture:add-highlight', handleAddHighlight);
-        ipcRenderer.removeListener('prompt-capture:screenshot-result', handleScreenshotResult);
+        ipcRenderer.removeListener('automation:progress', handleProgress);
+        ipcRenderer.removeListener('ws-bridge:message', handleBridgeMessage);
       }
     };
   }, []);
@@ -137,8 +111,9 @@ export default function StandalonePromptCapture() {
       console.log('🧠 [STANDALONE_PROMPT] Sending to StateGraph pipeline');
       ipcRenderer.send('stategraph:process', {
         prompt: finalPrompt.trim(),
-        selectedText: '',
+        selectedText: highlights.join('\n'),
       });
+      setIsProcessing(true);
       console.log('✅ [STANDALONE_PROMPT] Message sent to StateGraph');
     } else {
       console.error('❌ [STANDALONE_PROMPT] ipcRenderer is not available!');
@@ -210,9 +185,9 @@ export default function StandalonePromptCapture() {
     if (!isDragging || !ipcRenderer) return;
 
     const handleMouseMove = (e: MouseEvent) => {
-      const newX = e.screenX - dragOffset.current.x;
-      const newY = e.screenY - dragOffset.current.y;
-      
+      const newX = Math.round(e.screenX - dragOffset.current.x);
+      const newY = Math.round(e.screenY - dragOffset.current.y);
+      if (!Number.isFinite(newX) || !Number.isFinite(newY)) return;
       ipcRenderer.send('prompt-capture:move', { x: newX, y: newY });
     };
 
@@ -230,22 +205,85 @@ export default function StandalonePromptCapture() {
     };
   }, [isDragging]);
 
+  const handleFileDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragOver(false);
+    const files = Array.from(e.dataTransfer.files);
+    if (files.length === 0) return;
+    files.forEach(file => {
+      const path = (file as any).path;
+      if (path) {
+        handleAddHighlight(null, `[File: ${path}]`);
+      }
+    });
+  };
+
+  const handleDragOver = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (e.dataTransfer.types.includes('Files')) setIsDragOver(true);
+  };
+
+  const handleDragLeave = (e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDragOver(false);
+  };
+
   return (
     <div className="w-full h-full flex items-center justify-center">
-      <div
-        ref={containerRef}
-        className="rounded-xl shadow-2xl backdrop-blur-md"
-        style={{
-          backgroundColor: 'rgba(23, 23, 23, 0.95)',
-          border: '1px solid rgba(255, 255, 255, 0.1)',
-          minWidth: '400px',
-          maxWidth: '600px',
-          maxHeight: '600px',
-          display: 'flex',
-          flexDirection: 'column',
-          overflow: 'hidden',
-        }}
-      >
+      <style>{`
+        @keyframes prompt-border-sweep {
+          0%   { --prompt-angle: 0deg; }
+          100% { --prompt-angle: 360deg; }
+        }
+        @property --prompt-angle {
+          syntax: '<angle>';
+          initial-value: 0deg;
+          inherits: false;
+        }
+        .prompt-glow-ring {
+          position: absolute;
+          inset: -1px;
+          border-radius: 13px;
+          padding: 1.5px;
+          background: conic-gradient(from var(--prompt-angle), transparent 65%, #3b82f6 82%, #60a5fa 88%, #3b82f6 94%, transparent);
+          animation: prompt-border-sweep 2.4s linear infinite;
+          -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+          -webkit-mask-composite: xor;
+          mask-composite: exclude;
+          pointer-events: none;
+          z-index: 20;
+          opacity: 0;
+          transition: opacity 0.4s ease;
+        }
+        .prompt-glow-ring.active {
+          opacity: 1;
+        }
+      `}</style>
+      <div style={{ position: 'relative' }}>
+        <div className={`prompt-glow-ring${isProcessing ? ' active' : ''}`} />
+        <div
+          ref={containerRef}
+          className="rounded-xl shadow-2xl backdrop-blur-md"
+          onDrop={handleFileDrop}
+          onDragOver={handleDragOver}
+          onDragLeave={handleDragLeave}
+          style={{
+            backgroundColor: 'rgba(23, 23, 23, 0.95)',
+            border: isDragOver ? '1px solid rgba(59, 130, 246, 0.6)' : '1px solid rgba(255, 255, 255, 0.08)',
+            boxShadow: isDragOver ? '0 0 0 2px rgba(59, 130, 246, 0.2)' : undefined,
+            minWidth: '400px',
+            maxWidth: '600px',
+            maxHeight: '600px',
+            display: 'flex',
+            flexDirection: 'column',
+            overflow: 'hidden',
+            transition: 'border-color 0.15s, box-shadow 0.15s',
+            position: 'relative',
+            zIndex: 1,
+          }}
+        >
         <div
           onMouseDown={handleMouseDown}
           className="px-4 py-2 pt-2 border-b flex items-center justify-between"
@@ -271,24 +309,72 @@ export default function StandalonePromptCapture() {
             {highlights.length > 0 && (
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', marginBottom: '12px' }}>
                 {highlights.map((highlight, index) => {
-                  const truncated = highlight.length > 50 ? highlight.substring(0, 50) + '...' : highlight;
+                  // Detect tag type for icon + label
+                  const fileMatch = highlight.match(/^\[File:\s*(.+)\]$/);
+                  const isFile = !!fileMatch;
+                  const isApp = highlight.match(/^\[File:.*\.app\]$/);
+
+                  let label: string;
+                  let chipColor: string;
+                  let borderColor: string;
+                  let icon: React.ReactNode;
+
+                  if (isFile) {
+                    const fullPath = fileMatch![1].trim();
+                    const fileName = fullPath.split('/').pop() || fullPath;
+                    label = fileName;
+                    chipColor = isApp ? 'rgba(139, 92, 246, 0.15)' : 'rgba(59, 130, 246, 0.15)';
+                    borderColor = isApp ? 'rgba(139, 92, 246, 0.35)' : 'rgba(59, 130, 246, 0.3)';
+                    icon = isApp ? (
+                      // App icon
+                      <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                        <rect x="3" y="3" width="18" height="18" rx="3" />
+                        <path d="M9 9h6M9 12h6M9 15h4" />
+                      </svg>
+                    ) : (
+                      // File icon
+                      <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                        <polyline points="14 2 14 8 20 8" />
+                      </svg>
+                    );
+                  } else {
+                    // Text highlight — show first ~24 chars
+                    const words = highlight.replace(/\s+/g, ' ').trim();
+                    label = words.length > 24 ? words.slice(0, 24) + '…' : words;
+                    chipColor = 'rgba(16, 185, 129, 0.12)';
+                    borderColor = 'rgba(16, 185, 129, 0.3)';
+                    icon = (
+                      // Quote/text icon
+                      <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                        <path d="M3 21c3 0 7-1 7-8V5c0-1.25-.756-2.017-2-2H4c-1.25 0-2 .75-2 1.972V11c0 1.25.75 2 2 2 1 0 1 0 1 1v1c0 1-1 2-2 2s-1 .008-1 1.031V20c0 1 0 1 1 1z" />
+                        <path d="M15 21c3 0 7-1 7-8V5c0-1.25-.757-2.017-2-2h-4c-1.25 0-2 .75-2 1.972V11c0 1.25.75 2 2 2h.75c0 2.25.25 4-2.75 4v3c0 1 0 1 1 1z" />
+                      </svg>
+                    );
+                  }
+
+                  const iconColor = isApp ? '#c4b5fd' : isFile ? '#93c5fd' : '#6ee7b7';
+
                   return (
                     <div
                       key={index}
+                      title={highlight}
                       style={{
-                        display: 'flex',
+                        display: 'inline-flex',
                         alignItems: 'center',
-                        gap: '6px',
-                        padding: '4px 8px',
-                        backgroundColor: 'rgba(59, 130, 246, 0.15)',
-                        border: '1px solid rgba(59, 130, 246, 0.3)',
+                        gap: '5px',
+                        padding: '3px 7px',
+                        backgroundColor: chipColor,
+                        border: `1px solid ${borderColor}`,
                         borderRadius: '6px',
-                        fontSize: '0.75rem',
-                        color: '#93c5fd',
+                        fontSize: '0.72rem',
+                        color: iconColor,
+                        maxWidth: '180px',
                       }}
                     >
-                      <span style={{ maxWidth: '300px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                        {truncated}
+                      <span style={{ flexShrink: 0, opacity: 0.85 }}>{icon}</span>
+                      <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                        {label}
                       </span>
                       <button
                         onClick={() => removeHighlight(index)}
@@ -296,18 +382,20 @@ export default function StandalonePromptCapture() {
                           display: 'flex',
                           alignItems: 'center',
                           justifyContent: 'center',
-                          width: '14px',
-                          height: '14px',
+                          flexShrink: 0,
+                          width: '13px',
+                          height: '13px',
                           padding: 0,
                           border: 'none',
                           backgroundColor: 'transparent',
-                          color: '#93c5fd',
+                          color: iconColor,
                           cursor: 'pointer',
-                          fontSize: '12px',
+                          fontSize: '13px',
                           lineHeight: 1,
+                          opacity: 0.7,
                         }}
-                        onMouseEnter={(e) => e.currentTarget.style.color = '#60a5fa'}
-                        onMouseLeave={(e) => e.currentTarget.style.color = '#93c5fd'}
+                        onMouseEnter={(e) => (e.currentTarget.style.opacity = '1')}
+                        onMouseLeave={(e) => (e.currentTarget.style.opacity = '0.7')}
                       >
                         ×
                       </button>
@@ -377,10 +465,12 @@ export default function StandalonePromptCapture() {
         </div>
         
         <div
-          className="px-4 py-2.5 border-t text-xs flex items-center gap-3"
-          style={{ 
-            borderColor: 'rgba(255, 255, 255, 0.08)',
-            color: '#9ca3af',
+          style={{
+            borderTop: '1px solid rgba(255, 255, 255, 0.08)',
+            padding: '6px 12px',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '4px',
             flex: '0 0 auto',
             position: 'sticky',
             bottom: 0,
@@ -388,12 +478,106 @@ export default function StandalonePromptCapture() {
             zIndex: 10,
           }}
         >
-          <button onClick={handleScreenshotCapture}>
-            <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="lucide lucide-camera-icon lucide-camera"><path d="M13.997 4a2 2 0 0 1 1.76 1.05l.486.9A2 2 0 0 0 18.003 7H20a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V9a2 2 0 0 1 2-2h1.997a2 2 0 0 0 1.759-1.048l.489-.904A2 2 0 0 1 10.004 4z"/><circle cx="12" cy="13" r="3"/></svg>
+          {/* ⇧⌘C shortcut hint — not clickable, just informational */}
+          <div
+            title="Copy text or a file path, then press ⇧⌘C to tag it as context"
+            style={{
+              display: 'flex', alignItems: 'center', gap: '5px',
+              padding: '4px 8px', borderRadius: '6px',
+              backgroundColor: 'rgba(255,255,255,0.04)',
+              border: '1px solid rgba(255,255,255,0.07)',
+              color: '#9ca3af', cursor: 'default', fontSize: '0.7rem',
+              userSelect: 'none',
+            }}
+          >
+            {/* Keyboard key badges: Shift + Ctrl/Cmd + C */}
+            {([
+              {
+                label: 'shift',
+                content: (
+                  <svg width="10" height="10" viewBox="0 0 10 10" fill="currentColor">
+                    <polygon points="5,1 9,6 7,6 7,9 3,9 3,6 1,6" />
+                  </svg>
+                ),
+              },
+              {
+                label: 'ctrl-cmd',
+                content: <span style={{ fontSize: '0.62rem', fontWeight: 600, lineHeight: 1, letterSpacing: '-0.02em' }}>Ctrl/⌘</span>,
+              },
+              {
+                label: 'C',
+                content: <span style={{ fontSize: '0.7rem', fontWeight: 600, lineHeight: 1 }}>C</span>,
+              },
+            ]).map(({ label, content }, i, arr) => (
+              <span key={label} style={{ display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
+                <span
+                  style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    height: '20px',
+                    padding: '0 6px',
+                    borderRadius: '4px',
+                    backgroundColor: 'rgba(255,255,255,0.08)',
+                    color: '#c9d1d9',
+                  }}
+                >
+                  {content}
+                </span>
+                {i < arr.length - 1 && (
+                  <span style={{ color: '#4b5563', fontSize: '0.65rem', lineHeight: 1 }}>+</span>
+                )}
+              </span>
+            ))}
+          </div>
+
+          {/* File picker button — click to open native file dialog */}
+          <button
+            title="Click to select a file or folder to tag as context. You can also drag files directly onto this window."
+            onClick={() => ipcRenderer?.send('prompt-capture:pick-file')}
+            style={{
+              display: 'flex', alignItems: 'center', gap: '5px',
+              padding: '4px 8px', borderRadius: '6px',
+              backgroundColor: 'rgba(255,255,255,0.04)',
+              border: '1px solid rgba(255,255,255,0.07)',
+              color: '#9ca3af', cursor: 'pointer', fontSize: '0.7rem',
+              userSelect: 'none',
+            }}
+            onMouseEnter={e => {
+              (e.currentTarget as HTMLButtonElement).style.backgroundColor = 'rgba(59,130,246,0.12)';
+              (e.currentTarget as HTMLButtonElement).style.borderColor = 'rgba(59,130,246,0.3)';
+              (e.currentTarget as HTMLButtonElement).style.color = '#93c5fd';
+            }}
+            onMouseLeave={e => {
+              (e.currentTarget as HTMLButtonElement).style.backgroundColor = 'rgba(255,255,255,0.04)';
+              (e.currentTarget as HTMLButtonElement).style.borderColor = 'rgba(255,255,255,0.07)';
+              (e.currentTarget as HTMLButtonElement).style.color = '#9ca3af';
+            }}
+          >
+            {/* Folder open icon */}
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
+            </svg>
+            <span>Attach file</span>
           </button>
-          <span><span style={{ fontWeight: 500 }}>Highlight and Cmd+C: </span>Tag(s)</span>
-          <span>•</span>
-          <span><span style={{ fontWeight: 500 }}>Esc:</span> Close</span>
+
+          <div style={{ flex: 1 }} />
+
+          {/* Esc hint */}
+          <div
+            title="Press Escape to close"
+            style={{
+              display: 'flex', alignItems: 'center', gap: '4px',
+              padding: '4px 8px', borderRadius: '6px',
+              backgroundColor: 'rgba(255,255,255,0.04)',
+              border: '1px solid rgba(255,255,255,0.07)',
+              color: '#4b5563', cursor: 'default', fontSize: '0.7rem',
+              userSelect: 'none',
+            }}
+          >
+            <span style={{ fontFamily: 'ui-monospace, monospace' }}>esc</span>
+          </div>
+        </div>
         </div>
       </div>
     </div>

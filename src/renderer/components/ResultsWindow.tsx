@@ -1,4 +1,4 @@
-import { useEffect, useState, useRef } from 'react';
+import React, { useEffect, useState, useRef } from 'react';
 import { RichContentRenderer } from './rich-content';
 import AutomationProgress from './AutomationProgress';
 
@@ -19,6 +19,8 @@ export default function ResultsWindow() {
   // Ref to prevent AutomationProgress from re-enabling automation mode once streaming starts
   const streamingStartedRef = useRef(false);
   
+  const [isGlowActive, setIsGlowActive] = useState(false);
+  const glowOffTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [isDragging, setIsDragging] = useState(false);
   const dragOffset = useRef({ x: 0, y: 0 });
   
@@ -53,6 +55,8 @@ export default function ResultsWindow() {
         console.log('💬 [RESULTS_WINDOW] Stream token:', message);
         setIsThinking(false);
         setIsStreaming(true);
+        if (glowOffTimerRef.current) clearTimeout(glowOffTimerRef.current);
+        setIsGlowActive(true);
         // Mark streaming started — keeps AutomationProgress visible (steps stay shown above)
         streamingStartedRef.current = true;
 
@@ -60,7 +64,9 @@ export default function ResultsWindow() {
         setStreamingResponse(prev => prev + msgText);
       } else if (message.type === 'done' || message.type === 'llm_stream_end') {
         setIsStreaming(false);
+        setIsThinking(false);
         console.log('✅ [RESULTS_WINDOW] Streaming complete');
+        glowOffTimerRef.current = setTimeout(() => setIsGlowActive(false), 300);
       } else if (message.type === 'ready') {
         console.log('✅ [RESULTS_WINDOW] VS Code extension ready');
       }
@@ -120,6 +126,8 @@ export default function ResultsWindow() {
       setIsStreaming(false);
       setIsThinking(true);
       setIsAutomationMode(false); // AutomationProgress will self-activate on 'planning' event
+      if (glowOffTimerRef.current) clearTimeout(glowOffTimerRef.current);
+      setIsGlowActive(true);
       
       console.log('✅ [RESULTS_WINDOW] Ready to receive response for:', text.substring(0, 50));
     };
@@ -130,15 +138,33 @@ export default function ResultsWindow() {
       setShowTrigger(prev => prev + 1);
     };
 
+    const handleAutomationProgress = (_event: any, data: any) => {
+      if (data?.type === 'planning') {
+        // Automation started — clear the thinking spinner (AutomationProgress takes over)
+        setIsThinking(false);
+        setIsAutomationMode(true);
+        if (glowOffTimerRef.current) clearTimeout(glowOffTimerRef.current);
+        setIsGlowActive(true);
+      } else if (data?.type === 'all_done') {
+        // Automation finished — ensure glow clears after a short settle delay
+        setIsThinking(false);
+        setIsStreaming(false);
+        setIsAutomationMode(false);
+        glowOffTimerRef.current = setTimeout(() => setIsGlowActive(false), 400);
+      }
+    };
+
     ipcRenderer.on('results-window:display-error', handleDisplayError);
     ipcRenderer.on('results-window:set-prompt', handlePromptText);
     ipcRenderer.on('results-window:show', handleWindowShow);
+    ipcRenderer.on('automation:progress', handleAutomationProgress);
   
     return () => {
       if (ipcRenderer.removeListener) {
         ipcRenderer.removeListener('results-window:display-error', handleDisplayError);
         ipcRenderer.removeListener('results-window:set-prompt', handlePromptText);
         ipcRenderer.removeListener('results-window:show', handleWindowShow);
+        ipcRenderer.removeListener('automation:progress', handleAutomationProgress);
       }
     };
   }, []);
@@ -249,6 +275,103 @@ export default function ResultsWindow() {
     };
   }, [isDragging]);
 
+  const renderPromptHeader = (text: string) => {
+    // Split into tag tokens and plain text
+    const parts: React.ReactNode[] = [];
+    // Match [Highlighted: ...] wrapping a [File: ...] tag, plain [File: ...], or plain text
+    const tagRegex = /\[Highlighted:\s*(\[File:\s*([^\]]+)\])\]|\[File:\s*([^\]]+)\]|\[Highlighted:\s*([^\]]+)\]/g;
+    let lastIndex = 0;
+    let match: RegExpExecArray | null;
+    let key = 0;
+
+    while ((match = tagRegex.exec(text)) !== null) {
+      // Plain text before this match
+      if (match.index > lastIndex) {
+        const plain = text.slice(lastIndex, match.index).trim();
+        if (plain) {
+          parts.push(
+            <span key={key++} className="text-sm font-medium truncate" style={{ color: '#e5e7eb', maxWidth: 160, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', display: 'inline-block' }}>
+              {plain}
+            </span>
+          );
+        }
+      }
+
+      // [Highlighted: [File: /path]] or [File: /path]
+      const filePath = match[2] || match[3];
+      // [Highlighted: some text]
+      const highlightText = match[4];
+
+      if (filePath) {
+        const trimmed = filePath.trim();
+        const isApp = /\.app$/i.test(trimmed);
+        const fileName = trimmed.split('/').pop() || trimmed;
+        const chipColor = isApp ? 'rgba(139,92,246,0.15)' : 'rgba(59,130,246,0.15)';
+        const borderColor = isApp ? 'rgba(139,92,246,0.35)' : 'rgba(59,130,246,0.3)';
+        const iconColor = isApp ? '#c4b5fd' : '#93c5fd';
+        parts.push(
+          <span key={key++} title={trimmed} style={{ display: 'inline-flex', alignItems: 'center', gap: 4, padding: '2px 6px', borderRadius: 5, backgroundColor: chipColor, border: `1px solid ${borderColor}`, color: iconColor, fontSize: '0.7rem', maxWidth: 160, overflow: 'hidden' }}>
+            {isApp ? (
+              <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
+                <rect x="3" y="3" width="18" height="18" rx="3"/><path d="M9 9h6M9 12h6M9 15h4"/>
+              </svg>
+            ) : (
+              <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
+                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/>
+              </svg>
+            )}
+            <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{fileName}</span>
+          </span>
+        );
+      } else if (highlightText) {
+        const trimmed = highlightText.trim();
+        const label = trimmed.length > 22 ? trimmed.slice(0, 22) + '…' : trimmed;
+        parts.push(
+          <span key={key++} title={trimmed} style={{ display: 'inline-flex', alignItems: 'center', gap: 4, padding: '2px 6px', borderRadius: 5, backgroundColor: 'rgba(16,185,129,0.12)', border: '1px solid rgba(16,185,129,0.3)', color: '#6ee7b7', fontSize: '0.7rem', maxWidth: 160, overflow: 'hidden' }}>
+            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
+              <path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/><line x1="7" y1="7" x2="7.01" y2="7"/>
+            </svg>
+            <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{label}</span>
+          </span>
+        );
+      }
+
+      lastIndex = match.index + match[0].length;
+    }
+
+    // Remaining plain text (the actual user question)
+    if (lastIndex < text.length) {
+      const plain = text.slice(lastIndex).trim();
+      if (plain) {
+        parts.push(
+          <span key={key++} className="text-sm font-medium" style={{ color: '#e5e7eb', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 200, display: 'inline-block' }}>
+            {plain}
+          </span>
+        );
+      }
+    }
+
+    return parts.length > 0 ? parts : <span className="text-sm font-medium" style={{ color: '#e5e7eb' }}>Results</span>;
+  };
+
+  const openFilePath = (filePath: string) => {
+    if (ipcRenderer) {
+      ipcRenderer.send('shell:open-path', filePath);
+    }
+  };
+
+  // Pre-process text: wrap absolute file paths in markdown link syntax so RichContentRenderer
+  // renders them as clickable links. Matches /Users/..., /home/..., /tmp/..., ~/... paths.
+  const injectFileLinks = (text: string): string => {
+    // Match absolute paths not already inside markdown link syntax [...](...) or code blocks
+    // Regex: path starts with / or ~/, followed by non-whitespace, non-quote chars
+    const filePathRegex = /(?<!\[)(?<!\()(?<![`'"])(\/(?:Users|home|tmp|var|etc|opt|Applications)[^\s`'"\)\]]+|~\/[^\s`'"\)\]]+)/g;
+    return text.replace(filePathRegex, (match) => {
+      const fileName = match.split('/').pop() || match;
+      return `[${fileName}](file://${match})`;
+    });
+  };
+
   const renderResults = () => {
     // In automation mode, only render if there's streaming content (synthesis answer below steps)
     if (isAutomationMode && !streamingResponse) return null;
@@ -271,9 +394,10 @@ export default function ResultsWindow() {
         {streamingResponse && (
           <div className="relative">
             <RichContentRenderer 
-              content={streamingResponse}
+              content={injectFileLinks(streamingResponse)}
               animated={!isStreaming}
               className="text-sm"
+              onFileLinkClick={openFilePath}
             />
             {isStreaming && (
               <span className="inline-block w-1.5 h-4 bg-blue-500 animate-pulse ml-1" />
@@ -281,7 +405,7 @@ export default function ResultsWindow() {
           </div>
         )}
 
-        {!isThinking && !streamingResponse && (
+        {!isThinking && !streamingResponse && !isAutomationMode && (
           <div className="text-gray-400 text-sm text-center">
             Waiting for response...
           </div>
@@ -290,13 +414,48 @@ export default function ResultsWindow() {
     );
   };
 
+  const isActive = isGlowActive;
+
   return (
-    <div 
-      className="w-full h-full flex flex-col"
-      style={{
-        backgroundColor: 'rgba(23, 23, 23, 0.95)',
-      }}
-    >
+    <div className="w-full h-full flex flex-col" style={{ position: 'relative' }}>
+      <style>{`
+        @keyframes border-sweep {
+          0%   { --angle: 0deg; }
+          100% { --angle: 360deg; }
+        }
+        @property --angle {
+          syntax: '<angle>';
+          initial-value: 0deg;
+          inherits: false;
+        }
+        .results-glow-ring {
+          position: absolute;
+          inset: -1px;
+          border-radius: 12px;
+          padding: 1.5px;
+          background: conic-gradient(from var(--angle), transparent 70%, #3b82f6 85%, #60a5fa 90%, #3b82f6 95%, transparent);
+          animation: border-sweep 2s linear infinite;
+          -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+          -webkit-mask-composite: xor;
+          mask-composite: exclude;
+          pointer-events: none;
+          z-index: 10;
+          opacity: 0;
+          transition: opacity 0.4s ease;
+        }
+        .results-glow-ring.active {
+          opacity: 1;
+        }
+      `}</style>
+      <div className={`results-glow-ring${isActive ? ' active' : ''}`} />
+      <div 
+        className="w-full h-full flex flex-col"
+        style={{
+          backgroundColor: 'rgba(23, 23, 23, 0.95)',
+          borderRadius: '11px',
+          overflow: 'hidden',
+        }}
+      >
       <div 
         className="flex items-center justify-between px-4 py-3 border-b"
         onMouseDown={handleMouseDown}
@@ -308,11 +467,10 @@ export default function ResultsWindow() {
         }}
       >
         <div 
-          className="text-sm font-medium truncate flex-1 mr-2"
-          style={{ color: '#e5e7eb' }}
+          className="flex-1 mr-2 flex flex-wrap items-center gap-1 min-w-0"
           title={promptText}
         >
-          {promptText || 'Results'}
+          {promptText ? renderPromptHeader(promptText) : <span className="text-sm font-medium" style={{ color: '#e5e7eb' }}>Results</span>}
         </div>
         <div className="flex items-center gap-2">
           {streamingResponse && (
@@ -371,6 +529,7 @@ export default function ResultsWindow() {
           {renderResults()}
           <div ref={scrollBottomRef} />
         </div>
+      </div>
       </div>
     </div>
   );

@@ -7,8 +7,7 @@ contextBridge.exposeInMainWorld('electron', {
         'prompt-capture:hide',
         'prompt-capture:resize',
         'prompt-capture:move',
-        'prompt-capture:capture-screenshot',
-        'prompt-capture:screenshot-result',
+        'prompt-capture:pick-file',
         'results-window:show',
         'results-window:close',
         'results-window:resize',
@@ -18,6 +17,7 @@ contextBridge.exposeInMainWorld('electron', {
         'ws-bridge:send-message',
         'ws-bridge:connect',
         'stategraph:process',
+        'shell:open-path',
       ];
       if (validChannels.includes(channel)) {
         ipcRenderer.send(channel, data);

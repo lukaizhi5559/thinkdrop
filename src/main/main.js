@@ -3,6 +3,60 @@ const { app, BrowserWindow, ipcMain, screen, globalShortcut, clipboard } = requi
 const screenshot = require('screenshot-desktop');
 const path = require('path');
 const WebSocket = require('ws');
+const http = require('http');
+
+// ---------------------------------------------------------------------------
+// Overlay control HTTP server (port 3010)
+// Skills in command-service call POST /overlay/hide before screenshotting
+// and POST /overlay/show after, so the Electron windows don't appear in
+// OmniParser / vision LLM screenshots.
+// ---------------------------------------------------------------------------
+const OVERLAY_CONTROL_PORT = parseInt(process.env.OVERLAY_CONTROL_PORT || '3010', 10);
+
+function startOverlayControlServer() {
+  const server = http.createServer((req, res) => {
+    if (req.method !== 'POST') {
+      res.writeHead(405).end('Method Not Allowed');
+      return;
+    }
+
+    const hide = req.url === '/overlay/hide';
+    const show = req.url === '/overlay/show';
+
+    if (!hide && !show) {
+      res.writeHead(404).end('Not Found');
+      return;
+    }
+
+    const windows = [promptCaptureWindow, resultsWindow];
+
+    if (hide) {
+      // Save visibility state BEFORE hiding
+      for (const win of windows) {
+        if (!win || win.isDestroyed()) continue;
+        win._overlayWasVisible = win.isVisible();
+        win.hide();
+      }
+    } else {
+      // Restore windows that were visible before hide
+      for (const win of windows) {
+        if (!win || win.isDestroyed()) continue;
+        if (win._overlayWasVisible) win.showInactive();
+      }
+    }
+
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ ok: true, action: hide ? 'hidden' : 'shown' }));
+  });
+
+  server.listen(OVERLAY_CONTROL_PORT, '127.0.0.1', () => {
+    console.log(`[Overlay Control] HTTP server listening on http://127.0.0.1:${OVERLAY_CONTROL_PORT}`);
+  });
+
+  server.on('error', (err) => {
+    console.error('[Overlay Control] Server error:', err.message);
+  });
+}
 
 // StateGraph integration
 const { StateGraphBuilder, RealMCPAdapter, VSCodeLLMBackend } = require('@thinkdrop/stategraph');
@@ -128,7 +182,8 @@ function connectToSocket() {
   });
 }
 
-// Clipboard monitoring and interaction
+// Clipboard tagging — explicit Shift+Cmd+C shortcut (no polling)
+// User presses Shift+Cmd+C after selecting/copying text or a file to tag it as context
 let clipboardMonitorActive = false;
 let lastClipboardContent = '';
 let clipboardCheckInterval = null;
@@ -308,68 +363,10 @@ function createResultsWindow() {
 
 // Clipboard monitoring functionality
 function startClipboardMonitoring(checkInitial = false) {
-  if (clipboardMonitorActive) return;
+  // Polling disabled — tagging is now explicit via Shift+Cmd+C shortcut
   clipboardMonitorActive = true;
   lastClipboardContent = clipboard.readText();
-
-  // Initial clipboard check on activation to capture any existing content
-  // if (checkInitial && lastClipboardContent && lastClipboardContent.length > 0 && !sentHighlights.has(lastClipboardContent)) {
-  //   console.log(`[Clipboard Monitor] Initial clipboard content detected: ${lastClipboardContent.substring(0, 100)}...`);
-  //   if (promptCaptureWindow && !promptCaptureWindow.isDestroyed()) {
-  //     promptCaptureWindow.webContents.send('prompt-capture:add-highlight', lastClipboardContent);
-  //     sentHighlights.add(lastClipboardContent);
-  //   }
-  // }
-
   console.log('[Clipboard Monitor] Started monitoring for auto-capture highlights.');
-
-  clipboardCheckInterval = setInterval(() => {
-    if (!clipboardMonitorActive) {
-      clearInterval(clipboardCheckInterval);
-      return;
-    }
-
-    if (!promptCaptureWindow || !promptCaptureWindow.isVisible()) {
-      stopClipboardMonitoring();
-      return;
-    }
-
-    const currentClipboard = clipboard.readText();
-    if (currentClipboard && currentClipboard !== lastClipboardContent && !sentHighlights.has(currentClipboard)) {
-      if (!sentHighlights.has(currentClipboard)) {
-        // Skip if this was recently submitted as a prompt (user copied their own query)
-        if (recentlySubmittedPrompts.has(currentClipboard.trim())) {
-          console.log(`[Clipboard Monitor] Skipping recently submitted prompt from clipboard.`);
-          lastClipboardContent = currentClipboard;
-          return;
-        }
-        // Skip short single-line plain text — likely a typed query, not a highlight
-        const trimmed = currentClipboard.trim();
-        const lines = trimmed.split('\n');
-        const isShortPlainText = lines.length === 1 && trimmed.length < 200;
-        if (isShortPlainText) {
-          console.log(`[Clipboard Monitor] Skipping short plain text (likely a query, not a highlight).`);
-          lastClipboardContent = currentClipboard;
-          return;
-        }
-        // Skip JSON log content (error logs, structured logs copied from terminal)
-        const isJsonLog = lines.every(l => {
-          const t = l.trim();
-          return t === '' || (t.startsWith('{') && t.endsWith('}'));
-        }) && lines.filter(l => l.trim()).length > 0;
-        if (isJsonLog) {
-          console.log(`[Clipboard Monitor] Skipping JSON log content.`);
-          lastClipboardContent = currentClipboard;
-          return;
-        }
-        console.log(`[Clipboard Monitor] New clipboard content detected: ${currentClipboard.substring(0, 100)}...`);
-        promptCaptureWindow.webContents.send('prompt-capture:add-highlight', currentClipboard);
-        sentHighlights.add(currentClipboard);
-      }
-      lastClipboardContent = currentClipboard;
-    }
-
-  }, 300);
 }
 
 function stopClipboardMonitoring() {
@@ -421,6 +418,9 @@ app.whenReady().then(async () => {
   createPromptCaptureWindow();
   createResultsWindow();
 
+  // Start overlay control HTTP server so command-service skills can hide/show windows before screenshotting
+  startOverlayControlServer();
+
   // Initialize StateGraph pipeline
   initStateGraph();
 
@@ -463,13 +463,20 @@ app.whenReady().then(async () => {
       }
     };
 
-    // Progress callback: forward automation progress events to ResultsWindow
+    // Progress callback: forward automation progress events to ResultsWindow (and prompt window for glow)
     const progressCallback = (event) => {
-      console.log(`[ProgressCallback] Event: ${event.type}`, JSON.stringify(event).substring(0, 120));
+      const logStr = event.type === 'all_done'
+        ? JSON.stringify({ type: event.type, completedCount: event.completedCount, totalCount: event.totalCount, savedFilePaths: event.savedFilePaths })
+        : JSON.stringify(event).substring(0, 120);
+      console.log(`[ProgressCallback] Event: ${event.type}`, logStr);
       if (resultsWindow && !resultsWindow.isDestroyed()) {
         resultsWindow.webContents.send('automation:progress', event);
       } else {
         console.warn('[ProgressCallback] resultsWindow not available for event:', event.type);
+      }
+      // Forward all_done to promptCaptureWindow so its glow clears
+      if (event.type === 'all_done' && promptCaptureWindow && !promptCaptureWindow.isDestroyed()) {
+        promptCaptureWindow.webContents.send('automation:progress', event);
       }
     };
 
@@ -489,15 +496,17 @@ app.whenReady().then(async () => {
             chosenOption = q.options[idx];
           }
         }
-        const wantsAbort = /abort|cancel|stop|no/i.test(chosenOption);
+        const wantsAbort = /\b(abort|cancel|stop)\b/i.test(chosenOption) || /^no$/i.test(chosenOption.trim());
         const wantsSkip = /skip/i.test(chosenOption);
+        // "Done, I clicked it" — user confirmed a manual step; advance cursor like skip
+        const wantsDone = /\b(done|clicked|confirmed|complete|finished)\b/i.test(chosenOption);
         if (wantsAbort) {
           // User wants to abort — clear state and let it fall through as a fresh prompt
           console.log('[StateGraph] ASK_USER resume: user chose abort — clearing paused state');
           initialState = { message: prompt, selectedText, streamCallback, progressCallback, context: { sessionId: sessionId || currentSessionId, userId, source: 'thinkdrop_electron' } };
-        } else if (wantsSkip) {
-          // Skip the failed step and continue from the next one
-          console.log('[StateGraph] ASK_USER resume: user chose skip — advancing cursor and resuming plan');
+        } else if (wantsSkip || wantsDone) {
+          // Skip the failed step / user confirmed manual action — advance cursor and resume plan
+          console.log('[StateGraph] ASK_USER resume: user chose skip/done — advancing cursor and resuming plan');
           initialState = {
             ...paused,
             message: paused.message,
@@ -585,9 +594,12 @@ app.whenReady().then(async () => {
         // Do NOT send ws-bridge:message for normal completion — AutomationProgress shows it
       }
 
-      // Signal stream end (stops thinking spinner)
+      // Signal stream end (stops thinking spinner + clears prompt glow)
       if (resultsWindow && !resultsWindow.isDestroyed()) {
         resultsWindow.webContents.send('ws-bridge:message', { type: 'done' });
+      }
+      if (promptCaptureWindow && !promptCaptureWindow.isDestroyed()) {
+        promptCaptureWindow.webContents.send('ws-bridge:message', { type: 'done' });
       }
 
       // Print full trace to console
@@ -672,6 +684,119 @@ app.whenReady().then(async () => {
     }
   });
 
+  // Shift+Cmd+C — tag current clipboard content as context, then restore original clipboard.
+  // Workflow: user selects text or a file and copies (Cmd+C), then presses Shift+Cmd+C to tag it.
+  // The clipboard is read, tagged, then restored to its prior value so nothing is lost.
+  // Works on Mac and Windows — no AppleScript or platform-specific APIs needed.
+  globalShortcut.register('CommandOrControl+Shift+C', () => {
+    // Save the current clipboard value before we do anything
+    const previousClipboard = clipboard.readText();
+    const tagged = previousClipboard;
+
+    if (!tagged || !tagged.trim()) {
+      console.log('[Tag Shortcut] Clipboard is empty — nothing to tag.');
+      return;
+    }
+    if (recentlySubmittedPrompts.has(tagged.trim())) {
+      console.log('[Tag Shortcut] Skipping recently submitted prompt.');
+      return;
+    }
+
+    // Detect if the clipboard content looks like a file path (tagged as file context)
+    const looksLikeFilePath = /^(\/[^\n]+|[A-Z]:\\[^\n]+)$/.test(tagged.trim());
+    let resolvedTagPath = tagged.trim();
+    if (looksLikeFilePath) {
+      // macOS screenshot filenames use U+202F NARROW NO-BREAK SPACE before AM/PM.
+      // The clipboard delivers a regular space, so we try normalization candidates
+      // to find the actual path that exists on disk before storing the tag.
+      const fs = require('fs');
+      const withNarrowSpace = resolvedTagPath.replace(/ (AM|PM)\./g, '\u202F$1.');
+      const candidates = [
+        resolvedTagPath,
+        withNarrowSpace,
+        resolvedTagPath.normalize('NFC'),
+        resolvedTagPath.normalize('NFD'),
+        withNarrowSpace.normalize('NFC'),
+        withNarrowSpace.normalize('NFD'),
+      ];
+      for (const c of candidates) {
+        if (fs.existsSync(c)) { resolvedTagPath = c; break; }
+      }
+    }
+    const tagContent = looksLikeFilePath
+      ? `[File: ${resolvedTagPath}]`
+      : resolvedTagPath;
+
+    console.log(`[Tag Shortcut] Tagging: ${tagContent.substring(0, 120)}`);
+
+    if (promptCaptureWindow && !promptCaptureWindow.isDestroyed()) {
+      if (!promptCaptureWindow.isVisible()) {
+        const { x, y } = screen.getCursorScreenPoint();
+        const primaryDisplay = screen.getPrimaryDisplay();
+        const { width: screenWidth, height: screenHeight } = primaryDisplay.workAreaSize;
+        promptCaptureWindow.setPosition(x - 250, y - 60);
+        promptCaptureWindow.show();
+        promptCaptureWindow.focus();
+        promptCaptureWindow.webContents.send('prompt-capture:show', { position: { x, y } });
+
+        if (resultsWindow && !resultsWindow.isDestroyed()) {
+          const margin = 20;
+          const currentBounds = resultsWindow.getBounds();
+          const windowWidth = currentBounds.width || 400;
+          const windowHeight = currentBounds.height || 300;
+          resultsWindow.setBounds({ x: screenWidth - windowWidth - margin, y: screenHeight - windowHeight - margin, width: windowWidth, height: windowHeight });
+          resultsWindow.showInactive();
+        }
+      }
+      promptCaptureWindow.webContents.send('prompt-capture:add-highlight', tagContent);
+      sentHighlights.add(tagContent);
+    }
+
+    // Restore the original clipboard after a short delay so the tag send completes first
+    setTimeout(() => {
+      clipboard.writeText(previousClipboard);
+      console.log('[Tag Shortcut] Clipboard restored.');
+    }, 500);
+  });
+
+  // Native file picker — opens dialog and sends selected paths back to renderer
+  ipcMain.on('prompt-capture:pick-file', async (event) => {
+    const { dialog } = require('electron');
+    const result = await dialog.showOpenDialog(promptCaptureWindow, {
+      properties: ['openFile', 'openDirectory', 'multiSelections'],
+      title: 'Select file or folder to tag as context',
+    });
+    if (!result.canceled && result.filePaths.length > 0) {
+      result.filePaths.forEach(fp => {
+        if (promptCaptureWindow && !promptCaptureWindow.isDestroyed()) {
+          promptCaptureWindow.webContents.send('prompt-capture:add-highlight', `[File: ${fp}]`);
+        }
+      });
+    }
+  });
+
+  // Open a file path in its default app, or reveal in Finder if it's a directory
+  ipcMain.on('shell:open-path', async (_event, filePath) => {
+    if (!filePath || typeof filePath !== 'string') return;
+    const { shell } = require('electron');
+    const fs = require('fs');
+    console.log(`[Shell] Opening path: ${filePath}`);
+    try {
+      const stat = fs.statSync(filePath);
+      if (stat.isDirectory()) {
+        shell.showItemInFolder(filePath);
+      } else {
+        const err = await shell.openPath(filePath);
+        if (err) {
+          console.warn(`[Shell] openPath failed (${err}), falling back to showItemInFolder`);
+          shell.showItemInFolder(filePath);
+        }
+      }
+    } catch (e) {
+      console.warn(`[Shell] Path not found: ${filePath}`);
+    }
+  });
+
   ipcMain.on('prompt-capture:hide', () => {
     if (promptCaptureWindow) {
       promptCaptureWindow.hide();
@@ -681,13 +806,21 @@ app.whenReady().then(async () => {
 
   ipcMain.on('prompt-capture:resize', (event, { width, height }) => {
     if (promptCaptureWindow) {
-      promptCaptureWindow.setSize(width, height);
+      const w = Math.round(width);
+      const h = Math.round(height);
+      if (Number.isFinite(w) && Number.isFinite(h) && w > 0 && h > 0) {
+        promptCaptureWindow.setSize(w, h);
+      }
     }
   });
 
   ipcMain.on('prompt-capture:move', (event, { x, y }) => {
     if (promptCaptureWindow) {
-      promptCaptureWindow.setPosition(x, y);
+      const px = Math.round(x);
+      const py = Math.round(y);
+      if (Number.isFinite(px) && Number.isFinite(py)) {
+        promptCaptureWindow.setPosition(px, py);
+      }
     }
   });
 
