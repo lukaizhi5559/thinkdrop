@@ -18,6 +18,7 @@ contextBridge.exposeInMainWorld('electron', {
         'ws-bridge:connect',
         'stategraph:process',
         'shell:open-path',
+        'install:confirm',
       ];
       if (validChannels.includes(channel)) {
         ipcRenderer.send(channel, data);

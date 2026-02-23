@@ -454,7 +454,9 @@ app.whenReady().then(async () => {
     }
 
     // Stream callback: forward each token to ResultsWindow as it arrives
+    let streamingUsed = false;
     const streamCallback = (token) => {
+      streamingUsed = true;
       if (resultsWindow && !resultsWindow.isDestroyed()) {
         resultsWindow.webContents.send('ws-bridge:message', {
           type: 'chunk',
@@ -480,72 +482,122 @@ app.whenReady().then(async () => {
       }
     };
 
+    // Install confirmation callback: pauses the plan until the user clicks Install or Skip
+    // in ResultsWindow. Returns a Promise<boolean> resolved by the IPC reply.
+    // Uses ipcMain.on + manual cleanup (not .once) to avoid cross-run listener consumption.
+    let pendingInstallResolve = null;
+    const handleInstallConfirm = (_event, { confirmed }) => {
+      console.log(`[ConfirmInstall] IPC received: install:confirm confirmed=${confirmed}`);
+      if (pendingInstallResolve) {
+        const resolve = pendingInstallResolve;
+        pendingInstallResolve = null;
+        resolve(confirmed === true);
+      } else {
+        console.warn('[ConfirmInstall] Received install:confirm but no pending resolve — ignoring');
+      }
+    };
+    ipcMain.on('install:confirm', handleInstallConfirm);
+
+    const confirmInstallCallback = (tool) => {
+      return new Promise((resolve) => {
+        pendingInstallResolve = resolve;
+        console.log(`[ConfirmInstall] Waiting for user confirmation for: ${tool}`);
+        // 5-minute timeout — auto-skip if user never responds
+        setTimeout(() => {
+          if (pendingInstallResolve === resolve) {
+            console.warn(`[ConfirmInstall] Timed out waiting for confirmation of: ${tool} — auto-skipping`);
+            pendingInstallResolve = null;
+            resolve(false);
+          }
+        }, 5 * 60 * 1000);
+      });
+    };
+
     try {
       // If there's a paused automation waiting for user input, resume it
       let initialState;
       if (pausedAutomationState) {
         const paused = pausedAutomationState;
-        pausedAutomationState = null;
         const userReply = prompt.trim().toLowerCase();
-        const q = paused.pendingQuestion;
-        // Map numeric reply ("1", "2", "3") to option text
-        let chosenOption = prompt.trim();
-        if (q?.options?.length) {
-          const idx = parseInt(userReply, 10) - 1;
-          if (!isNaN(idx) && idx >= 0 && idx < q.options.length) {
-            chosenOption = q.options[idx];
-          }
-        }
-        const wantsAbort = /\b(abort|cancel|stop)\b/i.test(chosenOption) || /^no$/i.test(chosenOption.trim());
-        const wantsSkip = /skip/i.test(chosenOption);
-        // "Done, I clicked it" — user confirmed a manual step; advance cursor like skip
-        const wantsDone = /\b(done|clicked|confirmed|complete|finished)\b/i.test(chosenOption);
-        if (wantsAbort) {
-          // User wants to abort — clear state and let it fall through as a fresh prompt
-          console.log('[StateGraph] ASK_USER resume: user chose abort — clearing paused state');
-          initialState = { message: prompt, selectedText, streamCallback, progressCallback, context: { sessionId: sessionId || currentSessionId, userId, source: 'thinkdrop_electron' } };
-        } else if (wantsSkip || wantsDone) {
-          // Skip the failed step / user confirmed manual action — advance cursor and resume plan
-          console.log('[StateGraph] ASK_USER resume: user chose skip/done — advancing cursor and resuming plan');
-          initialState = {
-            ...paused,
-            message: paused.message,
-            streamCallback,
-            progressCallback,
-            failedStep: null,
-            pendingQuestion: null,
-            recoveryAction: null,
-            answer: undefined,
-            commandExecuted: false,
-            skillCursor: (paused.skillCursor || 0) + 1,  // skip the failed step
-            stepRetryCount: 0,
-            context: { ...paused.context, sessionId: sessionId || currentSessionId }
-          };
+
+        // Detect if the new prompt is clearly a fresh/unrelated request rather than
+        // an answer to the paused question. Fresh prompts typically:
+        // - Ask a question about the past ("what have I been doing", "what did I do")
+        // - Start a completely new task ("send email to...", "open Slack", "search for...")
+        // - Are clearly not one of the offered options
+        const isFreshPrompt = (
+          /\b(what have i been|what did i|what was i|summarize|recap|history|last hour|last \d+ min)\b/i.test(prompt) ||
+          /^(send|open|search|find|create|delete|move|copy|download|install|run|start|stop|quit|close|show|list|check|get|set|go to|navigate|book|buy|schedule|remind)\b/i.test(prompt.trim())
+        );
+
+        if (isFreshPrompt) {
+          console.log('[StateGraph] ASK_USER resume: new prompt looks like a fresh request — clearing paused state and processing fresh');
+          pausedAutomationState = null;
+          initialState = { message: prompt, selectedText, streamCallback, progressCallback, confirmInstallCallback, context: { sessionId: sessionId || currentSessionId, userId, source: 'thinkdrop_electron' } };
         } else {
-          // User provided a custom answer — inject it as recoveryContext and replan
-          console.log('[StateGraph] ASK_USER resume: user provided answer — replanning with context');
-          initialState = {
-            ...paused,
-            message: paused.message,
-            streamCallback,
-            progressCallback,
-            failedStep: null,
-            pendingQuestion: null,
-            recoveryAction: 'replan',
-            recoveryContext: {
-              failedSkill: paused.failedStep?.skill || 'browser.act',
-              failedStep: paused.failedStep?.step || paused.skillCursor,
-              failureReason: paused.failedStep?.error || 'user requested change',
-              suggestion: `User replied: "${prompt}". Adjust the plan accordingly.`,
-              constraint: null
-            },
-            answer: undefined,
-            commandExecuted: false,
-            skillPlan: null,
-            skillCursor: 0,
-            stepRetryCount: 0,
-            context: { ...paused.context, sessionId: sessionId || currentSessionId }
-          };
+          pausedAutomationState = null;
+          const q = paused.pendingQuestion;
+          // Map numeric reply ("1", "2", "3") to option text
+          let chosenOption = prompt.trim();
+          if (q?.options?.length) {
+            const idx = parseInt(userReply, 10) - 1;
+            if (!isNaN(idx) && idx >= 0 && idx < q.options.length) {
+              chosenOption = q.options[idx];
+            }
+          }
+          const wantsAbort = /\b(abort|cancel|stop)\b/i.test(chosenOption) || /^no$/i.test(chosenOption.trim());
+          const wantsSkip = /skip/i.test(chosenOption);
+          // "Done, I clicked it" — user confirmed a manual step; advance cursor like skip
+          const wantsDone = /\b(done|clicked|confirmed|complete|finished)\b/i.test(chosenOption);
+          if (wantsAbort) {
+            // User wants to abort — clear state and let it fall through as a fresh prompt
+            console.log('[StateGraph] ASK_USER resume: user chose abort — clearing paused state');
+            initialState = { message: prompt, selectedText, streamCallback, progressCallback, confirmInstallCallback, context: { sessionId: sessionId || currentSessionId, userId, source: 'thinkdrop_electron' } };
+          } else if (wantsSkip || wantsDone) {
+            // Skip the failed step / user confirmed manual action — advance cursor and resume plan
+            console.log('[StateGraph] ASK_USER resume: user chose skip/done — advancing cursor and resuming plan');
+            initialState = {
+              ...paused,
+              message: paused.message,
+              streamCallback,
+              progressCallback,
+              confirmInstallCallback,
+              failedStep: null,
+              pendingQuestion: null,
+              recoveryAction: null,
+              answer: undefined,
+              commandExecuted: false,
+              skillCursor: (paused.skillCursor || 0) + 1,  // skip the failed step
+              stepRetryCount: 0,
+              context: { ...paused.context, sessionId: sessionId || currentSessionId }
+            };
+          } else {
+            // User provided a custom answer — inject it as recoveryContext and replan
+            console.log('[StateGraph] ASK_USER resume: user provided answer — replanning with context');
+            initialState = {
+              ...paused,
+              message: paused.message,
+              streamCallback,
+              progressCallback,
+              confirmInstallCallback,
+              failedStep: null,
+              pendingQuestion: null,
+              recoveryAction: 'replan',
+              recoveryContext: {
+                failedSkill: paused.failedStep?.skill || 'browser.act',
+                failedStep: paused.failedStep?.step || paused.skillCursor,
+                failureReason: paused.failedStep?.error || 'user requested change',
+                suggestion: `User replied: "${prompt}". Adjust the plan accordingly.`,
+                constraint: null
+              },
+              answer: undefined,
+              commandExecuted: false,
+              skillPlan: null,
+              skillCursor: 0,
+              stepRetryCount: 0,
+              context: { ...paused.context, sessionId: sessionId || currentSessionId }
+            };
+          }
         }
       } else {
         initialState = {
@@ -553,6 +605,7 @@ app.whenReady().then(async () => {
           selectedText,
           streamCallback,
           progressCallback,
+          confirmInstallCallback,
           context: {
             sessionId: sessionId || currentSessionId,
             userId,
@@ -577,12 +630,13 @@ app.whenReady().then(async () => {
           pausedAutomationState = finalState;
           console.log('[StateGraph] ASK_USER: pausing automation — next prompt will resume the plan');
           const q = finalState.pendingQuestion;
-          let displayText = `**${q.question}**`;
-          if (q.options?.length) {
-            displayText += '\n\n' + q.options.map((o, i) => `${i + 1}. ${o}`).join('\n');
-          }
+          // Send a structured ask_user event so the UI can render clickable option buttons
           if (resultsWindow && !resultsWindow.isDestroyed()) {
-            resultsWindow.webContents.send('ws-bridge:message', { type: 'chunk', text: displayText });
+            resultsWindow.webContents.send('automation:progress', {
+              type: 'ask_user',
+              question: q.question,
+              options: q.options || []
+            });
           }
         }
         // Plan error not caught by progressCallback (e.g. no skillPlan at all)
@@ -592,6 +646,15 @@ app.whenReady().then(async () => {
           }
         }
         // Do NOT send ws-bridge:message for normal completion — AutomationProgress shows it
+      }
+
+      // For non-streaming intents (e.g. memory_store), the answer node is skipped so
+      // streamCallback is never called. Send the answer as a single chunk so the UI
+      // shows it instead of the "Waiting for response..." placeholder.
+      if (intentType !== 'command_automate' && finalState.answer && !streamingUsed) {
+        if (resultsWindow && !resultsWindow.isDestroyed()) {
+          resultsWindow.webContents.send('ws-bridge:message', { type: 'chunk', text: finalState.answer });
+        }
       }
 
       // Signal stream end (stops thinking spinner + clears prompt glow)
@@ -618,6 +681,10 @@ app.whenReady().then(async () => {
       if (resultsWindow && !resultsWindow.isDestroyed()) {
         resultsWindow.webContents.send('ws-bridge:error', err.message);
       }
+    } finally {
+      // Always clean up the install:confirm listener to prevent accumulation across runs
+      ipcMain.removeListener('install:confirm', handleInstallConfirm);
+      pendingInstallResolve = null;
     }
   });
 

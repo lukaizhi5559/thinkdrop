@@ -25,6 +25,7 @@ interface Step {
   stderr?: string;
   error?: string;
   exitCode?: number;
+  savedFilePath?: string;
 }
 
 type AutomationPhase =
@@ -32,7 +33,13 @@ type AutomationPhase =
   | 'planning'
   | 'executing'
   | 'done'
-  | 'failed';
+  | 'failed'
+  | 'ask_user';
+
+interface AskUserPrompt {
+  question: string;
+  options: string[];
+}
 
 interface AutomationProgressProps {
   onHeightChange?: () => void;
@@ -130,6 +137,7 @@ export default function AutomationProgress({ onHeightChange, onActiveChange }: A
   const [expandedSteps, setExpandedSteps] = useState<Set<number>>(new Set());
   const [synthesisAnswer, setSynthesisAnswer] = useState<string>('');
   const [savedFilePaths, setSavedFilePaths] = useState<string[]>([]);
+  const [askUserPrompt, setAskUserPrompt] = useState<AskUserPrompt | null>(null);
 
   // Notify parent to re-measure height whenever visible content changes
   useEffect(() => {
@@ -154,6 +162,7 @@ export default function AutomationProgress({ onHeightChange, onActiveChange }: A
       setExpandedSteps(new Set());
       setSynthesisAnswer('');
       setSavedFilePaths([]);
+      setAskUserPrompt(null);
     };
     ipcRenderer.on('results-window:set-prompt', handleNewPrompt);
 
@@ -192,14 +201,14 @@ export default function AutomationProgress({ onHeightChange, onActiveChange }: A
         case 'step_done':
           setSteps(prev => prev.map(s =>
             s.index === data.stepIndex
-              ? { ...s, status: 'done', stdout: data.stdout, exitCode: data.exitCode }
+              ? { ...s, status: 'done', stdout: data.stdout, exitCode: data.exitCode, savedFilePath: data.savedFilePath || undefined }
               : s
           ));
           // Auto-expand steps that have meaningful stdout
           if (data.stdout && data.stdout.trim().length > 0) {
             setExpandedSteps(prev => new Set([...prev, data.stepIndex]));
           }
-          // Capture savedFilePath emitted by synthesize step_done
+          // Also accumulate at bottom-level for all_done fallback
           if (data.savedFilePath && data.savedFilePath.startsWith('/')) {
             setSavedFilePaths(prev => {
               if (prev.includes(data.savedFilePath)) return prev;
@@ -220,14 +229,29 @@ export default function AutomationProgress({ onHeightChange, onActiveChange }: A
           // Keep phase as 'executing' — synthesize node emits step_done with answer as stdout
           break;
 
+        case 'ask_user':
+          setPhase('ask_user');
+          setAskUserPrompt({ question: data.question, options: data.options || [] });
+          break;
+
         case 'all_done': {
           setPhase('done');
           setTotalCount(data.totalCount);
-          // Merge any final stdout from skillResults into steps
+          // Merge any final stdout from skillResults into steps.
+          // Also backfill savedFilePath onto the step that wrote it so the
+          // inline file link appears on the step row (shell.run write steps
+          // don't emit savedFilePath in step_done — only synthesize does).
           if (Array.isArray(data.skillResults)) {
+            const filePaths: string[] = Array.isArray(data.savedFilePaths) ? data.savedFilePaths : [];
             setSteps(prev => prev.map((s, i) => {
               const r = data.skillResults[i];
               if (!r) return s;
+              // Find a savedFilePath that this step wrote by matching against its resolved args script
+              let stepFilePath = s.savedFilePath;
+              if (!stepFilePath && r.skill === 'shell.run' && filePaths.length > 0) {
+                const script = (r.args?.argv || []).find((a: any) => typeof a === 'string') || '';
+                stepFilePath = filePaths.find(fp => script.includes(fp) || script.includes(fp.replace(/^\/Users\/[^/]+/, '~')));
+              }
               return {
                 ...s,
                 status: r.ok ? 'done' : 'failed',
@@ -235,10 +259,11 @@ export default function AutomationProgress({ onHeightChange, onActiveChange }: A
                 stderr: r.stderr || s.stderr,
                 error: r.error || s.error,
                 exitCode: r.exitCode ?? s.exitCode,
+                savedFilePath: stepFilePath || s.savedFilePath,
               };
             }));
           }
-          // Show clickable links for any files written during this plan
+          // Also keep bottom-level list for any paths not matched to a specific step
           if (Array.isArray(data.savedFilePaths) && data.savedFilePaths.length > 0) {
             setSavedFilePaths(data.savedFilePaths);
           }
@@ -273,6 +298,11 @@ export default function AutomationProgress({ onHeightChange, onActiveChange }: A
       else next.add(index);
       return next;
     });
+  };
+
+  const handleOptionClick = (option: string) => {
+    setAskUserPrompt(null);
+    ipcRenderer?.send('stategraph:process', { prompt: option, selectedText: '' });
   };
 
   if (phase === 'idle') return null;
@@ -398,6 +428,22 @@ export default function AutomationProgress({ onHeightChange, onActiveChange }: A
                       </div>
                     )}
                   </div>
+                  {/* Inline file link — shown on the step that created the file */}
+                  {step.savedFilePath && step.status === 'done' && (
+                    <button
+                      onClick={e => { e.stopPropagation(); ipcRenderer?.send('shell:open-path', step.savedFilePath); }}
+                      className="flex-shrink-0 flex items-center gap-1 px-2 py-0.5 rounded text-xs"
+                      style={{ backgroundColor: 'rgba(59,130,246,0.1)', border: '1px solid rgba(59,130,246,0.25)', color: '#93c5fd', cursor: 'pointer' }}
+                      onMouseEnter={e => (e.currentTarget.style.backgroundColor = 'rgba(59,130,246,0.2)')}
+                      onMouseLeave={e => (e.currentTarget.style.backgroundColor = 'rgba(59,130,246,0.1)')}
+                      title={step.savedFilePath}
+                    >
+                      <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/>
+                      </svg>
+                      {step.savedFilePath.split('/').pop()}
+                    </button>
+                  )}
                   {/* Expand chevron */}
                   {hasOutput && (
                     <div className="flex-shrink-0 mt-0.5" style={{ color: '#6b7280' }}>
@@ -504,6 +550,36 @@ export default function AutomationProgress({ onHeightChange, onActiveChange }: A
         <div className="flex items-center gap-2" style={{ color: '#6b7280' }}>
           <div className="w-1.5 h-1.5 rounded-full bg-blue-500 animate-pulse" />
           <span className="text-xs">Analyzing your request...</span>
+        </div>
+      )}
+
+      {/* ── ASK_USER: clickable option buttons ───────────────────────────── */}
+      {askUserPrompt && (
+        <div className="mt-2 space-y-2">
+          <p className="text-sm font-medium" style={{ color: '#e5e7eb', lineHeight: 1.5 }}>
+            {askUserPrompt.question}
+          </p>
+          {askUserPrompt.options.length > 0 && (
+            <div className="flex flex-col gap-1.5 mt-2">
+              {askUserPrompt.options.map((option, i) => (
+                <button
+                  key={i}
+                  onClick={() => handleOptionClick(option)}
+                  className="text-left px-3 py-2 rounded-lg text-sm transition-colors"
+                  style={{
+                    backgroundColor: 'rgba(59,130,246,0.08)',
+                    border: '1px solid rgba(59,130,246,0.25)',
+                    color: '#93c5fd',
+                    cursor: 'pointer',
+                  }}
+                  onMouseEnter={e => (e.currentTarget.style.backgroundColor = 'rgba(59,130,246,0.18)')}
+                  onMouseLeave={e => (e.currentTarget.style.backgroundColor = 'rgba(59,130,246,0.08)')}
+                >
+                  {option}
+                </button>
+              ))}
+            </div>
+          )}
         </div>
       )}
     </div>

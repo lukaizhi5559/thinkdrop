@@ -24,10 +24,32 @@ export default function ResultsWindow() {
   const [isDragging, setIsDragging] = useState(false);
   const dragOffset = useRef({ x: 0, y: 0 });
   
-  const [isCopied, setIsCopied] = useState(false);
+  const [isCopied, setIsCopied] = useState<boolean>(false);
   const [showTrigger, setShowTrigger] = useState(0);
+
+  // Install confirmation card state
+  const [installPrompt, setInstallPrompt] = useState<{
+    tool: string;
+    installCmd: string;
+    reason: string;
+    source: string;
+    toolDescription: string | null;
+  } | null>(null);
+  const [isInstalling, setIsInstalling] = useState(false);
+
+  // Action chips: quick follow-up prompts shown after a response
+  const [actionChips, setActionChips] = useState<string[]>([]);
   const scrollBottomRef = useRef<HTMLDivElement>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
+
+  // Auto-scroll to bottom when install card appears
+  useEffect(() => {
+    if (installPrompt) {
+      setTimeout(() => {
+        scrollBottomRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
+      }, 50);
+    }
+  }, [installPrompt]);
 
   useEffect(() => {
     if (!ipcRenderer) return;
@@ -143,13 +165,41 @@ export default function ResultsWindow() {
         // Automation started — clear the thinking spinner (AutomationProgress takes over)
         setIsThinking(false);
         setIsAutomationMode(true);
+        setInstallPrompt(null);
+        setActionChips([]);
         if (glowOffTimerRef.current) clearTimeout(glowOffTimerRef.current);
         setIsGlowActive(true);
+      } else if (data?.type === 'needs_install') {
+        // Pause plan — show install confirmation card
+        setInstallPrompt({
+          tool: data.tool,
+          installCmd: data.installCmd,
+          reason: data.reason,
+          source: data.source || 'brew',
+          toolDescription: data.toolDescription || null,
+        });
+        setIsInstalling(false);
+        if (glowOffTimerRef.current) clearTimeout(glowOffTimerRef.current);
+        setIsGlowActive(true);
+      } else if (data?.type === 'step_done' && data?.skill === 'needs_install') {
+        // Install completed (success or fail) — clear the installing spinner
+        setIsInstalling(false);
+        setInstallPrompt(null);
+      } else if (data?.type === 'step_failed' && data?.skill === 'needs_install') {
+        // Install failed — clear spinner too
+        setIsInstalling(false);
+        setInstallPrompt(null);
+      } else if (data?.type === 'ask_user') {
+        // ASK_USER pause — clear install spinner if still showing
+        setIsInstalling(false);
+        setInstallPrompt(null);
       } else if (data?.type === 'all_done') {
-        // Automation finished — ensure glow clears after a short settle delay
+        // Automation finished — keep isAutomationMode true so AutomationProgress stays visible
+        // and 'Waiting for response...' placeholder doesn't flash. Resets on next planning event.
         setIsThinking(false);
         setIsStreaming(false);
-        setIsAutomationMode(false);
+        setInstallPrompt(null);
+        setIsInstalling(false);
         glowOffTimerRef.current = setTimeout(() => setIsGlowActive(false), 400);
       }
     };
@@ -219,6 +269,22 @@ export default function ResultsWindow() {
     console.log('❌ [RESULTS_WINDOW] Close button clicked');
     if (ipcRenderer) {
       ipcRenderer.send('results-window:close');
+    }
+  };
+
+  const handleInstallConfirm = (confirmed: boolean) => {
+    if (confirmed) setIsInstalling(true);
+    setInstallPrompt(null);
+    if (ipcRenderer) {
+      console.log(`[ResultsWindow] install:confirm → confirmed=${confirmed}`);
+      ipcRenderer.send('install:confirm', { confirmed });
+    }
+  };
+
+  const handleActionChip = (chip: string) => {
+    setActionChips([]);
+    if (ipcRenderer) {
+      ipcRenderer.send('stategraph:process', { prompt: chip, selectedText: '' });
     }
   };
 
@@ -372,9 +438,91 @@ export default function ResultsWindow() {
     });
   };
 
+  const renderInstallCard = () => {
+    if (!installPrompt && !isInstalling) return null;
+
+    if (isInstalling) {
+      return (
+        <div style={{ margin: '8px 0', padding: '12px 14px', borderRadius: 10, backgroundColor: 'rgba(59,130,246,0.08)', border: '1px solid rgba(59,130,246,0.25)' }}>
+          <div className="flex items-center gap-2">
+            <div className="w-3 h-3 rounded-full bg-blue-500 animate-pulse" />
+            <span style={{ color: '#93c5fd', fontSize: '0.8rem', fontWeight: 500 }}>Installing...</span>
+          </div>
+        </div>
+      );
+    }
+
+    if (!installPrompt) return null;
+    const { tool, installCmd, reason, source, toolDescription } = installPrompt;
+    const sourceLabel = source === 'brew' ? 'Homebrew' : source === 'npm' ? 'npm' : source === 'pip' ? 'pip' : source;
+    const sourceBadgeColor = source === 'brew' ? 'rgba(251,146,60,0.15)' : 'rgba(59,130,246,0.15)';
+    const sourceBorderColor = source === 'brew' ? 'rgba(251,146,60,0.35)' : 'rgba(59,130,246,0.3)';
+    const sourceTextColor = source === 'brew' ? '#fdba74' : '#93c5fd';
+
+    return (
+      <div style={{ margin: '8px 0', padding: '14px', borderRadius: 10, backgroundColor: 'rgba(23,23,23,0.9)', border: '1px solid rgba(255,255,255,0.12)' }}>
+        <div className="flex items-start gap-3">
+          <div style={{ width: 32, height: 32, borderRadius: 8, backgroundColor: 'rgba(251,146,60,0.12)', border: '1px solid rgba(251,146,60,0.25)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#fdba74" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/>
+            </svg>
+          </div>
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center gap-2 flex-wrap" style={{ marginBottom: 4 }}>
+              <span style={{ color: '#f3f4f6', fontSize: '0.82rem', fontWeight: 600 }}>Install {tool}?</span>
+              <span style={{ padding: '1px 6px', borderRadius: 4, backgroundColor: sourceBadgeColor, border: `1px solid ${sourceBorderColor}`, color: sourceTextColor, fontSize: '0.68rem', fontWeight: 500 }}>{sourceLabel}</span>
+            </div>
+            <p style={{ color: '#9ca3af', fontSize: '0.75rem', margin: '0 0 6px', lineHeight: 1.4 }}>{reason}</p>
+            {toolDescription && (
+              <p style={{ color: '#6b7280', fontSize: '0.72rem', margin: '0 0 8px', lineHeight: 1.4 }}>{toolDescription}</p>
+            )}
+            <code style={{ display: 'block', padding: '4px 8px', borderRadius: 5, backgroundColor: 'rgba(0,0,0,0.3)', color: '#86efac', fontSize: '0.7rem', fontFamily: 'monospace', marginBottom: 10, wordBreak: 'break-all' }}>{installCmd}</code>
+            <div className="flex gap-2">
+              <button
+                onClick={() => handleInstallConfirm(true)}
+                style={{ padding: '5px 14px', borderRadius: 6, backgroundColor: 'rgba(59,130,246,0.2)', border: '1px solid rgba(59,130,246,0.4)', color: '#93c5fd', fontSize: '0.75rem', fontWeight: 600, cursor: 'pointer', transition: 'all 0.15s' }}
+                onMouseEnter={e => (e.currentTarget.style.backgroundColor = 'rgba(59,130,246,0.35)')}
+                onMouseLeave={e => (e.currentTarget.style.backgroundColor = 'rgba(59,130,246,0.2)')}
+              >
+                Install
+              </button>
+              <button
+                onClick={() => handleInstallConfirm(false)}
+                style={{ padding: '5px 14px', borderRadius: 6, backgroundColor: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.12)', color: '#6b7280', fontSize: '0.75rem', fontWeight: 500, cursor: 'pointer', transition: 'all 0.15s' }}
+                onMouseEnter={e => (e.currentTarget.style.backgroundColor = 'rgba(255,255,255,0.1)')}
+                onMouseLeave={e => (e.currentTarget.style.backgroundColor = 'rgba(255,255,255,0.05)')}
+              >
+                Skip
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
+  const renderActionChips = () => {
+    if (!actionChips.length || isStreaming || isThinking || isAutomationMode) return null;
+    return (
+      <div className="flex flex-wrap gap-2" style={{ marginTop: 10 }}>
+        {actionChips.map((chip, i) => (
+          <button
+            key={i}
+            onClick={() => handleActionChip(chip)}
+            style={{ padding: '4px 12px', borderRadius: 20, backgroundColor: 'rgba(59,130,246,0.1)', border: '1px solid rgba(59,130,246,0.25)', color: '#93c5fd', fontSize: '0.72rem', fontWeight: 500, cursor: 'pointer', transition: 'all 0.15s', whiteSpace: 'nowrap' }}
+            onMouseEnter={e => (e.currentTarget.style.backgroundColor = 'rgba(59,130,246,0.22)')}
+            onMouseLeave={e => (e.currentTarget.style.backgroundColor = 'rgba(59,130,246,0.1)')}
+          >
+            {chip}
+          </button>
+        ))}
+      </div>
+    );
+  };
+
   const renderResults = () => {
     // In automation mode, only render if there's streaming content (synthesis answer below steps)
-    if (isAutomationMode && !streamingResponse) return null;
+    if (isAutomationMode && !streamingResponse && !installPrompt && !isInstalling) return null;
 
     if (isThinking) {
       return (
@@ -405,7 +553,10 @@ export default function ResultsWindow() {
           </div>
         )}
 
-        {!isThinking && !streamingResponse && !isAutomationMode && (
+        {renderInstallCard()}
+        {renderActionChips()}
+
+        {!isThinking && !streamingResponse && !isAutomationMode && !installPrompt && !isInstalling && (
           <div className="text-gray-400 text-sm text-center">
             Waiting for response...
           </div>
