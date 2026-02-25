@@ -51,10 +51,24 @@ export default function StandalonePromptCapture() {
       if (msg?.type === 'done' || msg?.type === 'llm_stream_end') setIsProcessing(false);
     };
 
+    // Voice inject: clear textarea + show processing ring. Do NOT populate the text input.
+    const handleVoiceInjectPrompt = (_event: any) => {
+      setPromptText('');
+      setHighlights([]);
+      setIsProcessing(true);
+    };
+
+    // Voice done (response received): stop processing ring
+    const handleVoiceResponse = () => {
+      setIsProcessing(false);
+    };
+
     ipcRenderer.on('prompt-capture:show', handleShow);
     ipcRenderer.on('prompt-capture:add-highlight', handleAddHighlight);
     ipcRenderer.on('automation:progress', handleProgress);
     ipcRenderer.on('ws-bridge:message', handleBridgeMessage);
+    ipcRenderer.on('voice:inject-prompt', handleVoiceInjectPrompt);
+    ipcRenderer.on('voice:response', handleVoiceResponse);
 
     return () => {
       if (ipcRenderer.removeListener) {
@@ -62,6 +76,8 @@ export default function StandalonePromptCapture() {
         ipcRenderer.removeListener('prompt-capture:add-highlight', handleAddHighlight);
         ipcRenderer.removeListener('automation:progress', handleProgress);
         ipcRenderer.removeListener('ws-bridge:message', handleBridgeMessage);
+        ipcRenderer.removeListener('voice:inject-prompt', handleVoiceInjectPrompt);
+        ipcRenderer.removeListener('voice:response', handleVoiceResponse);
       }
     };
   }, []);
@@ -549,10 +565,6 @@ export default function StandalonePromptCapture() {
           <VoiceButton
             mode="push-to-talk"
             compact={false}
-            onTranscript={(text) => {
-              setPromptText(text);
-              setTimeout(() => requestWindowResize(), 50);
-            }}
           />
 
           {/* File picker button — click to open native file dialog */}

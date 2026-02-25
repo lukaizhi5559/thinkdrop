@@ -1,0 +1,125 @@
+# ThinkDrop Bridge Integration
+
+## What is the bridge?
+
+The file `~/.thinkdrop/bridge.md` is a real-time communication channel between
+**ThinkDrop AI** (a separate desktop AI app) and **Windsurf**.
+
+- ThinkDrop writes `<!-- TD:INSTRUCTION ... -->` blocks with tasks for you to execute
+- You write `<!-- WS:RESPONSE ... -->` blocks back when done
+
+## Block format
+
+ThinkDrop instructions look like this in the file:
+
+```
+<!-- TD:INSTRUCTION id=td_instruction_abc123 ts=2026-02-24T17:00:00Z status=pending -->
+The instruction body goes here — plain markdown
+<!-- TD:END -->
+```
+
+Your response should look like this:
+
+```
+<!-- WS:RESPONSE id=ws_response_<6 random chars> ref=<td block id> ts=<current ISO timestamp> status=done -->
+Summary of what you did
+<!-- WS:END -->
+```
+
+## How Windsurf fits in
+
+**Windsurf (Cascade) is reactive, not autonomous.** It acts when:
+- The user opens the chat and says something
+- The user says "check the bridge", "any ThinkDrop instructions?", "act on the bridge"
+- The file `.thinkdrop-bridge-trigger.md` changes in this workspace (ThinkDrop writes this as a signal)
+
+**ThinkDrop AI is the autonomous actor.** It has a built-in bridge listener that:
+- Watches `~/.thinkdrop/bridge.md` continuously (always-on, no user input needed)
+- Auto-executes any new `WS:INSTRUCTION` blocks the moment they appear
+- Writes `TD:RESULT` blocks back when done
+
+**For code edits you want done automatically:** Tell ThinkDrop directly — it has `shell.run`, `fs.read`, and direct file access. It can read any file, run `sed`/`awk`/`python3`/`git`, and write results back — no IDE interaction needed.
+
+**Use Windsurf (me) when:** You want AI-assisted code editing with IDE context, multi-file refactoring, or tasks that benefit from seeing the full project in the IDE.
+
+## When to check the bridge
+
+Check `~/.thinkdrop/bridge.md` automatically when:
+- The user says "check the bridge", "any ThinkDrop instructions?", "what did ThinkDrop send?", "check for instructions"
+- The file `.thinkdrop-bridge-trigger.md` appears or changes in this workspace (ThinkDrop writes this as a signal)
+- The user opens this project and mentions ThinkDrop
+
+## How to respond to a ThinkDrop instruction
+
+1. Read `~/.thinkdrop/bridge.md`
+2. Find all `<!-- TD:INSTRUCTION ... -->` blocks where `status=pending`
+3. **Act on it immediately — no confirmation needed** (ThinkDrop sent it deliberately)
+4. Execute the instruction (edit files, run commands, read code, etc.)
+5. Append a response block to `~/.thinkdrop/bridge.md`:
+
+```
+<!-- WS:RESPONSE id=ws_response_XXXXXX ref=<the td block id> ts=2026-02-24T18:00:00.000Z status=done -->
+Done — <brief summary of what was completed>
+<!-- WS:END -->
+```
+
+**Important:** Always include `ref=<td_block_id>` so ThinkDrop knows which instruction you're responding to.
+Use `status=done` when complete, `status=error` if something failed, `status=in_progress` if still working.
+
+## Status values
+
+| status | meaning |
+|---|---|
+| `pending` | ThinkDrop wrote this, waiting for Windsurf to act |
+| `done` | Windsurf completed the task |
+| `error` | Windsurf hit an error |
+| `in_progress` | Windsurf is working on it |
+| `info` | Informational block, no action needed |
+
+## Writing a WS:RESPONSE — exact steps
+
+When you complete a ThinkDrop instruction, append this to `~/.thinkdrop/bridge.md`
+(use a bash command so the timestamp is accurate):
+
+```bash
+cat >> ~/.thinkdrop/bridge.md << 'BRIDGE_EOF'
+
+<!-- WS:RESPONSE id=ws_response_REPLACE_WITH_6_RANDOM_CHARS ref=REPLACE_WITH_TD_BLOCK_ID ts=REPLACE_WITH_ISO_TIMESTAMP status=done -->
+REPLACE_WITH_YOUR_SUMMARY
+<!-- WS:END -->
+BRIDGE_EOF
+```
+
+Or in a single shell command with a real timestamp:
+```bash
+printf '\n<!-- WS:RESPONSE id=ws_response_%s ref=%s ts=%s status=done -->\n%s\n<!-- WS:END -->\n' \
+  "$(openssl rand -hex 3)" \
+  "TD_BLOCK_ID_HERE" \
+  "$(date -u +%Y-%m-%dT%H:%M:%S.000Z)" \
+  "Done — brief summary here" >> ~/.thinkdrop/bridge.md
+```
+
+## Example full interaction
+
+ThinkDrop writes to bridge.md:
+```
+<!-- TD:INSTRUCTION id=td_instruction_x7f2a1 ts=2026-02-24T17:00:00Z status=pending -->
+Read the file `src/main/main.js` and tell me how many IPC handlers it registers.
+<!-- TD:END -->
+```
+
+You read the file, count the handlers, then append:
+```
+<!-- WS:RESPONSE id=ws_response_b3d9e2 ref=td_instruction_x7f2a1 ts=2026-02-24T17:01:30.000Z status=done -->
+Found 12 IPC handlers in `src/main/main.js`. They handle: automation:run, automation:cancel, schedule:dismiss, shell:open-url, guide:cancel, and 7 others listed in lines 45-180.
+<!-- WS:END -->
+```
+
+## Quick reference
+
+| User says | What you do |
+|---|---|
+| "check the bridge" | Read `~/.thinkdrop/bridge.md`, show pending TD blocks |
+| "act on the bridge" | Execute pending TD instructions + write WS:RESPONSE |
+| "clear the bridge" | Ask ThinkDrop to clear it, or remove WS: blocks you wrote |
+| "bridge status" | Count TD/WS blocks, show last activity |

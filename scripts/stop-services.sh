@@ -21,6 +21,7 @@ if [ ! -f "$PIDS_FILE" ]; then
     pkill -f "thinkdrop-phi4-service" 2>/dev/null || true
     pkill -f "command-service.*http-server" 2>/dev/null || true
     pkill -f "screen-intelligence-service" 2>/dev/null || true
+    pkill -f "voice-service/src/server" 2>/dev/null || true
 else
     # Stop by PID
     while IFS=: read -r service_name pid; do
@@ -50,6 +51,10 @@ done
 # Force-kill any nodemon instances for user-memory-service (multiple restarts can leave orphans)
 pkill -9 -f "thinkdrop-user-memory-service/node_modules/nodemon" 2>/dev/null || true
 pkill -9 -f "thinkdrop-user-memory-service/src/server" 2>/dev/null || true
+
+# Force-kill voice-service nodemon orphans
+pkill -9 -f "voice-service/node_modules/nodemon" 2>/dev/null || true
+pkill -9 -f "voice-service/src/server" 2>/dev/null || true
 
 # Release any remaining DuckDB lock holders
 DB_FILE="$PROJECT_ROOT/mcp-services/thinkdrop-user-memory-service/data/user_memory.duckdb"

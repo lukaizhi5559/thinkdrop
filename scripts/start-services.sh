@@ -159,7 +159,7 @@ start_node_direct_service() {
 
 # ── Pre-flight: kill ALL orphaned MCP service nodemon instances ───────────────
 # Multiple restarts leave nodemon orphans; kill them all before starting fresh
-for svc in thinkdrop-user-memory-service thinkdrop-phi4-service thinkdrop-web-search conversation-service command-service screen-intelligence-service; do
+for svc in thinkdrop-user-memory-service thinkdrop-phi4-service thinkdrop-web-search conversation-service command-service screen-intelligence-service voice-service; do
     pkill -9 -f "${svc}/node_modules/nodemon" 2>/dev/null || true
     pkill -9 -f "${svc}/src/server" 2>/dev/null || true
 done
@@ -200,6 +200,10 @@ sleep 2
 start_npm_service "screen-intelligence" "$PROJECT_ROOT/mcp-services/screen-intelligence-service" 256
 sleep 2
 
+# 8. Voice Service — port 3006 (STT/TTS via ElevenLabs, wake word, journal)
+start_node_service "voice-service" "$PROJECT_ROOT/mcp-services/voice-service" 512
+sleep 2
+
 # ── Summary ─────────────────────────────────────────────────────────────────
 
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
@@ -213,6 +217,7 @@ echo "   • Phi4:                http://localhost:3009/service.health"
 echo "   • Coreference:         http://localhost:3005/health"
 echo "   • Command:             http://localhost:3007/health"
 echo "   • Screen Intelligence: http://localhost:3008/service.health"
+echo "   • Voice Service:       http://localhost:3006/health"
 echo ""
 echo "📝 Logs:"
 echo "   tail -f logs/*.log"

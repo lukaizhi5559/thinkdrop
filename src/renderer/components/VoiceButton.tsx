@@ -42,11 +42,25 @@ export default function VoiceButton({ mode = 'push-to-talk', onTranscript, onRes
   const streamRef = useRef<MediaStream | null>(null);
   const isHoldingRef = useRef(false);
   const isRecordingRef = useRef(false); // true while MediaRecorder is active
-  const playAudioRef = useRef<(b: string, f: string) => Promise<void>>(async () => {});
   const wakeWordLoopRef = useRef(false);  // true while wake word listen loop is running
+
+  // TTS audio queue — ensures clips play serially, stategraph lane preempts fast lane
+  type AudioQueueItem = { base64: string; format: string; lane: string };
+  const audioQueueRef = useRef<AudioQueueItem[]>([]);
+  const currentAudioRef = useRef<HTMLAudioElement | null>(null);
+  const audioPlayingRef = useRef(false);
   const wakeWordStreamRef = useRef<MediaStream | null>(null);
+  const wakeWordAudioCtxRef = useRef<AudioContext | null>(null);
+
+  // Keep latest callbacks in refs so IPC handlers never go stale without re-registering
+  const onTranscriptRef = useRef(onTranscript);
+  const onResponseRef = useRef(onResponse);
+  useEffect(() => { onTranscriptRef.current = onTranscript; }, [onTranscript]);
+  useEffect(() => { onResponseRef.current = onResponse; }, [onResponse]);
 
   // ── IPC listeners ─────────────────────────────────────────────────────────
+  // Registered once on mount, cleaned up on unmount. Uses refs for callbacks
+  // so they never go stale. Avoids duplicate registration from React StrictMode.
   useEffect(() => {
     if (!ipcRenderer) return;
 
@@ -60,22 +74,60 @@ export default function VoiceButton({ mode = 'push-to-talk', onTranscript, onRes
     const handleTranscript = (_e: any, data: { text: string; language: string }) => {
       setTranscript(data.text);
       setDetectedLanguage(data.language || '');
-      onTranscript?.(data.text, data.language);
+      onTranscriptRef.current?.(data.text, data.language);
     };
 
-    const handleResponse = (_e: any, data: { text: string; audioBase64: string; audioFormat: string; language: string }) => {
-      console.log('[VoiceButton] voice:response received, audioFormat:', data.audioFormat, 'b64 length:', data.audioBase64?.length);
+    const drainQueue = () => {
+      if (audioPlayingRef.current || audioQueueRef.current.length === 0) return;
+      const item = audioQueueRef.current.shift()!;
+      audioPlayingRef.current = true;
       setVoiceState('speaking');
-      setDetectedLanguage(data.language || '');
-      onResponse?.(data.text, data.audioBase64, data.audioFormat);
-      playAudioRef.current(data.audioBase64, data.audioFormat).then(() => {
-        console.log('[VoiceButton] Audio playback finished');
-      }).catch((err) => {
-        console.error('[VoiceButton] Audio playback error:', err);
-      }).finally(() => {
-        setVoiceState('idle');
-        setTranscript('');
+      const mimeType = item.format === 'mp3' ? 'audio/mpeg' : item.format === 'wav' ? 'audio/wav' : 'audio/webm';
+      const audio = new Audio(`data:${mimeType};base64,${item.base64}`);
+      currentAudioRef.current = audio;
+      audio.onended = () => {
+        currentAudioRef.current = null;
+        audioPlayingRef.current = false;
+        if (audioQueueRef.current.length > 0) {
+          drainQueue();
+        } else {
+          setVoiceState('idle');
+          setTranscript('');
+        }
+      };
+      audio.onerror = () => {
+        currentAudioRef.current = null;
+        audioPlayingRef.current = false;
+        drainQueue();
+      };
+      audio.play().catch(() => {
+        currentAudioRef.current = null;
+        audioPlayingRef.current = false;
+        drainQueue();
       });
+    };
+
+    const handleResponse = (_e: any, data: { text: string; audioBase64: string; audioFormat: string; language: string; lane?: string }) => {
+      const lane = data.lane || 'fast';
+      console.log('[VoiceButton] voice:response received, lane:', lane, 'audioFormat:', data.audioFormat, 'b64 length:', data.audioBase64?.length);
+      setDetectedLanguage(data.language || '');
+      onResponseRef.current?.(data.text, data.audioBase64, data.audioFormat);
+
+      if (lane === 'stategraph') {
+        // Stategraph is authoritative — stop current audio, clear fast-lane queue, play immediately
+        if (currentAudioRef.current) {
+          currentAudioRef.current.pause();
+          currentAudioRef.current.src = '';
+          currentAudioRef.current = null;
+        }
+        audioQueueRef.current = [];
+        audioPlayingRef.current = false;
+      }
+
+      if (data.audioBase64) {
+        audioQueueRef.current.push({ base64: data.audioBase64, format: data.audioFormat || 'mp3', lane });
+        drainQueue();
+      }
     };
 
     const handleError = (_e: any, data: { error: string }) => {
@@ -84,31 +136,59 @@ export default function VoiceButton({ mode = 'push-to-talk', onTranscript, onRes
       setTimeout(() => setVoiceState('idle'), 1500);
     };
 
+    // Clear any previously registered listeners before adding new ones
+    ipcRenderer.removeAllListeners?.('voice:status');
+    ipcRenderer.removeAllListeners?.('voice:transcript');
+    ipcRenderer.removeAllListeners?.('voice:response');
+    ipcRenderer.removeAllListeners?.('voice:error');
+
     ipcRenderer.on('voice:status', handleVoiceStatus);
     ipcRenderer.on('voice:transcript', handleTranscript);
     ipcRenderer.on('voice:response', handleResponse);
     ipcRenderer.on('voice:error', handleError);
 
     return () => {
-      if (ipcRenderer.removeListener) {
-        ipcRenderer.removeListener('voice:status', handleVoiceStatus);
-        ipcRenderer.removeListener('voice:transcript', handleTranscript);
-        ipcRenderer.removeListener('voice:response', handleResponse);
-        ipcRenderer.removeListener('voice:error', handleError);
-      }
+      ipcRenderer.removeAllListeners?.('voice:status');
+      ipcRenderer.removeAllListeners?.('voice:transcript');
+      ipcRenderer.removeAllListeners?.('voice:response');
+      ipcRenderer.removeAllListeners?.('voice:error');
     };
-  }, [onTranscript, onResponse]);
+  }, []); // empty deps — registered once, callbacks via refs
+
+  // ── Mic stream with WebRTC audio constraints ─────────────────────────────
+  // getUserMedia with echoCancellation+noiseSuppression invokes the same WebRTC
+  // audio processing stack at the OS level — this IS the WebRTC noise pipeline.
+  const getWebRTCProcessedStream = async (): Promise<MediaStream> => {
+    return navigator.mediaDevices.getUserMedia({
+      audio: {
+        echoCancellation: true,
+        noiseSuppression: true,
+        autoGainControl: true,
+        channelCount: 1,
+        sampleRate: { ideal: 16000 },
+      }
+    });
+  };
 
   // ── Audio recording ───────────────────────────────────────────────────────
 
+  const activationModeRef = useRef<ActivationMode>(activationMode);
+  useEffect(() => { activationModeRef.current = activationMode; }, [activationMode]);
+
   const startRecording = useCallback(async () => {
-    if (isRecordingRef.current) return; // already recording
+    if (isRecordingRef.current) {
+      console.log('[VoiceButton] startRecording: already recording, ignoring');
+      return;
+    }
     isRecordingRef.current = true;
+    console.log('[VoiceButton] startRecording: requesting mic...');
 
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const stream = await getWebRTCProcessedStream();
       streamRef.current = stream;
       audioChunksRef.current = [];
+      const tracks = stream.getAudioTracks();
+      console.log('[VoiceButton] mic stream tracks:', tracks.length, tracks.map(t => `${t.label} enabled=${t.enabled} muted=${t.muted} readyState=${t.readyState}`));
 
       const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
         ? 'audio/webm;codecs=opus'
@@ -126,17 +206,20 @@ export default function VoiceButton({ mode = 'push-to-talk', onTranscript, onRes
       recorder.onstop = async () => {
         isRecordingRef.current = false;
         const blob = new Blob(audioChunksRef.current, { type: mimeType });
-        if (blob.size < 1000) {
+        console.log('[VoiceButton] recorder.onstop: blob size', blob.size);
+        if (blob.size < 4000) {
           setVoiceState('idle');
           return;
         }
-        const arrayBuffer = await blob.arrayBuffer();
-        const bytes = new Uint8Array(arrayBuffer);
-        let base64 = '';
-        const CHUNK = 8192;
-        for (let i = 0; i < bytes.length; i += CHUNK) {
-          base64 += btoa(String.fromCharCode(...bytes.subarray(i, i + CHUNK)));
-        }
+        // Use FileReader for correct single-pass base64 — chunked btoa breaks at padding boundaries
+        const base64 = await new Promise<string>((resolve) => {
+          const reader = new FileReader();
+          reader.onloadend = () => {
+            const dataUrl = reader.result as string;
+            resolve(dataUrl.split(',')[1]); // strip "data:audio/webm;base64," prefix
+          };
+          reader.readAsDataURL(blob);
+        });
         const format = mimeType.includes('webm') ? 'webm' : 'mp4';
 
         setVoiceState('processing');
@@ -144,13 +227,22 @@ export default function VoiceButton({ mode = 'push-to-talk', onTranscript, onRes
         ipcRenderer?.send('voice:audio-chunk', {
           audioBase64: base64,
           format,
-          pushToTalk: activationMode === 'push-to-talk',
+          pushToTalk: activationModeRef.current === 'push-to-talk',
         });
       };
 
       recorder.start(100);
+      console.log('[VoiceButton] recorder started, state:', recorder.state);
       setVoiceState('listening');
       ipcRenderer?.send('voice:push-to-talk-start');
+
+      // Auto-stop after 15s max to prevent huge recordings
+      setTimeout(() => {
+        if (isRecordingRef.current && mediaRecorderRef.current?.state === 'recording') {
+          console.log('[VoiceButton] Max PTT duration reached — auto-stopping');
+          stopRecording();
+        }
+      }, 15000);
     } catch (err) {
       isRecordingRef.current = false;
       isHoldingRef.current = false;
@@ -158,11 +250,14 @@ export default function VoiceButton({ mode = 'push-to-talk', onTranscript, onRes
       setVoiceState('error');
       setTimeout(() => setVoiceState('idle'), 1500);
     }
-  }, [activationMode]);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const stopRecording = useCallback(() => {
+    console.log('[VoiceButton] stopRecording, recorder state:', mediaRecorderRef.current?.state, 'isRecording:', isRecordingRef.current);
     if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
-      mediaRecorderRef.current.stop();
+      mediaRecorderRef.current.stop(); // onstop will set isRecordingRef=false
+    } else {
+      isRecordingRef.current = false; // recorder never started — reset manually
     }
     if (streamRef.current) {
       streamRef.current.getTracks().forEach(t => t.stop());
@@ -170,30 +265,6 @@ export default function VoiceButton({ mode = 'push-to-talk', onTranscript, onRes
     }
     isHoldingRef.current = false;
   }, []);
-
-  // ── Audio playback ────────────────────────────────────────────────────────
-
-  const playAudioBase64 = useCallback(async (base64: string, format: string): Promise<void> => {
-    return new Promise((resolve) => {
-      try {
-        const mimeType = format === 'mp3' ? 'audio/mpeg' : format === 'wav' ? 'audio/wav' : format === 'aiff' ? 'audio/aiff' : 'audio/webm';
-        const binary = atob(base64);
-        const bytes = new Uint8Array(binary.length);
-        for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
-        const blob = new Blob([bytes], { type: mimeType });
-        const url = URL.createObjectURL(blob);
-        const audio = new Audio(url);
-        audio.onended = () => { URL.revokeObjectURL(url); resolve(); };
-        audio.onerror = () => { URL.revokeObjectURL(url); resolve(); };
-        audio.play().catch(() => resolve());
-      } catch (_) {
-        resolve();
-      }
-    });
-  }, []);
-
-  // ── Sync playAudio ref so useEffect always has current version ─────────────
-  playAudioRef.current = playAudioBase64;
 
   // ── Wake word continuous listen loop ─────────────────────────────────────
   // Records 3-second clips and sends to voice-service with pushToTalk=false.
@@ -205,6 +276,10 @@ export default function VoiceButton({ mode = 'push-to-talk', onTranscript, onRes
       wakeWordStreamRef.current.getTracks().forEach(t => t.stop());
       wakeWordStreamRef.current = null;
     }
+    if (wakeWordAudioCtxRef.current) {
+      wakeWordAudioCtxRef.current.close().catch(() => {});
+      wakeWordAudioCtxRef.current = null;
+    }
   }, []);
 
   const startWakeWordLoop = useCallback(async () => {
@@ -213,7 +288,7 @@ export default function VoiceButton({ mode = 'push-to-talk', onTranscript, onRes
 
     let stream: MediaStream;
     try {
-      stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      stream = await getWebRTCProcessedStream();
       wakeWordStreamRef.current = stream;
     } catch (err) {
       console.error('[VoiceButton] Wake word mic error:', err);
@@ -229,92 +304,126 @@ export default function VoiceButton({ mode = 'push-to-talk', onTranscript, onRes
         ? 'audio/webm'
         : 'audio/mp4';
 
-    // Use Web Audio API to check energy — skip silent/noise-only chunks
-    let audioCtx: AudioContext | null = null;
-    let analyser: AnalyserNode | null = null;
-    try {
-      audioCtx = new AudioContext();
-      const source = audioCtx.createMediaStreamSource(stream);
-      analyser = audioCtx.createAnalyser();
-      analyser.fftSize = 256;
-      source.connect(analyser);
-    } catch (_) { /* energy check unavailable, proceed anyway */ }
+    // ── VAD via Web Audio API ─────────────────────────────────────────────
+    // Same approach ElevenLabs uses: monitor RMS energy, gate recording on speech
+    const audioCtx = new AudioContext();
+    wakeWordAudioCtxRef.current = audioCtx;
+    const source = audioCtx.createMediaStreamSource(stream);
+    const analyser = audioCtx.createAnalyser();
+    analyser.fftSize = 512;
+    analyser.smoothingTimeConstant = 0.3;
+    source.connect(analyser);
 
-    const hasSpeechEnergy = (): boolean => {
-      if (!analyser) return true; // fallback: always send if no analyser
+    const VAD_SPEECH_THRESHOLD = 28;   // RMS 0-255: absolute floor
+    const VAD_DELTA_MULTIPLIER = 1.8;  // must be 1.8x above rolling baseline to trigger
+    const VAD_SILENCE_MS = 1500;       // ms of silence before sending
+    const VAD_MIN_SPEECH_MS = 300;     // ignore clips shorter than this
+    const VAD_MAX_SPEECH_MS = 12000;   // max utterance before force-send
+
+    const getRMS = (): number => {
       const buf = new Uint8Array(analyser.frequencyBinCount);
       analyser.getByteFrequencyData(buf);
-      // Average energy of speech-range frequencies (roughly 300Hz–3400Hz)
-      // At fftSize=256 and typical 44100Hz sample rate: bin ≈ freq / (sampleRate/fftSize)
-      const sampleRate = audioCtx?.sampleRate || 44100;
-      const binSize = sampleRate / 256;
-      const lo = Math.floor(300 / binSize);
-      const hi = Math.ceil(3400 / binSize);
       let sum = 0;
-      for (let i = lo; i <= hi && i < buf.length; i++) sum += buf[i];
-      const avg = sum / (hi - lo + 1);
-      return avg > 20; // 0-255 scale; >20 = likely speech
+      for (let i = 0; i < buf.length; i++) sum += buf[i] * buf[i];
+      return Math.sqrt(sum / buf.length);
     };
 
-    const recordChunk = () => {
-      if (!wakeWordLoopRef.current) return;
-      if (!wakeWordStreamRef.current) return;
-      // Don't send while PTT is recording — avoid double-processing
+    // Rolling baseline: tracks ambient noise level so we detect SPIKES not sustained noise
+    let baseline = 0;
+    const BASELINE_ALPHA = 0.02; // slow adaptation — background music settles into baseline
+
+    let recorder: MediaRecorder | null = null;
+    let recordingChunks: Blob[] = [];
+    let speechStart = 0;
+    let lastSpeechMs = 0;
+    let isSpeaking = false;
+
+    const sendSegment = async () => {
+      if (!recorder || recorder.state !== 'recording') return;
+      recorder.stop();
+      // onstop handles sending
+    };
+
+    const vadTick = () => {
+      if (!wakeWordLoopRef.current) {
+        if (recorder?.state === 'recording') recorder.stop();
+        return; // audioCtx closed by stopWakeWordLoop
+      }
       if (isRecordingRef.current) {
-        setTimeout(recordChunk, 1000);
+        // PTT active — pause VAD
+        setTimeout(vadTick, 500);
         return;
       }
 
-      const chunks: Blob[] = [];
-      let recorder: MediaRecorder;
-      let peakEnergy = false;
-      try {
-        recorder = new MediaRecorder(wakeWordStreamRef.current, { mimeType });
-      } catch (_) {
-        wakeWordLoopRef.current = false;
-        return;
+      const rms = getRMS();
+      const now = Date.now();
+
+      // Update rolling baseline only when not speaking (so voice doesn't pollute baseline)
+      if (!isSpeaking) {
+        baseline = baseline === 0 ? rms : baseline * (1 - BASELINE_ALPHA) + rms * BASELINE_ALPHA;
       }
 
-      recorder.ondataavailable = (e) => {
-        if (e.data.size > 0) {
-          chunks.push(e.data);
-          if (!peakEnergy) peakEnergy = hasSpeechEnergy();
-        }
-      };
+      // Trigger: RMS must clear absolute floor AND be a significant spike over baseline
+      const isSpeech = rms > VAD_SPEECH_THRESHOLD && rms > baseline * VAD_DELTA_MULTIPLIER;
 
-      recorder.onstop = async () => {
-        if (!wakeWordLoopRef.current) return;
-        const blob = new Blob(chunks, { type: mimeType });
-        // Only send to ElevenLabs if energy suggests actual speech
-        if (blob.size > 2000 && peakEnergy) {
-          const arrayBuffer = await blob.arrayBuffer();
-          const wbytes = new Uint8Array(arrayBuffer);
-          let base64 = '';
-          const CHUNK = 8192;
-          for (let i = 0; i < wbytes.length; i += CHUNK) {
-            base64 += btoa(String.fromCharCode(...wbytes.subarray(i, i + CHUNK)));
-          }
-          const format = mimeType.includes('webm') ? 'webm' : 'mp4';
-          ipcRenderer?.send('voice:audio-chunk', {
-            audioBase64: base64,
-            format,
-            pushToTalk: false,
-            skipWakeWordCheck: false,
-          });
-        }
-        // Next chunk after gap
-        if (wakeWordLoopRef.current) {
-          setTimeout(recordChunk, 500);
-        }
-      };
+      // Debug: log RMS/baseline every 2s so user can tune threshold in devtools
+      if (Math.round(now / 2000) !== Math.round((now - 80) / 2000)) {
+        console.log(`[VAD] rms=${rms.toFixed(1)} baseline=${baseline.toFixed(1)} threshold=${VAD_SPEECH_THRESHOLD} trigger=${isSpeaking ? 'SPEAKING' : isSpeech ? 'TRIGGER' : 'quiet'}`);
+      }
 
-      recorder.start(200); // collect data every 200ms so energy check fires during recording
-      setTimeout(() => {
-        if (recorder.state === 'recording') recorder.stop();
-      }, 4000); // 4s chunks
+      if (isSpeech) {
+        lastSpeechMs = now;
+        if (!isSpeaking) {
+          // Speech onset — start recording
+          isSpeaking = true;
+          speechStart = now;
+          recordingChunks = [];
+          try {
+            recorder = new MediaRecorder(stream, { mimeType });
+            recorder.ondataavailable = (e) => { if (e.data.size > 0) recordingChunks.push(e.data); };
+            recorder.onstop = async () => {
+              if (!wakeWordLoopRef.current) return;
+              const duration = Date.now() - speechStart;
+              if (duration < VAD_MIN_SPEECH_MS) {
+                console.log('[VoiceButton] VAD: segment too short, skipping');
+                return;
+              }
+              const blob = new Blob(recordingChunks, { type: mimeType });
+              if (blob.size < 4000) return;
+              // Use FileReader for correct single-pass base64 — chunked btoa breaks at padding boundaries
+              const base64 = await new Promise<string>((resolve) => {
+                const reader = new FileReader();
+                reader.onloadend = () => resolve((reader.result as string).split(',')[1]);
+                reader.readAsDataURL(blob);
+              });
+              const format = mimeType.includes('webm') ? 'webm' : 'mp4';
+              console.log('[VoiceButton] VAD: sending speech segment', { ms: duration, bytes: blob.size });
+              ipcRenderer?.send('voice:audio-chunk', {
+                audioBase64: base64,
+                format,
+                pushToTalk: false,
+                skipWakeWordCheck: false,
+              });
+            };
+            recorder.start(100);
+            console.log('[VoiceButton] VAD: speech detected, recording...');
+          } catch (_) { isSpeaking = false; }
+        } else if (now - speechStart > VAD_MAX_SPEECH_MS) {
+          // Force-send after max duration
+          isSpeaking = false;
+          sendSegment();
+        }
+      } else if (isSpeaking && now - lastSpeechMs > VAD_SILENCE_MS) {
+        // Silence after speech — send segment
+        isSpeaking = false;
+        console.log('[VoiceButton] VAD: silence detected, sending segment');
+        sendSegment();
+      }
+
+      setTimeout(vadTick, 80); // poll every 80ms
     };
 
-    recordChunk();
+    vadTick();
   }, []);
 
   // ── Wake word toggle ──────────────────────────────────────────────────────
@@ -348,29 +457,28 @@ export default function VoiceButton({ mode = 'push-to-talk', onTranscript, onRes
 
   // ── Button interaction ────────────────────────────────────────────────────
 
-  const handleMouseDown = (e: React.MouseEvent) => {
+  const handlePointerDown = (e: React.PointerEvent<HTMLButtonElement>) => {
     if (activationMode !== 'push-to-talk') return;
     e.preventDefault();
-    e.stopPropagation(); // prevent parent drag handler from firing
-    if (isHoldingRef.current) return; // already recording — ignore re-fires
+    e.stopPropagation();
+    if (isHoldingRef.current) return;
+    // Capture pointer on the button — keeps pointerup firing on this element
+    // even if the mouse moves off it (e.g. during Electron window drag).
+    (e.currentTarget as HTMLButtonElement).setPointerCapture(e.pointerId);
     isHoldingRef.current = true;
     startRecording();
   };
 
-  const handleMouseUp = (e: React.MouseEvent) => {
+  const handlePointerUp = (e: React.PointerEvent<HTMLButtonElement>) => {
     if (activationMode !== 'push-to-talk') return;
     e.preventDefault();
     e.stopPropagation();
+    (e.currentTarget as HTMLButtonElement).releasePointerCapture(e.pointerId);
     if (isHoldingRef.current) {
       stopRecording();
     }
   };
 
-  const handleMouseLeave = () => {
-    if (activationMode === 'push-to-talk' && isHoldingRef.current) {
-      stopRecording();
-    }
-  };
 
   const handleClick = () => {
     if (activationMode === 'wake-word') {
@@ -461,8 +569,8 @@ export default function VoiceButton({ mode = 'push-to-talk', onTranscript, onRes
       {/* Mic button */}
       <button
         title={title}
-        onMouseDown={isPTT ? handleMouseDown : undefined}
-        onMouseUp={isPTT ? handleMouseUp : undefined}
+        onPointerDown={isPTT ? handlePointerDown : undefined}
+        onPointerUp={isPTT ? handlePointerUp : undefined}
         onClick={!isPTT ? handleClick : undefined}
         onContextMenu={handleRightClick}
         style={{
@@ -494,7 +602,6 @@ export default function VoiceButton({ mode = 'push-to-talk', onTranscript, onRes
             e.currentTarget.style.borderColor = stateBorders.idle;
             e.currentTarget.style.color = stateIconColors.idle;
           }
-          if (isPTT) handleMouseLeave();
         }}
       >
         {/* Pulse ring for listening */}

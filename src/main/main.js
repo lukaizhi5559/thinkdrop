@@ -55,6 +55,19 @@ function startOverlayControlServer() {
           if (promptCaptureWindow && !promptCaptureWindow.isDestroyed()) {
             promptCaptureWindow.webContents.send('voice:inject-prompt', { message, sessionId, source: source || 'voice' });
           }
+          // Reset Results window state for the new voice prompt
+          if (resultsWindow && !resultsWindow.isDestroyed()) {
+            resultsWindow.webContents.send('results-window:set-prompt', message);
+          }
+
+          // Flush stale cancel/pause signals before starting so previous-session
+          // signals don't abort this fresh execution.
+          const _voiceStaleSignals = voiceJournal.readPendingSignals();
+          for (const sig of _voiceStaleSignals) {
+            if (sig.type === 'cancel' || sig.type === 'pause') {
+              voiceJournal.acknowledgeSignal(sig.id);
+            }
+          }
 
           // Run StateGraph synchronously so voice-service gets the answer to TTS
           const voiceAbort = new AbortController();
@@ -62,16 +75,43 @@ function startOverlayControlServer() {
           const tokens = [];
           const streamCallback = (token) => {
             tokens.push(token);
-            // Also stream to renderer in real-time
             if (resultsWindow && !resultsWindow.isDestroyed()) {
               resultsWindow.webContents.send('ws-bridge:message', { type: 'chunk', text: token });
             }
           };
 
+          // Forward automation progress events to Results window (AutomationProgress component)
+          const progressCallback = (evt) => {
+            if (resultsWindow && !resultsWindow.isDestroyed()) {
+              resultsWindow.webContents.send('automation:progress', evt);
+            }
+            if (evt.type === 'all_done' && promptCaptureWindow && !promptCaptureWindow.isDestroyed()) {
+              promptCaptureWindow.webContents.send('automation:progress', evt);
+            }
+          };
+
+          // Install confirmation: show card in Results window, wait for user reply
+          let pendingVoiceInstallResolve = null;
+          const confirmInstallCallback = () => new Promise((resolve) => {
+            pendingVoiceInstallResolve = resolve;
+          });
+          const handleVoiceInstallConfirm = (_e, { confirmed }) => {
+            if (pendingVoiceInstallResolve) {
+              const r = pendingVoiceInstallResolve;
+              pendingVoiceInstallResolve = null;
+              r(confirmed === true);
+            }
+          };
+          ipcMain.on('install:confirm', handleVoiceInstallConfirm);
+
           const initialState = {
             message,
             selectedText: '',
             streamCallback,
+            progressCallback,
+            confirmInstallCallback,
+            confirmGuideCallback: () => Promise.resolve(false),
+            isGuideCancelled: () => false,
             context: {
               sessionId: sessionId || currentSessionId,
               userId: 'voice_inject',
@@ -86,20 +126,26 @@ function startOverlayControlServer() {
 
           let _nodeIdx = 0;
           const onProgress = async (nodeName, _s, durationMs, phase) => {
+            // Activate AutomationProgress in Results window when planning starts
+            if (nodeName === 'planSkills' && phase === 'started') {
+              progressCallback({ type: 'planning' });
+            }
             if (phase !== 'completed') return;
             _nodeIdx++;
             voiceJournal.graphNodeDone({ node: nodeName, durationMs, nodeIndex: _nodeIdx, totalNodes: 0 });
           };
 
           const finalState = await stateGraph.execute(initialState, onProgress, voiceAbort.signal);
+          ipcMain.removeListener('install:confirm', handleVoiceInstallConfirm);
 
           // Persist session
           if (finalState.resolvedSessionId) currentSessionId = finalState.resolvedSessionId;
 
           const answer = finalState.answer || tokens.join('') || '';
+          const intent = finalState?.intent?.type || 'unknown';
 
           voiceJournal.graphDone({
-            intent: finalState?.intent?.type || 'unknown',
+            intent,
             summary: answer.substring(0, 120),
           });
 
@@ -109,7 +155,7 @@ function startOverlayControlServer() {
           }
 
           res.writeHead(200);
-          res.end(JSON.stringify({ ok: true, answer, intent: finalState?.intent?.type }));
+          res.end(JSON.stringify({ ok: true, answer, intent, hadLiveStream: tokens.length > 0 }));
         } catch (err) {
           console.error('[VoiceInject] Error:', err.message);
           voiceJournal.graphError({ intent: 'unknown', error: err.message });
@@ -338,6 +384,7 @@ function createPromptCaptureWindow() {
       nodeIntegration: false,
       contextIsolation: true,
       preload: path.join(__dirname, 'preload.js'),
+      backgroundThrottling: false, // keep AudioContext alive when window is hidden/unfocused
     },
   });
 
@@ -362,9 +409,8 @@ function createPromptCaptureWindow() {
   promptCaptureWindow.webContents.on('did-finish-load', () => {
     console.log('[PROMPT_CAPTURE] Content finished loading.');
     console.log('[PROMPT_CAPTURE] isVisible:', promptCaptureWindow.isVisible());
-    
-    // Open DevTools for debugging
-    // promptCaptureWindow.webContents.openDevTools({ mode: 'detach' });
+    promptCaptureWindow.webContents.setAudioMuted(false); // ensure audio output is enabled
+    // promptCaptureWindow.webContents.openDevTools({ mode: 'detach' }); // open devtools for voice debugging
     console.log('[PROMPT_CAPTURE] isDestroyed:', promptCaptureWindow.isDestroyed());
   });
 
@@ -424,6 +470,7 @@ function createResultsWindow() {
       nodeIntegration: false,
       contextIsolation: true,
       preload: path.join(__dirname, 'preload.js'),
+      backgroundThrottling: false,
     },
   });
 
@@ -695,14 +742,16 @@ app.whenReady().then(async () => {
   });
 
   // voice:audio-chunk — renderer sends base64 audio for processing
-  let _voiceChunkProcessing = false; // guard against concurrent processing
+  let _voiceChunkActive = 0; // count of concurrent voice chunk processings
   ipcMain.on('voice:audio-chunk', async (event, { audioBase64, format = 'webm', pushToTalk = true, sessionId = null }) => {
     console.log(`🎙️ [Voice] Audio chunk received (${format}, ${audioBase64?.length || 0} b64 chars)`);
-    if (_voiceChunkProcessing) {
-      console.log('🎙️ [Voice] Already processing a chunk — skipping duplicate');
+    // For PTT: drop duplicates (shouldn't overlap). For wake word: allow up to 2 concurrent.
+    const maxConcurrent = pushToTalk ? 1 : 2;
+    if (_voiceChunkActive >= maxConcurrent) {
+      console.log(`🎙️ [Voice] Skipping chunk — ${_voiceChunkActive} already in flight`);
       return;
     }
-    _voiceChunkProcessing = true;
+    _voiceChunkActive++;
 
     const wins = [promptCaptureWindow, resultsWindow];
 
@@ -727,9 +776,19 @@ app.whenReady().then(async () => {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) },
         }, (res) => {
-          let data = '';
-          res.on('data', chunk => { data += chunk; });
-          res.on('end', () => { try { resolve(JSON.parse(data)); } catch (_) { resolve({}); } });
+          const chunks = [];
+          res.on('data', chunk => { chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)); });
+          res.on('end', () => {
+            try {
+              const respBody = Buffer.concat(chunks).toString('utf8');
+              const parsed = JSON.parse(respBody);
+              console.log(`🎙️ [Voice] Raw response keys: ${Object.keys(parsed).join(',')}, dataKeys: ${parsed.data ? Object.keys(parsed.data).join(',') : 'no-data'}, bodyLen: ${respBody.length}`);
+              resolve(parsed);
+            } catch (e) {
+              console.error('🎙️ [Voice] JSON parse error:', e.message);
+              resolve({});
+            }
+          });
         });
         req.on('error', reject);
         req.setTimeout(180000, () => req.destroy(new Error('Voice process timeout')));
@@ -740,11 +799,33 @@ app.whenReady().then(async () => {
       const result = response.data || response;
       console.log(`🎙️ [Voice] Pipeline result: lane=${result.lane}, hasAudio=${!!result.audioBase64}, skipped=${result.skipped}, reason=${result.reason || ''}, transcript=${result.transcript?.substring(0,40) || ''}`);
 
-      if (result.transcript) {
+      // Only show transcript in UI when actually processed (not noise-filtered/skipped)
+      if (result.transcript && !result.skipped) {
         for (const win of wins) {
           if (win && !win.isDestroyed()) {
             win.webContents.send('voice:transcript', { text: result.transcript, language: result.detectedLanguage });
           }
+        }
+      }
+
+      // Forward responses to Results window:
+      // - stategraph: full answer (if not already streamed live during execution)
+      // - fast: response text (butler reply — show so user can read what was spoken)
+      if (result.lane === 'stategraph' && result.fullAnswer && !result._hadLiveStream) {
+        if (resultsWindow && !resultsWindow.isDestroyed()) {
+          if (result.transcript) resultsWindow.webContents.send('results-window:set-prompt', result.transcript);
+          resultsWindow.showInactive();
+          resultsWindow.moveTop();
+          resultsWindow.webContents.send('ws-bridge:message', { type: 'chunk', text: result.fullAnswer });
+          resultsWindow.webContents.send('ws-bridge:message', { type: 'done' });
+        }
+      } else if (result.lane === 'fast' && result.responseEnglish && !result.skipped) {
+        if (resultsWindow && !resultsWindow.isDestroyed()) {
+          if (result.transcript) resultsWindow.webContents.send('results-window:set-prompt', result.transcript);
+          resultsWindow.showInactive();
+          resultsWindow.moveTop();
+          resultsWindow.webContents.send('ws-bridge:message', { type: 'chunk', text: result.responseEnglish });
+          resultsWindow.webContents.send('ws-bridge:message', { type: 'done' });
         }
       }
 
@@ -754,6 +835,7 @@ app.whenReady().then(async () => {
           if (win && !win.isDestroyed()) {
             win.webContents.send('voice:response', {
               text: result.responseFinal || result.responseEnglish || '',
+              fullAnswer: result.fullAnswer || '',
               audioBase64: result.audioBase64,
               audioFormat: result.audioFormat || 'mp3',
               language: result.detectedLanguage,
@@ -775,7 +857,7 @@ app.whenReady().then(async () => {
         }
       }
     } finally {
-      _voiceChunkProcessing = false;
+      _voiceChunkActive = Math.max(0, _voiceChunkActive - 1);
     }
   });
 
@@ -892,7 +974,14 @@ app.whenReady().then(async () => {
         pendingGuideResolve = null;
         resolve(false);
       }
-      // Unblock waitForTrigger and clear all overlays from the page.
+      // Abort the entire stateGraph run immediately — this unblocks any pending MCP call
+      // including guide.step's long-poll regardless of whether a browser session is open.
+      if (activeAbortController) {
+        console.log('[GuideStep] Aborting active stateGraph run via AbortController');
+        activeAbortController.abort();
+        activeAbortController = null;
+      }
+      // Also try to unblock browser-based guide triggers if a session is open
       if (currentBrowserSessionId) {
         const cancelUrl = `http://127.0.0.1:3007/command.automate`;
         // 1. Call __tdTrigger to unblock the Promise
@@ -907,6 +996,10 @@ app.whenReady().then(async () => {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ skill: 'browser.act', args: { action: 'highlight', sessionId: currentBrowserSessionId, clear: true } })
         }).catch(() => {});
+      }
+      // Notify UI that automation was cancelled
+      if (resultsWindow && !resultsWindow.isDestroyed()) {
+        resultsWindow.webContents.send('automation:progress', { type: 'all_done', cancelled: true, completedCount: 0, totalCount: 0 });
       }
     };
     ipcMain.on('guide:continue', handleGuideContinue);
@@ -1081,7 +1174,17 @@ app.whenReady().then(async () => {
 
       activeAbortController = new AbortController();
 
+      // Flush any stale cancel/pause signals before starting — a cancel from a
+      // previous run should never abort a fresh execution.
+      const _staleSignals = voiceJournal.readPendingSignals();
+      for (const sig of _staleSignals) {
+        if (sig.type === 'cancel' || sig.type === 'pause') {
+          voiceJournal.acknowledgeSignal(sig.id);
+        }
+      }
+
       // ── Voice Journal: report start + per-node progress ──────────────────────
+      const _runStartedAt = Date.now(); // signals older than this are from a previous context
       voiceJournal.graphStarted({
         intent: initialState?.intent?.type || initialState?.intent || 'unknown',
         sessionId: initialState?.context?.sessionId || initialState?.sessionId || null,
@@ -1094,9 +1197,18 @@ app.whenReady().then(async () => {
         voiceJournal.graphNodeDone({ node: nodeName, durationMs, nodeIndex: _journalNodeIndex, totalNodes: 0 });
 
         // Check for pending voice signals (cancel/pause/inject)
+        // Only honor signals written AFTER this run started — prevents concurrent VAD
+        // audio chunks from cancelling a stategraph run with background noise signals.
         const signals = voiceJournal.readPendingSignals();
         for (const sig of signals) {
+          const sigAge = Date.now() - new Date(sig.ts).getTime();
+          const sigWrittenAfterRunStart = new Date(sig.ts).getTime() >= _runStartedAt;
           if (sig.type === 'cancel') {
+            if (!sigWrittenAfterRunStart) {
+              console.log('[VoiceJournal] Ignoring stale cancel signal (predates this run)', { sigAge });
+              voiceJournal.acknowledgeSignal(sig.id);
+              continue;
+            }
             console.log('[VoiceJournal] Cancel signal received — aborting StateGraph');
             activeAbortController && activeAbortController.abort();
             voiceJournal.acknowledgeSignal(sig.id);
