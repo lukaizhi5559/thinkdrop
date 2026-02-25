@@ -764,9 +764,14 @@ app.whenReady().then(async () => {
           // "Done, I clicked it" — user confirmed a manual step; advance cursor like skip
           const wantsDone = /\b(done|clicked|confirmed|complete|finished)\b/i.test(chosenOption);
           if (wantsAbort) {
-            // User wants to abort — clear state and let it fall through as a fresh prompt
-            console.log('[StateGraph] ASK_USER resume: user chose abort — clearing paused state');
-            initialState = { message: prompt, selectedText, streamCallback, progressCallback, confirmInstallCallback, confirmGuideCallback, isGuideCancelled, activeBrowserSessionId: currentBrowserSessionId || null, activeBrowserUrl: currentBrowserUrl || null, context: { sessionId: sessionId || currentSessionId, userId, source: 'thinkdrop_electron' } };
+            // User wants to abort — notify and return immediately, do NOT re-run the graph
+            console.log('[StateGraph] ASK_USER resume: user chose abort — stopping, not replanning');
+            if (typeof streamCallback === 'function') {
+              streamCallback('Operation cancelled.');
+            } else if (typeof progressCallback === 'function') {
+              progressCallback({ type: 'step_done', skill: 'cancel', description: 'Operation cancelled.' });
+            }
+            return { success: true, aborted: true };
           } else if (wantsSkip || wantsDone) {
             // Skip the failed step / user confirmed manual action — advance cursor and resume plan
             console.log('[StateGraph] ASK_USER resume: user chose skip/done — advancing cursor and resuming plan');

@@ -587,11 +587,6 @@ export default function ResultsWindow() {
         {renderInstallCard()}
         {renderActionChips()}
 
-        {!isThinking && !streamingResponse && !isAutomationMode && !installPrompt && !isInstalling && (
-          <div className="text-gray-400 text-sm text-center">
-            Waiting for response...
-          </div>
-        )}
       </div>
     );
   };
@@ -751,36 +746,36 @@ export default function ResultsWindow() {
             </div>
           )}
 
-          {/* Bridge listener status banner — watching/executing */}
+          {/* Bridge listener status banner — collapsed pill when watching, full banner when executing */}
           {bridgeStatus && bridgeStatus.state !== 'stopped' && (
-            <div style={{
-              marginBottom: 10,
-              padding: '7px 10px',
-              borderRadius: 8,
-              backgroundColor: bridgeStatus.state === 'executing' ? 'rgba(59,130,246,0.08)' : 'rgba(16,185,129,0.06)',
-              border: `1px solid ${bridgeStatus.state === 'executing' ? 'rgba(59,130,246,0.25)' : 'rgba(16,185,129,0.2)'}`,
-              display: 'flex',
-              alignItems: 'center',
-              gap: 8,
-            }}>
-              {bridgeStatus.state === 'executing' ? (
+            bridgeStatus.state === 'executing' ? (
+              <div style={{
+                marginBottom: 10,
+                padding: '7px 10px',
+                borderRadius: 8,
+                backgroundColor: 'rgba(59,130,246,0.08)',
+                border: '1px solid rgba(59,130,246,0.25)',
+                display: 'flex',
+                alignItems: 'center',
+                gap: 8,
+              }}>
                 <div style={{ width: 7, height: 7, borderRadius: '50%', backgroundColor: '#3b82f6', flexShrink: 0, animation: 'pulse 1.5s ease-in-out infinite' }} />
-              ) : (
-                <div style={{ width: 7, height: 7, borderRadius: '50%', backgroundColor: '#10b981', flexShrink: 0, boxShadow: '0 0 5px rgba(16,185,129,0.6)' }} />
-              )}
-              <div style={{ flex: 1, minWidth: 0 }}>
-                {bridgeStatus.state === 'executing' ? (
-                  <span style={{ color: '#93c5fd', fontSize: '0.7rem', fontWeight: 500 }}>
-                    Bridge executing: <span style={{ color: '#e5e7eb', fontWeight: 400 }}>{bridgeStatus.summary || 'running task...'}</span>
-                  </span>
-                ) : (
-                  <span style={{ color: '#6ee7b7', fontSize: '0.7rem', fontWeight: 500 }}>
-                    Bridge watching
-                    <span style={{ color: '#6b7280', fontWeight: 400 }}> — ready for instructions from any IDE</span>
-                  </span>
-                )}
+                <span style={{ color: '#93c5fd', fontSize: '0.7rem', fontWeight: 500 }}>
+                  Bridge executing: <span style={{ color: '#e5e7eb', fontWeight: 400 }}>{bridgeStatus.summary || 'running task...'}</span>
+                </span>
               </div>
-            </div>
+            ) : (
+              <div style={{
+                marginBottom: 8,
+                display: 'flex',
+                alignItems: 'center',
+                gap: 5,
+                opacity: 0.45,
+              }}>
+                <div style={{ width: 5, height: 5, borderRadius: '50%', backgroundColor: '#10b981', flexShrink: 0 }} />
+                <span style={{ color: '#6b7280', fontSize: '0.65rem' }}>Bridge watching</span>
+              </div>
+            )
           )}
 
           {/* AutomationProgress is always mounted so its IPC listener is pre-registered */}

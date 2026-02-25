@@ -438,11 +438,11 @@ export default function StandalonePromptCapture() {
                   height: '24px',
                   borderRadius: '4px',
                   backgroundColor: isProcessing
-                    ? 'rgba(239, 68, 68, 0.15)'
+                    ? 'rgba(255, 255, 255, 0.07)'
                     : (promptText.trim() || highlights.length > 0) ? 'rgba(59, 130, 246, 0.2)' : 'rgba(255, 255, 255, 0.05)',
                   border: '1px solid',
                   borderColor: isProcessing
-                    ? 'rgba(239, 68, 68, 0.35)'
+                    ? 'rgba(255, 255, 255, 0.15)'
                     : (promptText.trim() || highlights.length > 0) ? 'rgba(59, 130, 246, 0.3)' : 'rgba(255, 255, 255, 0.1)',
                   flexShrink: 0,
                   marginTop: '2px',
@@ -454,7 +454,7 @@ export default function StandalonePromptCapture() {
               >
                 {isProcessing ? (
                   /* Stop square — like ChatGPT/Windsurf cancel */
-                  <svg width="10" height="10" viewBox="0 0 10 10" fill="#f87171">
+                  <svg width="10" height="10" viewBox="0 0 10 10" fill="#9ca3af">
                     <rect x="0" y="0" width="10" height="10" rx="2" />
                   </svg>
                 ) : (

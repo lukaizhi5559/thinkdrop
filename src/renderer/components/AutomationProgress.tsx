@@ -161,7 +161,7 @@ export default function AutomationProgress({ onHeightChange, onActiveChange }: A
   // Notify parent when we become active/inactive
   // Only active during planning/executing — done/failed/idle should NOT keep the glow on
   useEffect(() => {
-    onActiveChange?.(phase === 'planning' || phase === 'executing');
+    onActiveChange?.(phase !== 'idle');
   }, [phase]);
 
   useEffect(() => {
@@ -484,7 +484,7 @@ export default function AutomationProgress({ onHeightChange, onActiveChange }: A
 
       {/* ── Step list ────────────────────────────────────────────────────── */}
       {steps.length > 0 && (
-        <div className="space-y-2">
+        <div className="space-y-2" style={{ maxHeight: 340, overflowY: 'auto', overflowX: 'hidden' }}>
           {steps.map((step) => {
             const isSynthesize = step.skill === 'synthesize';
             const hasOutput = isSynthesize
@@ -592,7 +592,7 @@ export default function AutomationProgress({ onHeightChange, onActiveChange }: A
                               border: '1px solid rgba(255,255,255,0.08)',
                               color: '#d1fae5',
                               fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
-                              maxHeight: '200px',
+                              maxHeight: '160px',
                               overflowY: 'auto',
                             }}>
                             {step.stdout.trim()}
