@@ -1,3 +1,4 @@
+// Entry point — ThinkDrop managed
 require('dotenv').config();
 const { app, BrowserWindow, ipcMain, screen, globalShortcut, clipboard } = require('electron');
 const screenshot = require('screenshot-desktop');
@@ -61,6 +62,7 @@ function startOverlayControlServer() {
 // StateGraph integration
 const { StateGraphBuilder, RealMCPAdapter, VSCodeLLMBackend } = require('@thinkdrop/stategraph');
 const ThinkDropMCPClient = require('./ThinkDropMCPClient');
+const scheduler = require('./scheduler');
 
 // Singleton StateGraph instance (created once on app ready)
 let stateGraph = null;
@@ -68,6 +70,12 @@ let mcpClient = null;
 let mcpAdapter = null;
 let llmBackend = null;
 let currentSessionId = null; // Persists across prompts for conversation continuity
+let currentBrowserSessionId = null; // Persists active Playwright session across prompts
+let currentBrowserUrl = null;        // Last known URL in the active Playwright session
+
+// Active schedule countdown — set when a schedule step is running, cleared when done/cancelled
+// Used to warn the user before closing the app mid-countdown
+let activeScheduleCountdown = null; // { id, targetTime, label }
 
 function initStateGraph() {
   try {
@@ -427,8 +435,112 @@ app.whenReady().then(async () => {
   // Connect to VS Code extension (kept for legacy/fallback)
   setTimeout(() => connectToSocket(), 1000);
 
+  // ── Persistent schedule: check on startup ──────────────────────────────────
+  // Case 1: App was launched BY launchd for a scheduled task.
+  //         Run the skill plan immediately — no user confirmation needed.
+  // Case 2: App was already open (normal launch) and a pending schedule exists.
+  //         Show a non-blocking notification banner in ResultsWindow.
+  const launchedScheduleId = scheduler.getLaunchedScheduleId();
+  if (launchedScheduleId) {
+    console.log(`[Scheduler] App launched by launchd for schedule: ${launchedScheduleId}`);
+    const pending = scheduler.readPendingSchedule();
+    if (pending && pending.id === launchedScheduleId && Array.isArray(pending.skillPlan) && pending.skillPlan.length > 0) {
+      console.log(`[Scheduler] Auto-running scheduled task: "${pending.label}"`);
+      scheduler.clearPendingSchedule(pending.id);
+      // Wait for windows + stategraph to be ready, then fire the plan directly
+      setTimeout(() => {
+        if (!stateGraph) { console.warn('[Scheduler] StateGraph not ready for scheduled task'); return; }
+        if (resultsWindow && !resultsWindow.isDestroyed()) {
+          resultsWindow.webContents.send('results-window:set-prompt', pending.prompt || pending.label);
+          resultsWindow.showInactive();
+          resultsWindow.moveTop();
+        }
+        const progressCallback = (event) => {
+          if (resultsWindow && !resultsWindow.isDestroyed()) {
+            resultsWindow.webContents.send('automation:progress', event);
+          }
+          if (event.type === 'all_done' && promptCaptureWindow && !promptCaptureWindow.isDestroyed()) {
+            promptCaptureWindow.webContents.send('automation:progress', event);
+          }
+        };
+        // Inject plan directly into stategraph as command_automate with pre-built skillPlan
+        stateGraph.invoke({
+          message: pending.prompt || pending.label,
+          intent: { type: 'command_automate' },
+          skillPlan: pending.skillPlan,
+          skillCursor: 0,
+          skillResults: [],
+          progressCallback,
+          mcpAdapter,
+          activeBrowserSessionId: null,
+          activeBrowserUrl: null,
+          context: { userId: 'default_user', source: 'scheduled_task' },
+        }).catch(err => console.error('[Scheduler] Auto-run failed:', err.message));
+      }, 3000); // wait 3s for stategraph + MCP services to be ready
+    } else {
+      console.warn('[Scheduler] Launched for schedule but no matching pending record found — starting normally');
+      scheduler.clearPendingSchedule(launchedScheduleId);
+    }
+  } else {
+    // Normal launch — check if a pending schedule was registered while app was closed
+    const pending = scheduler.readPendingSchedule();
+    if (pending) {
+      const targetStr = new Date(pending.targetMs).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+      console.log(`[Scheduler] Pending schedule found: "${pending.label}" at ${targetStr}`);
+      // Send notification to ResultsWindow once it's loaded
+      const notifyPending = () => {
+        if (resultsWindow && !resultsWindow.isDestroyed()) {
+          resultsWindow.webContents.send('schedule:pending', {
+            id: pending.id,
+            label: pending.label,
+            targetTime: targetStr,
+            prompt: pending.prompt,
+          });
+        }
+      };
+      // Delay until ResultsWindow content is loaded
+      if (resultsWindow) {
+        resultsWindow.webContents.once('did-finish-load', () => setTimeout(notifyPending, 500));
+      }
+    }
+  }
+
+  // Track active schedule countdown state via progress events (for close warning)
+  // Intercept progressCallback globally by monkey-patching at IPC level
+  ipcMain.on('schedule:activity', (_event, data) => {
+    if (data.type === 'schedule_start') {
+      activeScheduleCountdown = { id: data.scheduleId || 'unknown', targetTime: data.targetTime, label: data.label };
+    } else if (data.type === 'schedule_done' || data.type === 'schedule_cancel') {
+      activeScheduleCountdown = null;
+    }
+  });
+
+  // Dismiss a pending schedule notification (user saw it, task will still run via launchd)
+  ipcMain.on('schedule:dismiss', (_event, { id }) => {
+    console.log(`[Scheduler] User dismissed pending schedule notification: ${id}`);
+    // Don't clear the launchd plist — launchd will still fire at the right time
+    // Just remove the notification JSON so it doesn't show again on next normal launch
+    scheduler.clearPendingSchedule(id);
+  });
+
   // Paused automation state — set when recoverSkill returns ASK_USER, cleared on resume or abort
   let pausedAutomationState = null;
+  let activeAbortController = null; // AbortController for the currently running stateGraph.execute
+
+  // ─── Automation: Cancel active run ───────────────────────────────────────
+  ipcMain.on('automation:cancel', () => {
+    console.log('🛑 [Automation] Cancel requested by user');
+    if (activeAbortController) {
+      activeAbortController.abort();
+      activeAbortController = null;
+    }
+    if (resultsWindow && !resultsWindow.isDestroyed()) {
+      resultsWindow.webContents.send('automation:progress', { type: 'all_done', cancelled: true, completedCount: 0, totalCount: 0 });
+    }
+    if (promptCaptureWindow && !promptCaptureWindow.isDestroyed()) {
+      promptCaptureWindow.webContents.send('automation:progress', { type: 'all_done', cancelled: true, completedCount: 0, totalCount: 0 });
+    }
+  });
 
   // ─── StateGraph: Process prompt through full pipeline ────────────────────
   ipcMain.on('stategraph:process', async (event, { prompt, selectedText = '', sessionId = null, userId = 'default_user' }) => {
@@ -471,6 +583,14 @@ app.whenReady().then(async () => {
         ? JSON.stringify({ type: event.type, completedCount: event.completedCount, totalCount: event.totalCount, savedFilePaths: event.savedFilePaths })
         : JSON.stringify(event).substring(0, 120);
       console.log(`[ProgressCallback] Event: ${event.type}`, logStr);
+      // Track active schedule countdown for close warning
+      if (event.type === 'schedule_start') {
+        activeScheduleCountdown = { id: event.scheduleId || 'unknown', targetTime: event.targetTime, label: event.label };
+      } else if (event.type === 'step_done' && event.skill === 'schedule') {
+        activeScheduleCountdown = null;
+      } else if (event.type === 'all_done') {
+        activeScheduleCountdown = null;
+      }
       if (resultsWindow && !resultsWindow.isDestroyed()) {
         resultsWindow.webContents.send('automation:progress', event);
       } else {
@@ -513,6 +633,66 @@ app.whenReady().then(async () => {
       });
     };
 
+    // Guide continue/cancel callbacks: pauses the plan until the user clicks
+    // "Continue" or "Stop Guide" in the guide step card.
+    let pendingGuideResolve = null;
+    let guideCancelled = false;
+    const handleGuideContinue = (_event) => {
+      console.log('[GuideStep] IPC received: guide:continue');
+      if (pendingGuideResolve) {
+        const resolve = pendingGuideResolve;
+        pendingGuideResolve = null;
+        resolve(true);
+      } else {
+        console.warn('[GuideStep] Received guide:continue but no pending resolve — ignoring');
+      }
+    };
+    const handleGuideCancel = (_event) => {
+      console.log('[GuideStep] IPC received: guide:cancel — aborting current guide');
+      guideCancelled = true;
+      if (pendingGuideResolve) {
+        const resolve = pendingGuideResolve;
+        pendingGuideResolve = null;
+        resolve(false);
+      }
+      // Unblock waitForTrigger and clear all overlays from the page.
+      if (currentBrowserSessionId) {
+        const cancelUrl = `http://127.0.0.1:3007/command.automate`;
+        // 1. Call __tdTrigger to unblock the Promise
+        fetch(cancelUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ skill: 'browser.act', args: { action: 'evaluate', sessionId: currentBrowserSessionId, expression: 'if (typeof window.__tdTrigger === "function") window.__tdTrigger(); true' } })
+        }).catch(() => {});
+        // 2. Clear all ThinkDrop overlays from the page
+        fetch(cancelUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ skill: 'browser.act', args: { action: 'highlight', sessionId: currentBrowserSessionId, clear: true } })
+        }).catch(() => {});
+      }
+    };
+    ipcMain.on('guide:continue', handleGuideContinue);
+    ipcMain.on('guide:cancel', handleGuideCancel);
+
+    const isGuideCancelled = () => guideCancelled;
+
+    const confirmGuideCallback = () => {
+      return new Promise((resolve) => {
+        if (guideCancelled) { resolve(false); return; }
+        pendingGuideResolve = resolve;
+        console.log('[GuideStep] Waiting for user to click Continue...');
+        // 5-minute timeout — auto-continue if user never responds
+        setTimeout(() => {
+          if (pendingGuideResolve === resolve) {
+            console.warn('[GuideStep] Timed out waiting for Continue — auto-continuing');
+            pendingGuideResolve = null;
+            resolve(true);
+          }
+        }, 5 * 60 * 1000);
+      });
+    };
+
     try {
       // If there's a paused automation waiting for user input, resume it
       let initialState;
@@ -533,7 +713,7 @@ app.whenReady().then(async () => {
         if (isFreshPrompt) {
           console.log('[StateGraph] ASK_USER resume: new prompt looks like a fresh request — clearing paused state and processing fresh');
           pausedAutomationState = null;
-          initialState = { message: prompt, selectedText, streamCallback, progressCallback, confirmInstallCallback, context: { sessionId: sessionId || currentSessionId, userId, source: 'thinkdrop_electron' } };
+          initialState = { message: prompt, selectedText, streamCallback, progressCallback, confirmInstallCallback, confirmGuideCallback, isGuideCancelled, activeBrowserSessionId: currentBrowserSessionId || null, activeBrowserUrl: currentBrowserUrl || null, context: { sessionId: sessionId || currentSessionId, userId, source: 'thinkdrop_electron' } };
         } else {
           pausedAutomationState = null;
           const q = paused.pendingQuestion;
@@ -545,6 +725,40 @@ app.whenReady().then(async () => {
               chosenOption = q.options[idx];
             }
           }
+
+          // ── Guide offer re-entry ─────────────────────────────────────────────
+          // When the answer node surfaced a guide offer (_isGuideOffer) and the
+          // user picked one of the first two options (walk-through or together),
+          // re-enter the graph as command_automate with carriedIntent so parseIntent
+          // is bypassed and planSkills generates a guide.step / api_suggest plan.
+          if (q?._isGuideOffer) {
+            const wantsGuide = !/no thanks/i.test(chosenOption) && !/enough/i.test(chosenOption);
+            if (wantsGuide) {
+              const originalMsg = q._guideContext || paused.message || prompt;
+              // Prefix the chosen option so the LLM knows the user's preference
+              const guideMessage = `${chosenOption}: ${originalMsg}`;
+              console.log(`[StateGraph] Guide offer accepted: "${chosenOption}" — re-entering as command_automate for: "${originalMsg}"`);
+              initialState = {
+                message: guideMessage,
+                selectedText,
+                streamCallback,
+                progressCallback,
+                confirmInstallCallback,
+                confirmGuideCallback,
+                carriedIntent: 'command_automate',
+                activeBrowserSessionId: currentBrowserSessionId || null,
+                activeBrowserUrl: currentBrowserUrl || null,
+                context: { sessionId: sessionId || currentSessionId, userId, source: 'thinkdrop_electron' }
+              };
+            } else {
+              // User declined — treat as fresh prompt
+              console.log('[StateGraph] Guide offer declined — clearing paused state');
+              initialState = { message: prompt, selectedText, streamCallback, progressCallback, confirmInstallCallback, confirmGuideCallback, isGuideCancelled, activeBrowserSessionId: currentBrowserSessionId || null, activeBrowserUrl: currentBrowserUrl || null, context: { sessionId: sessionId || currentSessionId, userId, source: 'thinkdrop_electron' } };
+            }
+            // Skip the rest of the resume logic
+            // (fall through to stateGraph.execute below)
+          } else {
+
           const wantsAbort = /\b(abort|cancel|stop)\b/i.test(chosenOption) || /^no$/i.test(chosenOption.trim());
           const wantsSkip = /skip/i.test(chosenOption);
           // "Done, I clicked it" — user confirmed a manual step; advance cursor like skip
@@ -552,7 +766,7 @@ app.whenReady().then(async () => {
           if (wantsAbort) {
             // User wants to abort — clear state and let it fall through as a fresh prompt
             console.log('[StateGraph] ASK_USER resume: user chose abort — clearing paused state');
-            initialState = { message: prompt, selectedText, streamCallback, progressCallback, confirmInstallCallback, context: { sessionId: sessionId || currentSessionId, userId, source: 'thinkdrop_electron' } };
+            initialState = { message: prompt, selectedText, streamCallback, progressCallback, confirmInstallCallback, confirmGuideCallback, isGuideCancelled, activeBrowserSessionId: currentBrowserSessionId || null, activeBrowserUrl: currentBrowserUrl || null, context: { sessionId: sessionId || currentSessionId, userId, source: 'thinkdrop_electron' } };
           } else if (wantsSkip || wantsDone) {
             // Skip the failed step / user confirmed manual action — advance cursor and resume plan
             console.log('[StateGraph] ASK_USER resume: user chose skip/done — advancing cursor and resuming plan');
@@ -562,6 +776,8 @@ app.whenReady().then(async () => {
               streamCallback,
               progressCallback,
               confirmInstallCallback,
+              confirmGuideCallback,
+              isGuideCancelled,
               failedStep: null,
               pendingQuestion: null,
               recoveryAction: null,
@@ -580,6 +796,8 @@ app.whenReady().then(async () => {
               streamCallback,
               progressCallback,
               confirmInstallCallback,
+              confirmGuideCallback,
+              isGuideCancelled,
               failedStep: null,
               pendingQuestion: null,
               recoveryAction: 'replan',
@@ -598,6 +816,7 @@ app.whenReady().then(async () => {
               context: { ...paused.context, sessionId: sessionId || currentSessionId }
             };
           }
+          } // end non-guide-offer branch
         }
       } else {
         initialState = {
@@ -606,6 +825,10 @@ app.whenReady().then(async () => {
           streamCallback,
           progressCallback,
           confirmInstallCallback,
+          confirmGuideCallback,
+          isGuideCancelled,
+          activeBrowserSessionId: currentBrowserSessionId || null,
+          activeBrowserUrl: currentBrowserUrl || null,
           context: {
             sessionId: sessionId || currentSessionId,
             userId,
@@ -614,33 +837,47 @@ app.whenReady().then(async () => {
         };
       }
 
-      const finalState = await stateGraph.execute(initialState);
+      activeAbortController = new AbortController();
+      const finalState = await stateGraph.execute(initialState, null, activeAbortController.signal);
+      activeAbortController = null;
 
       // Persist resolved session for next prompt
       if (finalState.resolvedSessionId) {
         currentSessionId = finalState.resolvedSessionId;
       }
 
+      // Persist active browser session so follow-up prompts reuse the same Playwright tab.
+      // If recoverSkill cleared it (browser was closed), reset so next prompt starts fresh.
+      if (finalState.activeBrowserSessionId) {
+        currentBrowserSessionId = finalState.activeBrowserSessionId;
+        currentBrowserUrl = finalState.activeBrowserUrl || currentBrowserUrl;
+        console.log(`[StateGraph] Persisted browser session: ${currentBrowserSessionId} @ ${currentBrowserUrl}`);
+      } else if ('activeBrowserSessionId' in finalState && finalState.activeBrowserSessionId === null) {
+        console.log(`[StateGraph] Browser session cleared (was: ${currentBrowserSessionId}) — next prompt will open a new tab`);
+        currentBrowserSessionId = null;
+        currentBrowserUrl = null;
+      }
+
       // For command_automate, AutomationProgress handles the display via automation:progress events.
-      // Only forward pendingQuestion (recoverSkill ASK_USER) since that requires user interaction.
+      // Also forward pendingQuestion for web_search/general_knowledge/screen_intelligence when
+      // the answer node appended a guide offer (_isGuideOffer).
       const intentType = finalState.intent?.type;
-      if (intentType === 'command_automate') {
-        if (finalState.pendingQuestion?.question) {
-          // Persist the full state so the next user reply can resume the paused plan
-          pausedAutomationState = finalState;
-          console.log('[StateGraph] ASK_USER: pausing automation — next prompt will resume the plan');
-          const q = finalState.pendingQuestion;
-          // Send a structured ask_user event so the UI can render clickable option buttons
-          if (resultsWindow && !resultsWindow.isDestroyed()) {
-            resultsWindow.webContents.send('automation:progress', {
-              type: 'ask_user',
-              question: q.question,
-              options: q.options || []
-            });
-          }
+      if (finalState.pendingQuestion?.question) {
+        // Persist the full state so the next user reply can resume / re-enter
+        pausedAutomationState = finalState;
+        console.log(`[StateGraph] ASK_USER (${intentType}): pausing — next prompt will resume`);
+        const q = finalState.pendingQuestion;
+        if (resultsWindow && !resultsWindow.isDestroyed()) {
+          resultsWindow.webContents.send('automation:progress', {
+            type: 'ask_user',
+            question: q.question,
+            options: q.options || []
+          });
         }
+      }
+      if (intentType === 'command_automate') {
         // Plan error not caught by progressCallback (e.g. no skillPlan at all)
-        else if (finalState.planError && !finalState.skillPlan) {
+        if (finalState.planError && !finalState.skillPlan && !finalState.pendingQuestion) {
           if (resultsWindow && !resultsWindow.isDestroyed()) {
             resultsWindow.webContents.send('automation:progress', { type: 'plan_error', error: finalState.planError });
           }
@@ -682,9 +919,13 @@ app.whenReady().then(async () => {
         resultsWindow.webContents.send('ws-bridge:error', err.message);
       }
     } finally {
-      // Always clean up the install:confirm listener to prevent accumulation across runs
+      // Always clean up the install:confirm and guide:continue/cancel listeners to prevent accumulation across runs
       ipcMain.removeListener('install:confirm', handleInstallConfirm);
+      ipcMain.removeListener('guide:continue', handleGuideContinue);
+      ipcMain.removeListener('guide:cancel', handleGuideCancel);
       pendingInstallResolve = null;
+      pendingGuideResolve = null;
+      guideCancelled = false;
     }
   });
 
@@ -847,21 +1088,31 @@ app.whenReady().then(async () => {
     if (!filePath || typeof filePath !== 'string') return;
     const { shell } = require('electron');
     const fs = require('fs');
-    console.log(`[Shell] Opening path: ${filePath}`);
+    const os = require('os');
+    // Expand ~/path → absolute (Node.js fs and Electron shell do not expand ~)
+    const resolvedPath = filePath.startsWith('~/') ? filePath.replace('~', os.homedir()) : filePath;
+    console.log(`[Shell] Opening path: ${resolvedPath}`);
     try {
-      const stat = fs.statSync(filePath);
+      const stat = fs.statSync(resolvedPath);
       if (stat.isDirectory()) {
-        shell.showItemInFolder(filePath);
+        shell.showItemInFolder(resolvedPath);
       } else {
-        const err = await shell.openPath(filePath);
+        const err = await shell.openPath(resolvedPath);
         if (err) {
           console.warn(`[Shell] openPath failed (${err}), falling back to showItemInFolder`);
-          shell.showItemInFolder(filePath);
+          shell.showItemInFolder(resolvedPath);
         }
       }
     } catch (e) {
-      console.warn(`[Shell] Path not found: ${filePath}`);
+      console.warn(`[Shell] Path not found: ${resolvedPath}`);
     }
+  });
+
+  ipcMain.on('shell:open-url', (_event, url) => {
+    if (!url || typeof url !== 'string') return;
+    const { shell } = require('electron');
+    console.log(`[Shell] Opening URL in default browser: ${url}`);
+    shell.openExternal(url).catch(err => console.warn(`[Shell] openExternal failed: ${err}`));
   });
 
   ipcMain.on('prompt-capture:hide', () => {
@@ -1061,6 +1312,258 @@ app.whenReady().then(async () => {
   ipcMain.handle('ws-bridge:is-connected', () => {
     return vscodeConnected;
   });
+
+  // ─── Bridge Auto-Listener ─────────────────────────────────────────────────
+  // Watches ~/.thinkdrop/bridge.md for new WS:INSTRUCTION blocks and
+  // auto-fires stategraph:process — ThinkDrop acts without any user input.
+  // Start: say "file.bridge listen start"   Stop: "file.bridge listen stop"
+  // Also starts automatically when ThinkDrop launches.
+  {
+    const fs = require('fs');
+    const crypto = require('crypto');
+    const BRIDGE_FILE = require('path').join(require('os').homedir(), '.thinkdrop', 'bridge.md');
+    const BRIDGE_DEBOUNCE_MS = 800;
+
+    function parseBridgeBlocks(content) {
+      const blocks = [];
+      const re = /<!--\s*([A-Z][A-Z0-9_]*):([\w]+)\s+(.*?)-->([\s\S]*?)<!--\s*\1:END\s*-->/g;
+      let m;
+      while ((m = re.exec(content)) !== null) {
+        const [, prefix, type, attrsStr, body] = m;
+        if (type === 'END') continue;
+        const attrs = {};
+        const attrRe = /(\w+)=([^\s>]+)/g;
+        let am;
+        while ((am = attrRe.exec(attrsStr)) !== null) attrs[am[1]] = am[2];
+        blocks.push({ id: attrs.id || `${prefix}_${type}_unknown`, prefix, type, status: attrs.status || 'unknown', body: body.trim() });
+      }
+      return blocks;
+    }
+
+    function hashIds(blocks) {
+      return crypto.createHash('md5').update(blocks.map(b => b.id).join(',')).digest('hex');
+    }
+
+    let bridgeListenerActive = false;
+    let bridgeWatcher = null;
+    let bridgeDebounce = null;
+    let bridgeKnownHash = '';
+
+    function startBridgeListener() {
+      if (bridgeListenerActive) return;
+      if (!fs.existsSync(BRIDGE_FILE)) {
+        fs.mkdirSync(require('path').dirname(BRIDGE_FILE), { recursive: true });
+        fs.writeFileSync(BRIDGE_FILE, '# ThinkDrop Bridge\n\n', 'utf8');
+      }
+
+      // Snapshot current blocks so we only react to NEW ones
+      const initial = fs.readFileSync(BRIDGE_FILE, 'utf8');
+      bridgeKnownHash = hashIds(parseBridgeBlocks(initial));
+      bridgeListenerActive = true;
+
+      bridgeWatcher = fs.watch(BRIDGE_FILE, { persistent: true }, () => {
+        if (bridgeDebounce) clearTimeout(bridgeDebounce);
+        bridgeDebounce = setTimeout(() => {
+          try {
+            if (!fs.existsSync(BRIDGE_FILE)) return;
+            const content = fs.readFileSync(BRIDGE_FILE, 'utf8');
+            const blocks = parseBridgeBlocks(content);
+            const newHash = hashIds(blocks);
+            if (newHash === bridgeKnownHash) return;
+
+            // Find new WS: blocks that are pending (Windsurf/Cursor wrote an instruction)
+            // bridgeSeenIds tracks every block ID we've already acted on — filter to truly new ones
+            const newPendingWS = blocks.filter(b =>
+              b.prefix !== 'TD' && b.status === 'pending' && !bridgeSeenIds.has(b.id)
+            );
+
+            bridgeKnownHash = newHash;
+
+            for (const block of newPendingWS) {
+              bridgeSeenIds.add(block.id);
+              console.log(`🌉 [Bridge Listener] New ${block.prefix}:${block.type} [${block.id}] — auto-executing`);
+
+              // Show results window + emit executing status
+              if (resultsWindow && !resultsWindow.isDestroyed()) {
+                resultsWindow.show();
+                resultsWindow.webContents.send('bridge:status', { state: 'executing', blockId: block.id, summary: block.body.split('\n')[0].slice(0, 80), bridgeFile: BRIDGE_FILE });
+              }
+
+              // Fire stategraph exactly like a user submission via the IPC handler
+              if (stateGraph) {
+                // Show prompt in results window
+                if (resultsWindow && !resultsWindow.isDestroyed()) {
+                  resultsWindow.webContents.send('results-window:set-prompt', `[Bridge] ${block.body.split('\n')[0].slice(0, 80)}`);
+                }
+
+                const bridgeProgressCallback = (evt) => {
+                  if (resultsWindow && !resultsWindow.isDestroyed()) {
+                    resultsWindow.webContents.send('automation:progress', evt);
+                  }
+                };
+                const bridgeStreamCallback = (token) => {
+                  if (resultsWindow && !resultsWindow.isDestroyed()) {
+                    resultsWindow.webContents.send('ws-bridge:message', { type: 'chunk', text: token });
+                  }
+                };
+
+                // Build a prompt that routes to command_automate via skill-name invocation
+                // and instructs planSkills to act on this specific block body + write back
+                const autoPrompt = [
+                  `file.bridge act`,
+                  ``,
+                  `Execute this pending bridge instruction (block id: ${block.id}) and write a TD:RESULT block back to the bridge when done:`,
+                  ``,
+                  block.body,
+                ].join('\n');
+
+                const initialState = {
+                  message: autoPrompt,
+                  selectedText: '',
+                  streamCallback: bridgeStreamCallback,
+                  progressCallback: bridgeProgressCallback,
+                  confirmInstallCallback: () => Promise.resolve(false),
+                  confirmGuideCallback: () => Promise.resolve(false),
+                  isGuideCancelled: () => false,
+                  activeBrowserSessionId: null,
+                  activeBrowserUrl: null,
+                  context: { sessionId: null, userId: 'bridge_auto', source: 'bridge_listener', blockId: block.id },
+                };
+
+                stateGraph.execute(initialState).then(() => {
+                  console.log(`✅ [Bridge Listener] Done executing block ${block.id}`);
+                  markBridgeBlockDone(block.id);
+                  if (resultsWindow && !resultsWindow.isDestroyed()) {
+                    resultsWindow.webContents.send('bridge:status', { state: 'watching', bridgeFile: BRIDGE_FILE });
+                  }
+                }).catch(err => {
+                  console.error(`❌ [Bridge Listener] Error executing block ${block.id}:`, err.message);
+                  markBridgeBlockDone(block.id, 'error');
+                  if (resultsWindow && !resultsWindow.isDestroyed()) {
+                    resultsWindow.webContents.send('bridge:status', { state: 'watching', bridgeFile: BRIDGE_FILE });
+                  }
+                });
+              }
+            }
+          } catch (err) {
+            console.error('[Bridge Listener] Watch error:', err.message);
+          }
+        }, BRIDGE_DEBOUNCE_MS);
+      });
+
+      bridgeWatcher.on('error', (err) => console.error('[Bridge Listener] fs.watch error:', err.message));
+      console.log(`🌉 [Bridge Listener] Active — watching ${BRIDGE_FILE}`);
+      if (resultsWindow && !resultsWindow.isDestroyed()) {
+        resultsWindow.webContents.send('bridge:status', { state: 'watching', bridgeFile: BRIDGE_FILE });
+      }
+
+      // Execute any pending WS: blocks that were already in the bridge at startup
+      // (fs.watch only fires on changes, so startup-pending blocks need a manual kick)
+      setTimeout(() => {
+        try {
+          if (!fs.existsSync(BRIDGE_FILE)) return;
+          const content = fs.readFileSync(BRIDGE_FILE, 'utf8');
+          const startupPending = parseBridgeBlocks(content).filter(b =>
+            b.prefix !== 'TD' && b.status === 'pending' && !bridgeSeenIds.has(b.id)
+          );
+          if (startupPending.length === 0) {
+            if (resultsWindow && !resultsWindow.isDestroyed()) {
+              resultsWindow.webContents.send('bridge:status', { state: 'watching', bridgeFile: BRIDGE_FILE });
+            }
+          } else {
+            console.log(`🌉 [Bridge Listener] ${startupPending.length} pending block(s) found at startup — executing`);
+          }
+          for (const block of startupPending) {
+            bridgeSeenIds.add(block.id);
+            console.log(`🌉 [Bridge Listener] Startup: executing ${block.prefix}:${block.type} [${block.id}]`);
+            if (resultsWindow && !resultsWindow.isDestroyed()) {
+              resultsWindow.show();
+              resultsWindow.webContents.send('bridge:status', { state: 'executing', blockId: block.id, summary: block.body.split('\n')[0].slice(0, 80), bridgeFile: BRIDGE_FILE });
+              resultsWindow.webContents.send('results-window:set-prompt', `[Bridge] ${block.body.split('\n')[0].slice(0, 80)}`);
+            }
+            if (stateGraph) {
+              const autoPrompt = [
+                `file.bridge act`,
+                ``,
+                `Execute this pending bridge instruction (block id: ${block.id}) and write a TD:RESULT block back to the bridge when done:`,
+                ``,
+                block.body,
+              ].join('\n');
+              stateGraph.execute({
+                message: autoPrompt,
+                selectedText: '',
+                streamCallback: (token) => { if (resultsWindow && !resultsWindow.isDestroyed()) resultsWindow.webContents.send('ws-bridge:message', { type: 'chunk', text: token }); },
+                progressCallback: (evt) => { if (resultsWindow && !resultsWindow.isDestroyed()) resultsWindow.webContents.send('automation:progress', evt); },
+                confirmInstallCallback: () => Promise.resolve(false),
+                confirmGuideCallback: () => Promise.resolve(false),
+                isGuideCancelled: () => false,
+                activeBrowserSessionId: null,
+                activeBrowserUrl: null,
+                context: { sessionId: null, userId: 'bridge_auto', source: 'bridge_startup', blockId: block.id },
+              }).then(() => {
+                console.log(`✅ [Bridge Listener] Startup: done with block ${block.id}`);
+                markBridgeBlockDone(block.id);
+              }).catch(err => {
+                console.error(`❌ [Bridge Listener] Startup: error on block ${block.id}:`, err.message);
+                markBridgeBlockDone(block.id, 'error');
+              });
+            }
+          }
+        } catch (err) {
+          console.error('[Bridge Listener] Startup scan error:', err.message);
+        }
+      }, 2000); // 2s delay — wait for stateGraph and windows to be fully ready
+    }
+
+    function markBridgeBlockDone(blockId, finalStatus = 'done') {
+      try {
+        if (!fs.existsSync(BRIDGE_FILE)) return;
+        let content = fs.readFileSync(BRIDGE_FILE, 'utf8');
+        // Replace status=pending with status=<finalStatus> for this specific block ID
+        const updated = content.replace(
+          new RegExp(`(<!--\\s*(?:WS|TD):[A-Z]+ id=${blockId}[^>]*?)status=pending`),
+          `$1status=${finalStatus}`
+        );
+        if (updated !== content) {
+          fs.writeFileSync(BRIDGE_FILE, updated, 'utf8');
+          console.log(`🌉 [Bridge Listener] Marked block ${blockId} as ${finalStatus} in bridge file`);
+        }
+      } catch (err) {
+        console.error(`[Bridge Listener] Failed to mark block ${blockId} done:`, err.message);
+      }
+    }
+
+    function stopBridgeListener() {
+      if (!bridgeListenerActive) return;
+      if (bridgeWatcher) { bridgeWatcher.close(); bridgeWatcher = null; }
+      if (bridgeDebounce) { clearTimeout(bridgeDebounce); bridgeDebounce = null; }
+      bridgeListenerActive = false;
+      console.log('🌉 [Bridge Listener] Stopped.');
+    }
+
+    // Track which block IDs we have already acted on (persists across file changes)
+    const bridgeSeenIds = new Set();
+    // Seed with already-completed blocks so we don't replay them, but leave pending WS: blocks
+    // unseeded so they auto-execute on startup (handles the case where ThinkDrop restarts with
+    // unprocessed instructions in the bridge).
+    try {
+      if (fs.existsSync(BRIDGE_FILE)) {
+        parseBridgeBlocks(fs.readFileSync(BRIDGE_FILE, 'utf8')).forEach(b => {
+          // Skip pending non-TD blocks — they need to be executed
+          if (b.prefix !== 'TD' && b.status === 'pending') return;
+          bridgeSeenIds.add(b.id);
+        });
+      }
+    } catch (_) {}
+
+    // IPC controls — "file.bridge listen start/stop/status" from renderer or skill
+    ipcMain.on('bridge:listener:start', () => startBridgeListener());
+    ipcMain.on('bridge:listener:stop', () => stopBridgeListener());
+    ipcMain.handle('bridge:listener:status', () => ({ active: bridgeListenerActive, bridgeFile: BRIDGE_FILE }));
+
+    // Auto-start on launch
+    startBridgeListener();
+  }
 });
 
 app.on('window-all-closed', () => {
@@ -1071,6 +1574,29 @@ app.on('window-all-closed', () => {
 
 app.on('will-quit', () => {
   globalShortcut.unregisterAll();
+});
+
+// ── Schedule: warn before close if countdown is active ───────────────────────
+app.on('before-quit', (e) => {
+  if (!activeScheduleCountdown) return;
+  // Only warn if NOT launched by launchd (i.e. user is interacting)
+  const launchedScheduleId = scheduler.getLaunchedScheduleId();
+  if (launchedScheduleId) return; // silent auto-run — let it quit normally
+  e.preventDefault();
+  const { dialog } = require('electron');
+  dialog.showMessageBox({
+    type: 'warning',
+    title: 'Scheduled task is pending',
+    message: `"${activeScheduleCountdown.label}" is scheduled to run at ${activeScheduleCountdown.targetTime}.\n\nThinkDrop will relaunch automatically at that time via macOS launchd — you can close safely.`,
+    buttons: ['Close anyway', 'Keep open'],
+    defaultId: 1,
+    cancelId: 1,
+  }).then(({ response }) => {
+    if (response === 0) {
+      activeScheduleCountdown = null;
+      app.quit();
+    }
+  });
 });
 
 app.on('activate', () => {

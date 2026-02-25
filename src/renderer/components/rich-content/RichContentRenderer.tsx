@@ -92,6 +92,7 @@ const RichContentRenderer: React.FC<RichContentRendererProps> = ({
           },
           a({ node, children, href, ...props }: any) {
             const isFilePath = href?.startsWith('file://');
+            const ipcRenderer = (window as any).electron?.ipcRenderer;
             return (
               <a
                 href={href}
@@ -101,6 +102,8 @@ const RichContentRenderer: React.FC<RichContentRendererProps> = ({
                   if (isFilePath && onFileLinkClick) {
                     const filePath = href.replace(/^file:\/\//, '');
                     onFileLinkClick(filePath);
+                  } else if (ipcRenderer) {
+                    ipcRenderer.send('shell:open-url', href);
                   } else {
                     window.open(href, '_blank');
                   }

@@ -34,11 +34,22 @@ type AutomationPhase =
   | 'executing'
   | 'done'
   | 'failed'
-  | 'ask_user';
+  | 'ask_user'
+  | 'guide_step'
+  | 'schedule_wait';
 
 interface AskUserPrompt {
   question: string;
   options: string[];
+}
+
+interface GuideStepCard {
+  instruction: string;
+  url: string | null;
+  highlight: string | null;
+  imageUrl: string | null;
+  description: string;
+  mode: 'page_event' | 'ipc';
 }
 
 interface AutomationProgressProps {
@@ -138,6 +149,9 @@ export default function AutomationProgress({ onHeightChange, onActiveChange }: A
   const [synthesisAnswer, setSynthesisAnswer] = useState<string>('');
   const [savedFilePaths, setSavedFilePaths] = useState<string[]>([]);
   const [askUserPrompt, setAskUserPrompt] = useState<AskUserPrompt | null>(null);
+  const [guideStep, setGuideStep] = useState<GuideStepCard | null>(null);
+  const [intentType, setIntentType] = useState<string | null>(null);
+  const [scheduleCountdown, setScheduleCountdown] = useState<{ label: string; targetTime: string; remainingMs: number } | null>(null);
 
   // Notify parent to re-measure height whenever visible content changes
   useEffect(() => {
@@ -163,6 +177,9 @@ export default function AutomationProgress({ onHeightChange, onActiveChange }: A
       setSynthesisAnswer('');
       setSavedFilePaths([]);
       setAskUserPrompt(null);
+      setGuideStep(null);
+      setIntentType(null);
+      setScheduleCountdown(null);
     };
     ipcRenderer.on('results-window:set-prompt', handleNewPrompt);
 
@@ -179,6 +196,7 @@ export default function AutomationProgress({ onHeightChange, onActiveChange }: A
         case 'plan_ready':
           setPhase('executing');
           setTotalCount(data.steps.length);
+          if (data.intent) setIntentType(data.intent);
           setSteps(data.steps.map((s: any) => ({
             index: s.index,
             skill: s.skill,
@@ -232,6 +250,27 @@ export default function AutomationProgress({ onHeightChange, onActiveChange }: A
         case 'ask_user':
           setPhase('ask_user');
           setAskUserPrompt({ question: data.question, options: data.options || [] });
+          break;
+
+        case 'guide_step':
+          setPhase('guide_step');
+          setGuideStep({
+            instruction: data.instruction,
+            url: data.url || null,
+            highlight: data.highlight || null,
+            imageUrl: data.imageUrl || null,
+            description: data.description || 'Follow the steps below',
+            mode: data.mode === 'page_event' ? 'page_event' : 'ipc',
+          });
+          break;
+
+        case 'schedule_start':
+          setPhase('schedule_wait');
+          setScheduleCountdown({ label: data.label || 'Waiting...', targetTime: data.targetTime || '', remainingMs: data.waitMs || 0 });
+          break;
+
+        case 'schedule_tick':
+          setScheduleCountdown(prev => prev ? { ...prev, remainingMs: data.remainingMs, label: data.description || prev.label } : prev);
           break;
 
         case 'all_done': {
@@ -305,6 +344,18 @@ export default function AutomationProgress({ onHeightChange, onActiveChange }: A
     ipcRenderer?.send('stategraph:process', { prompt: option, selectedText: '' });
   };
 
+  const handleGuideContinue = () => {
+    setGuideStep(null);
+    setPhase('executing');
+    ipcRenderer?.send('guide:continue');
+  };
+
+  const handleGuideCancel = () => {
+    setGuideStep(null);
+    setPhase('idle');
+    ipcRenderer?.send('guide:cancel');
+  };
+
   if (phase === 'idle') return null;
 
   const doneCount = steps.filter(s => s.status === 'done').length;
@@ -342,6 +393,32 @@ export default function AutomationProgress({ onHeightChange, onActiveChange }: A
               <span className="text-sm font-medium" style={{ color: allDone ? '#34d399' : '#e5e7eb' }}>
                 {doneCount} / {shownTotal} tasks done
               </span>
+              {intentType && (
+                <span className="text-xs px-1.5 py-0.5 rounded-full font-medium ml-1"
+                  style={{
+                    backgroundColor: intentType === 'command_automate'
+                      ? 'rgba(59,130,246,0.15)'
+                      : intentType === 'memory_retrieve'
+                      ? 'rgba(168,85,247,0.15)'
+                      : 'rgba(107,114,128,0.15)',
+                    color: intentType === 'command_automate'
+                      ? '#93c5fd'
+                      : intentType === 'memory_retrieve'
+                      ? '#d8b4fe'
+                      : '#9ca3af',
+                    border: `1px solid ${intentType === 'command_automate'
+                      ? 'rgba(59,130,246,0.25)'
+                      : intentType === 'memory_retrieve'
+                      ? 'rgba(168,85,247,0.25)'
+                      : 'rgba(107,114,128,0.25)'}`,
+                  }}>
+                  {intentType === 'command_automate' ? 'automate'
+                    : intentType === 'memory_retrieve' ? 'recall'
+                    : intentType === 'web_search' ? 'search'
+                    : intentType === 'screen_intelligence' ? 'screen'
+                    : intentType}
+                </span>
+              )}
             </>
           );
         })()}
@@ -359,7 +436,43 @@ export default function AutomationProgress({ onHeightChange, onActiveChange }: A
             </span>
           </>
         )}
+        {phase === 'schedule_wait' && (
+          <>
+            <div className="w-3.5 h-3.5 rounded-full border-2 animate-spin flex-shrink-0"
+              style={{ borderColor: '#a78bfa', borderTopColor: 'transparent' }} />
+            <span className="text-sm font-medium" style={{ color: '#a78bfa' }}>
+              Scheduled — waiting to run
+            </span>
+          </>
+        )}
       </div>
+
+      {/* ── Schedule countdown banner ─────────────────────────────────────── */}
+      {phase === 'schedule_wait' && scheduleCountdown && (() => {
+        const totalSecs = Math.ceil(scheduleCountdown.remainingMs / 1000);
+        const mins = Math.floor(totalSecs / 60);
+        const secs = totalSecs % 60;
+        const countdownStr = mins > 0
+          ? `${mins}m ${secs.toString().padStart(2, '0')}s`
+          : `${secs}s`;
+        return (
+          <div style={{ padding: '12px 14px', borderRadius: 10, backgroundColor: 'rgba(139,92,246,0.08)', border: '1px solid rgba(139,92,246,0.3)' }}>
+            <div className="flex items-center gap-3">
+              <div style={{ fontSize: '1.5rem', lineHeight: 1, color: '#a78bfa', fontVariantNumeric: 'tabular-nums', fontWeight: 700, minWidth: 72 }}>
+                {countdownStr}
+              </div>
+              <div>
+                <div style={{ color: '#c4b5fd', fontSize: '0.78rem', fontWeight: 600, marginBottom: 2 }}>
+                  Fires at {scheduleCountdown.targetTime}
+                </div>
+                <div style={{ color: '#7c3aed', fontSize: '0.7rem' }}>
+                  {scheduleCountdown.label.replace(/ — \d+m.*$| — \d+s.*$/, '')}
+                </div>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
 
       {/* ── Global error ─────────────────────────────────────────────────── */}
       {globalError && (
@@ -550,6 +663,80 @@ export default function AutomationProgress({ onHeightChange, onActiveChange }: A
         <div className="flex items-center gap-2" style={{ color: '#6b7280' }}>
           <div className="w-1.5 h-1.5 rounded-full bg-blue-500 animate-pulse" />
           <span className="text-xs">Analyzing your request...</span>
+        </div>
+      )}
+
+      {/* ── GUIDE STEP: instruction card ──────────────────────────── */}
+      {guideStep && (
+        <div className="mt-2 rounded-xl overflow-hidden"
+          style={{ border: '1px solid rgba(99,102,241,0.35)', backgroundColor: 'rgba(99,102,241,0.06)' }}>
+          {/* Header */}
+          <div className="flex items-center gap-2 px-3 py-2"
+            style={{ borderBottom: '1px solid rgba(99,102,241,0.2)', backgroundColor: 'rgba(99,102,241,0.1)' }}>
+            {guideStep.mode === 'page_event' ? (
+              <>
+                <div className="w-3 h-3 rounded-full border-2 animate-spin flex-shrink-0"
+                  style={{ borderColor: '#a5b4fc', borderTopColor: 'transparent' }} />
+                <span className="text-xs font-semibold" style={{ color: '#a5b4fc' }}>Waiting for your action in the browser</span>
+              </>
+            ) : (
+              <>
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#a5b4fc" strokeWidth="2"
+                  strokeLinecap="round" strokeLinejoin="round">
+                  <circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/>
+                </svg>
+                <span className="text-xs font-semibold" style={{ color: '#a5b4fc' }}>Action Required</span>
+              </>
+            )}
+          </div>
+          {/* Instruction */}
+          <div className="px-3 py-2.5">
+            <p className="text-sm" style={{ color: '#e5e7eb', lineHeight: 1.6 }}>
+              {guideStep.instruction}
+            </p>
+            {guideStep.mode === 'page_event' && (
+              <p className="text-xs mt-2" style={{ color: '#6b7280' }}>
+                The browser is highlighting what to click. Once you click it, the guide continues automatically.
+              </p>
+            )}
+          </div>
+          {/* Action buttons */}
+          <div className="px-3 pb-3 flex gap-2">
+            {/* Continue button — only shown in IPC fallback mode */}
+            {guideStep.mode === 'ipc' && (
+              <button
+                onClick={handleGuideContinue}
+                className="flex-1 py-2 rounded-lg text-sm font-medium transition-colors"
+                style={{
+                  backgroundColor: 'rgba(99,102,241,0.2)',
+                  border: '1px solid rgba(99,102,241,0.4)',
+                  color: '#a5b4fc',
+                  cursor: 'pointer',
+                }}
+                onMouseEnter={e => (e.currentTarget.style.backgroundColor = 'rgba(99,102,241,0.35)')}
+                onMouseLeave={e => (e.currentTarget.style.backgroundColor = 'rgba(99,102,241,0.2)')}
+              >
+                ✓ Done — Continue
+              </button>
+            )}
+            {/* Stop Guide button — always shown */}
+            <button
+              onClick={handleGuideCancel}
+              className="py-2 rounded-lg text-sm font-medium transition-colors"
+              style={{
+                flex: guideStep.mode === 'ipc' ? '0 0 auto' : '1',
+                padding: '8px 14px',
+                backgroundColor: 'rgba(239,68,68,0.08)',
+                border: '1px solid rgba(239,68,68,0.25)',
+                color: '#f87171',
+                cursor: 'pointer',
+              }}
+              onMouseEnter={e => (e.currentTarget.style.backgroundColor = 'rgba(239,68,68,0.18)')}
+              onMouseLeave={e => (e.currentTarget.style.backgroundColor = 'rgba(239,68,68,0.08)')}
+            >
+              Stop Guide
+            </button>
+          </div>
         </div>
       )}
 

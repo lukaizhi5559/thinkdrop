@@ -437,28 +437,41 @@ export default function StandalonePromptCapture() {
                   width: '24px',
                   height: '24px',
                   borderRadius: '4px',
-                  backgroundColor: (promptText.trim() || highlights.length > 0) ? 'rgba(59, 130, 246, 0.2)' : 'rgba(255, 255, 255, 0.05)',
+                  backgroundColor: isProcessing
+                    ? 'rgba(239, 68, 68, 0.15)'
+                    : (promptText.trim() || highlights.length > 0) ? 'rgba(59, 130, 246, 0.2)' : 'rgba(255, 255, 255, 0.05)',
                   border: '1px solid',
-                  borderColor: (promptText.trim() || highlights.length > 0) ? 'rgba(59, 130, 246, 0.3)' : 'rgba(255, 255, 255, 0.1)',
+                  borderColor: isProcessing
+                    ? 'rgba(239, 68, 68, 0.35)'
+                    : (promptText.trim() || highlights.length > 0) ? 'rgba(59, 130, 246, 0.3)' : 'rgba(255, 255, 255, 0.1)',
                   flexShrink: 0,
                   marginTop: '2px',
-                  cursor: (promptText.trim() || highlights.length > 0) ? 'pointer' : 'default',
+                  cursor: (isProcessing || promptText.trim() || highlights.length > 0) ? 'pointer' : 'default',
+                  transition: 'background-color 0.15s, border-color 0.15s',
                 }}
-                onClick={(promptText.trim() || highlights.length > 0) ? handleSubmit : undefined}
+                title={isProcessing ? 'Cancel' : 'Send'}
+                onClick={isProcessing ? () => ipcRenderer?.send('automation:cancel') : (promptText.trim() || highlights.length > 0) ? handleSubmit : undefined}
               >
-                <svg
-                  width="14"
-                  height="14"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke={(promptText.trim() || highlights.length > 0) ? '#60a5fa' : '#6b7280'}
-                  strokeWidth="2"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                >
-                  <path d="M9 10l-5 5 5 5" />
-                  <path d="M20 4v7a4 4 0 0 1-4 4H4" />
-                </svg>
+                {isProcessing ? (
+                  /* Stop square — like ChatGPT/Windsurf cancel */
+                  <svg width="10" height="10" viewBox="0 0 10 10" fill="#f87171">
+                    <rect x="0" y="0" width="10" height="10" rx="2" />
+                  </svg>
+                ) : (
+                  <svg
+                    width="14"
+                    height="14"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke={(promptText.trim() || highlights.length > 0) ? '#60a5fa' : '#6b7280'}
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  >
+                    <path d="M9 10l-5 5 5 5" />
+                    <path d="M20 4v7a4 4 0 0 1-4 4H4" />
+                  </svg>
+                )}
               </div>
             </div>
           </div>

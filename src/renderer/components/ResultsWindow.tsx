@@ -27,6 +27,21 @@ export default function ResultsWindow() {
   const [isCopied, setIsCopied] = useState<boolean>(false);
   const [showTrigger, setShowTrigger] = useState(0);
 
+  // Bridge listener status — shown as a persistent footer when watching, swaps to executing during auto-tasks
+  const [bridgeStatus, setBridgeStatus] = useState<{
+    state: 'watching' | 'executing' | 'stopped';
+    bridgeFile?: string;
+    summary?: string;
+  } | null>(null);
+
+  // Pending schedule notification (app was opened and a launchd schedule is registered)
+  const [schedulePending, setSchedulePending] = useState<{
+    id: string;
+    label: string;
+    targetTime: string;
+    prompt: string;
+  } | null>(null);
+
   // Install confirmation card state
   const [installPrompt, setInstallPrompt] = useState<{
     tool: string;
@@ -83,7 +98,11 @@ export default function ResultsWindow() {
         streamingStartedRef.current = true;
 
         const msgText = message?.text || message.payload?.text || '';
-        setStreamingResponse(prev => prev + msgText);
+        if (msgText.startsWith('\x00REPLACE\x00')) {
+          setStreamingResponse(msgText.slice('\x00REPLACE\x00'.length));
+        } else {
+          setStreamingResponse(prev => prev + msgText);
+        }
       } else if (message.type === 'done' || message.type === 'llm_stream_end') {
         setIsStreaming(false);
         setIsThinking(false);
@@ -204,10 +223,20 @@ export default function ResultsWindow() {
       }
     };
 
+    const handleSchedulePending = (_event: any, data: any) => {
+      setSchedulePending({ id: data.id, label: data.label, targetTime: data.targetTime, prompt: data.prompt || '' });
+    };
+
+    const handleBridgeStatus = (_event: any, data: any) => {
+      setBridgeStatus({ state: data.state, bridgeFile: data.bridgeFile, summary: data.summary });
+    };
+
     ipcRenderer.on('results-window:display-error', handleDisplayError);
     ipcRenderer.on('results-window:set-prompt', handlePromptText);
     ipcRenderer.on('results-window:show', handleWindowShow);
     ipcRenderer.on('automation:progress', handleAutomationProgress);
+    ipcRenderer.on('schedule:pending', handleSchedulePending);
+    ipcRenderer.on('bridge:status', handleBridgeStatus);
   
     return () => {
       if (ipcRenderer.removeListener) {
@@ -215,6 +244,8 @@ export default function ResultsWindow() {
         ipcRenderer.removeListener('results-window:set-prompt', handlePromptText);
         ipcRenderer.removeListener('results-window:show', handleWindowShow);
         ipcRenderer.removeListener('automation:progress', handleAutomationProgress);
+        ipcRenderer.removeListener('schedule:pending', handleSchedulePending);
+        ipcRenderer.removeListener('bridge:status', handleBridgeStatus);
       }
     };
   }, []);
@@ -624,6 +655,28 @@ export default function ResultsWindow() {
           {promptText ? renderPromptHeader(promptText) : <span className="text-sm font-medium" style={{ color: '#e5e7eb' }}>Results</span>}
         </div>
         <div className="flex items-center gap-2">
+          {isAutomationMode && (
+            <button
+              onClick={() => ipcRenderer?.send('automation:cancel')}
+              style={{
+                padding: '2px 8px',
+                borderRadius: 5,
+                backgroundColor: 'rgba(239,68,68,0.12)',
+                border: '1px solid rgba(239,68,68,0.3)',
+                color: '#f87171',
+                fontSize: '0.7rem',
+                fontWeight: 600,
+                cursor: 'pointer',
+                flexShrink: 0,
+                lineHeight: 1.6,
+              }}
+              onMouseEnter={e => (e.currentTarget.style.backgroundColor = 'rgba(239,68,68,0.25)')}
+              onMouseLeave={e => (e.currentTarget.style.backgroundColor = 'rgba(239,68,68,0.12)')}
+              title="Cancel automation"
+            >
+              Cancel
+            </button>
+          )}
           {streamingResponse && (
             <button
               onClick={handleCopy}
@@ -668,6 +721,68 @@ export default function ResultsWindow() {
       
       <div ref={scrollContainerRef} className="flex-1 overflow-y-auto overflow-x-hidden p-4">
         <div ref={contentRef}>
+          {/* Pending schedule notification — shown when app opens with a launchd task registered */}
+          {schedulePending && (
+            <div style={{ marginBottom: 12, padding: '12px 14px', borderRadius: 10, backgroundColor: 'rgba(139,92,246,0.08)', border: '1px solid rgba(139,92,246,0.3)' }}>
+              <div className="flex items-start gap-3">
+                <div style={{ width: 28, height: 28, borderRadius: 7, backgroundColor: 'rgba(139,92,246,0.15)', border: '1px solid rgba(139,92,246,0.3)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#a78bfa" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>
+                  </svg>
+                </div>
+                <div className="flex-1 min-w-0">
+                  <div style={{ color: '#c4b5fd', fontSize: '0.8rem', fontWeight: 600, marginBottom: 2 }}>
+                    Scheduled task queued
+                  </div>
+                  <div style={{ color: '#9ca3af', fontSize: '0.72rem', marginBottom: 8, lineHeight: 1.4 }}>
+                    <strong style={{ color: '#e5e7eb' }}>{schedulePending.label}</strong> will run automatically at <strong style={{ color: '#a78bfa' }}>{schedulePending.targetTime}</strong> via macOS launchd — even if this app is closed.
+                  </div>
+                  <button
+                    onClick={() => {
+                      ipcRenderer?.send('schedule:dismiss', { id: schedulePending.id });
+                      setSchedulePending(null);
+                    }}
+                    style={{ padding: '3px 10px', borderRadius: 5, backgroundColor: 'rgba(139,92,246,0.15)', border: '1px solid rgba(139,92,246,0.3)', color: '#a78bfa', fontSize: '0.72rem', cursor: 'pointer' }}
+                  >
+                    Got it
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Bridge listener status banner — watching/executing */}
+          {bridgeStatus && bridgeStatus.state !== 'stopped' && (
+            <div style={{
+              marginBottom: 10,
+              padding: '7px 10px',
+              borderRadius: 8,
+              backgroundColor: bridgeStatus.state === 'executing' ? 'rgba(59,130,246,0.08)' : 'rgba(16,185,129,0.06)',
+              border: `1px solid ${bridgeStatus.state === 'executing' ? 'rgba(59,130,246,0.25)' : 'rgba(16,185,129,0.2)'}`,
+              display: 'flex',
+              alignItems: 'center',
+              gap: 8,
+            }}>
+              {bridgeStatus.state === 'executing' ? (
+                <div style={{ width: 7, height: 7, borderRadius: '50%', backgroundColor: '#3b82f6', flexShrink: 0, animation: 'pulse 1.5s ease-in-out infinite' }} />
+              ) : (
+                <div style={{ width: 7, height: 7, borderRadius: '50%', backgroundColor: '#10b981', flexShrink: 0, boxShadow: '0 0 5px rgba(16,185,129,0.6)' }} />
+              )}
+              <div style={{ flex: 1, minWidth: 0 }}>
+                {bridgeStatus.state === 'executing' ? (
+                  <span style={{ color: '#93c5fd', fontSize: '0.7rem', fontWeight: 500 }}>
+                    Bridge executing: <span style={{ color: '#e5e7eb', fontWeight: 400 }}>{bridgeStatus.summary || 'running task...'}</span>
+                  </span>
+                ) : (
+                  <span style={{ color: '#6ee7b7', fontSize: '0.7rem', fontWeight: 500 }}>
+                    Bridge watching
+                    <span style={{ color: '#6b7280', fontWeight: 400 }}> — ready for instructions from any IDE</span>
+                  </span>
+                )}
+              </div>
+            </div>
+          )}
+
           {/* AutomationProgress is always mounted so its IPC listener is pre-registered */}
           <AutomationProgress
             onHeightChange={() => setShowTrigger(prev => prev + 1)}

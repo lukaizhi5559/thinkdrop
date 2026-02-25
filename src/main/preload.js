@@ -18,7 +18,12 @@ contextBridge.exposeInMainWorld('electron', {
         'ws-bridge:connect',
         'stategraph:process',
         'shell:open-path',
+        'shell:open-url',
         'install:confirm',
+        'guide:continue',
+        'guide:cancel',
+        'schedule:dismiss',
+        'automation:cancel',
       ];
       if (validChannels.includes(channel)) {
         ipcRenderer.send(channel, data);
@@ -38,6 +43,8 @@ contextBridge.exposeInMainWorld('electron', {
         'ws-bridge:message',
         'ws-bridge:error',
         'automation:progress',
+        'schedule:pending',
+        'bridge:status',
       ];
       if (validChannels.includes(channel)) {
         ipcRenderer.on(channel, func);
@@ -57,6 +64,8 @@ contextBridge.exposeInMainWorld('electron', {
         'ws-bridge:message',
         'ws-bridge:error',
         'automation:progress',
+        'schedule:pending',
+        'bridge:status',
       ];
       if (validChannels.includes(channel)) {
         ipcRenderer.removeAllListeners(channel);
@@ -76,6 +85,8 @@ contextBridge.exposeInMainWorld('electron', {
         'ws-bridge:message',
         'ws-bridge:error',
         'automation:progress',
+        'schedule:pending',
+        'bridge:status',
       ];
       if (validChannels.includes(channel)) {
         ipcRenderer.removeListener(channel, func);
