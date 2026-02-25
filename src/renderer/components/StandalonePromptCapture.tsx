@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import VoiceButton from './VoiceButton';
 
 const ipcRenderer = (window as any).electron?.ipcRenderer;
 
@@ -543,6 +544,16 @@ export default function StandalonePromptCapture() {
               </span>
             ))}
           </div>
+
+          {/* Voice button — push-to-talk or wake word */}
+          <VoiceButton
+            mode="push-to-talk"
+            compact={false}
+            onTranscript={(text) => {
+              setPromptText(text);
+              setTimeout(() => requestWindowResize(), 50);
+            }}
+          />
 
           {/* File picker button — click to open native file dialog */}
           <button

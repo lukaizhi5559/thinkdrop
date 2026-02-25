@@ -24,6 +24,11 @@ contextBridge.exposeInMainWorld('electron', {
         'guide:cancel',
         'schedule:dismiss',
         'automation:cancel',
+        'voice:start',
+        'voice:stop',
+        'voice:push-to-talk-start',
+        'voice:push-to-talk-end',
+        'voice:audio-chunk',
       ];
       if (validChannels.includes(channel)) {
         ipcRenderer.send(channel, data);
@@ -45,6 +50,13 @@ contextBridge.exposeInMainWorld('electron', {
         'automation:progress',
         'schedule:pending',
         'bridge:status',
+        'voice:status',
+        'voice:speaking',
+        'voice:listening',
+        'voice:transcript',
+        'voice:response',
+        'voice:error',
+        'voice:inject-prompt',
       ];
       if (validChannels.includes(channel)) {
         ipcRenderer.on(channel, func);
@@ -66,6 +78,13 @@ contextBridge.exposeInMainWorld('electron', {
         'automation:progress',
         'schedule:pending',
         'bridge:status',
+        'voice:status',
+        'voice:speaking',
+        'voice:listening',
+        'voice:transcript',
+        'voice:response',
+        'voice:error',
+        'voice:inject-prompt',
       ];
       if (validChannels.includes(channel)) {
         ipcRenderer.removeAllListeners(channel);
@@ -87,6 +106,13 @@ contextBridge.exposeInMainWorld('electron', {
         'automation:progress',
         'schedule:pending',
         'bridge:status',
+        'voice:status',
+        'voice:speaking',
+        'voice:listening',
+        'voice:transcript',
+        'voice:response',
+        'voice:error',
+        'voice:inject-prompt',
       ];
       if (validChannels.includes(channel)) {
         ipcRenderer.removeListener(channel, func);

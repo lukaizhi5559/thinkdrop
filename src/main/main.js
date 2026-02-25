@@ -16,8 +16,107 @@ const OVERLAY_CONTROL_PORT = parseInt(process.env.OVERLAY_CONTROL_PORT || '3010'
 
 function startOverlayControlServer() {
   const server = http.createServer((req, res) => {
+    res.setHeader('Content-Type', 'application/json');
+
+    // ── GET /voice/status — voice-service reads StateGraph journal status ──────
+    if (req.method === 'GET' && req.url === '/voice/status') {
+      const state = (() => { try { return voiceJournal.read(); } catch (_) { return {}; } })();
+      res.writeHead(200);
+      res.end(JSON.stringify({ ok: true, stategraph: state.stategraph || {}, voice: state.voice || {} }));
+      return;
+    }
+
     if (req.method !== 'POST') {
-      res.writeHead(405).end('Method Not Allowed');
+      res.writeHead(405).end(JSON.stringify({ error: 'Method Not Allowed' }));
+      return;
+    }
+
+    // ── POST /voice/inject — voice-service injects a command, waits for answer ──
+    if (req.url === '/voice/inject') {
+      let body = '';
+      req.on('data', chunk => { body += chunk; });
+      req.on('end', async () => {
+        try {
+          const { message, sessionId, source } = JSON.parse(body || '{}');
+          if (!message) {
+            res.writeHead(400);
+            res.end(JSON.stringify({ error: 'message is required' }));
+            return;
+          }
+          console.log(`[VoiceInject] Received: "${message.substring(0, 80)}" (source: ${source || 'voice'})`);
+
+          if (!stateGraph) {
+            res.writeHead(503);
+            res.end(JSON.stringify({ ok: false, error: 'StateGraph not initialized' }));
+            return;
+          }
+
+          // Notify renderer so it can show the prompt in the UI
+          if (promptCaptureWindow && !promptCaptureWindow.isDestroyed()) {
+            promptCaptureWindow.webContents.send('voice:inject-prompt', { message, sessionId, source: source || 'voice' });
+          }
+
+          // Run StateGraph synchronously so voice-service gets the answer to TTS
+          const voiceAbort = new AbortController();
+
+          const tokens = [];
+          const streamCallback = (token) => {
+            tokens.push(token);
+            // Also stream to renderer in real-time
+            if (resultsWindow && !resultsWindow.isDestroyed()) {
+              resultsWindow.webContents.send('ws-bridge:message', { type: 'chunk', text: token });
+            }
+          };
+
+          const initialState = {
+            message,
+            selectedText: '',
+            streamCallback,
+            context: {
+              sessionId: sessionId || currentSessionId,
+              userId: 'voice_inject',
+              source: source || 'voice',
+            },
+          };
+
+          voiceJournal.graphStarted({
+            intent: 'unknown',
+            sessionId: sessionId || currentSessionId,
+          });
+
+          let _nodeIdx = 0;
+          const onProgress = async (nodeName, _s, durationMs, phase) => {
+            if (phase !== 'completed') return;
+            _nodeIdx++;
+            voiceJournal.graphNodeDone({ node: nodeName, durationMs, nodeIndex: _nodeIdx, totalNodes: 0 });
+          };
+
+          const finalState = await stateGraph.execute(initialState, onProgress, voiceAbort.signal);
+
+          // Persist session
+          if (finalState.resolvedSessionId) currentSessionId = finalState.resolvedSessionId;
+
+          const answer = finalState.answer || tokens.join('') || '';
+
+          voiceJournal.graphDone({
+            intent: finalState?.intent?.type || 'unknown',
+            summary: answer.substring(0, 120),
+          });
+
+          // Signal stream end to renderer
+          if (resultsWindow && !resultsWindow.isDestroyed()) {
+            resultsWindow.webContents.send('ws-bridge:message', { type: 'done' });
+          }
+
+          res.writeHead(200);
+          res.end(JSON.stringify({ ok: true, answer, intent: finalState?.intent?.type }));
+        } catch (err) {
+          console.error('[VoiceInject] Error:', err.message);
+          voiceJournal.graphError({ intent: 'unknown', error: err.message });
+          res.writeHead(200);
+          res.end(JSON.stringify({ ok: false, error: err.message, answer: '' }));
+        }
+      });
       return;
     }
 
@@ -25,7 +124,7 @@ function startOverlayControlServer() {
     const show = req.url === '/overlay/show';
 
     if (!hide && !show) {
-      res.writeHead(404).end('Not Found');
+      res.writeHead(404).end(JSON.stringify({ error: 'Not Found' }));
       return;
     }
 
@@ -46,7 +145,7 @@ function startOverlayControlServer() {
       }
     }
 
-    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.writeHead(200);
     res.end(JSON.stringify({ ok: true, action: hide ? 'hidden' : 'shown' }));
   });
 
@@ -63,6 +162,20 @@ function startOverlayControlServer() {
 const { StateGraphBuilder, RealMCPAdapter, VSCodeLLMBackend } = require('@thinkdrop/stategraph');
 const ThinkDropMCPClient = require('./ThinkDropMCPClient');
 const scheduler = require('./scheduler');
+
+// Voice Journal — shared state file with voice-service
+const voiceJournal = (() => {
+  try {
+    return require('../../mcp-services/voice-service/src/voice-journal.cjs');
+  } catch (_) {
+    // voice-service not installed yet — no-op shim
+    return {
+      journalStart: () => {}, journalNodeDone: () => {}, journalDone: () => {},
+      journalError: () => {}, checkSignals: () => [], acknowledgeSignal: () => {},
+      journalReset: () => {},
+    };
+  }
+})();
 
 // Singleton StateGraph instance (created once on app ready)
 let stateGraph = null;
@@ -542,6 +655,130 @@ app.whenReady().then(async () => {
     }
   });
 
+  // ─── Voice: IPC handlers for voice service integration ───────────────────
+  const VOICE_SERVICE_URL = process.env.VOICE_SERVICE_URL || 'http://127.0.0.1:3006';
+
+  // voice:start — activate voice listening (wake-word mode)
+  ipcMain.on('voice:start', () => {
+    console.log('🎙️ [Voice] Activated');
+    voiceJournal.setVoiceStatus('listening');
+    const wins = [promptCaptureWindow, resultsWindow];
+    for (const win of wins) {
+      if (win && !win.isDestroyed()) win.webContents.send('voice:status', { status: 'listening' });
+    }
+  });
+
+  // voice:stop — deactivate voice
+  ipcMain.on('voice:stop', () => {
+    console.log('🎙️ [Voice] Deactivated');
+    voiceJournal.setVoiceStatus('idle');
+    const wins = [promptCaptureWindow, resultsWindow];
+    for (const win of wins) {
+      if (win && !win.isDestroyed()) win.webContents.send('voice:status', { status: 'idle' });
+    }
+  });
+
+  // voice:push-to-talk-start — renderer signals PTT button pressed
+  ipcMain.on('voice:push-to-talk-start', () => {
+    console.log('🎙️ [Voice] Push-to-talk: start');
+    voiceJournal.setVoiceStatus('listening');
+    const wins = [promptCaptureWindow, resultsWindow];
+    for (const win of wins) {
+      if (win && !win.isDestroyed()) win.webContents.send('voice:listening', { active: true });
+    }
+  });
+
+  // voice:push-to-talk-end — renderer signals PTT button released (audio chunk ready)
+  ipcMain.on('voice:push-to-talk-end', () => {
+    console.log('🎙️ [Voice] Push-to-talk: end — awaiting audio');
+    voiceJournal.setVoiceStatus('processing');
+  });
+
+  // voice:audio-chunk — renderer sends base64 audio for processing
+  let _voiceChunkProcessing = false; // guard against concurrent processing
+  ipcMain.on('voice:audio-chunk', async (event, { audioBase64, format = 'webm', pushToTalk = true, sessionId = null }) => {
+    console.log(`🎙️ [Voice] Audio chunk received (${format}, ${audioBase64?.length || 0} b64 chars)`);
+    if (_voiceChunkProcessing) {
+      console.log('🎙️ [Voice] Already processing a chunk — skipping duplicate');
+      return;
+    }
+    _voiceChunkProcessing = true;
+
+    const wins = [promptCaptureWindow, resultsWindow];
+
+    try {
+      voiceJournal.setVoiceStatus('processing');
+
+      const response = await new Promise((resolve, reject) => {
+        const http_module = require('http');
+        const body = JSON.stringify({
+          audioBase64,
+          format,
+          pushToTalk,
+          skipWakeWordCheck: pushToTalk,
+          sessionId: sessionId || currentSessionId,
+        });
+
+        const url = new URL('/voice.process', VOICE_SERVICE_URL);
+        const req = http_module.request({
+          hostname: url.hostname,
+          port: parseInt(url.port || '3006', 10),
+          path: url.pathname,
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) },
+        }, (res) => {
+          let data = '';
+          res.on('data', chunk => { data += chunk; });
+          res.on('end', () => { try { resolve(JSON.parse(data)); } catch (_) { resolve({}); } });
+        });
+        req.on('error', reject);
+        req.setTimeout(180000, () => req.destroy(new Error('Voice process timeout')));
+        req.write(body);
+        req.end();
+      });
+
+      const result = response.data || response;
+      console.log(`🎙️ [Voice] Pipeline result: lane=${result.lane}, hasAudio=${!!result.audioBase64}, skipped=${result.skipped}, reason=${result.reason || ''}, transcript=${result.transcript?.substring(0,40) || ''}`);
+
+      if (result.transcript) {
+        for (const win of wins) {
+          if (win && !win.isDestroyed()) {
+            win.webContents.send('voice:transcript', { text: result.transcript, language: result.detectedLanguage });
+          }
+        }
+      }
+
+      if (result.audioBase64) {
+        console.log(`🎙️ [Voice] Sending voice:response (${result.audioBase64.length} b64, format=${result.audioFormat})`);
+        for (const win of wins) {
+          if (win && !win.isDestroyed()) {
+            win.webContents.send('voice:response', {
+              text: result.responseFinal || result.responseEnglish || '',
+              audioBase64: result.audioBase64,
+              audioFormat: result.audioFormat || 'mp3',
+              language: result.detectedLanguage,
+              lane: result.lane,
+            });
+          }
+        }
+      } else {
+        console.log('🎙️ [Voice] No audioBase64 in result — no TTS to play');
+      }
+
+      voiceJournal.setVoiceStatus('idle');
+    } catch (err) {
+      console.error('❌ [Voice] Audio processing error:', err.message);
+      voiceJournal.setVoiceStatus('idle');
+      for (const win of wins) {
+        if (win && !win.isDestroyed()) {
+          win.webContents.send('voice:error', { error: err.message });
+        }
+      }
+    } finally {
+      _voiceChunkProcessing = false;
+    }
+  });
+
   // ─── StateGraph: Process prompt through full pipeline ────────────────────
   ipcMain.on('stategraph:process', async (event, { prompt, selectedText = '', sessionId = null, userId = 'default_user' }) => {
     console.log('🧠 [StateGraph] Processing prompt:', prompt.substring(0, 80));
@@ -843,8 +1080,43 @@ app.whenReady().then(async () => {
       }
 
       activeAbortController = new AbortController();
-      const finalState = await stateGraph.execute(initialState, null, activeAbortController.signal);
+
+      // ── Voice Journal: report start + per-node progress ──────────────────────
+      voiceJournal.graphStarted({
+        intent: initialState?.intent?.type || initialState?.intent || 'unknown',
+        sessionId: initialState?.context?.sessionId || initialState?.sessionId || null,
+      });
+      let _journalNodeIndex = 0;
+
+      const _journalOnProgress = async (nodeName, _nodeState, durationMs, phase) => {
+        if (phase !== 'completed') return;
+        _journalNodeIndex++;
+        voiceJournal.graphNodeDone({ node: nodeName, durationMs, nodeIndex: _journalNodeIndex, totalNodes: 0 });
+
+        // Check for pending voice signals (cancel/pause/inject)
+        const signals = voiceJournal.readPendingSignals();
+        for (const sig of signals) {
+          if (sig.type === 'cancel') {
+            console.log('[VoiceJournal] Cancel signal received — aborting StateGraph');
+            activeAbortController && activeAbortController.abort();
+            voiceJournal.acknowledgeSignal(sig.id);
+          } else if (sig.type === 'pause') {
+            console.log('[VoiceJournal] Pause signal received (acknowledged, pause handled at next node boundary)');
+            voiceJournal.acknowledgeSignal(sig.id);
+          } else if (sig.type === 'resume' || sig.type === 'inject') {
+            voiceJournal.acknowledgeSignal(sig.id);
+          }
+        }
+      };
+
+      const finalState = await stateGraph.execute(initialState, _journalOnProgress, activeAbortController.signal);
       activeAbortController = null;
+
+      // Voice Journal: report completion
+      voiceJournal.graphDone({
+        intent: finalState?.intent?.type || finalState?.intent || 'unknown',
+        summary: finalState?.answer ? finalState.answer.substring(0, 120) : '',
+      });
 
       // Persist resolved session for next prompt
       if (finalState.resolvedSessionId) {
@@ -920,6 +1192,10 @@ app.whenReady().then(async () => {
 
     } catch (err) {
       console.error('❌ [StateGraph] Execution error:', err.message);
+      voiceJournal.graphError({
+        intent: (initialState || {})?.intent?.type || (initialState || {})?.intent || 'unknown',
+        error: err?.message || String(err),
+      });
       if (resultsWindow && !resultsWindow.isDestroyed()) {
         resultsWindow.webContents.send('ws-bridge:error', err.message);
       }
