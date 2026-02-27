@@ -243,7 +243,7 @@ function initStateGraph() {
 
     llmBackend = new VSCodeLLMBackend({
       wsUrl:            process.env.WEBSOCKET_URL     || 'ws://localhost:4000/ws/stream',
-      apiKey:           process.env.BIBSCRIP_API_KEY  || process.env.WEBSOCKET_API_KEY || '',
+      apiKey:           process.env.BASE_API_KEY  || process.env.WEBSOCKET_API_KEY || '',
       userId:           'thinkdrop_electron',
       connectTimeoutMs: 5000,
       responseTimeoutMs: 60000,
@@ -292,7 +292,7 @@ function connectToSocket() {
   }
 
   const wsUrl = new URL(process.env.WEBSOCKET_URL);
-  wsUrl.searchParams.set('apiKey', process.env.BIBSCRIP_API_KEY || '');
+  wsUrl.searchParams.set('apiKey', process.env.BASE_URL || '');
   wsUrl.searchParams.set('userId', 'thinkdrop_electron');
   wsUrl.searchParams.set('clientId', `thinkdrop_${Date.now()}`);
 
@@ -1044,6 +1044,25 @@ app.whenReady().then(async () => {
           console.log('[StateGraph] ASK_USER resume: new prompt looks like a fresh request — clearing paused state and processing fresh');
           pausedAutomationState = null;
           initialState = { message: prompt, selectedText, streamCallback, progressCallback, confirmInstallCallback, confirmGuideCallback, isGuideCancelled, activeBrowserSessionId: currentBrowserSessionId || null, activeBrowserUrl: currentBrowserUrl || null, context: { sessionId: sessionId || currentSessionId, userId, source: 'thinkdrop_electron' } };
+        } else if (paused.enrichmentNeeded?.length > 0 && !paused.pendingQuestion) {
+          // Enrichment gap resume — user answered an entity question (e.g. "who is your cousin?")
+          // enrichIntent MODE B detects [ENTITY_QUESTION marker in conversation history,
+          // stores the answer, restores the original command, and retries.
+          // Just re-enter fresh with the user's answer — enrichIntent handles the rest.
+          pausedAutomationState = null;
+          console.log(`[StateGraph] Enrichment gap resume: user answered entity question — re-entering enrichIntent MODE B`);
+          initialState = {
+            message: prompt,
+            selectedText,
+            streamCallback,
+            progressCallback,
+            confirmInstallCallback,
+            confirmGuideCallback,
+            isGuideCancelled,
+            activeBrowserSessionId: currentBrowserSessionId || null,
+            activeBrowserUrl: currentBrowserUrl || null,
+            context: { sessionId: sessionId || currentSessionId, userId, source: 'thinkdrop_electron' },
+          };
         } else {
           pausedAutomationState = null;
           const q = paused.pendingQuestion;
@@ -1265,6 +1284,17 @@ app.whenReady().then(async () => {
         }
       }
       if (intentType === 'command_automate') {
+        // Enrichment gap question — entity or profile info missing, asking user before proceeding.
+        // Send the question as a visible message and pause state so next reply resumes the command.
+        if (finalState.enrichmentNeeded?.length > 0 && finalState.answer && !finalState.pendingQuestion) {
+          pausedAutomationState = finalState;
+          console.log(`[StateGraph] Enrichment gap (${intentType}): pausing for entity info — next prompt will resume`);
+          if (resultsWindow && !resultsWindow.isDestroyed()) {
+            // Strip internal routing markers before showing to user
+            const cleanAnswer = finalState.answer.replace(/^\[.*?\]\s*/s, '').trim();
+            resultsWindow.webContents.send('ws-bridge:message', { type: 'chunk', text: cleanAnswer });
+          }
+        }
         // Plan error not caught by progressCallback (e.g. no skillPlan at all)
         if (finalState.planError && !finalState.skillPlan && !finalState.pendingQuestion) {
           if (resultsWindow && !resultsWindow.isDestroyed()) {
