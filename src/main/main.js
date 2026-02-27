@@ -1,6 +1,13 @@
 // Entry point — ThinkDrop managed
 require('dotenv').config();
 const { app, BrowserWindow, ipcMain, screen, globalShortcut, clipboard } = require('electron');
+
+// Safe IPC send — guards against "Render frame was disposed" crash that occurs when
+// a window reloads between the isDestroyed() check and the actual send call.
+function safeSend(win, channel, ...args) {
+  if (!win || win.isDestroyed()) return;
+  try { win.webContents.send(channel, ...args); } catch (_) {}
+}
 const screenshot = require('screenshot-desktop');
 const path = require('path');
 const WebSocket = require('ws');
@@ -53,11 +60,11 @@ function startOverlayControlServer() {
 
           // Notify renderer so it can show the prompt in the UI
           if (promptCaptureWindow && !promptCaptureWindow.isDestroyed()) {
-            promptCaptureWindow.webContents.send('voice:inject-prompt', { message, sessionId, source: source || 'voice' });
+            safeSend(promptCaptureWindow, 'voice:inject-prompt', { message, sessionId, source: source || 'voice' });
           }
           // Reset Results window state for the new voice prompt
           if (resultsWindow && !resultsWindow.isDestroyed()) {
-            resultsWindow.webContents.send('results-window:set-prompt', message);
+            safeSend(resultsWindow, 'results-window:set-prompt', message);
           }
 
           // Flush stale cancel/pause signals before starting so previous-session
@@ -76,17 +83,17 @@ function startOverlayControlServer() {
           const streamCallback = (token) => {
             tokens.push(token);
             if (resultsWindow && !resultsWindow.isDestroyed()) {
-              resultsWindow.webContents.send('ws-bridge:message', { type: 'chunk', text: token });
+              safeSend(resultsWindow, 'ws-bridge:message', { type: 'chunk', text: token });
             }
           };
 
           // Forward automation progress events to Results window (AutomationProgress component)
           const progressCallback = (evt) => {
             if (resultsWindow && !resultsWindow.isDestroyed()) {
-              resultsWindow.webContents.send('automation:progress', evt);
+              safeSend(resultsWindow, 'automation:progress', evt);
             }
             if (evt.type === 'all_done' && promptCaptureWindow && !promptCaptureWindow.isDestroyed()) {
-              promptCaptureWindow.webContents.send('automation:progress', evt);
+              safeSend(promptCaptureWindow, 'automation:progress', evt);
             }
           };
 
@@ -151,7 +158,7 @@ function startOverlayControlServer() {
 
           // Signal stream end to renderer
           if (resultsWindow && !resultsWindow.isDestroyed()) {
-            resultsWindow.webContents.send('ws-bridge:message', { type: 'done' });
+            safeSend(resultsWindow, 'ws-bridge:message', { type: 'done' });
           }
 
           res.writeHead(200);
@@ -304,7 +311,7 @@ function connectToSocket() {
     vscodeConnected = true;
     reconnectAttempts = 0;
     if (resultsWindow && !resultsWindow.isDestroyed()) {
-      resultsWindow.webContents.send('ws-bridge:connected');
+      safeSend(resultsWindow, 'ws-bridge:connected');
     }
   });
 
@@ -315,7 +322,7 @@ function connectToSocket() {
       
       // Forward all messages to ResultsWindow
       if (resultsWindow && !resultsWindow.isDestroyed()) {
-        resultsWindow.webContents.send('ws-bridge:message', message);
+        safeSend(resultsWindow, 'ws-bridge:message', message);
       }
     } catch (error) {
       console.error('[VS Code Bridge] Failed to parse message:', error);
@@ -326,7 +333,7 @@ function connectToSocket() {
     console.error('[VS Code Bridge] Error:', error.message);
     vscodeConnected = false;
     if (resultsWindow && !resultsWindow.isDestroyed()) {
-      resultsWindow.webContents.send('ws-bridge:error', error.message);
+      safeSend(resultsWindow, 'ws-bridge:error', error.message);
     }
   });
 
@@ -335,7 +342,7 @@ function connectToSocket() {
     vscodeConnected = false;
     bridgeWs = null;
     if (resultsWindow && !resultsWindow.isDestroyed()) {
-      resultsWindow.webContents.send('ws-bridge:disconnected');
+      safeSend(resultsWindow, 'ws-bridge:disconnected');
     }
 
     if (reconnectAttempts < MAX_RECONNECT_ATTEMPTS) {
@@ -406,12 +413,35 @@ function createPromptCaptureWindow() {
     console.log('✅ [PROMPT_CAPTURE] Window ready to show');
   });
 
+  // Grant microphone access for webkitSpeechRecognition (PTT Web Speech API)
+  promptCaptureWindow.webContents.session.setPermissionRequestHandler((webContents, permission, callback) => {
+    if (permission === 'media' || permission === 'microphone') {
+      console.log(`[PROMPT_CAPTURE] Granting permission: ${permission}`);
+      callback(true);
+    } else {
+      callback(false);
+    }
+  });
+  promptCaptureWindow.webContents.session.setPermissionCheckHandler((webContents, permission) => {
+    if (permission === 'media' || permission === 'microphone') return true;
+    return false;
+  });
+
   promptCaptureWindow.webContents.on('did-finish-load', () => {
     console.log('[PROMPT_CAPTURE] Content finished loading.');
     console.log('[PROMPT_CAPTURE] isVisible:', promptCaptureWindow.isVisible());
-    promptCaptureWindow.webContents.setAudioMuted(false); // ensure audio output is enabled
-    // promptCaptureWindow.webContents.openDevTools({ mode: 'detach' }); // open devtools for voice debugging
+    promptCaptureWindow.webContents.setAudioMuted(false);
     console.log('[PROMPT_CAPTURE] isDestroyed:', promptCaptureWindow.isDestroyed());
+  });
+
+  // Block Vite HMR full-page reloads on promptCaptureWindow — same render frame disposal issue.
+  let promptCaptureWindowLoaded = false;
+  promptCaptureWindow.webContents.once('did-finish-load', () => { promptCaptureWindowLoaded = true; });
+  promptCaptureWindow.webContents.on('will-navigate', (event, url) => {
+    if (promptCaptureWindowLoaded) {
+      console.log('[PROMPT_CAPTURE] Blocking navigation to prevent render frame disposal:', url);
+      event.preventDefault();
+    }
   });
 
   promptCaptureWindow.webContents.on('did-fail-load', (event, errorCode, errorDescription) => {
@@ -499,13 +529,19 @@ function createResultsWindow() {
   resultsWindow.webContents.on('did-finish-load', () => {
     console.log('[RESULTS_WINDOW] Content finished loading.');
     console.log('[RESULTS_WINDOW] isVisible:', resultsWindow.isVisible());
-    
-    // Open DevTools for debugging
-    // resultsWindow.webContents.openDevTools({ mode: 'detach' });
     console.log('[RESULTS_WINDOW] isDestroyed:', resultsWindow.isDestroyed());
-    
-    // Ensure the window is hidden after loading to prevent it from showing at the initial off-screen position
-    setTimeout(() => resultsWindow.hide(), 50); 
+    setTimeout(() => resultsWindow.hide(), 50);
+  });
+
+  // Block Vite HMR full-page reloads — they dispose the render frame mid-stream causing
+  // "Render frame was disposed" errors. HMR hot updates arrive via WebSocket, not navigation.
+  let resultsWindowLoaded = false;
+  resultsWindow.webContents.once('did-finish-load', () => { resultsWindowLoaded = true; });
+  resultsWindow.webContents.on('will-navigate', (event, url) => {
+    if (resultsWindowLoaded) {
+      console.log('[RESULTS_WINDOW] Blocking navigation to prevent render frame disposal:', url);
+      event.preventDefault();
+    }
   });
 
   resultsWindow.webContents.on('did-fail-load', (event, errorCode, errorDescription) => {
@@ -611,16 +647,16 @@ app.whenReady().then(async () => {
       setTimeout(() => {
         if (!stateGraph) { console.warn('[Scheduler] StateGraph not ready for scheduled task'); return; }
         if (resultsWindow && !resultsWindow.isDestroyed()) {
-          resultsWindow.webContents.send('results-window:set-prompt', pending.prompt || pending.label);
+          safeSend(resultsWindow, 'results-window:set-prompt', pending.prompt || pending.label);
           resultsWindow.showInactive();
           resultsWindow.moveTop();
         }
         const progressCallback = (event) => {
           if (resultsWindow && !resultsWindow.isDestroyed()) {
-            resultsWindow.webContents.send('automation:progress', event);
+            safeSend(resultsWindow, 'automation:progress', event);
           }
           if (event.type === 'all_done' && promptCaptureWindow && !promptCaptureWindow.isDestroyed()) {
-            promptCaptureWindow.webContents.send('automation:progress', event);
+            safeSend(promptCaptureWindow, 'automation:progress', event);
           }
         };
         // Inject plan directly into stategraph as command_automate with pre-built skillPlan
@@ -650,7 +686,7 @@ app.whenReady().then(async () => {
       // Send notification to ResultsWindow once it's loaded
       const notifyPending = () => {
         if (resultsWindow && !resultsWindow.isDestroyed()) {
-          resultsWindow.webContents.send('schedule:pending', {
+          safeSend(resultsWindow, 'schedule:pending', {
             id: pending.id,
             label: pending.label,
             targetTime: targetStr,
@@ -695,10 +731,10 @@ app.whenReady().then(async () => {
       activeAbortController = null;
     }
     if (resultsWindow && !resultsWindow.isDestroyed()) {
-      resultsWindow.webContents.send('automation:progress', { type: 'all_done', cancelled: true, completedCount: 0, totalCount: 0 });
+      safeSend(resultsWindow, 'automation:progress', { type: 'all_done', cancelled: true, completedCount: 0, totalCount: 0 });
     }
     if (promptCaptureWindow && !promptCaptureWindow.isDestroyed()) {
-      promptCaptureWindow.webContents.send('automation:progress', { type: 'all_done', cancelled: true, completedCount: 0, totalCount: 0 });
+      safeSend(promptCaptureWindow, 'automation:progress', { type: 'all_done', cancelled: true, completedCount: 0, totalCount: 0 });
     }
   });
 
@@ -711,7 +747,7 @@ app.whenReady().then(async () => {
     voiceJournal.setVoiceStatus('listening');
     const wins = [promptCaptureWindow, resultsWindow];
     for (const win of wins) {
-      if (win && !win.isDestroyed()) win.webContents.send('voice:status', { status: 'listening' });
+      safeSend(win, 'voice:status', { status: 'listening' });
     }
   });
 
@@ -721,7 +757,7 @@ app.whenReady().then(async () => {
     voiceJournal.setVoiceStatus('idle');
     const wins = [promptCaptureWindow, resultsWindow];
     for (const win of wins) {
-      if (win && !win.isDestroyed()) win.webContents.send('voice:status', { status: 'idle' });
+      safeSend(win, 'voice:status', { status: 'idle' });
     }
   });
 
@@ -731,7 +767,7 @@ app.whenReady().then(async () => {
     voiceJournal.setVoiceStatus('listening');
     const wins = [promptCaptureWindow, resultsWindow];
     for (const win of wins) {
-      if (win && !win.isDestroyed()) win.webContents.send('voice:listening', { active: true });
+      safeSend(win, 'voice:listening', { active: true });
     }
   });
 
@@ -743,8 +779,8 @@ app.whenReady().then(async () => {
 
   // voice:audio-chunk — renderer sends base64 audio for processing
   let _voiceChunkActive = 0; // count of concurrent voice chunk processings
-  ipcMain.on('voice:audio-chunk', async (event, { audioBase64, format = 'webm', pushToTalk = true, sessionId = null }) => {
-    console.log(`🎙️ [Voice] Audio chunk received (${format}, ${audioBase64?.length || 0} b64 chars)`);
+  ipcMain.on('voice:audio-chunk', async (event, { audioBase64, format = 'webm', pushToTalk = true, skipWakeWordCheck: rendererSkipWWC = null, sessionId = null, pttTextOnly = false }) => {
+    console.log(`🎙️ [Voice] Audio chunk received (${format}, ${audioBase64?.length || 0} b64 chars, pttTextOnly=${pttTextOnly})`);
     // For PTT: drop duplicates (shouldn't overlap). For wake word: allow up to 2 concurrent.
     const maxConcurrent = pushToTalk ? 1 : 2;
     if (_voiceChunkActive >= maxConcurrent) {
@@ -764,7 +800,8 @@ app.whenReady().then(async () => {
           audioBase64,
           format,
           pushToTalk,
-          skipWakeWordCheck: pushToTalk,
+          skipWakeWordCheck: rendererSkipWWC !== null ? rendererSkipWWC : pushToTalk,
+          skipInject: pttTextOnly,
           sessionId: sessionId || currentSessionId,
         });
 
@@ -799,11 +836,23 @@ app.whenReady().then(async () => {
       const result = response.data || response;
       console.log(`🎙️ [Voice] Pipeline result: lane=${result.lane}, hasAudio=${!!result.audioBase64}, skipped=${result.skipped}, reason=${result.reason || ''}, transcript=${result.transcript?.substring(0,40) || ''}`);
 
+      // PTT text-only mode: just return the transcript to the renderer, skip LLM/TTS
+      if (pttTextOnly) {
+        const transcript = result.transcript || '';
+        console.log(`🎙️ [PTT] Text-only — transcript: "${transcript}"`);
+        if (promptCaptureWindow && !promptCaptureWindow.isDestroyed()) {
+          safeSend(promptCaptureWindow, 'ptt:transcript', { transcript });
+        }
+        _voiceChunkActive--;
+        voiceJournal.setVoiceStatus('idle');
+        return;
+      }
+
       // Only show transcript in UI when actually processed (not noise-filtered/skipped)
       if (result.transcript && !result.skipped) {
         for (const win of wins) {
           if (win && !win.isDestroyed()) {
-            win.webContents.send('voice:transcript', { text: result.transcript, language: result.detectedLanguage });
+            safeSend(win, 'voice:transcript', { text: result.transcript, language: result.detectedLanguage });
           }
         }
       }
@@ -813,36 +862,34 @@ app.whenReady().then(async () => {
       // - fast: response text (butler reply — show so user can read what was spoken)
       if (result.lane === 'stategraph' && result.fullAnswer && !result._hadLiveStream) {
         if (resultsWindow && !resultsWindow.isDestroyed()) {
-          if (result.transcript) resultsWindow.webContents.send('results-window:set-prompt', result.transcript);
+          if (result.transcript) safeSend(resultsWindow, 'results-window:set-prompt', result.transcript);
           resultsWindow.showInactive();
           resultsWindow.moveTop();
-          resultsWindow.webContents.send('ws-bridge:message', { type: 'chunk', text: result.fullAnswer });
-          resultsWindow.webContents.send('ws-bridge:message', { type: 'done' });
+          safeSend(resultsWindow, 'ws-bridge:message', { type: 'chunk', text: result.fullAnswer, lane: 'stategraph' });
+          safeSend(resultsWindow, 'ws-bridge:message', { type: 'done', lane: 'stategraph' });
         }
       } else if (result.lane === 'fast' && result.responseEnglish && !result.skipped) {
         if (resultsWindow && !resultsWindow.isDestroyed()) {
-          if (result.transcript) resultsWindow.webContents.send('results-window:set-prompt', result.transcript);
+          if (result.transcript) safeSend(resultsWindow, 'results-window:set-prompt', result.transcript);
           resultsWindow.showInactive();
           resultsWindow.moveTop();
-          resultsWindow.webContents.send('ws-bridge:message', { type: 'chunk', text: result.responseEnglish });
-          resultsWindow.webContents.send('ws-bridge:message', { type: 'done' });
+          safeSend(resultsWindow, 'ws-bridge:message', { type: 'chunk', text: result.responseEnglish, lane: 'fast' });
+          safeSend(resultsWindow, 'ws-bridge:message', { type: 'done', lane: 'fast' });
         }
       }
 
       if (result.audioBase64) {
         console.log(`🎙️ [Voice] Sending voice:response (${result.audioBase64.length} b64, format=${result.audioFormat})`);
-        for (const win of wins) {
-          if (win && !win.isDestroyed()) {
-            win.webContents.send('voice:response', {
-              text: result.responseFinal || result.responseEnglish || '',
-              fullAnswer: result.fullAnswer || '',
-              audioBase64: result.audioBase64,
-              audioFormat: result.audioFormat || 'mp3',
-              language: result.detectedLanguage,
-              lane: result.lane,
-            });
-          }
-        }
+        // Send ONLY to promptCaptureWindow — VoiceButton lives there and handles TTS playback.
+        // Sending to both windows causes duplicate audio playback.
+        safeSend(promptCaptureWindow, 'voice:response', {
+            text: result.responseFinal || result.responseEnglish || '',
+            fullAnswer: result.fullAnswer || '',
+            audioBase64: result.audioBase64,
+            audioFormat: result.audioFormat || 'mp3',
+            language: result.detectedLanguage,
+            lane: result.lane,
+          });
       } else {
         console.log('🎙️ [Voice] No audioBase64 in result — no TTS to play');
       }
@@ -852,12 +899,90 @@ app.whenReady().then(async () => {
       console.error('❌ [Voice] Audio processing error:', err.message);
       voiceJournal.setVoiceStatus('idle');
       for (const win of wins) {
-        if (win && !win.isDestroyed()) {
-          win.webContents.send('voice:error', { error: err.message });
-        }
+        safeSend(win, 'voice:error', { error: err.message });
       }
     } finally {
       _voiceChunkActive = Math.max(0, _voiceChunkActive - 1);
+    }
+  });
+
+  // voice:transcript-direct — renderer pre-transcribed via Web Speech API, skip STT
+  ipcMain.on('voice:transcript-direct', async (event, { transcript, pushToTalk = true, sessionId = null }) => {
+    console.log(`🎙️ [Voice] Transcript direct: "${transcript?.substring(0, 60)}" (pushToTalk=${pushToTalk})`);
+    const wins = [promptCaptureWindow, resultsWindow];
+    try {
+      voiceJournal.setVoiceStatus('processing');
+      const response = await new Promise((resolve, reject) => {
+        const http_module = require('http');
+        const body = JSON.stringify({
+          transcript,
+          skipSTT: true,
+          pushToTalk,
+          skipWakeWordCheck: pushToTalk,
+          sessionId: sessionId || currentSessionId,
+        });
+        const url = new URL('/voice.process', VOICE_SERVICE_URL);
+        const req = http_module.request({
+          hostname: url.hostname,
+          port: parseInt(url.port || '3006', 10),
+          path: url.pathname,
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) },
+        }, (res) => {
+          const chunks = [];
+          res.on('data', chunk => chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)));
+          res.on('end', () => {
+            try { resolve(JSON.parse(Buffer.concat(chunks).toString('utf8'))); }
+            catch (e) { resolve({}); }
+          });
+        });
+        req.on('error', reject);
+        req.setTimeout(180000, () => req.destroy(new Error('Voice process timeout')));
+        req.write(body);
+        req.end();
+      });
+
+      const result = response.data || response;
+      console.log(`🎙️ [Voice] Direct transcript result: lane=${result.lane}, hasAudio=${!!result.audioBase64}, skipped=${result.skipped}`);
+
+      if (result.transcript && !result.skipped) {
+        for (const win of wins) {
+          safeSend(win, 'voice:transcript', { text: result.transcript, language: result.detectedLanguage });
+        }
+      }
+      if (result.lane === 'stategraph' && result.fullAnswer && !result._hadLiveStream) {
+        if (resultsWindow && !resultsWindow.isDestroyed()) {
+          if (result.transcript) safeSend(resultsWindow, 'results-window:set-prompt', result.transcript);
+          resultsWindow.showInactive(); resultsWindow.moveTop();
+          safeSend(resultsWindow, 'ws-bridge:message', { type: 'chunk', text: result.fullAnswer, lane: 'stategraph' });
+          safeSend(resultsWindow, 'ws-bridge:message', { type: 'done', lane: 'stategraph' });
+        }
+      } else if (result.lane === 'fast' && result.responseEnglish && !result.skipped) {
+        if (resultsWindow && !resultsWindow.isDestroyed()) {
+          if (result.transcript) safeSend(resultsWindow, 'results-window:set-prompt', result.transcript);
+          resultsWindow.showInactive(); resultsWindow.moveTop();
+          safeSend(resultsWindow, 'ws-bridge:message', { type: 'chunk', text: result.responseEnglish, lane: 'fast' });
+          safeSend(resultsWindow, 'ws-bridge:message', { type: 'done', lane: 'fast' });
+        }
+      }
+      if (result.audioBase64) {
+        // Send ONLY to promptCaptureWindow to avoid duplicate TTS
+        safeSend(promptCaptureWindow, 'voice:response', {
+            text: result.responseFinal || result.responseEnglish || '',
+            fullAnswer: result.fullAnswer || '',
+            audioBase64: result.audioBase64,
+            audioFormat: result.audioFormat || 'mp3',
+            language: result.detectedLanguage,
+            lane: result.lane,
+          });
+      }
+      voiceJournal.setVoiceStatus('idle');
+    } catch (err) {
+      console.error('❌ [Voice] Direct transcript error:', err.message);
+      voiceJournal.setVoiceStatus('idle');
+      for (const win of wins) {
+        if (win && !win.isDestroyed()) safeSend(win, 'voice:error', { error: err.message });
+      }
     }
   });
 
@@ -872,28 +997,28 @@ app.whenReady().then(async () => {
     if (!stateGraph) {
       console.error('❌ [StateGraph] Not initialized');
       if (resultsWindow && !resultsWindow.isDestroyed()) {
-        resultsWindow.webContents.send('ws-bridge:error', 'StateGraph not initialized');
+        safeSend(resultsWindow, 'ws-bridge:error', 'StateGraph not initialized');
       }
       return;
     }
 
     // Show ResultsWindow and set prompt display (without stealing focus from active app)
     if (resultsWindow && !resultsWindow.isDestroyed()) {
-      resultsWindow.webContents.send('results-window:set-prompt', prompt);
+      safeSend(resultsWindow, 'results-window:set-prompt', prompt);
       resultsWindow.showInactive();
       resultsWindow.moveTop();
     }
+
+    // Snapshot webContents at handler start — if the window reloads mid-stream the
+    // reference becomes stale and safeSend would spam "Render frame was disposed" errors.
+    const targetContents = (resultsWindow && !resultsWindow.isDestroyed()) ? resultsWindow.webContents : null;
 
     // Stream callback: forward each token to ResultsWindow as it arrives
     let streamingUsed = false;
     const streamCallback = (token) => {
       streamingUsed = true;
-      if (resultsWindow && !resultsWindow.isDestroyed()) {
-        resultsWindow.webContents.send('ws-bridge:message', {
-          type: 'chunk',
-          text: token
-        });
-      }
+      if (!targetContents || targetContents.isDestroyed()) return;
+      try { targetContents.send('ws-bridge:message', { type: 'chunk', text: token }); } catch (_) {}
     };
 
     // Progress callback: forward automation progress events to ResultsWindow (and prompt window for glow)
@@ -911,13 +1036,13 @@ app.whenReady().then(async () => {
         activeScheduleCountdown = null;
       }
       if (resultsWindow && !resultsWindow.isDestroyed()) {
-        resultsWindow.webContents.send('automation:progress', event);
+        safeSend(resultsWindow, 'automation:progress', event);
       } else {
         console.warn('[ProgressCallback] resultsWindow not available for event:', event.type);
       }
       // Forward all_done to promptCaptureWindow so its glow clears
       if (event.type === 'all_done' && promptCaptureWindow && !promptCaptureWindow.isDestroyed()) {
-        promptCaptureWindow.webContents.send('automation:progress', event);
+        safeSend(promptCaptureWindow, 'automation:progress', event);
       }
     };
 
@@ -999,7 +1124,7 @@ app.whenReady().then(async () => {
       }
       // Notify UI that automation was cancelled
       if (resultsWindow && !resultsWindow.isDestroyed()) {
-        resultsWindow.webContents.send('automation:progress', { type: 'all_done', cancelled: true, completedCount: 0, totalCount: 0 });
+        safeSend(resultsWindow, 'automation:progress', { type: 'all_done', cancelled: true, completedCount: 0, totalCount: 0 });
       }
     };
     ipcMain.on('guide:continue', handleGuideContinue);
@@ -1276,7 +1401,7 @@ app.whenReady().then(async () => {
         console.log(`[StateGraph] ASK_USER (${intentType}): pausing — next prompt will resume`);
         const q = finalState.pendingQuestion;
         if (resultsWindow && !resultsWindow.isDestroyed()) {
-          resultsWindow.webContents.send('automation:progress', {
+          safeSend(resultsWindow, 'automation:progress', {
             type: 'ask_user',
             question: q.question,
             options: q.options || []
@@ -1292,13 +1417,13 @@ app.whenReady().then(async () => {
           if (resultsWindow && !resultsWindow.isDestroyed()) {
             // Strip internal routing markers before showing to user
             const cleanAnswer = finalState.answer.replace(/^\[.*?\]\s*/s, '').trim();
-            resultsWindow.webContents.send('ws-bridge:message', { type: 'chunk', text: cleanAnswer });
+            safeSend(resultsWindow, 'ws-bridge:message', { type: 'chunk', text: cleanAnswer });
           }
         }
         // Plan error not caught by progressCallback (e.g. no skillPlan at all)
         if (finalState.planError && !finalState.skillPlan && !finalState.pendingQuestion) {
           if (resultsWindow && !resultsWindow.isDestroyed()) {
-            resultsWindow.webContents.send('automation:progress', { type: 'plan_error', error: finalState.planError });
+            safeSend(resultsWindow, 'automation:progress', { type: 'plan_error', error: finalState.planError });
           }
         }
         // Do NOT send ws-bridge:message for normal completion — AutomationProgress shows it
@@ -1309,16 +1434,16 @@ app.whenReady().then(async () => {
       // shows it instead of the "Waiting for response..." placeholder.
       if (intentType !== 'command_automate' && finalState.answer && !streamingUsed) {
         if (resultsWindow && !resultsWindow.isDestroyed()) {
-          resultsWindow.webContents.send('ws-bridge:message', { type: 'chunk', text: finalState.answer });
+          safeSend(resultsWindow, 'ws-bridge:message', { type: 'chunk', text: finalState.answer });
         }
       }
 
       // Signal stream end (stops thinking spinner + clears prompt glow)
       if (resultsWindow && !resultsWindow.isDestroyed()) {
-        resultsWindow.webContents.send('ws-bridge:message', { type: 'done' });
+        safeSend(resultsWindow, 'ws-bridge:message', { type: 'done' });
       }
       if (promptCaptureWindow && !promptCaptureWindow.isDestroyed()) {
-        promptCaptureWindow.webContents.send('ws-bridge:message', { type: 'done' });
+        safeSend(promptCaptureWindow, 'ws-bridge:message', { type: 'done' });
       }
 
       // Print full trace to console
@@ -1339,7 +1464,7 @@ app.whenReady().then(async () => {
         error: err?.message || String(err),
       });
       if (resultsWindow && !resultsWindow.isDestroyed()) {
-        resultsWindow.webContents.send('ws-bridge:error', err.message);
+        safeSend(resultsWindow, 'ws-bridge:error', err.message);
       }
     } finally {
       // Always clean up the install:confirm and guide:continue/cancel listeners to prevent accumulation across runs
@@ -1370,7 +1495,7 @@ app.whenReady().then(async () => {
         promptCaptureWindow.setPosition(x - 250, y - 60);
         promptCaptureWindow.show();
         promptCaptureWindow.focus();
-        promptCaptureWindow.webContents.send('prompt-capture:show', { position: { x, y } });
+        safeSend(promptCaptureWindow, 'prompt-capture:show', { position: { x, y } });
 
         const bounds = promptCaptureWindow.getBounds();
         const centerX = bounds.x + Math.floor(bounds.width / 2);
@@ -1405,13 +1530,34 @@ app.whenReady().then(async () => {
 
           resultsWindow.showInactive();
           // Notify renderer to re-measure and resize based on current content
-          resultsWindow.webContents.send('results-window:show', { position: { x, y } });
+          safeSend(resultsWindow, 'results-window:show', { position: { x, y } });
           console.log('[Results Window] Shown alongside Prompt Capture Window.');
         }
 
         startClipboardMonitoring(true);
         console.log('[Prompt Capture] Activated via global shortcut.');
       }
+    }
+  });
+
+  // Backtick PTT — toggle mode: press once to start, press again to stop.
+  let pttGlobalActive = false;
+  const safeSendToWins = (channel) => {
+    [promptCaptureWindow, resultsWindow].forEach(w => {
+      if (!w || w.isDestroyed()) return;
+      try { w.webContents.send(channel); } catch (_) {}
+    });
+  };
+
+  globalShortcut.register('`', () => {
+    if (!pttGlobalActive) {
+      pttGlobalActive = true;
+      console.log('🎙️ [PTT] backtick — start');
+      safeSendToWins('voice:ptt-start');
+    } else {
+      pttGlobalActive = false;
+      console.log('🎙️ [PTT] backtick — stop');
+      safeSendToWins('voice:ptt-stop');
     }
   });
 
@@ -1468,7 +1614,7 @@ app.whenReady().then(async () => {
         promptCaptureWindow.setPosition(x - 250, y - 60);
         promptCaptureWindow.show();
         promptCaptureWindow.focus();
-        promptCaptureWindow.webContents.send('prompt-capture:show', { position: { x, y } });
+        safeSend(promptCaptureWindow, 'prompt-capture:show', { position: { x, y } });
 
         if (resultsWindow && !resultsWindow.isDestroyed()) {
           const margin = 20;
@@ -1479,7 +1625,7 @@ app.whenReady().then(async () => {
           resultsWindow.showInactive();
         }
       }
-      promptCaptureWindow.webContents.send('prompt-capture:add-highlight', tagContent);
+      safeSend(promptCaptureWindow, 'prompt-capture:add-highlight', tagContent);
       sentHighlights.add(tagContent);
     }
 
@@ -1500,7 +1646,7 @@ app.whenReady().then(async () => {
     if (!result.canceled && result.filePaths.length > 0) {
       result.filePaths.forEach(fp => {
         if (promptCaptureWindow && !promptCaptureWindow.isDestroyed()) {
-          promptCaptureWindow.webContents.send('prompt-capture:add-highlight', `[File: ${fp}]`);
+          safeSend(promptCaptureWindow, 'prompt-capture:add-highlight', `[File: ${fp}]`);
         }
       });
     }
@@ -1536,6 +1682,64 @@ app.whenReady().then(async () => {
     const { shell } = require('electron');
     console.log(`[Shell] Opening URL in default browser: ${url}`);
     shell.openExternal(url).catch(err => console.warn(`[Shell] openExternal failed: ${err}`));
+  });
+
+  // ─── Skills Manager: list installed skills ────────────────────────────────
+  ipcMain.on('skill:list', (event) => {
+    const fs = require('fs');
+    const path = require('path');
+    const os = require('os');
+    const skillsDir = path.join(os.homedir(), '.thinkdrop', 'skills');
+    try {
+      if (!fs.existsSync(skillsDir)) {
+        event.sender.send('skill:list-response', { skills: [] });
+        return;
+      }
+      const entries = fs.readdirSync(skillsDir, { withFileTypes: true });
+      const skills = entries
+        .filter(e => e.isDirectory())
+        .map(e => {
+          const skillPath = path.join(skillsDir, e.name);
+          const mdPath = path.join(skillPath, 'skill.md');
+          let description = '';
+          try {
+            const md = fs.readFileSync(mdPath, 'utf8');
+            const descMatch = md.match(/^description:\s*(.+)$/m);
+            description = descMatch ? descMatch[1].trim() : '';
+          } catch (_) {}
+          return { name: e.name, description, path: skillPath };
+        });
+      event.sender.send('skill:list-response', { skills });
+    } catch (err) {
+      console.error('[skill:list] Error:', err.message);
+      event.sender.send('skill:list-response', { skills: [], error: err.message });
+    }
+  });
+
+  // ─── Skills Manager: delete a skill by name (moves to Trash) ────────────
+  ipcMain.on('skill:delete', async (event, { name }) => {
+    const fs = require('fs');
+    const path = require('path');
+    const os = require('os');
+    const { shell } = require('electron');
+    if (!name || typeof name !== 'string' || name.includes('..') || name.includes('/')) {
+      event.sender.send('skill:delete-response', { ok: false, error: 'Invalid skill name' });
+      return;
+    }
+    const skillDir = path.join(os.homedir(), '.thinkdrop', 'skills', name);
+    try {
+      if (!fs.existsSync(skillDir)) {
+        event.sender.send('skill:delete-response', { ok: false, error: `Skill "${name}" not found` });
+        return;
+      }
+      // Move to Trash so the user can recover if needed
+      const trashResult = await shell.trashItem(skillDir);
+      console.log(`[skill:delete] Moved to Trash: ${skillDir}`);
+      event.sender.send('skill:delete-response', { ok: true, name });
+    } catch (err) {
+      console.error('[skill:delete] Error:', err.message);
+      event.sender.send('skill:delete-response', { ok: false, error: err.message });
+    }
   });
 
   ipcMain.on('prompt-capture:hide', () => {
@@ -1618,7 +1822,7 @@ app.whenReady().then(async () => {
 
     if (resultsWindow && !resultsWindow.isDestroyed()) {
       console.log(`[Results Window] Setting prompt text and showing window. ${text.substring(0, 100)}...`);
-      resultsWindow.webContents.send('results-window:set-prompt', text);
+      safeSend(resultsWindow, 'results-window:set-prompt', text);
       
   
       const primaryDisplay = screen.getPrimaryDisplay();
@@ -1635,7 +1839,7 @@ app.whenReady().then(async () => {
         console.log('[Results Window] Still loading content, waiting to show.');
         resultsWindow.webContents.once('did-finish-load', () => {
           console.log('[Results Window] Finished loading, now showing window.');
-          resultsWindow.webContents.send('results-window:set-prompt', text);
+          safeSend(resultsWindow, 'results-window:set-prompt', text);
           resultsWindow.showInactive(); // show without stealing focus
         });
       } else {
@@ -1655,14 +1859,14 @@ app.whenReady().then(async () => {
 
   ipcMain.on('results-window:show-error', (event, errorMessage) => {
     if (resultsWindow) {
-      resultsWindow.webContents.send('results-window:display-error', errorMessage);
+      safeSend(resultsWindow, 'results-window:display-error', errorMessage);
       resultsWindow.show();
     }
   });
 
   ipcMain.on('prompt-capture:add-highlight', (event, text) => {
     if (promptCaptureWindow) {
-      promptCaptureWindow.webContents.send('prompt-capture:add-highlight', text);
+      safeSend(promptCaptureWindow, 'prompt-capture:add-highlight', text);
     }
   });
 
@@ -1675,13 +1879,13 @@ app.whenReady().then(async () => {
       
       console.log('📸 [MAIN] Screenshot captured, size:', imgBuffer.length, 'bytes');
 
-      promptCaptureWindow.webContents.send('prompt-capture:screenshot-result', {
+      safeSend(promptCaptureWindow, 'prompt-capture:screenshot-result', {
         imageBase64: imgBuffer.toString('base64'),
       });
     } catch (error) {
       console.error('Screenshot capture failed:', error);
       if (resultsWindow && !resultsWindow.isDestroyed()) {
-        resultsWindow.webContents.send('ws-bridge:error', event.returnValue.error);
+        safeSend(resultsWindow, 'ws-bridge:error', event.returnValue.error);
       }
     }
   });
@@ -1694,7 +1898,7 @@ app.whenReady().then(async () => {
     if (!bridgeWs || bridgeWs.readyState !== WebSocket.OPEN) {
       console.error('[VS Code Bridge] Not connected');
       if (resultsWindow && !resultsWindow.isDestroyed()) {
-        resultsWindow.webContents.send('ws-bridge:error', 'Not connected to VS Code extension');
+        safeSend(resultsWindow, 'ws-bridge:error', 'Not connected to VS Code extension');
       }
       // Try to reconnect
       connectToSocket();
@@ -1721,7 +1925,7 @@ app.whenReady().then(async () => {
     } catch (error) {
       console.error('[VS Code Bridge] Failed to send message:', error);
       if (resultsWindow && !resultsWindow.isDestroyed()) {
-        resultsWindow.webContents.send('ws-bridge:error', error.message);
+        safeSend(resultsWindow, 'ws-bridge:error', error.message);
       }
     }
   });
@@ -1809,24 +2013,24 @@ app.whenReady().then(async () => {
               // Show results window + emit executing status
               if (resultsWindow && !resultsWindow.isDestroyed()) {
                 resultsWindow.show();
-                resultsWindow.webContents.send('bridge:status', { state: 'executing', blockId: block.id, summary: block.body.split('\n')[0].slice(0, 80), bridgeFile: BRIDGE_FILE });
+                safeSend(resultsWindow, 'bridge:status', { state: 'executing', blockId: block.id, summary: block.body.split('\n')[0].slice(0, 80), bridgeFile: BRIDGE_FILE });
               }
 
               // Fire stategraph exactly like a user submission via the IPC handler
               if (stateGraph) {
                 // Show prompt in results window
                 if (resultsWindow && !resultsWindow.isDestroyed()) {
-                  resultsWindow.webContents.send('results-window:set-prompt', `[Bridge] ${block.body.split('\n')[0].slice(0, 80)}`);
+                  safeSend(resultsWindow, 'results-window:set-prompt', `[Bridge] ${block.body.split('\n')[0].slice(0, 80)}`);
                 }
 
                 const bridgeProgressCallback = (evt) => {
                   if (resultsWindow && !resultsWindow.isDestroyed()) {
-                    resultsWindow.webContents.send('automation:progress', evt);
+                    safeSend(resultsWindow, 'automation:progress', evt);
                   }
                 };
                 const bridgeStreamCallback = (token) => {
                   if (resultsWindow && !resultsWindow.isDestroyed()) {
-                    resultsWindow.webContents.send('ws-bridge:message', { type: 'chunk', text: token });
+                    safeSend(resultsWindow, 'ws-bridge:message', { type: 'chunk', text: token });
                   }
                 };
 
@@ -1857,13 +2061,13 @@ app.whenReady().then(async () => {
                   console.log(`✅ [Bridge Listener] Done executing block ${block.id}`);
                   markBridgeBlockDone(block.id);
                   if (resultsWindow && !resultsWindow.isDestroyed()) {
-                    resultsWindow.webContents.send('bridge:status', { state: 'watching', bridgeFile: BRIDGE_FILE });
+                    safeSend(resultsWindow, 'bridge:status', { state: 'watching', bridgeFile: BRIDGE_FILE });
                   }
                 }).catch(err => {
                   console.error(`❌ [Bridge Listener] Error executing block ${block.id}:`, err.message);
                   markBridgeBlockDone(block.id, 'error');
                   if (resultsWindow && !resultsWindow.isDestroyed()) {
-                    resultsWindow.webContents.send('bridge:status', { state: 'watching', bridgeFile: BRIDGE_FILE });
+                    safeSend(resultsWindow, 'bridge:status', { state: 'watching', bridgeFile: BRIDGE_FILE });
                   }
                 });
               }
@@ -1877,7 +2081,7 @@ app.whenReady().then(async () => {
       bridgeWatcher.on('error', (err) => console.error('[Bridge Listener] fs.watch error:', err.message));
       console.log(`🌉 [Bridge Listener] Active — watching ${BRIDGE_FILE}`);
       if (resultsWindow && !resultsWindow.isDestroyed()) {
-        resultsWindow.webContents.send('bridge:status', { state: 'watching', bridgeFile: BRIDGE_FILE });
+        safeSend(resultsWindow, 'bridge:status', { state: 'watching', bridgeFile: BRIDGE_FILE });
       }
 
       // Execute any pending WS: blocks that were already in the bridge at startup
@@ -1891,7 +2095,7 @@ app.whenReady().then(async () => {
           );
           if (startupPending.length === 0) {
             if (resultsWindow && !resultsWindow.isDestroyed()) {
-              resultsWindow.webContents.send('bridge:status', { state: 'watching', bridgeFile: BRIDGE_FILE });
+              safeSend(resultsWindow, 'bridge:status', { state: 'watching', bridgeFile: BRIDGE_FILE });
             }
           } else {
             console.log(`🌉 [Bridge Listener] ${startupPending.length} pending block(s) found at startup — executing`);
@@ -1901,8 +2105,8 @@ app.whenReady().then(async () => {
             console.log(`🌉 [Bridge Listener] Startup: executing ${block.prefix}:${block.type} [${block.id}]`);
             if (resultsWindow && !resultsWindow.isDestroyed()) {
               resultsWindow.show();
-              resultsWindow.webContents.send('bridge:status', { state: 'executing', blockId: block.id, summary: block.body.split('\n')[0].slice(0, 80), bridgeFile: BRIDGE_FILE });
-              resultsWindow.webContents.send('results-window:set-prompt', `[Bridge] ${block.body.split('\n')[0].slice(0, 80)}`);
+              safeSend(resultsWindow, 'bridge:status', { state: 'executing', blockId: block.id, summary: block.body.split('\n')[0].slice(0, 80), bridgeFile: BRIDGE_FILE });
+              safeSend(resultsWindow, 'results-window:set-prompt', `[Bridge] ${block.body.split('\n')[0].slice(0, 80)}`);
             }
             if (stateGraph) {
               const autoPrompt = [
@@ -1915,8 +2119,8 @@ app.whenReady().then(async () => {
               stateGraph.execute({
                 message: autoPrompt,
                 selectedText: '',
-                streamCallback: (token) => { if (resultsWindow && !resultsWindow.isDestroyed()) resultsWindow.webContents.send('ws-bridge:message', { type: 'chunk', text: token }); },
-                progressCallback: (evt) => { if (resultsWindow && !resultsWindow.isDestroyed()) resultsWindow.webContents.send('automation:progress', evt); },
+                streamCallback: (token) => { if (resultsWindow && !resultsWindow.isDestroyed()) safeSend(resultsWindow, 'ws-bridge:message', { type: 'chunk', text: token }); },
+                progressCallback: (evt) => { if (resultsWindow && !resultsWindow.isDestroyed()) safeSend(resultsWindow, 'automation:progress', evt); },
                 confirmInstallCallback: () => Promise.resolve(false),
                 confirmGuideCallback: () => Promise.resolve(false),
                 isGuideCancelled: () => false,

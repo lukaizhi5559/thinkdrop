@@ -29,6 +29,12 @@ contextBridge.exposeInMainWorld('electron', {
         'voice:push-to-talk-start',
         'voice:push-to-talk-end',
         'voice:audio-chunk',
+        'voice:transcript-direct',
+        'skill:list',
+        'skill:delete',
+        'ptt:input-focus',
+        'ptt:input-blur',
+        'ptt:keyup',
       ];
       if (validChannels.includes(channel)) {
         ipcRenderer.send(channel, data);
@@ -57,6 +63,11 @@ contextBridge.exposeInMainWorld('electron', {
         'voice:response',
         'voice:error',
         'voice:inject-prompt',
+        'skill:list-response',
+        'skill:delete-response',
+        'voice:ptt-start',
+        'voice:ptt-stop',
+        'ptt:transcript',
       ];
       if (validChannels.includes(channel)) {
         ipcRenderer.on(channel, func);
@@ -85,6 +96,11 @@ contextBridge.exposeInMainWorld('electron', {
         'voice:response',
         'voice:error',
         'voice:inject-prompt',
+        'skill:list-response',
+        'skill:delete-response',
+        'voice:ptt-start',
+        'voice:ptt-stop',
+        'ptt:transcript',
       ];
       if (validChannels.includes(channel)) {
         ipcRenderer.removeAllListeners(channel);
@@ -113,6 +129,11 @@ contextBridge.exposeInMainWorld('electron', {
         'voice:response',
         'voice:error',
         'voice:inject-prompt',
+        'skill:list-response',
+        'skill:delete-response',
+        'voice:ptt-start',
+        'voice:ptt-stop',
+        'ptt:transcript',
       ];
       if (validChannels.includes(channel)) {
         ipcRenderer.removeListener(channel, func);

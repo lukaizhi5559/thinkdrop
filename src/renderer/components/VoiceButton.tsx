@@ -1,16 +1,17 @@
 /**
- * VoiceButton — Push-to-talk mic button + wake word indicator
+ * VoiceButton — Voice control button
  *
  * States:
- *   idle       — grey mic icon, click to activate wake-word mode
- *   listening  — blue pulsing ring, recording audio (push-to-talk held or wake word triggered)
+ *   idle       — grey mic icon
+ *   listening  — blue pulsing ring, recording audio (PTT) or always-on STT active
  *   processing — spinner, audio being processed by voice-service
  *   speaking   — green wave, TTS audio playing
  *   error      — red briefly, resets to idle
  *
- * Two activation modes:
- *   1. Push-to-talk: mousedown = start recording, mouseup = send audio
- *   2. Wake word: click toggles always-on mode (voice-service handles detection)
+ * Interaction model:
+ *   Click              = toggle always-on STT+TTS mode (wake-word VAD loop)
+ *   Backtick keydown   = PTT start recording (while key held)
+ *   Backtick keyup     = PTT stop + send audio
  *
  * Audio is captured via MediaRecorder (WebM/Opus), converted to base64,
  * sent to main process via voice:audio-chunk IPC.
@@ -32,10 +33,14 @@ interface VoiceButtonProps {
 
 export default function VoiceButton({ mode = 'push-to-talk', onTranscript, onResponse, compact = false }: VoiceButtonProps) {
   const [voiceState, setVoiceState] = useState<VoiceState>('idle');
-  const [activationMode, setActivationMode] = useState<ActivationMode>(mode);
+  const [activationMode, _setActivationMode] = useState<ActivationMode>(mode);
   const [detectedLanguage, setDetectedLanguage] = useState<string>('');
   const [transcript, setTranscript] = useState<string>('');
   const [wakeWordActive, setWakeWordActive] = useState(false);
+  // PTT via backtick: true while key is held
+  const isPTTHeldRef = useRef(false);
+  // Set to true if stopRecording is called before MediaRecorder has started
+  const pendingStopRef = useRef(false);
 
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
@@ -51,6 +56,7 @@ export default function VoiceButton({ mode = 'push-to-talk', onTranscript, onRes
   const audioPlayingRef = useRef(false);
   const wakeWordStreamRef = useRef<MediaStream | null>(null);
   const wakeWordAudioCtxRef = useRef<AudioContext | null>(null);
+  const ttsCooldownUntilRef = useRef<number>(0); // epoch ms — VAD suppressed until this time after TTS ends
 
   // Keep latest callbacks in refs so IPC handlers never go stale without re-registering
   const onTranscriptRef = useRef(onTranscript);
@@ -91,6 +97,8 @@ export default function VoiceButton({ mode = 'push-to-talk', onTranscript, onRes
         if (audioQueueRef.current.length > 0) {
           drainQueue();
         } else {
+          // Post-TTS cooldown: suppress VAD for 2.5s so speaker output isn't re-captured
+          ttsCooldownUntilRef.current = Date.now() + 2500;
           setVoiceState('idle');
           setTranscript('');
         }
@@ -100,7 +108,9 @@ export default function VoiceButton({ mode = 'push-to-talk', onTranscript, onRes
         audioPlayingRef.current = false;
         drainQueue();
       };
-      audio.play().catch(() => {
+      console.log('[VoiceButton] Starting audio playback, duration estimate unknown, mimeType:', mimeType, 'b64len:', item.base64.length);
+      audio.play().catch((err) => {
+        console.error('[VoiceButton] audio.play() failed:', err?.name, err?.message);
         currentAudioRef.current = null;
         audioPlayingRef.current = false;
         drainQueue();
@@ -136,7 +146,9 @@ export default function VoiceButton({ mode = 'push-to-talk', onTranscript, onRes
       setTimeout(() => setVoiceState('idle'), 1500);
     };
 
-    // Clear any previously registered listeners before adding new ones
+    // removeAllListeners before re-registering — prevents duplicate handlers from
+    // React StrictMode double-mount (mount→unmount→mount creates new refs each time,
+    // so removeListener by ref can't reliably clean up stale handlers).
     ipcRenderer.removeAllListeners?.('voice:status');
     ipcRenderer.removeAllListeners?.('voice:transcript');
     ipcRenderer.removeAllListeners?.('voice:response');
@@ -175,13 +187,19 @@ export default function VoiceButton({ mode = 'push-to-talk', onTranscript, onRes
   const activationModeRef = useRef<ActivationMode>(activationMode);
   useEffect(() => { activationModeRef.current = activationMode; }, [activationMode]);
 
-  const startRecording = useCallback(async () => {
+  // Web Speech API removed — caused double LLM calls (ran parallel to Groq, fired
+  // voice:transcript-direct which triggered a second full pipeline independently).
+  // Groq Whisper via voice:audio-chunk is the single STT path.
+
+  const _startRecording = useCallback(async () => {
     if (isRecordingRef.current) {
       console.log('[VoiceButton] startRecording: already recording, ignoring');
       return;
     }
     isRecordingRef.current = true;
-    console.log('[VoiceButton] startRecording: requesting mic...');
+    // Capture PTT flag now — isPTTHeldRef will be false by the time onstop fires
+    const recordingIsPTT = isPTTHeldRef.current || (activationModeRef.current === 'push-to-talk');
+    console.log('[VoiceButton] startRecording: requesting mic... isPTT:', recordingIsPTT);
 
     try {
       const stream = await getWebRTCProcessedStream();
@@ -203,31 +221,36 @@ export default function VoiceButton({ mode = 'push-to-talk', onTranscript, onRes
         if (e.data.size > 0) audioChunksRef.current.push(e.data);
       };
 
-      recorder.onstop = async () => {
+        recorder.onstop = async () => {
         isRecordingRef.current = false;
+        pendingStopRef.current = false;
+        if (streamRef.current) {
+          streamRef.current.getTracks().forEach(t => t.stop());
+          streamRef.current = null;
+        }
         const blob = new Blob(audioChunksRef.current, { type: mimeType });
         console.log('[VoiceButton] recorder.onstop: blob size', blob.size);
-        if (blob.size < 4000) {
+        if (blob.size < 1000) {
+          console.log('[VoiceButton] blob too small, discarding');
           setVoiceState('idle');
           return;
         }
-        // Use FileReader for correct single-pass base64 — chunked btoa breaks at padding boundaries
-        const base64 = await new Promise<string>((resolve) => {
-          const reader = new FileReader();
-          reader.onloadend = () => {
-            const dataUrl = reader.result as string;
-            resolve(dataUrl.split(',')[1]); // strip "data:audio/webm;base64," prefix
-          };
-          reader.readAsDataURL(blob);
-        });
-        const format = mimeType.includes('webm') ? 'webm' : 'mp4';
 
         setVoiceState('processing');
         ipcRenderer?.send('voice:push-to-talk-end');
+
+        // Single STT path: Groq Whisper via voice:audio-chunk
+        const base64 = await new Promise<string>((resolve) => {
+          const reader = new FileReader();
+          reader.onloadend = () => resolve((reader.result as string).split(',')[1]);
+          reader.readAsDataURL(blob);
+        });
+        const format = mimeType.includes('webm') ? 'webm' : 'mp4';
+        console.log('[VoiceButton] voice:audio-chunk sending, b64 len:', base64?.length, 'format:', format);
         ipcRenderer?.send('voice:audio-chunk', {
           audioBase64: base64,
           format,
-          pushToTalk: activationModeRef.current === 'push-to-talk',
+          pushToTalk: recordingIsPTT,
         });
       };
 
@@ -235,6 +258,23 @@ export default function VoiceButton({ mode = 'push-to-talk', onTranscript, onRes
       console.log('[VoiceButton] recorder started, state:', recorder.state);
       setVoiceState('listening');
       ipcRenderer?.send('voice:push-to-talk-start');
+
+      // If stopRecording was called before the recorder was ready, honour it now.
+      // Wait at least 300ms so we capture meaningful audio before stopping.
+      if (pendingStopRef.current) {
+        console.log('[VoiceButton] pendingStop — stopping recorder after minimum capture window');
+        pendingStopRef.current = false;
+        setTimeout(() => {
+          if (mediaRecorderRef.current?.state === 'recording') {
+            try { mediaRecorderRef.current.requestData(); } catch (_) {}
+            setTimeout(() => {
+              if (mediaRecorderRef.current?.state === 'recording') mediaRecorderRef.current.stop();
+            }, 120);
+          }
+        }, 300);
+        isHoldingRef.current = false;
+        return;
+      }
 
       // Auto-stop after 15s max to prevent huge recordings
       setTimeout(() => {
@@ -253,18 +293,29 @@ export default function VoiceButton({ mode = 'push-to-talk', onTranscript, onRes
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const stopRecording = useCallback(() => {
-    console.log('[VoiceButton] stopRecording, recorder state:', mediaRecorderRef.current?.state, 'isRecording:', isRecordingRef.current);
-    if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
-      mediaRecorderRef.current.stop(); // onstop will set isRecordingRef=false
+    const recorderState = mediaRecorderRef.current?.state;
+    console.log('[VoiceButton] stopRecording, recorder state:', recorderState, 'isRecording:', isRecordingRef.current);
+    if (mediaRecorderRef.current && recorderState === 'recording') {
+      // Flush any buffered audio before stopping so we don't lose the last chunk
+      try { mediaRecorderRef.current.requestData(); } catch (_) {}
+      // Small delay to let requestData() emit its ondataavailable before stop fires
+      setTimeout(() => {
+        if (mediaRecorderRef.current?.state === 'recording') {
+          mediaRecorderRef.current.stop();
+        }
+      }, 120);
+    } else if (isRecordingRef.current) {
+      // startRecording is still awaiting getUserMedia — flag a pending stop
+      console.log('[VoiceButton] stopRecording: recorder not ready yet — setting pendingStop');
+      pendingStopRef.current = true;
     } else {
-      isRecordingRef.current = false; // recorder never started — reset manually
-    }
-    if (streamRef.current) {
-      streamRef.current.getTracks().forEach(t => t.stop());
-      streamRef.current = null;
+      // nothing started at all
+      isRecordingRef.current = false;
     }
     isHoldingRef.current = false;
   }, []);
+
+  // Backtick PTT is handled by StandalonePromptCapture (speech-to-textarea flow).
 
   // ── Wake word continuous listen loop ─────────────────────────────────────
   // Records 3-second clips and sends to voice-service with pushToTalk=false.
@@ -337,6 +388,7 @@ export default function VoiceButton({ mode = 'push-to-talk', onTranscript, onRes
     let speechStart = 0;
     let lastSpeechMs = 0;
     let isSpeaking = false;
+    let vadSending = false; // true while a segment is in-flight to the voice service
 
     const sendSegment = async () => {
       if (!recorder || recorder.state !== 'recording') return;
@@ -352,6 +404,18 @@ export default function VoiceButton({ mode = 'push-to-talk', onTranscript, onRes
       if (isRecordingRef.current) {
         // PTT active — pause VAD
         setTimeout(vadTick, 500);
+        return;
+      }
+      if (audioPlayingRef.current || Date.now() < ttsCooldownUntilRef.current) {
+        // TTS is playing or cooldown active — suppress VAD entirely to avoid feedback loop
+        if (isSpeaking && recorder?.state === 'recording') {
+          recorder.stop();
+          isSpeaking = false;
+          vadSending = false;
+        }
+        // Reset baseline when cooldown expires so ambient noise recalibrates cleanly
+        if (!audioPlayingRef.current && Date.now() >= ttsCooldownUntilRef.current) baseline = 0;
+        setTimeout(vadTick, 200);
         return;
       }
 
@@ -373,10 +437,11 @@ export default function VoiceButton({ mode = 'push-to-talk', onTranscript, onRes
 
       if (isSpeech) {
         lastSpeechMs = now;
-        if (!isSpeaking) {
-          // Speech onset — start recording
+        if (!isSpeaking && !vadSending) {
+          // Speech onset — start recording (skip if previous segment still processing)
           isSpeaking = true;
           speechStart = now;
+          vadSending = true;
           recordingChunks = [];
           try {
             recorder = new MediaRecorder(stream, { mimeType });
@@ -386,10 +451,11 @@ export default function VoiceButton({ mode = 'push-to-talk', onTranscript, onRes
               const duration = Date.now() - speechStart;
               if (duration < VAD_MIN_SPEECH_MS) {
                 console.log('[VoiceButton] VAD: segment too short, skipping');
+                vadSending = false;
                 return;
               }
               const blob = new Blob(recordingChunks, { type: mimeType });
-              if (blob.size < 4000) return;
+              if (blob.size < 4000) { vadSending = false; return; }
               // Use FileReader for correct single-pass base64 — chunked btoa breaks at padding boundaries
               const base64 = await new Promise<string>((resolve) => {
                 const reader = new FileReader();
@@ -402,8 +468,10 @@ export default function VoiceButton({ mode = 'push-to-talk', onTranscript, onRes
                 audioBase64: base64,
                 format,
                 pushToTalk: false,
-                skipWakeWordCheck: false,
+                skipWakeWordCheck: true,  // user clicked mic on — the click IS the wake signal
               });
+              // Reset after processing window — 2s for fast lane responsiveness
+              setTimeout(() => { vadSending = false; }, 2000);
             };
             recorder.start(100);
             console.log('[VoiceButton] VAD: speech detected, recording...');
@@ -455,41 +523,11 @@ export default function VoiceButton({ mode = 'push-to-talk', onTranscript, onRes
     }
   }, [activationMode, stopWakeWordLoop]);
 
-  // ── Button interaction ────────────────────────────────────────────────────
+  // Backtick PTT is handled globally by main.js (globalShortcut) via voice:ptt-start/stop IPC.
+  // No renderer-side keydown listener needed — avoids double-firing when window is focused.
 
-  const handlePointerDown = (e: React.PointerEvent<HTMLButtonElement>) => {
-    if (activationMode !== 'push-to-talk') return;
-    e.preventDefault();
-    e.stopPropagation();
-    if (isHoldingRef.current) return;
-    // Capture pointer on the button — keeps pointerup firing on this element
-    // even if the mouse moves off it (e.g. during Electron window drag).
-    (e.currentTarget as HTMLButtonElement).setPointerCapture(e.pointerId);
-    isHoldingRef.current = true;
-    startRecording();
-  };
-
-  const handlePointerUp = (e: React.PointerEvent<HTMLButtonElement>) => {
-    if (activationMode !== 'push-to-talk') return;
-    e.preventDefault();
-    e.stopPropagation();
-    (e.currentTarget as HTMLButtonElement).releasePointerCapture(e.pointerId);
-    if (isHoldingRef.current) {
-      stopRecording();
-    }
-  };
-
-
-  const handleClick = () => {
-    if (activationMode === 'wake-word') {
-      toggleWakeWord();
-    }
-  };
-
-  const handleRightClick = (e: React.MouseEvent) => {
-    e.preventDefault();
-    setActivationMode(prev => prev === 'push-to-talk' ? 'wake-word' : 'push-to-talk');
-  };
+  // ── Button interaction: click = toggle always-on STT/TTS ──────────────────
+  const handleClick = () => toggleWakeWord();
 
   // ── Styles ────────────────────────────────────────────────────────────────
 
@@ -518,12 +556,10 @@ export default function VoiceButton({ mode = 'push-to-talk', onTranscript, onRes
   };
 
   const isPTT = activationMode === 'push-to-talk';
-  const isWWActive = activationMode === 'wake-word' && wakeWordActive;
-  const title = isPTT
-    ? 'Hold to speak (push-to-talk) · Right-click to switch to wake word mode'
-    : wakeWordActive
-      ? 'Wake word active — say "ThinkDrop" to speak · Right-click to switch to push-to-talk'
-      : 'Click to enable wake word mode · Right-click to switch to push-to-talk';
+  const isWWActive = wakeWordActive;
+  const title = wakeWordActive
+    ? 'Always-on STT active — click to deactivate · Hold ` (backtick) for push-to-talk'
+    : 'Click to activate always-on STT/TTS · Hold ` for push-to-talk';
 
   const langBadge = detectedLanguage && detectedLanguage !== 'en' ? detectedLanguage.toUpperCase() : null;
 
@@ -569,10 +605,7 @@ export default function VoiceButton({ mode = 'push-to-talk', onTranscript, onRes
       {/* Mic button */}
       <button
         title={title}
-        onPointerDown={isPTT ? handlePointerDown : undefined}
-        onPointerUp={isPTT ? handlePointerUp : undefined}
-        onClick={!isPTT ? handleClick : undefined}
-        onContextMenu={handleRightClick}
+        onClick={handleClick}
         style={{
           display: 'flex', alignItems: 'center', justifyContent: 'center',
           gap: '4px',
@@ -650,10 +683,10 @@ export default function VoiceButton({ mode = 'push-to-talk', onTranscript, onRes
         {/* Mode label (non-compact only) */}
         {!compact && (
           <span style={{ fontSize: '0.68rem', lineHeight: 1, fontWeight: 500 }}>
-            {voiceState === 'listening' && isPTT ? 'listening…' :
+            {voiceState === 'listening' ? (isPTTHeldRef.current ? 'listening…' : 'on') :
              voiceState === 'processing' ? '' :
              voiceState === 'speaking' ? '' :
-             isPTT ? 'hold' : isWWActive ? 'on' : 'voice'}
+             isWWActive ? 'on' : 'mic'}
           </span>
         )}
       </button>

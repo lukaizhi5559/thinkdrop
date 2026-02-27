@@ -1,6 +1,7 @@
 import React, { useEffect, useState, useRef } from 'react';
 import { RichContentRenderer } from './rich-content';
 import AutomationProgress from './AutomationProgress';
+import { playDropSound } from '../utils/thinkDropSound';
 
 const ipcRenderer = (window as any).electron?.ipcRenderer;
 
@@ -26,6 +27,8 @@ export default function ResultsWindow() {
   
   const [isCopied, setIsCopied] = useState<boolean>(false);
   const [showTrigger, setShowTrigger] = useState(0);
+  const [isDropping, setIsDropping] = useState(false);
+  const hasDroppedRef = useRef(false);
 
   // Bridge listener status — shown as a persistent footer when watching, swaps to executing during auto-tasks
   const [bridgeStatus, setBridgeStatus] = useState<{
@@ -51,6 +54,8 @@ export default function ResultsWindow() {
     toolDescription: string | null;
   } | null>(null);
   const [isInstalling, setIsInstalling] = useState(false);
+  const [installOutput, setInstallOutput] = useState<string[]>([]);
+  const installOutputRef = useRef<HTMLDivElement>(null);
 
   // Action chips: quick follow-up prompts shown after a response
   const [actionChips, setActionChips] = useState<string[]>([]);
@@ -96,6 +101,14 @@ export default function ResultsWindow() {
         setIsGlowActive(true);
         // Mark streaming started — keeps AutomationProgress visible (steps stay shown above)
         streamingStartedRef.current = true;
+        // Drop sound + animation: stategraph lane or direct LLM stream (no lane = keyboard/backtick).
+        // Fast lane voice replies are silent — the answer pops up instantly without a sound cue.
+        if (!hasDroppedRef.current && message.lane !== 'fast') {
+          hasDroppedRef.current = true;
+          playDropSound();
+          setIsDropping(true);
+          setTimeout(() => setIsDropping(false), 600);
+        }
 
         const msgText = message?.text || message.payload?.text || '';
         if (msgText.startsWith('\x00REPLACE\x00')) {
@@ -162,6 +175,8 @@ export default function ResultsWindow() {
       
       // Reset all state for new prompt
       streamingStartedRef.current = false;
+      hasDroppedRef.current = false;
+      setInstallOutput([]);
       setPromptText(text);
       setStreamingResponse('');
       setIsStreaming(false);
@@ -200,14 +215,22 @@ export default function ResultsWindow() {
         setIsInstalling(false);
         if (glowOffTimerRef.current) clearTimeout(glowOffTimerRef.current);
         setIsGlowActive(true);
+      } else if (data?.type === 'install_output') {
+        setInstallOutput(prev => {
+          const next = [...prev, data.line];
+          return next.length > 200 ? next.slice(-200) : next;
+        });
+        setTimeout(() => installOutputRef.current?.scrollTo({ top: installOutputRef.current.scrollHeight, behavior: 'smooth' }), 30);
       } else if (data?.type === 'step_done' && data?.skill === 'needs_install') {
         // Install completed (success or fail) — clear the installing spinner
         setIsInstalling(false);
         setInstallPrompt(null);
+        setInstallOutput([]);
       } else if (data?.type === 'step_failed' && data?.skill === 'needs_install') {
         // Install failed — clear spinner too
         setIsInstalling(false);
         setInstallPrompt(null);
+        setInstallOutput([]);
       } else if (data?.type === 'ask_user') {
         // ASK_USER pause — clear install spinner if still showing
         setIsInstalling(false);
@@ -304,7 +327,7 @@ export default function ResultsWindow() {
   };
 
   const handleInstallConfirm = (confirmed: boolean) => {
-    if (confirmed) setIsInstalling(true);
+    if (confirmed) { setIsInstalling(true); setInstallOutput([]); }
     setInstallPrompt(null);
     if (ipcRenderer) {
       console.log(`[ResultsWindow] install:confirm → confirmed=${confirmed}`);
@@ -474,10 +497,23 @@ export default function ResultsWindow() {
 
     if (isInstalling) {
       return (
-        <div style={{ margin: '8px 0', padding: '12px 14px', borderRadius: 10, backgroundColor: 'rgba(59,130,246,0.08)', border: '1px solid rgba(59,130,246,0.25)' }}>
-          <div className="flex items-center gap-2">
-            <div className="w-3 h-3 rounded-full bg-blue-500 animate-pulse" />
-            <span style={{ color: '#93c5fd', fontSize: '0.8rem', fontWeight: 500 }}>Installing...</span>
+        <div style={{ margin: '8px 0', borderRadius: 10, backgroundColor: 'rgba(15,15,15,0.95)', border: '1px solid rgba(59,130,246,0.3)', overflow: 'hidden' }}>
+          <div className="flex items-center gap-2" style={{ padding: '8px 12px', borderBottom: '1px solid rgba(59,130,246,0.15)', backgroundColor: 'rgba(59,130,246,0.08)' }}>
+            <div className="w-2.5 h-2.5 rounded-full bg-blue-500 animate-pulse" />
+            <span style={{ color: '#93c5fd', fontSize: '0.78rem', fontWeight: 600 }}>Installing...</span>
+            <span style={{ color: '#4b5563', fontSize: '0.7rem', marginLeft: 'auto', fontFamily: 'monospace' }}>{installOutput.length} lines</span>
+          </div>
+          <div
+            ref={installOutputRef}
+            style={{ maxHeight: 180, overflowY: 'auto', padding: '8px 12px', fontFamily: 'ui-monospace, monospace', fontSize: '0.68rem', lineHeight: 1.55, color: '#86efac', whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}
+          >
+            {installOutput.length === 0 ? (
+              <span style={{ color: '#4b5563' }}>Waiting for output...</span>
+            ) : (
+              installOutput.map((line, i) => (
+                <div key={i} style={{ color: line.toLowerCase().includes('error') || line.toLowerCase().includes('failed') ? '#f87171' : line.toLowerCase().includes('warn') ? '#fbbf24' : '#86efac' }}>{line}</div>
+              ))
+            )}
           </div>
         </div>
       );
@@ -569,7 +605,7 @@ export default function ResultsWindow() {
     }
 
     return (
-      <div className="space-y-4">
+      <div className={`space-y-4${isDropping ? ' drop-animate' : ''}`}>
         {streamingResponse && (
           <div className="relative">
             <RichContentRenderer 
@@ -604,6 +640,16 @@ export default function ResultsWindow() {
           syntax: '<angle>';
           initial-value: 0deg;
           inherits: false;
+        }
+        @keyframes drop-in {
+          0%   { transform: translateY(-8px) scaleY(0.97); }
+          55%  { transform: translateY(3px) scaleY(1.01); }
+          75%  { transform: translateY(-1px) scaleY(0.998); }
+          100% { transform: translateY(0) scaleY(1); }
+        }
+        .drop-animate {
+          animation: drop-in 0.45s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+          transform-origin: top center;
         }
         .results-glow-ring {
           position: absolute;

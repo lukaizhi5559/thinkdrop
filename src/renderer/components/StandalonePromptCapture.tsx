@@ -1,7 +1,14 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import VoiceButton from './VoiceButton';
+import { playThinkDropSound } from '../utils/thinkDropSound';
 
 const ipcRenderer = (window as any).electron?.ipcRenderer;
+
+interface InstalledSkill {
+  name: string;
+  description: string;
+  path: string;
+}
 
 export default function StandalonePromptCapture() {
   const [promptText, setPromptText] = useState('');
@@ -13,6 +20,22 @@ export default function StandalonePromptCapture() {
   const [isDragging, setIsDragging] = useState(false);
   const dragOffset = useRef({ x: 0, y: 0 });
   const [isProcessing, setIsProcessing] = useState(false);
+
+  // PTT speech-to-textarea state
+  const [isPTTActive, setIsPTTActive] = useState(false);
+  const pttHeldRef = useRef(false);
+  const pttStopRequestedRef = useRef(false);
+  const pttMediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const pttAudioChunksRef = useRef<Blob[]>([]);
+  const pttStreamRef = useRef<MediaStream | null>(null);
+
+  // Skills Manager state
+  const [showSkillsPanel, setShowSkillsPanel] = useState(false);
+  const [skills, setSkills] = useState<InstalledSkill[]>([]);
+  const [skillsLoading, setSkillsLoading] = useState(false);
+  const [deletingSkill, setDeletingSkill] = useState<string | null>(null);
+  const [confirmDeleteSkill, setConfirmDeleteSkill] = useState<string | null>(null);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
 
   const handleAddHighlight = (_event: any, text: string) => {
     console.log('📥 [STANDALONE_PROMPT] Received highlight:', text);
@@ -53,6 +76,7 @@ export default function StandalonePromptCapture() {
 
     // Voice inject: clear textarea + show processing ring. Do NOT populate the text input.
     const handleVoiceInjectPrompt = (_event: any) => {
+      playThinkDropSound();
       setPromptText('');
       setHighlights([]);
       setIsProcessing(true);
@@ -63,12 +87,29 @@ export default function StandalonePromptCapture() {
       setIsProcessing(false);
     };
 
+    const handleSkillListResponse = (_event: any, { skills: list }: { skills: InstalledSkill[] }) => {
+      setSkills(list || []);
+      setSkillsLoading(false);
+    };
+
+    const handleSkillDeleteResponse = (_event: any, { ok, name, error }: { ok: boolean; name?: string; error?: string }) => {
+      setDeletingSkill(null);
+      if (ok && name) {
+        setSkills(prev => prev.filter(s => s.name !== name));
+        setDeleteError(null);
+      } else {
+        setDeleteError(error || 'Delete failed');
+      }
+    };
+
     ipcRenderer.on('prompt-capture:show', handleShow);
     ipcRenderer.on('prompt-capture:add-highlight', handleAddHighlight);
     ipcRenderer.on('automation:progress', handleProgress);
     ipcRenderer.on('ws-bridge:message', handleBridgeMessage);
     ipcRenderer.on('voice:inject-prompt', handleVoiceInjectPrompt);
     ipcRenderer.on('voice:response', handleVoiceResponse);
+    ipcRenderer.on('skill:list-response', handleSkillListResponse);
+    ipcRenderer.on('skill:delete-response', handleSkillDeleteResponse);
 
     return () => {
       if (ipcRenderer.removeListener) {
@@ -78,13 +119,219 @@ export default function StandalonePromptCapture() {
         ipcRenderer.removeListener('ws-bridge:message', handleBridgeMessage);
         ipcRenderer.removeListener('voice:inject-prompt', handleVoiceInjectPrompt);
         ipcRenderer.removeListener('voice:response', handleVoiceResponse);
+        ipcRenderer.removeListener('skill:list-response', handleSkillListResponse);
+        ipcRenderer.removeListener('skill:delete-response', handleSkillDeleteResponse);
       }
     };
   }, []);
 
+  const loadSkills = useCallback(() => {
+    if (!ipcRenderer) return;
+    setSkillsLoading(true);
+    setDeleteError(null);
+    ipcRenderer.send('skill:list');
+  }, []);
+
+  const handleDeleteSkill = useCallback((name: string) => {
+    if (!ipcRenderer || deletingSkill) return;
+    setDeletingSkill(name);
+    setDeleteError(null);
+    ipcRenderer.send('skill:delete', { name });
+  }, [deletingSkill]);
+
+  const toggleSkillsPanel = useCallback(() => {
+    setShowSkillsPanel(prev => {
+      const next = !prev;
+      if (next) loadSkills();
+      else setDeleteError(null);
+      return next;
+    });
+    setTimeout(() => requestWindowResize(), 120);
+  }, [loadSkills]);
+
   useEffect(() => {
     requestWindowResize();
-  }, [highlights, promptText]);
+  }, [highlights, promptText, showSkillsPanel]);
+
+  // Stable ref to submit function so the PTT closure can call it after release
+  const submitPTTRef = useRef<(text: string) => void>(() => {});
+
+  // ── Prime mic permission on mount so enumerateDevices() returns labels ──────
+  // Without this, device labels are empty until after the first getUserMedia call,
+  // meaning the built-in mic preference logic won't work on the first PTT press.
+  useEffect(() => {
+    navigator.mediaDevices.getUserMedia({ audio: true })
+      .then(s => s.getTracks().forEach(t => t.stop()))
+      .catch(() => {});
+  }, []);
+
+  // ── Backtick PTT: record mic → Whisper STT → put text in textarea → submit ──
+  useEffect(() => {
+    const doStop = (recorder: MediaRecorder) => {
+      recorder.onstop = async () => {
+        // Stop mic tracks
+        pttStreamRef.current?.getTracks().forEach(t => t.stop());
+        pttStreamRef.current = null;
+        pttMediaRecorderRef.current = null;
+
+        const chunks = pttAudioChunksRef.current;
+        pttAudioChunksRef.current = [];
+        const mimeType = recorder.mimeType || 'audio/webm';
+        const blob = new Blob(chunks, { type: mimeType });
+        console.log('[PTT] Recording stopped, blob size:', blob.size);
+
+        if (blob.size < 1000) {
+          setPromptText('');
+          return;
+        }
+
+        setPromptText('⏳ Transcribing…');
+
+        const base64 = await new Promise<string>((resolve) => {
+          const reader = new FileReader();
+          reader.onloadend = () => resolve((reader.result as string).split(',')[1]);
+          reader.readAsDataURL(blob);
+        });
+
+        const format = mimeType.includes('webm') ? 'webm' : 'mp4';
+        ipcRenderer?.send('voice:audio-chunk', {
+          audioBase64: base64,
+          format,
+          pushToTalk: true,
+          pttTextOnly: true,
+        });
+      };
+
+      try { recorder.stop(); } catch (_) {}
+    };
+
+    const startPTT = async () => {
+      if (pttHeldRef.current) return;
+      pttHeldRef.current = true;
+      pttStopRequestedRef.current = false;
+      pttAudioChunksRef.current = [];
+      setIsPTTActive(true);
+      setPromptText('Listening…');
+
+      try {
+        // Prefer built-in internal mic over Bluetooth (AirPods etc.)
+        // AirPod mic uses BT SCO (~8-16kHz) which degrades Whisper accuracy.
+        const stream = await (async () => {
+          try {
+            const devices = await navigator.mediaDevices.enumerateDevices();
+            const audioInputs = devices.filter(d => d.kind === 'audioinput');
+            const builtIn = audioInputs.find(d =>
+              /built.?in|internal|macbook|imic/i.test(d.label)
+            );
+            const constraints: MediaStreamConstraints = {
+              audio: {
+                deviceId: builtIn ? { ideal: builtIn.deviceId } : undefined,
+                sampleRate: { ideal: 16000 },
+                channelCount: 1,
+                echoCancellation: false,
+                noiseSuppression: false,
+                autoGainControl: false,
+              }
+            };
+            return await navigator.mediaDevices.getUserMedia(constraints);
+          } catch {
+            return await navigator.mediaDevices.getUserMedia({ audio: true });
+          }
+        })();
+        pttStreamRef.current = stream;
+
+        const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
+          ? 'audio/webm;codecs=opus'
+          : MediaRecorder.isTypeSupported('audio/webm')
+            ? 'audio/webm'
+            : 'audio/mp4';
+
+        const recorder = new MediaRecorder(stream, { mimeType });
+        pttMediaRecorderRef.current = recorder;
+
+        recorder.ondataavailable = (e) => {
+          if (e.data.size > 0) pttAudioChunksRef.current.push(e.data);
+        };
+
+        recorder.start();
+        console.log('[PTT] Recording started');
+
+        // Handle race: key released before getUserMedia resolved
+        if (pttStopRequestedRef.current) {
+          console.log('[PTT] Stop was requested before recorder ready — stopping now');
+          doStop(recorder);
+        }
+      } catch (err) {
+        console.error('[PTT] Failed to start recording:', err);
+        pttHeldRef.current = false;
+        pttStopRequestedRef.current = false;
+        setIsPTTActive(false);
+        setPromptText('');
+      }
+    };
+
+    const stopPTT = () => {
+      if (!pttHeldRef.current) return;
+      pttHeldRef.current = false;
+      pttStopRequestedRef.current = true;
+      setIsPTTActive(false);
+
+      const recorder = pttMediaRecorderRef.current;
+      if (!recorder || recorder.state === 'inactive') {
+        console.log('[PTT] Recorder not ready yet — flagged for stop after start');
+        return;
+      }
+
+      doStop(recorder);
+    };
+
+    // Keyboard listeners (when window has focus)
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key !== '`' || e.repeat) return;
+      const tag = (document.activeElement as HTMLElement)?.tagName;
+      if (tag === 'INPUT') return;
+      e.preventDefault();
+      startPTT();
+    };
+    const onKeyUp = (e: KeyboardEvent) => {
+      if (e.key !== '`') return;
+      e.preventDefault();
+      stopPTT();
+    };
+
+    // IPC: transcript comes back from main.js after Whisper STT
+    const handleTranscript = (_evt: any, { transcript }: { transcript: string }) => {
+      console.log('[PTT] Transcript received:', transcript);
+      if (transcript?.trim()) {
+        playThinkDropSound();
+        setPromptText(transcript.trim());
+        setTimeout(() => submitPTTRef.current(transcript.trim()), 80);
+      } else {
+        setPromptText('');
+      }
+    };
+
+    // IPC listeners (globalShortcut toggle fires when window is not focused)
+    const handleIPCStart = () => startPTT();
+    const handleIPCStop = () => stopPTT();
+
+    window.addEventListener('keydown', onKeyDown);
+    window.addEventListener('keyup', onKeyUp);
+    ipcRenderer?.removeAllListeners?.('voice:ptt-start');
+    ipcRenderer?.removeAllListeners?.('voice:ptt-stop');
+    ipcRenderer?.removeAllListeners?.('ptt:transcript');
+    ipcRenderer?.on('voice:ptt-start', handleIPCStart);
+    ipcRenderer?.on('voice:ptt-stop', handleIPCStop);
+    ipcRenderer?.on('ptt:transcript', handleTranscript);
+
+    return () => {
+      window.removeEventListener('keydown', onKeyDown);
+      window.removeEventListener('keyup', onKeyUp);
+      ipcRenderer?.removeListener?.('voice:ptt-start', handleIPCStart);
+      ipcRenderer?.removeListener?.('voice:ptt-stop', handleIPCStop);
+      ipcRenderer?.removeListener?.('ptt:transcript', handleTranscript);
+    };
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleSubmit = async () => {
     console.log('🚀 [STANDALONE_PROMPT] handleSubmit called');
@@ -139,6 +386,20 @@ export default function StandalonePromptCapture() {
     setPromptText('');
     setHighlights([]);
     console.log('✅ [STANDALONE_PROMPT] Submit complete, waiting for results');
+  };
+
+  // PTT is STT-only: submits the spoken text as a regular prompt via stategraph:process.
+  // No TTS — response appears in the results window as text, same as typing and pressing Enter.
+  submitPTTRef.current = (text: string) => {
+    if (!text.trim()) return;
+    console.log('[PTT] Submitting via stategraph:process:', text);
+    let finalPrompt = '';
+    if (highlights.length > 0) finalPrompt = highlights.map((h: string) => `[Highlighted: ${h}]`).join('\n') + '\n\n';
+    finalPrompt += text.trim();
+    ipcRenderer?.send('stategraph:process', { prompt: finalPrompt, selectedText: highlights.join('\n') });
+    setIsProcessing(true);
+    setPromptText('');
+    setHighlights([]);
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
@@ -259,6 +520,10 @@ export default function StandalonePromptCapture() {
           initial-value: 0deg;
           inherits: false;
         }
+        @keyframes think-breathe {
+          0%, 100% { opacity: 0.55; }
+          50%       { opacity: 1; }
+        }
         .prompt-glow-ring {
           position: absolute;
           inset: -1px;
@@ -277,9 +542,19 @@ export default function StandalonePromptCapture() {
         .prompt-glow-ring.active {
           opacity: 1;
         }
+        .prompt-glow-ring.ptt {
+          background: conic-gradient(from var(--prompt-angle), transparent 60%, #10b981 78%, #34d399 86%, #10b981 93%, transparent);
+          animation: prompt-border-sweep 1.4s linear infinite;
+          opacity: 1;
+        }
+        .prompt-glow-ring.thinking {
+          background: conic-gradient(from var(--prompt-angle), transparent 40%, #6366f1 65%, #a78bfa 78%, #818cf8 88%, #6366f1 95%, transparent);
+          animation: prompt-border-sweep 3.2s linear infinite, think-breathe 1.6s ease-in-out infinite;
+          opacity: 1;
+        }
       `}</style>
       <div style={{ position: 'relative' }}>
-        <div className={`prompt-glow-ring${isProcessing ? ' active' : ''}`} />
+        <div className={`prompt-glow-ring${isPTTActive ? ' ptt' : isProcessing ? ' thinking' : ''}`} />
         <div
           ref={containerRef}
           className="rounded-xl shadow-2xl backdrop-blur-md"
@@ -427,6 +702,8 @@ export default function StandalonePromptCapture() {
                 value={promptText}
                 onChange={handleTextareaChange}
                 onKeyDown={handleKeyDown}
+                onFocus={() => ipcRenderer?.send('ptt:input-focus')}
+                onBlur={() => ipcRenderer?.send('ptt:input-blur')}
                 placeholder="Ask anything"
                 className="text-sm whitespace-pre-wrap break-words resize-none focus:outline-none"
                 style={{
@@ -500,8 +777,8 @@ export default function StandalonePromptCapture() {
             padding: '6px 12px',
             display: 'flex',
             alignItems: 'center',
-            gap: '4px',
-            flex: '0 0 auto',
+            gap: '10px',
+            flex: 'auto',
             position: 'sticky',
             bottom: 0,
             backgroundColor: 'rgba(23, 23, 23, 0.95)',
@@ -561,11 +838,28 @@ export default function StandalonePromptCapture() {
             ))}
           </div>
 
-          {/* Voice button — push-to-talk or wake word */}
-          <VoiceButton
-            mode="push-to-talk"
-            compact={false}
-          />
+          {/* Voice button — click or ` key to toggle */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: '3px' }}>
+            <VoiceButton
+              mode="push-to-talk"
+              compact={false}
+            />
+            {/* <span
+              title="Press ` (backtick) to start/stop voice"
+              style={{
+                display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+                height: '18px', padding: '0 5px',
+                borderRadius: '4px',
+                backgroundColor: 'rgba(255,255,255,0.06)',
+                border: '1px solid rgba(255,255,255,0.1)',
+                color: '#6b7280',
+                fontSize: '0.65rem', fontWeight: 600, lineHeight: 1,
+                userSelect: 'none', letterSpacing: '0.02em',
+              }}
+            >
+              `
+            </span> */}
+          </div>
 
           {/* File picker button — click to open native file dialog */}
           <button
@@ -597,10 +891,44 @@ export default function StandalonePromptCapture() {
             <span>Attach file</span>
           </button>
 
+          {/* Skills Manager gear button */}
+          <button
+            title="Manage installed skills"
+            onClick={toggleSkillsPanel}
+            style={{
+              display: 'flex', alignItems: 'center', justifyContent: 'center', 
+              width: '26px', height: '26px', borderRadius: '6px',
+              backgroundColor: showSkillsPanel ? 'rgba(139,92,246,0.18)' : 'rgba(255,255,255,0.04)',
+              border: `1px solid ${showSkillsPanel ? 'rgba(139,92,246,0.4)' : 'rgba(255,255,255,0.07)'}`,
+              color: showSkillsPanel ? '#c4b5fd' : '#9ca3af',
+              cursor: 'pointer', flexShrink: 0,
+            }}
+            onMouseEnter={e => {
+              if (!showSkillsPanel) {
+                (e.currentTarget as HTMLButtonElement).style.backgroundColor = 'rgba(139,92,246,0.12)';
+                (e.currentTarget as HTMLButtonElement).style.borderColor = 'rgba(139,92,246,0.3)';
+                (e.currentTarget as HTMLButtonElement).style.color = '#c4b5fd';
+              }
+            }}
+            onMouseLeave={e => {
+              if (!showSkillsPanel) {
+                (e.currentTarget as HTMLButtonElement).style.backgroundColor = 'rgba(255,255,255,0.04)';
+                (e.currentTarget as HTMLButtonElement).style.borderColor = 'rgba(255,255,255,0.07)';
+                (e.currentTarget as HTMLButtonElement).style.color = '#9ca3af';
+              }
+            }}
+          >
+            {/* Gear icon */}
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <circle cx="12" cy="12" r="3"/>
+              <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+            </svg>
+          </button>
+
           <div style={{ flex: 1 }} />
 
           {/* Esc hint */}
-          <div
+          {/* <div
             title="Press Escape to close"
             style={{
               display: 'flex', alignItems: 'center', gap: '4px',
@@ -612,8 +940,182 @@ export default function StandalonePromptCapture() {
             }}
           >
             <span style={{ fontFamily: 'ui-monospace, monospace' }}>esc</span>
-          </div>
+          </div> */}
         </div>
+
+        {/* ── Skills Manager Panel ──────────────────────────────────────── */}
+        {showSkillsPanel && (
+          <div style={{
+            borderTop: '1px solid rgba(139,92,246,0.2)',
+            backgroundColor: 'rgba(18,18,22,0.98)',
+            maxHeight: '240px',
+            overflowY: 'auto',
+            padding: '10px 12px',
+          }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+              <span style={{ color: '#c4b5fd', fontSize: '0.72rem', fontWeight: 600, letterSpacing: '0.04em', textTransform: 'uppercase' }}>
+                Installed Skills
+              </span>
+              <button
+                onClick={loadSkills}
+                title="Refresh list"
+                style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#6b7280', padding: '2px 4px', borderRadius: 4, fontSize: '0.68rem' }}
+                onMouseEnter={e => (e.currentTarget.style.color = '#c4b5fd')}
+                onMouseLeave={e => (e.currentTarget.style.color = '#6b7280')}
+              >
+                ↻
+              </button>
+            </div>
+
+            {deleteError && (
+              <div style={{ color: '#f87171', fontSize: '0.7rem', marginBottom: 6, padding: '4px 8px', borderRadius: 5, backgroundColor: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.2)' }}>
+                {deleteError}
+              </div>
+            )}
+
+            {skillsLoading ? (
+              <div style={{ color: '#6b7280', fontSize: '0.72rem', padding: '6px 0' }}>Loading…</div>
+            ) : skills.length === 0 ? (
+              <div style={{ color: '#4b5563', fontSize: '0.72rem', padding: '6px 0' }}>No installed skills found in ~/.thinkdrop/skills/</div>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                {skills.map(skill => (
+                  <div
+                    key={skill.name}
+                    style={{
+                      display: 'flex', alignItems: 'center', gap: '8px',
+                      padding: '5px 8px', borderRadius: '7px',
+                      backgroundColor: deletingSkill === skill.name ? 'rgba(239,68,68,0.08)' : 'rgba(255,255,255,0.03)',
+                      border: `1px solid ${deletingSkill === skill.name ? 'rgba(239,68,68,0.25)' : 'rgba(255,255,255,0.06)'}`,
+                      transition: 'background-color 0.15s, border-color 0.15s',
+                    }}
+                  >
+                    {/* Skill icon */}
+                    <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="#8b5cf6" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0, opacity: 0.7 }}>
+                      <polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/>
+                    </svg>
+                    {/* Name + description */}
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <span
+                        title={`Open ${skill.path} in Finder`}
+                        onClick={() => ipcRenderer?.send('shell:open-path', skill.path)}
+                        style={{
+                          color: '#c4b5fd', fontSize: '0.75rem', fontWeight: 500,
+                          fontFamily: 'ui-monospace, monospace', cursor: 'pointer',
+                          textDecoration: 'underline', textDecorationColor: 'rgba(196,181,253,0.35)',
+                          textUnderlineOffset: '2px',
+                        }}
+                        onMouseEnter={e => (e.currentTarget.style.color = '#ddd6fe')}
+                        onMouseLeave={e => (e.currentTarget.style.color = '#c4b5fd')}
+                      >
+                        {skill.name}
+                      </span>
+                      {skill.description && (
+                        <span style={{ color: '#6b7280', fontSize: '0.68rem', marginLeft: 6 }}>
+                          — {skill.description.length > 48 ? skill.description.slice(0, 48) + '…' : skill.description}
+                        </span>
+                      )}
+                    </div>
+                    {/* Delete: trash → confirm (check/x) → deleting spinner */}
+                    {confirmDeleteSkill === skill.name ? (
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '3px', flexShrink: 0 }}>
+                        {/* Confirm ✓ */}
+                        <button
+                          title="Yes, delete"
+                          onClick={() => { setConfirmDeleteSkill(null); handleDeleteSkill(skill.name); }}
+                          style={{
+                            display: 'flex', alignItems: 'center', justifyContent: 'center',
+                            width: '22px', height: '22px', background: 'none',
+                            border: '1px solid rgba(239,68,68,0.4)', borderRadius: '5px',
+                            cursor: 'pointer', color: '#f87171',
+                          }}
+                          onMouseEnter={e => {
+                            (e.currentTarget as HTMLButtonElement).style.backgroundColor = 'rgba(239,68,68,0.15)';
+                          }}
+                          onMouseLeave={e => {
+                            (e.currentTarget as HTMLButtonElement).style.backgroundColor = 'transparent';
+                          }}
+                        >
+                          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                            <polyline points="20 6 9 17 4 12"/>
+                          </svg>
+                        </button>
+                        {/* Cancel ✕ */}
+                        <button
+                          title="Cancel"
+                          onClick={() => setConfirmDeleteSkill(null)}
+                          style={{
+                            display: 'flex', alignItems: 'center', justifyContent: 'center',
+                            width: '22px', height: '22px', background: 'none',
+                            border: '1px solid rgba(255,255,255,0.1)', borderRadius: '5px',
+                            cursor: 'pointer', color: '#6b7280',
+                          }}
+                          onMouseEnter={e => {
+                            (e.currentTarget as HTMLButtonElement).style.backgroundColor = 'rgba(255,255,255,0.07)';
+                            (e.currentTarget as HTMLButtonElement).style.color = '#9ca3af';
+                          }}
+                          onMouseLeave={e => {
+                            (e.currentTarget as HTMLButtonElement).style.backgroundColor = 'transparent';
+                            (e.currentTarget as HTMLButtonElement).style.color = '#6b7280';
+                          }}
+                        >
+                          <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+                            <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+                          </svg>
+                        </button>
+                      </div>
+                    ) : deletingSkill === skill.name ? (
+                      /* Spinner while deleting */
+                      <div style={{ width: '22px', height: '22px', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, color: '#f87171' }}>
+                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+                          <path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83">
+                            <animateTransform attributeName="transform" type="rotate" from="0 12 12" to="360 12 12" dur="0.8s" repeatCount="indefinite"/>
+                          </path>
+                        </svg>
+                      </div>
+                    ) : (
+                      /* Trash icon — first click shows confirm */
+                      <button
+                        title={`Remove ${skill.name}`}
+                        onClick={() => setConfirmDeleteSkill(skill.name)}
+                        disabled={!!deletingSkill}
+                        style={{
+                          display: 'flex', alignItems: 'center', justifyContent: 'center',
+                          width: '22px', height: '22px', flexShrink: 0,
+                          background: 'none', border: '1px solid transparent',
+                          borderRadius: '5px', cursor: deletingSkill ? 'not-allowed' : 'pointer',
+                          color: '#4b5563',
+                          opacity: deletingSkill ? 0.35 : 1,
+                          transition: 'color 0.12s, border-color 0.12s, background-color 0.12s',
+                        }}
+                        onMouseEnter={e => {
+                          if (!deletingSkill) {
+                            (e.currentTarget as HTMLButtonElement).style.color = '#f87171';
+                            (e.currentTarget as HTMLButtonElement).style.borderColor = 'rgba(239,68,68,0.35)';
+                            (e.currentTarget as HTMLButtonElement).style.backgroundColor = 'rgba(239,68,68,0.1)';
+                          }
+                        }}
+                        onMouseLeave={e => {
+                          (e.currentTarget as HTMLButtonElement).style.color = '#4b5563';
+                          (e.currentTarget as HTMLButtonElement).style.borderColor = 'transparent';
+                          (e.currentTarget as HTMLButtonElement).style.backgroundColor = 'transparent';
+                        }}
+                      >
+                        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                          <polyline points="3 6 5 6 21 6"/>
+                          <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/>
+                          <path d="M10 11v6"/><path d="M14 11v6"/>
+                          <path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/>
+                        </svg>
+                      </button>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
         </div>
       </div>
     </div>
