@@ -154,7 +154,7 @@ export default function StandalonePromptCapture() {
   }, [highlights, promptText, showSkillsPanel]);
 
   // Stable ref to submit function so the PTT closure can call it after release
-  const submitPTTRef = useRef<(text: string) => void>(() => {});
+  const submitPTTRef = useRef<(text: string, responseLanguage?: string | null) => void>(() => {});
 
   // ── Prime mic permission on mount so enumerateDevices() returns labels ──────
   // Without this, device labels are empty until after the first getUserMedia call,
@@ -300,12 +300,13 @@ export default function StandalonePromptCapture() {
     };
 
     // IPC: transcript comes back from main.js after Whisper STT
-    const handleTranscript = (_evt: any, { transcript }: { transcript: string }) => {
-      console.log('[PTT] Transcript received:', transcript);
+    const handleTranscript = (_evt: any, { transcript, detectedLanguage, wasTranslated }: { transcript: string; detectedLanguage?: string; wasTranslated?: boolean }) => {
+      console.log('[PTT] Transcript received:', transcript, detectedLanguage ? `(lang: ${detectedLanguage})` : '');
       if (transcript?.trim()) {
         playThinkDropSound();
         setPromptText(transcript.trim());
-        setTimeout(() => submitPTTRef.current(transcript.trim()), 80);
+        const lang = (wasTranslated && detectedLanguage && detectedLanguage !== 'en') ? detectedLanguage : null;
+        setTimeout(() => submitPTTRef.current(transcript.trim(), lang), 80);
       } else {
         setPromptText('');
       }
@@ -390,13 +391,13 @@ export default function StandalonePromptCapture() {
 
   // PTT is STT-only: submits the spoken text as a regular prompt via stategraph:process.
   // No TTS — response appears in the results window as text, same as typing and pressing Enter.
-  submitPTTRef.current = (text: string) => {
+  submitPTTRef.current = (text: string, responseLanguage: string | null = null) => {
     if (!text.trim()) return;
-    console.log('[PTT] Submitting via stategraph:process:', text);
+    console.log('[PTT] Submitting via stategraph:process:', text, responseLanguage ? `(respond in: ${responseLanguage})` : '');
     let finalPrompt = '';
     if (highlights.length > 0) finalPrompt = highlights.map((h: string) => `[Highlighted: ${h}]`).join('\n') + '\n\n';
     finalPrompt += text.trim();
-    ipcRenderer?.send('stategraph:process', { prompt: finalPrompt, selectedText: highlights.join('\n') });
+    ipcRenderer?.send('stategraph:process', { prompt: finalPrompt, selectedText: highlights.join('\n'), responseLanguage });
     setIsProcessing(true);
     setPromptText('');
     setHighlights([]);

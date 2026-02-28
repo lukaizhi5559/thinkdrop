@@ -57,6 +57,7 @@ export default function VoiceButton({ mode = 'push-to-talk', onTranscript, onRes
   const wakeWordStreamRef = useRef<MediaStream | null>(null);
   const wakeWordAudioCtxRef = useRef<AudioContext | null>(null);
   const ttsCooldownUntilRef = useRef<number>(0); // epoch ms — VAD suppressed until this time after TTS ends
+  const vadSendingRef = useRef(false); // true while a segment is in-flight — reset by voice:response
 
   // Keep latest callbacks in refs so IPC handlers never go stale without re-registering
   const onTranscriptRef = useRef(onTranscript);
@@ -117,9 +118,11 @@ export default function VoiceButton({ mode = 'push-to-talk', onTranscript, onRes
       });
     };
 
-    const handleResponse = (_e: any, data: { text: string; audioBase64: string; audioFormat: string; language: string; lane?: string }) => {
+    const handleResponse = (_e: any, data: { text: string; audioBase64: string; audioFormat: string; language: string; lane?: string; durationEstimateMs?: number }) => {
       const lane = data.lane || 'fast';
       console.log('[VoiceButton] voice:response received, lane:', lane, 'audioFormat:', data.audioFormat, 'b64 length:', data.audioBase64?.length);
+      // Pipeline complete — unlock VAD so next utterance can be captured
+      vadSendingRef.current = false;
       setDetectedLanguage(data.language || '');
       onResponseRef.current?.(data.text, data.audioBase64, data.audioFormat);
 
@@ -135,6 +138,10 @@ export default function VoiceButton({ mode = 'push-to-talk', onTranscript, onRes
       }
 
       if (data.audioBase64) {
+        // Pre-set cooldown based on known duration so VAD stays closed during playback
+        if (data.durationEstimateMs) {
+          ttsCooldownUntilRef.current = Date.now() + data.durationEstimateMs + 1500;
+        }
         audioQueueRef.current.push({ base64: data.audioBase64, format: data.audioFormat || 'mp3', lane });
         drainQueue();
       }
@@ -367,7 +374,7 @@ export default function VoiceButton({ mode = 'push-to-talk', onTranscript, onRes
 
     const VAD_SPEECH_THRESHOLD = 28;   // RMS 0-255: absolute floor
     const VAD_DELTA_MULTIPLIER = 1.8;  // must be 1.8x above rolling baseline to trigger
-    const VAD_SILENCE_MS = 1500;       // ms of silence before sending
+    const VAD_SILENCE_MS = 2200;       // ms of silence before sending — 2200ms allows natural mid-sentence breathing pauses
     const VAD_MIN_SPEECH_MS = 300;     // ignore clips shorter than this
     const VAD_MAX_SPEECH_MS = 12000;   // max utterance before force-send
 
@@ -388,7 +395,7 @@ export default function VoiceButton({ mode = 'push-to-talk', onTranscript, onRes
     let speechStart = 0;
     let lastSpeechMs = 0;
     let isSpeaking = false;
-    let vadSending = false; // true while a segment is in-flight to the voice service
+    // vadSending is vadSendingRef.current — promoted to ref so handleResponse can reset it
 
     const sendSegment = async () => {
       if (!recorder || recorder.state !== 'recording') return;
@@ -407,16 +414,33 @@ export default function VoiceButton({ mode = 'push-to-talk', onTranscript, onRes
         return;
       }
       if (audioPlayingRef.current || Date.now() < ttsCooldownUntilRef.current) {
-        // TTS is playing or cooldown active — suppress VAD entirely to avoid feedback loop
-        if (isSpeaking && recorder?.state === 'recording') {
-          recorder.stop();
-          isSpeaking = false;
-          vadSending = false;
+        // TTS is playing or in post-TTS cooldown.
+        // Allow interrupt: if user speaks loudly (2.5x above threshold), stop TTS and start recording.
+        const rmsNow = getRMS();
+        const isInterrupt = audioPlayingRef.current && rmsNow > VAD_SPEECH_THRESHOLD * 2.5;
+        if (isInterrupt && !isSpeaking && !vadSendingRef.current) {
+          console.log('[VoiceButton] VAD: interrupt detected — stopping TTS', { rms: rmsNow.toFixed(1) });
+          // Stop TTS immediately
+          if (currentAudioRef.current) {
+            currentAudioRef.current.pause();
+            currentAudioRef.current.src = '';
+            currentAudioRef.current = null;
+          }
+          audioQueueRef.current = [];
+          audioPlayingRef.current = false;
+          ttsCooldownUntilRef.current = 0; // clear cooldown so VAD opens immediately
+          // fall through to normal recording logic below
+        } else {
+          if (isSpeaking && recorder?.state === 'recording') {
+            recorder.stop();
+            isSpeaking = false;
+            vadSendingRef.current = false;
+          }
+          // Reset baseline when cooldown expires so ambient noise recalibrates cleanly
+          if (!audioPlayingRef.current && Date.now() >= ttsCooldownUntilRef.current) baseline = 0;
+          setTimeout(vadTick, 200);
+          return;
         }
-        // Reset baseline when cooldown expires so ambient noise recalibrates cleanly
-        if (!audioPlayingRef.current && Date.now() >= ttsCooldownUntilRef.current) baseline = 0;
-        setTimeout(vadTick, 200);
-        return;
       }
 
       const rms = getRMS();
@@ -437,11 +461,11 @@ export default function VoiceButton({ mode = 'push-to-talk', onTranscript, onRes
 
       if (isSpeech) {
         lastSpeechMs = now;
-        if (!isSpeaking && !vadSending) {
+        if (!isSpeaking && !vadSendingRef.current) {
           // Speech onset — start recording (skip if previous segment still processing)
           isSpeaking = true;
           speechStart = now;
-          vadSending = true;
+          vadSendingRef.current = true;
           recordingChunks = [];
           try {
             recorder = new MediaRecorder(stream, { mimeType });
@@ -451,11 +475,11 @@ export default function VoiceButton({ mode = 'push-to-talk', onTranscript, onRes
               const duration = Date.now() - speechStart;
               if (duration < VAD_MIN_SPEECH_MS) {
                 console.log('[VoiceButton] VAD: segment too short, skipping');
-                vadSending = false;
+                vadSendingRef.current = false;
                 return;
               }
               const blob = new Blob(recordingChunks, { type: mimeType });
-              if (blob.size < 4000) { vadSending = false; return; }
+              if (blob.size < 4000) { vadSendingRef.current = false; return; }
               // Use FileReader for correct single-pass base64 — chunked btoa breaks at padding boundaries
               const base64 = await new Promise<string>((resolve) => {
                 const reader = new FileReader();
@@ -463,15 +487,32 @@ export default function VoiceButton({ mode = 'push-to-talk', onTranscript, onRes
                 reader.readAsDataURL(blob);
               });
               const format = mimeType.includes('webm') ? 'webm' : 'mp4';
-              console.log('[VoiceButton] VAD: sending speech segment', { ms: duration, bytes: blob.size });
+              // Short-segment filter: duration proxy ~130 wpm → 1 word ≈ 460ms.
+              // - < 300ms (< 1 word): always skip — pure noise
+              // - 300–900ms: send as potential control command ("stop", "go", "cancel", "yes", "no")
+              // - 900–1380ms: skip — too long for a control word, too short for a real sentence (mid-sentence noise)
+              // - > 1380ms (3+ words): always send
+              const estimatedWords = Math.round(duration / 460);
+              if (estimatedWords < 1) {
+                vadSendingRef.current = false;
+                return;
+              }
+              if (estimatedWords < 3 && duration > 900) {
+                console.log('[VoiceButton] VAD: borderline segment, skipping', { ms: duration, estimatedWords });
+                vadSendingRef.current = false;
+                return;
+              }
+              console.log('[VoiceButton] VAD: sending speech segment', { ms: duration, bytes: blob.size, estimatedWords });
               ipcRenderer?.send('voice:audio-chunk', {
                 audioBase64: base64,
                 format,
                 pushToTalk: false,
                 skipWakeWordCheck: true,  // user clicked mic on — the click IS the wake signal
               });
-              // Reset after processing window — 2s for fast lane responsiveness
-              setTimeout(() => { vadSending = false; }, 2000);
+              // vadSendingRef.current stays true until voice:response arrives (pipeline done)
+              // This prevents double-sends from VAD re-triggering on the tail of the same utterance.
+              // Safety fallback: if pipeline crashes and voice:response never comes, unlock after 15s
+              setTimeout(() => { vadSendingRef.current = false; }, 15000);
             };
             recorder.start(100);
             console.log('[VoiceButton] VAD: speech detected, recording...');

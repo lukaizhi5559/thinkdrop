@@ -44,7 +44,7 @@ function startOverlayControlServer() {
       req.on('data', chunk => { body += chunk; });
       req.on('end', async () => {
         try {
-          const { message, sessionId, source } = JSON.parse(body || '{}');
+          const { message, sessionId, source, responseLanguage: injectResponseLanguage = null } = JSON.parse(body || '{}');
           if (!message) {
             res.writeHead(400);
             res.end(JSON.stringify({ error: 'message is required' }));
@@ -119,6 +119,7 @@ function startOverlayControlServer() {
             confirmInstallCallback,
             confirmGuideCallback: () => Promise.resolve(false),
             isGuideCancelled: () => false,
+            responseLanguage: (injectResponseLanguage && injectResponseLanguage !== 'en') ? injectResponseLanguage : null,
             context: {
               sessionId: sessionId || currentSessionId,
               userId: 'voice_inject',
@@ -168,6 +169,38 @@ function startOverlayControlServer() {
           voiceJournal.graphError({ intent: 'unknown', error: err.message });
           res.writeHead(200);
           res.end(JSON.stringify({ ok: false, error: err.message, answer: '' }));
+        }
+      });
+      return;
+    }
+
+    // ── POST /voice/result — voice-service sends escalated stategraph TTS back ──
+    if (req.url === '/voice/result') {
+      let body = '';
+      req.on('data', chunk => { body += chunk; });
+      req.on('end', () => {
+        try {
+          const data = JSON.parse(body || '{}');
+          console.log(`🎙️ [Voice] Escalation result received — forwarding voice:response (lane=${data.lane})`);
+          if (promptCaptureWindow && !promptCaptureWindow.isDestroyed()) {
+            safeSend(promptCaptureWindow, 'voice:response', {
+              text: data.text || '',
+              fullAnswer: data.fullAnswer || '',
+              audioBase64: data.audioBase64 || '',
+              audioFormat: data.audioFormat || 'mp3',
+              language: data.language || 'en',
+              lane: data.lane || 'stategraph',
+              durationEstimateMs: data.durationEstimateMs || null,
+            });
+          }
+          if (resultsWindow && !resultsWindow.isDestroyed() && data.fullAnswer) {
+            safeSend(resultsWindow, 'ws-bridge:message', { type: 'chunk', text: data.fullAnswer, lane: data.lane || 'stategraph' });
+            safeSend(resultsWindow, 'ws-bridge:message', { type: 'done', lane: data.lane || 'stategraph' });
+          }
+          res.writeHead(200).end(JSON.stringify({ ok: true }));
+        } catch (err) {
+          console.error('[VoiceResult] Error:', err.message);
+          res.writeHead(500).end(JSON.stringify({ error: err.message }));
         }
       });
       return;
@@ -839,9 +872,16 @@ app.whenReady().then(async () => {
       // PTT text-only mode: just return the transcript to the renderer, skip LLM/TTS
       if (pttTextOnly) {
         const transcript = result.transcript || '';
-        console.log(`🎙️ [PTT] Text-only — transcript: "${transcript}"`);
+        // Use englishText for StateGraph injection when translation occurred (e.g. Chinese → English).
+        // The renderer's submitPTTRef sends this to stategraph:process — must be English.
+        const promptText = (result.wasTranslated && result.englishText) ? result.englishText : transcript;
+        console.log(`🎙️ [PTT] Text-only — transcript: "${transcript}"${result.wasTranslated ? ` → englishText: "${promptText}"` : ''}`);
         if (promptCaptureWindow && !promptCaptureWindow.isDestroyed()) {
-          safeSend(promptCaptureWindow, 'ptt:transcript', { transcript });
+          safeSend(promptCaptureWindow, 'ptt:transcript', {
+            transcript: promptText,
+            detectedLanguage: result.detectedLanguage || 'en',
+            wasTranslated: result.wasTranslated || false,
+          });
         }
         _voiceChunkActive--;
         voiceJournal.setVoiceStatus('idle');
@@ -889,6 +929,7 @@ app.whenReady().then(async () => {
             audioFormat: result.audioFormat || 'mp3',
             language: result.detectedLanguage,
             lane: result.lane,
+            durationEstimateMs: result.durationEstimateMs || null,
           });
       } else {
         console.log('🎙️ [Voice] No audioBase64 in result — no TTS to play');
@@ -974,6 +1015,7 @@ app.whenReady().then(async () => {
             audioFormat: result.audioFormat || 'mp3',
             language: result.detectedLanguage,
             lane: result.lane,
+            durationEstimateMs: result.durationEstimateMs || null,
           });
       }
       voiceJournal.setVoiceStatus('idle');
@@ -987,8 +1029,8 @@ app.whenReady().then(async () => {
   });
 
   // ─── StateGraph: Process prompt through full pipeline ────────────────────
-  ipcMain.on('stategraph:process', async (event, { prompt, selectedText = '', sessionId = null, userId = 'default_user' }) => {
-    console.log('🧠 [StateGraph] Processing prompt:', prompt.substring(0, 80));
+  ipcMain.on('stategraph:process', async (event, { prompt, selectedText = '', sessionId = null, userId = 'default_user', responseLanguage = null }) => {
+    console.log('🧠 [StateGraph] Processing prompt:', prompt.substring(0, 80), responseLanguage ? `(responseLanguage: ${responseLanguage})` : '');
 
     // Track this prompt so clipboard monitor won't re-capture it as a highlight
     recentlySubmittedPrompts.add(prompt.trim());
@@ -1013,7 +1055,7 @@ app.whenReady().then(async () => {
     // reference becomes stale and safeSend would spam "Render frame was disposed" errors.
     const targetContents = (resultsWindow && !resultsWindow.isDestroyed()) ? resultsWindow.webContents : null;
 
-    // Stream callback: forward each token to ResultsWindow as it arrives
+    // Stream callback: forward each token to ResultsWindow as it arrives.
     let streamingUsed = false;
     const streamCallback = (token) => {
       streamingUsed = true;
@@ -1308,6 +1350,7 @@ app.whenReady().then(async () => {
           isGuideCancelled,
           activeBrowserSessionId: currentBrowserSessionId || null,
           activeBrowserUrl: currentBrowserUrl || null,
+          responseLanguage: responseLanguage || null,
           context: {
             sessionId: sessionId || currentSessionId,
             userId,
