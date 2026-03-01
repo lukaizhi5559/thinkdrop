@@ -8,7 +8,8 @@
  *   4. Final summary on completion or error banner on failure
  */
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useMemo } from 'react';
+import { semanticSkillSearch, SkillMatch } from '../utils/semanticSkillSearch';
 
 const ipcRenderer = (window as any).electron?.ipcRenderer;
 
@@ -139,6 +140,171 @@ function SkillBadge({ skill }: { skill: string }) {
   );
 }
 
+// ── CapabilityGapCard ──────────────────────────────────────────────────────────
+
+interface CapabilityGapProps {
+  capabilityGap: { capability: string; suggestion: string; scaffolded: boolean };
+  onBrowseStore: () => void;
+  onBuildSkill: (skill: any) => void;
+  onBuildScaffold: () => void;
+}
+
+function CapabilityGapCard({ capabilityGap, onBrowseStore, onBuildSkill, onBuildScaffold }: CapabilityGapProps) {
+  const [building, setBuilding] = useState<string | null>(null);
+
+  const matches = useMemo(
+    () => semanticSkillSearch(capabilityGap.capability, 3),
+    [capabilityGap.capability]
+  );
+
+  const handleBuild = (skill: any) => {
+    setBuilding(skill.name);
+    onBuildSkill(skill);
+  };
+
+  const handleScaffold = () => {
+    setBuilding('__scaffold__');
+    onBuildScaffold();
+  };
+
+  const CAT_COLORS: Record<string, string> = {
+    'Browser & Automation': '#3b82f6',
+    'Coding Agents & IDEs': '#8b5cf6',
+    'DevOps & Cloud': '#06b6d4',
+    'AI & LLMs': '#a78bfa',
+    'Communication': '#ec4899',
+    'Productivity & Tasks': '#6366f1',
+    'Calendar & Scheduling': '#f59e0b',
+    'CLI Utilities': '#84cc16',
+  };
+  const catColor = (c: string) => CAT_COLORS[c] || '#6b7280';
+
+  return (
+    <div style={{ padding: '12px 14px', borderRadius: 10, backgroundColor: 'rgba(245,158,11,0.07)', border: '1px solid rgba(245,158,11,0.3)' }}>
+      {/* Header */}
+      <div className="flex items-start gap-2" style={{ marginBottom: 8 }}>
+        <div style={{ fontSize: '0.9rem', lineHeight: 1, marginTop: 1, flexShrink: 0 }}>🔌</div>
+        <div>
+          <div style={{ color: '#fbbf24', fontSize: '0.76rem', fontWeight: 600, marginBottom: 2 }}>
+            Skill required — can't do this natively
+          </div>
+          <div style={{ color: '#9ca3af', fontSize: '0.69rem', lineHeight: 1.4 }}>
+            <strong style={{ color: '#e5e7eb' }}>{capabilityGap.capability || 'This capability'}</strong> needs a custom skill.
+          </div>
+        </div>
+      </div>
+
+      {/* Scaffolded confirmation */}
+      {capabilityGap.scaffolded && (
+        <div style={{ color: '#86efac', fontSize: '0.68rem', marginBottom: 8, paddingLeft: 22 }}>
+          ✓ Starter skill scaffolded at <code style={{ backgroundColor: 'rgba(0,0,0,0.3)', padding: '1px 4px', borderRadius: 3 }}>
+            {capabilityGap.suggestion?.match(/skills\/[^/]+/)?.[0] || '~/.thinkdrop/skills/...'}
+          </code>
+        </div>
+      )}
+
+      {/* Semantic matches */}
+      {matches.length > 0 && (
+        <div style={{ marginBottom: 8 }}>
+          <div style={{ color: '#6b7280', fontSize: '0.63rem', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 5, paddingLeft: 22 }}>
+            Similar skills in store
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+            {matches.map(({ skill }: SkillMatch) => {
+              const col = catColor(skill.category);
+              const isBuilding = building === skill.name;
+              return (
+                <div key={skill.name} style={{
+                  display: 'flex', alignItems: 'center', gap: 8, padding: '6px 9px',
+                  borderRadius: 7, backgroundColor: isBuilding ? `${col}14` : 'rgba(255,255,255,0.03)',
+                  border: `1px solid ${isBuilding ? `${col}44` : 'rgba(255,255,255,0.07)'}`,
+                }}>
+                  <div style={{ width: 6, height: 6, borderRadius: '50%', flexShrink: 0, background: col, boxShadow: `0 0 4px ${col}55` }} />
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ color: '#c4b5fd', fontSize: '0.7rem', fontWeight: 600, fontFamily: 'ui-monospace,monospace', marginBottom: 1 }}>
+                      {skill.displayName}
+                    </div>
+                    <div style={{ color: '#6b7280', fontSize: '0.64rem', lineHeight: 1.3, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      {skill.description}
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => !building && handleBuild(skill)}
+                    disabled={!!building}
+                    style={{
+                      flexShrink: 0, padding: '3px 9px', borderRadius: 5, fontSize: '0.64rem',
+                      fontWeight: 600, cursor: building ? 'not-allowed' : 'pointer',
+                      border: `1px solid ${isBuilding ? `${col}55` : 'rgba(139,92,246,0.45)'}`,
+                      background: isBuilding ? `${col}22` : 'rgba(139,92,246,0.15)',
+                      color: isBuilding ? col : '#c4b5fd',
+                      opacity: building && !isBuilding ? 0.35 : 1,
+                      display: 'flex', alignItems: 'center', gap: 3, whiteSpace: 'nowrap',
+                    }}
+                  >
+                    {isBuilding ? (
+                      <>
+                        <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                          <path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83">
+                            <animateTransform attributeName="transform" type="rotate" from="0 12 12" to="360 12 12" dur="0.8s" repeatCount="indefinite"/>
+                          </path>
+                        </svg>
+                        Building…
+                      </>
+                    ) : 'Build'}
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* Action row */}
+      <div style={{ display: 'flex', gap: 6, paddingLeft: 0, flexWrap: 'wrap' }}>
+        {/* Build from scaffold — only shown if scaffold was created */}
+        {capabilityGap.scaffolded && (
+          <button
+            onClick={() => !building && handleScaffold()}
+            disabled={!!building}
+            style={{
+              display: 'inline-flex', alignItems: 'center', gap: 5,
+              padding: '5px 11px', borderRadius: 6, cursor: building ? 'not-allowed' : 'pointer',
+              backgroundColor: building === '__scaffold__' ? 'rgba(34,197,94,0.15)' : 'rgba(34,197,94,0.1)',
+              border: '1px solid rgba(34,197,94,0.35)',
+              color: '#86efac', fontSize: '0.69rem', fontWeight: 600,
+              opacity: building && building !== '__scaffold__' ? 0.4 : 1,
+            }}
+            onMouseEnter={e => { if (!building) e.currentTarget.style.backgroundColor = 'rgba(34,197,94,0.2)'; }}
+            onMouseLeave={e => { if (!building) e.currentTarget.style.backgroundColor = 'rgba(34,197,94,0.1)'; }}
+          >
+            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/>
+            </svg>
+            {building === '__scaffold__' ? 'Building scaffold…' : 'Build from scaffold'}
+          </button>
+        )}
+        {/* Browse store */}
+        <button
+          onClick={onBrowseStore}
+          style={{
+            display: 'inline-flex', alignItems: 'center', gap: 5,
+            padding: '5px 11px', borderRadius: 6, cursor: 'pointer',
+            backgroundColor: 'rgba(245,158,11,0.1)', border: '1px solid rgba(245,158,11,0.3)',
+            color: '#fcd34d', fontSize: '0.69rem', fontWeight: 600,
+          }}
+          onMouseEnter={e => (e.currentTarget.style.backgroundColor = 'rgba(245,158,11,0.2)')}
+          onMouseLeave={e => (e.currentTarget.style.backgroundColor = 'rgba(245,158,11,0.1)')}
+        >
+          <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+            <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
+          </svg>
+          {matches.length > 0 ? 'Browse more in store' : 'Search Skill Store'}
+        </button>
+      </div>
+    </div>
+  );
+}
+
 // ── Component ─────────────────────────────────────────────────────────────────
 
 export default function AutomationProgress({ onHeightChange, onActiveChange }: AutomationProgressProps) {
@@ -156,6 +322,10 @@ export default function AutomationProgress({ onHeightChange, onActiveChange }: A
   const [scheduleCountdown, setScheduleCountdown] = useState<{ label: string; targetTime: string; remainingMs: number } | null>(null);
   const [evalMessage, setEvalMessage] = useState<string>('');
   const [retryMessage, setRetryMessage] = useState<string>('');
+  const [capabilityGap, setCapabilityGap] = useState<{ capability: string; suggestion: string; scaffolded: boolean } | null>(null);
+  const [skillBuildAsking, setSkillBuildAsking] = useState<{ name: string; question: string; options: string[] } | null>(null);
+  const [skillBuildAnswer, setSkillBuildAnswer] = useState('');
+  const [skillBuildConfirm, setSkillBuildConfirm] = useState<{ skillName: string; summary: string } | null>(null);
 
   // Notify parent to re-measure height whenever visible content changes
   useEffect(() => {
@@ -184,6 +354,10 @@ export default function AutomationProgress({ onHeightChange, onActiveChange }: A
       setGuideStep(null);
       setIntentType(null);
       setScheduleCountdown(null);
+      setCapabilityGap(null);
+      setSkillBuildAsking(null);
+      setSkillBuildAnswer('');
+      setSkillBuildConfirm(null);
     };
     ipcRenderer.on('results-window:set-prompt', handleNewPrompt);
 
@@ -228,8 +402,13 @@ export default function AutomationProgress({ onHeightChange, onActiveChange }: A
               ? { ...s, status: 'done', description: data.description || s.description, stdout: data.stdout, exitCode: data.exitCode, savedFilePath: data.savedFilePath || undefined }
               : s
           ));
-          // Auto-expand steps that have meaningful stdout
-          if (data.stdout && data.stdout.trim().length > 0) {
+          // Detect shell.run scaffold step that follows needs_skill (marks scaffold as done)
+          // Match on stdout containing 'Scaffolded at' since description is just 'shell.run' in the event
+          if (data.skill === 'shell.run' && data.stdout && data.stdout.includes('Scaffolded at')) {
+            setCapabilityGap(prev => prev ? { ...prev, scaffolded: true } : prev);
+          }
+          // Auto-expand steps that have meaningful stdout (skip needs_skill — rendered as card)
+          if (data.stdout && data.stdout.trim().length > 0 && data.skill !== 'needs_skill') {
             setExpandedSteps(prev => new Set([...prev, data.stepIndex]));
           }
           // Also accumulate at bottom-level for all_done fallback
@@ -277,6 +456,17 @@ export default function AutomationProgress({ onHeightChange, onActiveChange }: A
 
         case 'schedule_tick':
           setScheduleCountdown(prev => prev ? { ...prev, remainingMs: data.remainingMs, label: data.description || prev.label } : prev);
+          break;
+
+        case 'skill_build_confirm':
+          setSkillBuildConfirm({
+            skillName: data.skillName,
+            summary: data.summary,
+          });
+          break;
+
+        case 'skill_build_triggered':
+          setSkillBuildConfirm(null);
           break;
 
         case 'evaluating':
@@ -338,13 +528,35 @@ export default function AutomationProgress({ onHeightChange, onActiveChange }: A
       }
     };
 
+    // skill_store_trigger — fired by executeCommand when needs_skill step runs
+    const handleSkillStoreTrigger = (_event: any, { capability, suggestion }: { capability: string; suggestion: string }) => {
+      setCapabilityGap({ capability: capability || '', suggestion: suggestion || '', scaffolded: false });
+    };
+
+    // skill:build-asking — installSkill needs a secret/API key from the user
+    const handleSkillBuildAsking = (_event: any, { name, question, options }: { name: string; question: string; options: string[] }) => {
+      setSkillBuildAsking({ name: name || '', question: question || '', options: options || [] });
+      setSkillBuildAnswer('');
+    };
+
+    // skill:build-done — clear asking state
+    const handleSkillBuildDone = (_event: any, { ok }: { ok: boolean }) => {
+      if (ok) setSkillBuildAsking(null);
+    };
+
     ipcRenderer.on('automation:progress', handleProgress);
     ipcRenderer.on('ws-bridge:message', handleBridgeMessage);
+    ipcRenderer.on('skill:store-trigger', handleSkillStoreTrigger);
+    ipcRenderer.on('skill:build-asking', handleSkillBuildAsking);
+    ipcRenderer.on('skill:build-done', handleSkillBuildDone);
     return () => {
       if (ipcRenderer.removeListener) {
         ipcRenderer.removeListener('automation:progress', handleProgress);
         ipcRenderer.removeListener('results-window:set-prompt', handleNewPrompt);
         ipcRenderer.removeListener('ws-bridge:message', handleBridgeMessage);
+        ipcRenderer.removeListener('skill:store-trigger', handleSkillStoreTrigger);
+        ipcRenderer.removeListener('skill:build-asking', handleSkillBuildAsking);
+        ipcRenderer.removeListener('skill:build-done', handleSkillBuildDone);
       }
     };
   }, []);
@@ -555,15 +767,147 @@ export default function AutomationProgress({ onHeightChange, onActiveChange }: A
         </div>
       )}
 
+      {/* ── Skill build confirmation card ───────────────────────────────── */}
+      {skillBuildConfirm && (
+        <div style={{ padding: '12px 14px', borderRadius: 10, backgroundColor: 'rgba(139,92,246,0.07)', border: '1px solid rgba(139,92,246,0.35)' }}>
+          <div className="flex items-start gap-2" style={{ marginBottom: 8 }}>
+            <div style={{ fontSize: '0.95rem', lineHeight: 1, marginTop: 1, flexShrink: 0 }}>🔧</div>
+            <div>
+              <div style={{ color: '#c4b5fd', fontSize: '0.76rem', fontWeight: 600, marginBottom: 3 }}>
+                New skill required
+              </div>
+              <div style={{ color: '#9ca3af', fontSize: '0.69rem', lineHeight: 1.4, marginBottom: 4 }}>
+                <span style={{ color: '#e5e7eb', fontFamily: 'ui-monospace,monospace', fontSize: '0.68rem', background: 'rgba(0,0,0,0.3)', padding: '1px 5px', borderRadius: 3 }}>
+                  {skillBuildConfirm.skillName}
+                </span>
+              </div>
+            </div>
+          </div>
+          <div style={{ color: '#d1d5db', fontSize: '0.71rem', lineHeight: 1.5, marginBottom: 10, paddingLeft: 22, fontStyle: 'italic' }}>
+            {skillBuildConfirm.summary}
+          </div>
+          <div style={{ display: 'flex', gap: 6, paddingLeft: 22 }}>
+            <button
+              onClick={() => {
+                setSkillBuildConfirm(null);
+                ipcRenderer?.send('install:confirm', { confirmed: true });
+              }}
+              style={{
+                padding: '5px 12px', borderRadius: 6, fontSize: '0.7rem', fontWeight: 600,
+                cursor: 'pointer', background: 'rgba(139,92,246,0.2)',
+                border: '1px solid rgba(139,92,246,0.5)', color: '#c4b5fd',
+                display: 'flex', alignItems: 'center', gap: 4,
+              }}
+            >
+              <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/>
+              </svg>
+              Build &amp; Install
+            </button>
+            <button
+              onClick={() => {
+                setSkillBuildConfirm(null);
+                ipcRenderer?.send('install:confirm', { confirmed: false });
+              }}
+              style={{
+                padding: '5px 12px', borderRadius: 6, fontSize: '0.7rem', fontWeight: 600,
+                cursor: 'pointer', background: 'rgba(107,114,128,0.1)',
+                border: '1px solid rgba(107,114,128,0.3)', color: '#9ca3af',
+              }}
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* ── Capability gap card (needs_skill) ───────────────────────────── */}
+      {capabilityGap && (
+        <CapabilityGapCard
+          capabilityGap={capabilityGap}
+          onBrowseStore={() => ipcRenderer?.send('skill:store-open', { capability: capabilityGap.capability, suggestion: capabilityGap.suggestion })}
+          onBuildSkill={(skill) => ipcRenderer?.send('skill:build-start', skill)}
+          onBuildScaffold={() => {
+            const skillName = capabilityGap.suggestion?.match(/skills\/([^/]+)/)?.[1] || 'custom-skill';
+            const scaffoldPath = `${(window as any).__HOME__ || '~'}/.thinkdrop/skills/${skillName}/skill.md`;
+            ipcRenderer?.send('skill:build-start', {
+              name: skillName,
+              displayName: skillName,
+              description: capabilityGap.capability,
+              category: 'Custom',
+              rawUrl: `file://${scaffoldPath}`,
+              ocUrl: '',
+              isScaffold: true,
+              scaffoldPath,
+            });
+          }}
+        />
+      )}
+
+      {/* ── Skill build: secret input prompt ─────────────────────────────── */}
+      {skillBuildAsking && (
+        <div style={{ padding: '12px 14px', borderRadius: 10, backgroundColor: 'rgba(99,102,241,0.07)', border: '1px solid rgba(99,102,241,0.35)' }}>
+          <div style={{ color: '#a5b4fc', fontSize: '0.76rem', fontWeight: 600, marginBottom: 4 }}>
+            🔑 Secret required to install <code style={{ fontSize: '0.7rem', background: 'rgba(0,0,0,0.3)', padding: '1px 5px', borderRadius: 3 }}>{skillBuildAsking.name}</code>
+          </div>
+          <div style={{ color: '#9ca3af', fontSize: '0.7rem', marginBottom: 8, lineHeight: 1.4 }}>
+            {skillBuildAsking.question}
+          </div>
+          <div style={{ display: 'flex', gap: 6 }}>
+            <input
+              type="password"
+              value={skillBuildAnswer}
+              onChange={e => setSkillBuildAnswer(e.target.value)}
+              onKeyDown={e => {
+                if (e.key === 'Enter' && skillBuildAnswer.trim()) {
+                  ipcRenderer?.send('skill:build-answer', { name: skillBuildAsking.name, answer: skillBuildAnswer });
+                  setSkillBuildAsking(null);
+                  setSkillBuildAnswer('');
+                }
+              }}
+              placeholder="Paste API key or token…"
+              autoFocus
+              style={{
+                flex: 1, padding: '5px 9px', borderRadius: 6, fontSize: '0.7rem',
+                background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(99,102,241,0.35)',
+                color: '#e5e7eb', outline: 'none',
+              }}
+              onFocus={e => { e.currentTarget.style.borderColor = 'rgba(99,102,241,0.7)'; }}
+              onBlur={e => { e.currentTarget.style.borderColor = 'rgba(99,102,241,0.35)'; }}
+            />
+            <button
+              onClick={() => {
+                if (skillBuildAnswer.trim()) {
+                  ipcRenderer?.send('skill:build-answer', { name: skillBuildAsking.name, answer: skillBuildAnswer });
+                  setSkillBuildAsking(null);
+                  setSkillBuildAnswer('');
+                }
+              }}
+              disabled={!skillBuildAnswer.trim()}
+              style={{
+                padding: '5px 12px', borderRadius: 6, fontSize: '0.7rem', fontWeight: 600,
+                cursor: skillBuildAnswer.trim() ? 'pointer' : 'not-allowed',
+                background: skillBuildAnswer.trim() ? 'rgba(99,102,241,0.25)' : 'rgba(99,102,241,0.07)',
+                border: '1px solid rgba(99,102,241,0.4)', color: skillBuildAnswer.trim() ? '#a5b4fc' : '#4b5563',
+                whiteSpace: 'nowrap',
+              }}
+            >
+              Submit →
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* ── Step list ────────────────────────────────────────────────────── */}
       {steps.length > 0 && (
         <div className="space-y-2" style={{ maxHeight: 340, overflowY: 'auto', overflowX: 'hidden' }}>
           {steps.map((step) => {
             const isSynthesize = step.skill === 'synthesize';
+            const isNeedsSkill = step.skill === 'needs_skill';
             const hasOutput = isSynthesize
               ? synthesisAnswer.length > 0
-              : (step.stdout && step.stdout.trim().length > 0) ||
-                (step.error && step.error.trim().length > 0);
+              : !isNeedsSkill && ((step.stdout && step.stdout.trim().length > 0) ||
+                (step.error && step.error.trim().length > 0));
             const isExpanded = expandedSteps.has(step.index);
 
             return (

@@ -128,7 +128,7 @@ export default function SkillStore({ onBuildSkill, initialSearch = '' }: SkillSt
       </div>
 
       {/* ── Category pills — single scrollable row ── */}
-      <div style={{
+      <div className="hide-scrollbar" style={{
         display: 'flex', gap: 3, flexWrap: 'nowrap',
         overflowX: 'auto', paddingBottom: 2,
         scrollbarWidth: 'none',

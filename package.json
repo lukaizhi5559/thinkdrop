@@ -78,7 +78,9 @@
       "target": "dmg"
     },
     "electronRebuild": {
-      "onlyModules": ["keytar"]
+      "onlyModules": [
+        "keytar"
+      ]
     }
   }
 }

@@ -1,295 +1,341 @@
-# Standalone Copilot Screen Assistant
+# ThinkDrop AI
 
-A lightweight Electron app that communicates with VS Code Copilot via a VS Code extension bridge. This app provides a screen capture interface that sends screenshots and prompts to VS Code Copilot for processing.
+ThinkDrop is a macOS desktop AI assistant that lives in a floating overlay. You type (or speak) a natural language request and ThinkDrop plans and executes it — automating browser tasks, running custom skills, managing your schedule, and more — all without switching context from what you're working on.
+
+## Requirements
+
+- **macOS** 12 Monterey or later
+- **Node.js v18+** — required to build and run skills. ThinkDrop will prompt you to install it on first launch if missing. Download: https://nodejs.org/en/download/
+- **npm** — bundled with Node.js
+- **Python 3.10+** — required for the coreference resolution service. Download: https://python.org/downloads/
 
 ## Architecture
 
+### Electron App
+
 ```
-┌─────────────────────────────────────────────────────────────────┐
-│                    Standalone Electron App                       │
-│                                                                   │
-│  ┌──────────────────────┐        ┌──────────────────────┐      │
-│  │ StandalonePrompt     │        │   ResultsWindow      │      │
-│  │ Capture              │        │                      │      │
-│  │                      │        │  - Streaming         │      │
-│  │ - Text input         │        │  - Markdown render   │      │
-│  │ - Highlight tags     │        │  - Code highlighting │      │
-│  │ - Screenshot capture │        │                      │      │
-│  └──────────┬───────────┘        └──────────▲───────────┘      │
-│             │                               │                    │
-│             │                               │                    │
-│             │      ┌────────────────────────┘                    │
-│             │      │                                             │
-│             └──────▼──────────────────────┐                     │
-│                VSCodeBridge Service        │                     │
-│                (WebSocket Client)          │                     │
-│                                            │                     │
-└────────────────────────┬───────────────────┴─────────────────────┘
-                         │
-                         │ WebSocket (ws://localhost:3000)
-                         │
-┌────────────────────────▼───────────────────────────────────────┐
-│                  VS Code Extension Bridge                       │
-│                                                                  │
-│  - Receives: { message, screenshot, timestamp }                │
-│  - Sends: { type: 'stream_token', token: '...' }              │
-│  - Sends: { type: 'stream_end' }                              │
-│  - Sends: { type: 'error', error: '...' }                     │
-│                                                                  │
-│  ┌──────────────────────────────────────────────────────────┐ │
-│  │         VS Code Copilot API (Internal)                   │ │
-│  │                                                            │ │
-│  │  - Processes screenshot + prompt                          │ │
-│  │  - Streams response back to extension                     │ │
-│  └──────────────────────────────────────────────────────────┘ │
-└──────────────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────────┐
+│                        ThinkDrop Electron App                        │
+│                                                                      │
+│  ┌─────────────────────────┐       ┌──────────────────────────────┐  │
+│  │   Prompt Capture Window │       │      Results Window          │  │
+│  │   (floating overlay)    │       │   (progress + output)        │  │
+│  │                         │       │                              │  │
+│  │  - Text / voice input   │       │  - Automation progress       │  │
+│  │  - Global hotkey        │       │  - Skill build progress      │  │
+│  │  - Clipboard highlight  │       │  - Streaming LLM output      │  │
+│  └──────────┬──────────────┘       └──────────────▲───────────────┘  │
+│             │ IPC                                   │ IPC            │
+│             └───────────────────┬───────────────────┘                │
+│                                 │                                    │
+│                    ┌────────────▼────────────┐                       │
+│                    │   Main Process (main.js) │                      │
+│                    │   StateGraph pipeline    │                      │
+│                    └────────────┬────────────┘                       │
+└─────────────────────────────────┼────────────────────────────────────┘
+                                  │ MCP (HTTP/JSON)
+                                  ▼
+                         (see MCP Services below)
 ```
 
-## Features
+### StateGraph Pipeline
 
-- **Screen Capture**: Automatically captures screenshots when submitting prompts
-- **Text Highlighting**: Select text and press `Cmd+C` to add as context tags
-- **Streaming Responses**: Real-time streaming of Copilot responses
-- **Markdown Rendering**: Full markdown support with code syntax highlighting
-- **Draggable Windows**: Both prompt and results windows are draggable
-- **Global Hotkey**: `Cmd+Shift+Space` to show/hide prompt window
+Every prompt runs through a directed graph of AI nodes:
 
-## Setup
+```
+START
+  │
+  ▼
+resolveReferences ──→ parseSkill ──→ parseIntent ──→ enrichIntent
+                                                          │
+                    ┌─────────────────────────────────────┤
+                    │                                     │
+         command_automate                           skill_build
+                    │                                     │
+                    ▼                                     ▼
+               planSkills ◄──────────────────────── buildSkill ◄─────────────────────┐
+                    │         evaluateSkills FIX           │                         │
+                    │                                      ▼                         │
+                    ▼                              validateSkill                     │
+             executeCommand ◄──────┐                      │ PASS                     │
+                    │   auto_patch  │                      ▼                         │
+                    │ (step failed) │               installSkill                     │
+                    ▼               │                      │                         │
+             recoverSkill ──────────┘         ┌───────────┴───────────┐              │
+                    │                         │                       │              │
+                    │ replan                  │ asking (secret)       │ smoke FAIL   │
+                    ▼                         ▼                       └──────────────┘
+             evaluateSkills            logConversation
+                    │                  (paused for user)
+                    │ FIX / PASS
+                    ▼
+               planSkills
 
-### 1. Install Dependencies
+
+                    ┌─────────────────── enrichIntent ───────────────────┐
+                    │                                                    │
+              web_search / question                              screen_intelligence
+                    │                                                    │
+                    ▼                                                    ▼
+               webSearch                                      screenIntelligence
+                    │                                          (has answer?) │ no
+                    ▼                                                    ▼
+            retrieveMemory ──→ answer                              vision / answer
+                    │               │
+                    │          synthesize
+                    │               │
+                    └───────┬───────┘
+                            │
+              memory_store / memory_retrieve
+                    │                  │
+               storeMemory       retrieveMemory
+                    │                  │
+                    └──────┬───────────┘
+                           │
+                           ▼
+                    logConversation ──→ journalProgress ──→ END
+```
+
+**All nodes** (20 total):
+
+| Node | Role |
+|---|---|
+| `resolveReferences` | Resolve pronouns + co-references via coreference-service |
+| `parseSkill` | Detect if prompt matches an installed skill |
+| `parseIntent` | Classify intent type (command_automate, skill_build, answer, etc.) |
+| `enrichIntent` | Fill profile gaps, re-route based on enriched intent |
+| `planSkills` | LLM step planner with RAG context rules |
+| `executeCommand` | Dispatch skill steps via MCP, loop until plan complete |
+| `recoverSkill` | Handle step failures: AUTO_PATCH, REPLAN, ASK_USER |
+| `evaluateSkills` | LLM judge — post-run verdict or failure rule derivation |
+| `buildSkill` | Creator Agent — LLM generates `.cjs` skill code |
+| `validateSkill` | 3-layer validator — static + intent fulfillment + corrective feedback |
+| `installSkill` | Dep detection, npm install, smoke test, Keychain, DB registration |
+| `webSearch` | Search via DuckDuckGo / Brave / SearXNG / NewsAPI |
+| `retrieveMemory` | Fetch relevant memories from user-memory-service |
+| `storeMemory` | Save new memory to user-memory-service |
+| `screenIntelligence` | Screenshot capture + OCR via screen-intelligence-service |
+| `vision` | Visual analysis via LLM vision API |
+| `answer` | Direct LLM response (greetings, general knowledge) |
+| `synthesize` | Compose final response from multi-step context |
+| `logConversation` | Persist conversation turn to conversation-service |
+| `journalProgress` | Write StateGraph status to voice-journal for voice-service sync |
+
+### MCP Services
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                              MCP Services Layer                             │
+│                                                                             │
+│  ┌───────────────┐  ┌──────────────┐  ┌──────────────┐  ┌─────────────────┐ │
+│  │ command-      │  │ user-memory  │  │conversation  │  │  voice-service  │ │
+│  │ service       │  │ service      │  │ service      │  │                 │ │
+│  │ (port 3007)   │  │ (port 3001)  │  │ (port 3004)  │  │ (port 3006)     │ │
+│  │               │  │              │  │              │  │                 │ │
+│  │ browser.act   │  │ Skills DB    │  │ Sessions     │  │ STT (Whisper)   │ │
+│  │ shell.run     │  │ Context rules│  │ Messages     │  │ TTS (Inworld)   │ │
+│  │ ui.*          │  │ User profile │  │              │  │ VAD, wake word  │ │
+│  │ external.*    │  │ (DuckDB)     │  │              │  │                 │ │
+│  └───────────────┘  └──────────────┘  └──────────────┘  └─────────────────┘ │
+│                                                                             │
+│  ┌───────────────┐  ┌──────────────┐  ┌──────────────┐  ┌─────────────────┐ │
+│  │ phi4-service  │  │ web-search   │  │ coreference  │  │ screen-intelli- │ │
+│  │               │  │ service      │  │ service      │  │ gence-service   │ │
+│  │ (port 3003)   │  │ (port 3002)  │  │ (port 3005)  │  │ (port 3008)     │ │
+│  │               │  │              │  │              │  │                 │ │
+│  │ Intent class. │  │ DuckDuckGo   │  │ Pronoun/ref  │  │ Screenshot OCR  │ │
+│  │ DistilBERT    │  │ Brave, News  │  │ resolution   │  │ Active window   │ │
+│  │ embeddings    │  │ SearXNG      │  │ (Python NLP) │  │ detection       │ │
+│  └───────────────┘  └──────────────┘  └──────────────┘  └─────────────────┘ │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+**Skill Build Loop** (`buildSkill` → `validateSkill` → `installSkill`):
+1. `buildSkill` — LLM generates a `.cjs` skill file from description
+2. `validateSkill` — 3-layer validator: static checks → intent fulfillment (LLM) → corrective feedback. Fails inject rich `FIX [CATEGORY]:` instructions back to `buildSkill`
+3. `installSkill` — writes file, detects deps, runs `npm install` in skill dir, smoke tests, stores secrets in Keychain, registers in DB
+4. Smoke test failures route back to `buildSkill` for another fix cycle (up to 5 rounds total)
+
+## Skills
+
+Skills are user-installable Node.js modules stored in `~/.thinkdrop/skills/<name>/index.cjs`. Each skill:
+- Exports `module.exports = async (args) => { ... }`
+- Uses `keytar` for secret storage (macOS Keychain)
+- Gets its own `package.json` + `node_modules/` — dependencies auto-installed on build
+- Is registered in the user-memory service DB for discovery
+
+**Always-available in skills** (no install needed):
+- All Node.js built-ins (`fs`, `https`, `path`, `crypto`, etc.)
+- `keytar` — macOS Keychain access
+- `node-cron` — cron scheduling
+
+**Auto-installed per skill** (detector scans `require()` calls):
+- `twilio`, `googleapis`, `nodemailer`, `axios`, `openai`, `node-fetch`, and more
+
+## MCP Services
+
+Each service is an independent process with its own dependencies:
+
+| Service | Port | Runtime | Purpose |
+|---|---|---|---|
+| `command-service` | 3007 | Node.js | Browser automation (Playwright), shell, UI control, external skill execution |
+| `user-memory-service` | 3001 | Node.js | Skills DB, context rules, user profile (DuckDB) |
+| `conversation-service` | 3004 | Node.js | Session history, message store |
+| `voice-service` | 3006 | Node.js | STT (Groq Whisper), TTS (Inworld/ElevenLabs), VAD, wake word |
+| `phi4-service` | 3003 | Node.js | Intent classification, DistilBERT embeddings |
+| `web-search` | 3002 | Node.js | Web search via DuckDuckGo, Brave, NewsAPI, SearXNG |
+| `coreference-service` | 3005 | Python | Pronoun + reference resolution (NLP) |
+| `screen-intelligence-service` | 3008 | Node.js | Screenshot OCR, active window detection |
+
+## Getting Started
+
+### Prerequisites
 
 ```bash
-cd standalone-copilot-app
-npm install
+# Install Node.js v18+ from https://nodejs.org
+node --version   # should be v18.0.0 or later
+npm --version
 ```
 
-### 2. VS Code Extension Bridge Setup
-
-You need to create a VS Code extension that acts as a bridge to Copilot. The extension should:
-
-1. **Start a WebSocket server** on `ws://localhost:3000`
-2. **Listen for messages** from the Electron app:
-   ```typescript
-   interface IncomingMessage {
-     type: 'query';
-     message: string;
-     screenshot?: string; // base64 encoded PNG
-     timestamp: number;
-   }
-   ```
-
-3. **Forward to VS Code Copilot** using the internal API:
-   ```typescript
-   // Example using VS Code's internal Copilot API
-   const response = await vscode.commands.executeCommand(
-     'vscode.executeInlineCompletionProvider',
-     document.uri,
-     position,
-     {
-       triggerKind: vscode.InlineCompletionTriggerKind.Invoke,
-       selectedCompletionInfo: undefined
-     }
-   );
-   ```
-
-4. **Stream responses back** to the Electron app:
-   ```typescript
-   // Send tokens as they arrive
-   ws.send(JSON.stringify({
-     type: 'stream_token',
-     token: 'partial response text'
-   }));
-   
-   // Signal completion
-   ws.send(JSON.stringify({
-     type: 'stream_end'
-   }));
-   
-   // Send errors
-   ws.send(JSON.stringify({
-     type: 'error',
-     error: 'Error message'
-   }));
-   ```
-
-### 3. Extension Example Structure
-
-Create a VS Code extension with this structure:
-
-```
-vscode-copilot-bridge/
-├── package.json
-├── src/
-│   ├── extension.ts          # Main extension entry
-│   ├── server.ts             # WebSocket server
-│   └── copilotBridge.ts      # Copilot API integration
-```
-
-**extension.ts**:
-```typescript
-import * as vscode from 'vscode';
-import { startBridgeServer } from './server';
-
-export function activate(context: vscode.ExtensionContext) {
-  console.log('Copilot Bridge extension activated');
-  
-  // Start WebSocket server
-  const server = startBridgeServer(3000);
-  
-  context.subscriptions.push({
-    dispose: () => server.close()
-  });
-}
-```
-
-**server.ts**:
-```typescript
-import WebSocket from 'ws';
-import { processCopilotQuery } from './copilotBridge';
-
-export function startBridgeServer(port: number) {
-  const wss = new WebSocket.Server({ port });
-  
-  wss.on('connection', (ws) => {
-    console.log('Electron app connected');
-    
-    ws.on('message', async (data) => {
-      const message = JSON.parse(data.toString());
-      
-      if (message.type === 'query') {
-        try {
-          // Process with Copilot
-          await processCopilotQuery(
-            message.message,
-            message.screenshot,
-            (token) => {
-              // Stream tokens back
-              ws.send(JSON.stringify({
-                type: 'stream_token',
-                token
-              }));
-            }
-          );
-          
-          // Signal completion
-          ws.send(JSON.stringify({ type: 'stream_end' }));
-        } catch (error) {
-          ws.send(JSON.stringify({
-            type: 'error',
-            error: error.message
-          }));
-        }
-      }
-    });
-  });
-  
-  return wss;
-}
-```
-
-**copilotBridge.ts**:
-```typescript
-import * as vscode from 'vscode';
-
-export async function processCopilotQuery(
-  prompt: string,
-  screenshot: string | undefined,
-  onToken: (token: string) => void
-) {
-  // Build the full prompt with screenshot context
-  let fullPrompt = prompt;
-  if (screenshot) {
-    fullPrompt = `[Screenshot attached]\n\n${prompt}`;
-  }
-  
-  // Use VS Code's Copilot API (internal - may vary by version)
-  // This is a simplified example - actual implementation depends on
-  // VS Code's internal Copilot API which is not publicly documented
-  
-  // Alternative: Use GitHub Copilot Chat API if available
-  const editor = vscode.window.activeTextEditor;
-  if (editor) {
-    // Insert prompt and trigger Copilot
-    // Stream response back via onToken callback
-  }
-}
-```
-
-## Development
-
-### Run the Electron App
+### Install & Run (Development)
 
 ```bash
-npm run dev
+# 1. Clone and install root dependencies
+git clone <repo>
+cd thinkdrop
+yarn install
+
+# 2. Install MCP service dependencies (Node.js services)
+cd mcp-services/command-service && npm install && cd ../..
+cd mcp-services/thinkdrop-user-memory-service && npm install && cd ../..
+cd mcp-services/conversation-service && npm install && cd ../..
+cd mcp-services/voice-service && npm install && cd ../..
+cd mcp-services/thinkdrop-phi4-service && npm install && cd ../..
+cd mcp-services/thinkdrop-web-search && npm install && cd ../..
+cd mcp-services/screen-intelligence-service && npm install && cd ../..
+
+# 3. Install coreference service (Python)
+cd mcp-services/coreference-service
+python3 -m venv venv && source venv/bin/activate
+pip install -r requirements.txt && cd ../..
+
+# 4. Install stategraph module
+cd stategraph-module && npm install && cd ..
+
+# 5. Start all services (separate terminals or use a process manager)
+# Terminal 1 — main app
+yarn dev
+
+# Terminal 2 — command service
+cd mcp-services/command-service && npm start
+
+# Terminal 3 — user memory service
+cd mcp-services/thinkdrop-user-memory-service && npm start
+
+# Terminal 4 — conversation service
+cd mcp-services/conversation-service && npm start
+
+# Terminal 5 — voice service
+cd mcp-services/voice-service && npm start
+
+# Terminal 6 — phi4 service
+cd mcp-services/thinkdrop-phi4-service && npm start
+
+# Terminal 7 — web search service
+cd mcp-services/thinkdrop-web-search && npm start
+
+# Terminal 8 — coreference service (Python)
+cd mcp-services/coreference-service && source venv/bin/activate && python server.py
+
+# Terminal 9 — screen intelligence service
+cd mcp-services/screen-intelligence-service && npm start
 ```
 
-This starts:
-- Vite dev server on `http://localhost:5173`
-- Electron app with hot reload
+### Global Hotkey
 
-### Build for Production
-
-```bash
-npm run build
-```
-
-This creates a distributable app in the `dist/` folder.
-
-## Usage
-
-1. **Start the VS Code extension** (ensure WebSocket server is running on port 3000)
-2. **Launch the Electron app**: `npm run dev`
-3. **Press `Cmd+Shift+Space`** to open the prompt window
-4. **Type your question** or **highlight text** and press `Cmd+C` to add context
-5. **Press Enter** to submit (screenshot is automatically captured)
-6. **View results** in the results window that appears
-
-## Configuration
-
-Edit `src/renderer/services/vscodebridge.ts` to change the WebSocket URL:
-
-```typescript
-const bridge = getVSCodeBridge({
-  serverUrl: 'ws://localhost:3000', // Change port if needed
-  onMessage: (message) => { /* ... */ },
-  onStreamToken: (token) => { /* ... */ },
-  onError: (error) => { /* ... */ }
-});
-```
+`Cmd+Shift+Space` — show/hide the prompt capture window from anywhere on macOS.
 
 ## Keyboard Shortcuts
 
-- `Cmd+Shift+Space`: Show/hide prompt window
-- `Enter`: Submit prompt
-- `Shift+Enter`: New line in prompt
-- `Esc`: Close prompt/results windows
-- `Cmd+C` (with text selected): Add highlighted text as context tag
+| Shortcut | Action |
+|---|---|
+| `Cmd+Shift+Space` | Show / hide prompt window |
+| `Enter` | Submit prompt |
+| `Shift+Enter` | New line |
+| `Esc` | Close windows |
+| `Cmd+C` (text selected) | Add highlighted text as context tag |
+
+## Project Structure
+
+```
+thinkdrop/
+├── src/
+│   ├── main/
+│   │   ├── main.js              # Electron main process, IPC, StateGraph init
+│   │   ├── preload.js           # Context bridge — IPC channel whitelist
+│   │   └── scheduler.js         # launchd-based persistent task scheduler
+│   └── renderer/
+│       ├── components/
+│       │   ├── AutomationProgress.tsx   # Live step-by-step automation UI
+│       │   ├── SkillBuildProgress.tsx   # Skill build pipeline UI
+│       │   └── ResultsWindow.tsx        # Results + progress host
+│       └── utils/
+├── stategraph-module/
+│   └── src/
+│       ├── StateGraphBuilder.js         # Graph wiring + routing logic
+│       ├── nodes/
+│       │   ├── buildSkill.js            # Creator Agent — generates skill code
+│       │   ├── validateSkill.js         # Validator Agent — 3-layer review + corrective feedback
+│       │   ├── installSkill.js          # Installer — deps, Keychain, smoke test, registration
+│       │   ├── planSkills.js            # Planner — LLM step generation with RAG
+│       │   ├── evaluateSkills.js        # Judge — post-run verdict, saves context rules
+│       │   ├── executeCommand.js        # Dispatcher — runs skill steps via MCP
+│       │   └── recoverSkill.js          # Recovery — AUTO_PATCH, REPLAN, ASK_USER
+│       └── prompts/                     # System prompt markdown files
+└── mcp-services/
+    ├── command-service/                 # Playwright, shell, UI, external skills (port 3007)
+    ├── thinkdrop-user-memory-service/   # DuckDB — skills, context rules, profile (port 3001)
+    ├── conversation-service/            # Session + message history (port 3004)
+    ├── voice-service/                   # STT/TTS/VAD pipeline (port 3006)
+    ├── thinkdrop-phi4-service/          # Intent classification, DistilBERT (port 3003)
+    ├── thinkdrop-web-search/            # Web search — DuckDuckGo, Brave, SearXNG (port 3002)
+    ├── coreference-service/             # Pronoun/ref resolution — Python/FastAPI (port 3005)
+    └── screen-intelligence-service/     # Screenshot OCR, active window detection (port 3008)
+```
 
 ## Troubleshooting
 
-### Connection Failed
-- Ensure VS Code extension is running
-- Check WebSocket server is on port 3000
-- Look for errors in VS Code Output panel
+### Node.js not detected at startup
+ThinkDrop shows a dialog on launch if `node` is not in PATH. Install Node.js v18+ from https://nodejs.org and restart the app.
 
-### No Response from Copilot
-- Verify VS Code Copilot is active and authenticated
-- Check VS Code extension logs
-- Ensure Copilot has necessary permissions
+### Skill build fails repeatedly
+Check the validator feedback shown in the build progress UI. Each failed round injects corrective `FIX [CATEGORY]:` instructions into the next build attempt. After 5 failed rounds the build aborts with an error summary.
 
-### Screenshot Not Captured
-- Grant screen recording permissions to Electron app
-- On macOS: System Preferences → Security & Privacy → Screen Recording
+### `Cannot find module 'keytar'`
+Run `npm install` in `mcp-services/command-service/` — `keytar` must be installed there since it's the process that loads and runs user skills.
+
+### Screen recording / accessibility permissions
+ThinkDrop needs screen recording permission for screenshot capture and accessibility permission for UI automation (nut.js). Grant both in **System Settings → Privacy & Security**.
+
+### MCP service not responding
+Each MCP service must be running independently. Check that the service processes are active on their expected ports (3001, 3004, 3006, 3007).
 
 ## Technical Stack
 
-- **Electron 28**: Desktop app framework
-- **React 18**: UI framework
-- **TypeScript**: Type safety
-- **Vite**: Fast build tool
-- **TailwindCSS**: Styling
-- **React Markdown**: Markdown rendering
-- **React Syntax Highlighter**: Code highlighting
+| Layer | Technology |
+|---|---|
+| Desktop shell | Electron |
+| UI | React 18 + TypeScript + Vite |
+| Styling | TailwindCSS |
+| AI pipeline | Custom StateGraph (directed node graph) |
+| LLM bridge | VS Code WebSocket LLM backend (port 4000) |
+| Browser automation | Playwright |
+| UI automation | nut.js |
+| Secret storage | keytar (macOS Keychain) |
+| Skill scheduling | node-cron + launchd |
+| Persistence | DuckDB (user-memory-service) |
+| Voice STT | Groq Whisper (whisper-large-v3-turbo) |
+| Voice TTS | Inworld AI / ElevenLabs / macOS native |
 
 ## License
 

@@ -640,7 +640,48 @@ function waitForVite(url = 'http://localhost:5173', maxWaitMs = 30000) {
   });
 }
 
+// ── Node.js runtime check ─────────────────────────────────────────────────────
+// ThinkDrop uses Node.js to run user skills. Without it, skill building and
+// execution will silently fail. Detect early and guide the user to install it.
+
+function checkNodeJs() {
+  const { execFileSync } = require('child_process');
+  try {
+    const version = execFileSync('node', ['--version'], { timeout: 5000, encoding: 'utf8' }).trim();
+    console.log(`[App] Node.js detected: ${version}`);
+    return { ok: true, version };
+  } catch (_) {
+    return { ok: false };
+  }
+}
+
 app.whenReady().then(async () => {
+  // ── Check Node.js is installed ───────────────────────────────────────────────
+  const nodeCheck = checkNodeJs();
+  if (!nodeCheck.ok) {
+    const { dialog, shell } = require('electron');
+    const choice = await dialog.showMessageBox({
+      type: 'warning',
+      title: 'Node.js Required',
+      message: 'Node.js is not installed',
+      detail: 'ThinkDrop requires Node.js (v18 or later) to build and run skills.\n\nWithout it, skill installation and execution will not work.\n\nClick "Install Node.js" to open the download page, then restart ThinkDrop after installing.',
+      buttons: ['Install Node.js', 'Continue Anyway', 'Quit'],
+      defaultId: 0,
+      cancelId: 2,
+    });
+    if (choice.response === 0) {
+      shell.openExternal('https://nodejs.org/en/download/');
+      app.quit();
+      return;
+    }
+    if (choice.response === 2) {
+      app.quit();
+      return;
+    }
+    // Continue anyway — user acknowledged the warning
+    console.warn('[App] Continuing without Node.js — skill features will not work');
+  }
+
   // In dev mode, wait for Vite before creating windows to avoid ERR_CONNECTION_REFUSED
   if (process.env.NODE_ENV === 'development') {
     console.log('[App] Waiting for Vite dev server...');
@@ -1087,9 +1128,12 @@ app.whenReady().then(async () => {
       if (event.type === 'all_done' && promptCaptureWindow && !promptCaptureWindow.isDestroyed()) {
         safeSend(promptCaptureWindow, 'automation:progress', event);
       }
-      // needs_skill gap — open Skill Store in promptCaptureWindow pre-filtered to the capability
-      if (event.type === 'skill_store_trigger' && promptCaptureWindow && !promptCaptureWindow.isDestroyed()) {
-        safeSend(promptCaptureWindow, 'skill:store-trigger', { capability: event.capability, suggestion: event.suggestion });
+      // needs_skill gap — notify resultsWindow so AutomationProgress shows the capability gap card
+      // Do NOT auto-open Skill Store in promptCaptureWindow; user clicks the card button to open it
+      if (event.type === 'skill_store_trigger') {
+        if (resultsWindow && !resultsWindow.isDestroyed()) {
+          safeSend(resultsWindow, 'skill:store-trigger', { capability: event.capability, suggestion: event.suggestion });
+        }
       }
     };
 
@@ -1828,6 +1872,12 @@ app.whenReady().then(async () => {
     }
   });
 
+  // ─── Skill Store: open from capability gap card (results window → prompt capture) ──
+  ipcMain.on('skill:store-open', (_event, { capability, suggestion } = {}) => {
+    console.log(`[SkillStore] Opening Skill Store for capability: "${capability}"`);
+    safeSend(promptCaptureWindow, 'skill:store-trigger', { capability: capability || '', suggestion: suggestion || '' });
+  });
+
   // ─── Skill Store: kick off the skill build pipeline ─────────────────────
   ipcMain.on('skill:build-start', async (event, skillEntry) => {
     const { name, displayName, description, category, ocUrl, rawUrl } = skillEntry || {};
@@ -1888,11 +1938,15 @@ app.whenReady().then(async () => {
       if (finalState.skillBuildPhase === 'asking' && finalState.pendingQuestion) {
         // Paused for user secret input — store state for resume
         pausedSkillBuildState = finalState;
-        safeSend(promptCaptureWindow, 'skill:build-asking', {
+        const askingPayload = {
           name,
           question: finalState.pendingQuestion.question,
           options: finalState.pendingQuestion.options || [],
-        });
+        };
+        safeSend(promptCaptureWindow, 'skill:build-asking', askingPayload);
+        if (resultsWindow && !resultsWindow.isDestroyed()) {
+          safeSend(resultsWindow, 'skill:build-asking', askingPayload);
+        }
       } else if (finalState.skillBuildPhase === 'done') {
         safeSend(promptCaptureWindow, 'skill:build-done', { name, ok: true, installedPath: finalState.skillBuildInstalledPath });
         if (resultsWindow && !resultsWindow.isDestroyed()) {
@@ -1936,19 +1990,23 @@ app.whenReady().then(async () => {
 
       if (finalState.skillBuildPhase === 'asking' && finalState.pendingQuestion) {
         pausedSkillBuildState = finalState;
-        safeSend(promptCaptureWindow, 'skill:build-asking', {
-          name,
-          question: finalState.pendingQuestion.question,
-          options: finalState.pendingQuestion.options || [],
-        });
+        const nextAsk = { name, question: finalState.pendingQuestion.question, options: finalState.pendingQuestion.options || [] };
+        safeSend(promptCaptureWindow, 'skill:build-asking', nextAsk);
+        if (resultsWindow && !resultsWindow.isDestroyed()) safeSend(resultsWindow, 'skill:build-asking', nextAsk);
       } else if (finalState.skillBuildPhase === 'done') {
-        safeSend(promptCaptureWindow, 'skill:build-done', { name, ok: true, installedPath: finalState.skillBuildInstalledPath });
+        const donePayload = { name, ok: true, installedPath: finalState.skillBuildInstalledPath };
+        safeSend(promptCaptureWindow, 'skill:build-done', donePayload);
+        if (resultsWindow && !resultsWindow.isDestroyed()) safeSend(resultsWindow, 'skill:build-done', donePayload);
       } else {
-        safeSend(promptCaptureWindow, 'skill:build-done', { name, ok: false, error: finalState.skillBuildError || 'Build failed' });
+        const errPayload = { name, ok: false, error: finalState.skillBuildError || 'Build failed' };
+        safeSend(promptCaptureWindow, 'skill:build-done', errPayload);
+        if (resultsWindow && !resultsWindow.isDestroyed()) safeSend(resultsWindow, 'skill:build-done', errPayload);
       }
     } catch (err) {
       console.error(`[SkillBuild] Resume error for "${name}":`, err.message);
-      safeSend(promptCaptureWindow, 'skill:build-done', { name, ok: false, error: err.message });
+      const errPayload = { name, ok: false, error: err.message };
+      safeSend(promptCaptureWindow, 'skill:build-done', errPayload);
+      if (resultsWindow && !resultsWindow.isDestroyed()) safeSend(resultsWindow, 'skill:build-done', errPayload);
     }
   });
 

@@ -274,6 +274,10 @@ export default function ResultsWindow() {
       } else if (data?.type === 'skill_build_done') {
         setSkillBuild(prev => prev ? { ...prev, phase: data.ok ? 'done' : 'error', error: data.error, installedPath: data.installedPath } : prev);
         glowOffTimerRef.current = setTimeout(() => setIsGlowActive(false), 1000);
+      } else if (data?.type === 'skill_build_draft') {
+        setSkillBuild(prev => prev ? { ...prev, draft: data.draft } : prev);
+      } else if (data?.type === 'skill_smoke_test') {
+        setSkillBuild(prev => prev ? { ...prev, smokeTest: { ok: data.ok, output: data.output, error: data.error } } : prev);
       }
     };
 
@@ -285,12 +289,26 @@ export default function ResultsWindow() {
       setBridgeStatus({ state: data.state, bridgeFile: data.bridgeFile, summary: data.summary });
     };
 
+    // skill:build-asking — installSkill paused for secret; update SkillBuildProgress to 'asking' phase
+    const handleSkillBuildAsking = (_event: any, { question, options }: { name: string; question: string; options: string[] }) => {
+      setSkillBuild(prev => prev ? { ...prev, phase: 'asking', question, options: options || [] } : prev);
+      setIsGlowActive(true);
+    };
+
+    // skill:build-done — mark SkillBuildProgress done or error
+    const handleSkillBuildDone = (_event: any, { ok, installedPath, error }: { ok: boolean; installedPath?: string; error?: string }) => {
+      setSkillBuild(prev => prev ? { ...prev, phase: ok ? 'done' : 'error', installedPath, error } : prev);
+      if (ok) setTimeout(() => setIsGlowActive(false), 1000);
+    };
+
     ipcRenderer.on('results-window:display-error', handleDisplayError);
     ipcRenderer.on('results-window:set-prompt', handlePromptText);
     ipcRenderer.on('results-window:show', handleWindowShow);
     ipcRenderer.on('automation:progress', handleAutomationProgress);
     ipcRenderer.on('schedule:pending', handleSchedulePending);
     ipcRenderer.on('bridge:status', handleBridgeStatus);
+    ipcRenderer.on('skill:build-asking', handleSkillBuildAsking);
+    ipcRenderer.on('skill:build-done', handleSkillBuildDone);
   
     return () => {
       if (ipcRenderer.removeListener) {
@@ -300,6 +318,8 @@ export default function ResultsWindow() {
         ipcRenderer.removeListener('automation:progress', handleAutomationProgress);
         ipcRenderer.removeListener('schedule:pending', handleSchedulePending);
         ipcRenderer.removeListener('bridge:status', handleBridgeStatus);
+        ipcRenderer.removeListener('skill:build-asking', handleSkillBuildAsking);
+        ipcRenderer.removeListener('skill:build-done', handleSkillBuildDone);
       }
     };
   }, []);
