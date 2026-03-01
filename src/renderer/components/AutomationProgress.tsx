@@ -36,7 +36,9 @@ type AutomationPhase =
   | 'failed'
   | 'ask_user'
   | 'guide_step'
-  | 'schedule_wait';
+  | 'schedule_wait'
+  | 'evaluating'
+  | 'retrying_with_fix';
 
 interface AskUserPrompt {
   question: string;
@@ -152,6 +154,8 @@ export default function AutomationProgress({ onHeightChange, onActiveChange }: A
   const [guideStep, setGuideStep] = useState<GuideStepCard | null>(null);
   const [intentType, setIntentType] = useState<string | null>(null);
   const [scheduleCountdown, setScheduleCountdown] = useState<{ label: string; targetTime: string; remainingMs: number } | null>(null);
+  const [evalMessage, setEvalMessage] = useState<string>('');
+  const [retryMessage, setRetryMessage] = useState<string>('');
 
   // Notify parent to re-measure height whenever visible content changes
   useEffect(() => {
@@ -212,14 +216,16 @@ export default function AutomationProgress({ onHeightChange, onActiveChange }: A
 
         case 'step_start':
           setSteps(prev => prev.map(s =>
-            s.index === data.stepIndex ? { ...s, status: 'running' } : s
+            s.index === data.stepIndex
+              ? { ...s, status: 'running', description: data.description || s.description }
+              : s
           ));
           break;
 
         case 'step_done':
           setSteps(prev => prev.map(s =>
             s.index === data.stepIndex
-              ? { ...s, status: 'done', stdout: data.stdout, exitCode: data.exitCode, savedFilePath: data.savedFilePath || undefined }
+              ? { ...s, status: 'done', description: data.description || s.description, stdout: data.stdout, exitCode: data.exitCode, savedFilePath: data.savedFilePath || undefined }
               : s
           ));
           // Auto-expand steps that have meaningful stdout
@@ -271,6 +277,19 @@ export default function AutomationProgress({ onHeightChange, onActiveChange }: A
 
         case 'schedule_tick':
           setScheduleCountdown(prev => prev ? { ...prev, remainingMs: data.remainingMs, label: data.description || prev.label } : prev);
+          break;
+
+        case 'evaluating':
+          setPhase('evaluating');
+          setEvalMessage(data.message || 'Evaluating result quality...');
+          break;
+
+        case 'retrying_with_fix':
+          setPhase('retrying_with_fix');
+          setRetryMessage(data.message || 'Adjusting approach and retrying...');
+          // Reset steps for the new plan run
+          setSteps([]);
+          setTotalCount(0);
           break;
 
         case 'all_done': {
@@ -445,7 +464,61 @@ export default function AutomationProgress({ onHeightChange, onActiveChange }: A
             </span>
           </>
         )}
+        {phase === 'evaluating' && (
+          <>
+            <div className="w-3.5 h-3.5 rounded-full border-2 animate-spin flex-shrink-0"
+              style={{ borderColor: '#f59e0b', borderTopColor: 'transparent' }} />
+            <span className="text-sm font-medium" style={{ color: '#fbbf24' }}>
+              {evalMessage}
+            </span>
+          </>
+        )}
+        {phase === 'retrying_with_fix' && (
+          <>
+            <div className="w-3.5 h-3.5 rounded-full border-2 animate-spin flex-shrink-0"
+              style={{ borderColor: '#f97316', borderTopColor: 'transparent' }} />
+            <span className="text-sm font-medium" style={{ color: '#fb923c' }}>
+              {retryMessage}
+            </span>
+          </>
+        )}
       </div>
+
+      {/* ── Evaluating banner ────────────────────────────────────────────── */}
+      {phase === 'evaluating' && (
+        <div style={{ padding: '10px 14px', borderRadius: 10, backgroundColor: '#1c1a0e', border: '1px solid #a16207', position: 'sticky', top: 0, zIndex: 10 }}>
+          <div className="flex items-center gap-2.5">
+            <div className="w-3 h-3 rounded-full border-2 animate-spin flex-shrink-0"
+              style={{ borderColor: '#facc15', borderTopColor: 'transparent' }} />
+            <div>
+              <div style={{ color: '#fde047', fontSize: '0.75rem', fontWeight: 600 }}>
+                Checking result quality
+              </div>
+              <div style={{ color: '#a3a3a3', fontSize: '0.68rem', marginTop: 2 }}>
+                ThinkDrop is reviewing the output. This may take a few seconds.
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Retrying with fix banner ──────────────────────────────────────── */}
+      {phase === 'retrying_with_fix' && (
+        <div style={{ padding: '10px 14px', borderRadius: 10, backgroundColor: '#1a1108', border: '1px solid #c2410c', position: 'sticky', top: 0, zIndex: 10 }}>
+          <div className="flex items-center gap-2.5">
+            <div className="w-3 h-3 rounded-full border-2 animate-spin flex-shrink-0"
+              style={{ borderColor: '#fb923c', borderTopColor: 'transparent' }} />
+            <div>
+              <div style={{ color: '#fdba74', fontSize: '0.75rem', fontWeight: 600 }}>
+                Self-healing — retrying with a fix
+              </div>
+              <div style={{ color: '#a3a3a3', fontSize: '0.68rem', marginTop: 2 }}>
+                A correction rule was saved. Replanning now — no action needed.
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ── Schedule countdown banner ─────────────────────────────────────── */}
       {phase === 'schedule_wait' && scheduleCountdown && (() => {

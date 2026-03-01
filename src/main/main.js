@@ -1279,6 +1279,8 @@ app.whenReady().then(async () => {
           const wantsSkip = /skip/i.test(chosenOption);
           // "Done, I clicked it" — user confirmed a manual step; advance cursor like skip
           const wantsDone = /\b(done|clicked|confirmed|complete|finished)\b/i.test(chosenOption);
+          // "I'm logged in" — user completed login; resume plan from current skillCursor (no replan)
+          const wantsLoginContinue = /logged.?in|signed.?in|i.?m in/i.test(chosenOption) || chosenOption === "I'm logged in — continue";
           if (wantsAbort) {
             // User wants to abort — notify and return immediately, do NOT re-run the graph
             console.log('[StateGraph] ASK_USER resume: user chose abort — stopping, not replanning');
@@ -1288,6 +1290,30 @@ app.whenReady().then(async () => {
               progressCallback({ type: 'step_done', skill: 'cancel', description: 'Operation cancelled.' });
             }
             return { success: true, aborted: true };
+          } else if (wantsLoginContinue) {
+            // User confirmed login — resume plan from current skillCursor (page is now authenticated).
+            // Set resumeFromLogin=true so planSkills skips the LLM replan and returns existing plan.
+            console.log('[StateGraph] ASK_USER resume: user logged in — resuming plan from skillCursor', paused.skillCursor);
+            initialState = {
+              ...paused,
+              message: paused.message,
+              streamCallback,
+              progressCallback,
+              confirmInstallCallback,
+              confirmGuideCallback,
+              isGuideCancelled,
+              failedStep: null,
+              pendingQuestion: null,
+              recoveryAction: null,
+              answer: undefined,
+              commandExecuted: false,
+              resumeFromLogin: true,
+              skillCursor: paused.skillCursor || 0,  // resume from where login was detected
+              stepRetryCount: 0,
+              activeBrowserSessionId: paused.activeBrowserSessionId || currentBrowserSessionId || null,
+              activeBrowserUrl: paused.activeBrowserUrl || currentBrowserUrl || null,
+              context: { ...paused.context, sessionId: sessionId || currentSessionId }
+            };
           } else if (wantsSkip || wantsDone) {
             // Skip the failed step / user confirmed manual action — advance cursor and resume plan
             console.log('[StateGraph] ASK_USER resume: user chose skip/done — advancing cursor and resuming plan');
@@ -1468,6 +1494,18 @@ app.whenReady().then(async () => {
           if (resultsWindow && !resultsWindow.isDestroyed()) {
             safeSend(resultsWindow, 'automation:progress', { type: 'plan_error', error: finalState.planError });
           }
+        }
+        // Send all_done for normal completion so AutomationProgress clears evaluating/retrying phases.
+        // Skip if paused for ASK_USER — that case sends ask_user above and waits for user reply.
+        if (!finalState.pendingQuestion && !finalState.planError && resultsWindow && !resultsWindow.isDestroyed()) {
+          safeSend(resultsWindow, 'automation:progress', {
+            type: 'all_done',
+            completedCount: (finalState.skillResults || []).length,
+            totalCount: (finalState.skillPlan || []).length,
+            skillResults: finalState.skillResults || [],
+            savedFilePaths: finalState.savedFilePaths || [],
+            answer: finalState.answer || '',
+          });
         }
         // Do NOT send ws-bridge:message for normal completion — AutomationProgress shows it
       }
