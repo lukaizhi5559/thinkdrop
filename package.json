@@ -14,7 +14,8 @@
     "stop:services": "bash scripts/stop-services.sh",
     "restart:services": "yarn stop:services && sleep 2 && yarn start:services",
     "sync:stategraph": "rsync -av --delete stategraph-module/src/ node_modules/@thinkdrop/stategraph/src/",
-    "dev:synced": "yarn sync:stategraph && yarn dev"
+    "dev:synced": "yarn sync:stategraph && yarn dev",
+    "rebuild:native": "electron-rebuild -f -w keytar"
   },
   "keywords": [
     "electron",
@@ -46,6 +47,7 @@
     "@types/react-syntax-highlighter": "^15.5.13",
     "class-variance-authority": "^0.7.0",
     "clsx": "^2.0.0",
+    "keytar": "^7.9.0",
     "lucide-react": "^0.263.0",
     "node-fetch": "^2.7.0",
     "react": "^18.2.0",
@@ -74,6 +76,9 @@
     "mac": {
       "category": "public.app-category.productivity",
       "target": "dmg"
+    },
+    "electronRebuild": {
+      "onlyModules": ["keytar"]
     }
   }
 }

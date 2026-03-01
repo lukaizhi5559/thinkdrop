@@ -405,9 +405,9 @@ function createPromptCaptureWindow() {
     width: windowWidth,
     height: windowHeight,
     minWidth: 400,
-    maxWidth: 600,
+    maxWidth: 720,
     minHeight: 100,
-    maxHeight: 600,
+    maxHeight: 760,
     transparent: true,
     frame: false,
     alwaysOnTop: true,
@@ -754,6 +754,7 @@ app.whenReady().then(async () => {
 
   // Paused automation state — set when recoverSkill returns ASK_USER, cleared on resume or abort
   let pausedAutomationState = null;
+  let pausedSkillBuildState = null; // set when installSkill pauses for ASK_USER (secrets)
   let activeAbortController = null; // AbortController for the currently running stateGraph.execute
 
   // ─── Automation: Cancel active run ───────────────────────────────────────
@@ -1085,6 +1086,10 @@ app.whenReady().then(async () => {
       // Forward all_done to promptCaptureWindow so its glow clears
       if (event.type === 'all_done' && promptCaptureWindow && !promptCaptureWindow.isDestroyed()) {
         safeSend(promptCaptureWindow, 'automation:progress', event);
+      }
+      // needs_skill gap — open Skill Store in promptCaptureWindow pre-filtered to the capability
+      if (event.type === 'skill_store_trigger' && promptCaptureWindow && !promptCaptureWindow.isDestroyed()) {
+        safeSend(promptCaptureWindow, 'skill:store-trigger', { capability: event.capability, suggestion: event.suggestion });
       }
     };
 
@@ -1820,6 +1825,130 @@ app.whenReady().then(async () => {
     } catch (err) {
       console.error('[skill:delete] Error:', err.message);
       event.sender.send('skill:delete-response', { ok: false, error: err.message });
+    }
+  });
+
+  // ─── Skill Store: kick off the skill build pipeline ─────────────────────
+  ipcMain.on('skill:build-start', async (event, skillEntry) => {
+    const { name, displayName, description, category, ocUrl, rawUrl } = skillEntry || {};
+    if (!name) {
+      safeSend(promptCaptureWindow, 'skill:build-done', { name: '', ok: false, error: 'Missing skill name' });
+      return;
+    }
+    console.log(`[SkillBuild] Starting build pipeline for "${displayName || name}" (${category})`);
+
+    if (!stateGraph) {
+      safeSend(promptCaptureWindow, 'skill:build-done', { name, ok: false, error: 'StateGraph not initialized' });
+      return;
+    }
+
+    // Show results window for build progress
+    if (resultsWindow && !resultsWindow.isDestroyed()) {
+      safeSend(resultsWindow, 'results-window:set-prompt', `Building skill: ${displayName || name}`);
+      resultsWindow.showInactive();
+      resultsWindow.moveTop();
+    }
+
+    const progressCallback = (evt) => {
+      if (resultsWindow && !resultsWindow.isDestroyed()) {
+        safeSend(resultsWindow, 'automation:progress', evt);
+      }
+      if (promptCaptureWindow && !promptCaptureWindow.isDestroyed()) {
+        safeSend(promptCaptureWindow, 'automation:progress', evt);
+      }
+      // Forward done event back to SkillStore
+      if (evt.type === 'skill_build_done') {
+        safeSend(promptCaptureWindow, 'skill:build-done', { name, ok: evt.ok, installedPath: evt.installedPath });
+      }
+    };
+
+    const initialState = {
+      message: `Build ThinkDrop skill: ${displayName || name}`,
+      intent: { type: 'skill_build', confidence: 1.0 },
+      skillBuildRequest: { name, displayName, description, category, ocUrl, rawUrl },
+      skillBuildRound: 1,
+      skillBuildRounds: [],
+      skillBuildPhase: 'fetching',
+      progressCallback,
+      streamCallback: (token) => {
+        if (resultsWindow && !resultsWindow.isDestroyed()) {
+          try { resultsWindow.webContents.send('ws-bridge:message', { type: 'chunk', text: token }); } catch (_) {}
+        }
+      },
+      confirmInstallCallback: () => Promise.resolve(true),
+      confirmGuideCallback: () => Promise.resolve(false),
+      isGuideCancelled: () => false,
+      context: { sessionId: currentSessionId, userId: 'default_user', source: 'skill_store' },
+    };
+
+    try {
+      const abortCtrl = new AbortController();
+      const finalState = await stateGraph.execute(initialState, null, abortCtrl.signal);
+
+      if (finalState.skillBuildPhase === 'asking' && finalState.pendingQuestion) {
+        // Paused for user secret input — store state for resume
+        pausedSkillBuildState = finalState;
+        safeSend(promptCaptureWindow, 'skill:build-asking', {
+          name,
+          question: finalState.pendingQuestion.question,
+          options: finalState.pendingQuestion.options || [],
+        });
+      } else if (finalState.skillBuildPhase === 'done') {
+        safeSend(promptCaptureWindow, 'skill:build-done', { name, ok: true, installedPath: finalState.skillBuildInstalledPath });
+        if (resultsWindow && !resultsWindow.isDestroyed()) {
+          safeSend(resultsWindow, 'ws-bridge:message', { type: 'done' });
+        }
+      } else if (finalState.skillBuildPhase === 'error') {
+        safeSend(promptCaptureWindow, 'skill:build-done', { name, ok: false, error: finalState.skillBuildError });
+        if (resultsWindow && !resultsWindow.isDestroyed()) {
+          safeSend(resultsWindow, 'ws-bridge:message', { type: 'done' });
+        }
+      }
+    } catch (err) {
+      console.error(`[SkillBuild] Pipeline error for "${name}":`, err.message);
+      safeSend(promptCaptureWindow, 'skill:build-done', { name, ok: false, error: err.message });
+    }
+  });
+
+  // ─── Skill Store: resume build after user answers a secret prompt ─────────
+  ipcMain.on('skill:build-answer', async (event, { name, answer }) => {
+    if (!pausedSkillBuildState) {
+      console.warn('[SkillBuild] No paused skill build to resume');
+      return;
+    }
+
+    const paused = pausedSkillBuildState;
+    pausedSkillBuildState = null;
+
+    const secretKey = paused.skillBuildCurrentSecretKey;
+    const updatedSecrets = { ...(paused.skillBuildSecrets || {}), ...(secretKey ? { [secretKey]: answer } : {}) };
+
+    const resumeState = {
+      ...paused,
+      skillBuildSecrets: updatedSecrets,
+      pendingQuestion: null,
+      skillBuildPhase: 'installing',
+    };
+
+    try {
+      const abortCtrl = new AbortController();
+      const finalState = await stateGraph.execute(resumeState, null, abortCtrl.signal);
+
+      if (finalState.skillBuildPhase === 'asking' && finalState.pendingQuestion) {
+        pausedSkillBuildState = finalState;
+        safeSend(promptCaptureWindow, 'skill:build-asking', {
+          name,
+          question: finalState.pendingQuestion.question,
+          options: finalState.pendingQuestion.options || [],
+        });
+      } else if (finalState.skillBuildPhase === 'done') {
+        safeSend(promptCaptureWindow, 'skill:build-done', { name, ok: true, installedPath: finalState.skillBuildInstalledPath });
+      } else {
+        safeSend(promptCaptureWindow, 'skill:build-done', { name, ok: false, error: finalState.skillBuildError || 'Build failed' });
+      }
+    } catch (err) {
+      console.error(`[SkillBuild] Resume error for "${name}":`, err.message);
+      safeSend(promptCaptureWindow, 'skill:build-done', { name, ok: false, error: err.message });
     }
   });
 

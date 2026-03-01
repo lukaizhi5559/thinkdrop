@@ -1,6 +1,7 @@
 import React, { useEffect, useState, useRef } from 'react';
 import { RichContentRenderer } from './rich-content';
 import AutomationProgress from './AutomationProgress';
+import SkillBuildProgress, { SkillBuildState, BuildPhase } from './SkillBuildProgress';
 import { playDropSound } from '../utils/thinkDropSound';
 
 const ipcRenderer = (window as any).electron?.ipcRenderer;
@@ -59,6 +60,9 @@ export default function ResultsWindow() {
 
   // Action chips: quick follow-up prompts shown after a response
   const [actionChips, setActionChips] = useState<string[]>([]);
+
+  // Skill build pipeline state
+  const [skillBuild, setSkillBuild] = useState<SkillBuildState | null>(null);
   const scrollBottomRef = useRef<HTMLDivElement>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
 
@@ -243,6 +247,33 @@ export default function ResultsWindow() {
         setInstallPrompt(null);
         setIsInstalling(false);
         glowOffTimerRef.current = setTimeout(() => setIsGlowActive(false), 400);
+      } else if (data?.type === 'skill_build_phase') {
+        // Skill build pipeline progress — update SkillBuildProgress state
+        setSkillBuild(prev => {
+          const base: SkillBuildState = prev || {
+            phase: 'idle',
+            skillName: data.skillName || '',
+            skillDisplayName: data.skillName || '',
+            category: data.category || '',
+            round: data.round || 1,
+            maxRounds: 4,
+            rounds: [],
+          };
+          return { ...base, phase: data.phase as BuildPhase, round: data.round ?? base.round };
+        });
+        setIsGlowActive(true);
+      } else if (data?.type === 'skill_validate_result') {
+        setSkillBuild(prev => {
+          if (!prev) return prev;
+          return {
+            ...prev,
+            phase: data.verdict === 'PASS' ? 'installing' : 'fixing',
+            rounds: [...prev.rounds, { round: data.round, issues: data.issues || [], fixed: data.verdict === 'PASS' }],
+          };
+        });
+      } else if (data?.type === 'skill_build_done') {
+        setSkillBuild(prev => prev ? { ...prev, phase: data.ok ? 'done' : 'error', error: data.error, installedPath: data.installedPath } : prev);
+        glowOffTimerRef.current = setTimeout(() => setIsGlowActive(false), 1000);
       }
     };
 
@@ -822,6 +853,18 @@ export default function ResultsWindow() {
                 <span style={{ color: '#6b7280', fontSize: '0.65rem' }}>Bridge watching</span>
               </div>
             )
+          )}
+
+          {/* Skill build pipeline progress — shown when a skill is being built/validated/installed */}
+          {skillBuild && skillBuild.phase !== 'idle' && (
+            <SkillBuildProgress
+              state={skillBuild}
+              onAnswer={(answer) => {
+                ipcRenderer?.send('skill:build-answer', { name: skillBuild.skillName, answer });
+                setSkillBuild(prev => prev ? { ...prev, phase: 'installing' } : prev);
+              }}
+              onCancel={() => setSkillBuild(null)}
+            />
           )}
 
           {/* AutomationProgress is always mounted so its IPC listener is pre-registered */}

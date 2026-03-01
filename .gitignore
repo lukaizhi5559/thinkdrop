@@ -7,3 +7,4 @@ dist-renderer/
 .env.local
 .yarn
 .service-pids
+oc-mimic-skills/

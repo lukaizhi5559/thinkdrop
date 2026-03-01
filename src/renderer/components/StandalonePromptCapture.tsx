@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import VoiceButton from './VoiceButton';
 import { playThinkDropSound } from '../utils/thinkDropSound';
+import SkillStore from './SkillStore';
 
 const ipcRenderer = (window as any).electron?.ipcRenderer;
 
@@ -31,6 +32,8 @@ export default function StandalonePromptCapture() {
 
   // Skills Manager state
   const [showSkillsPanel, setShowSkillsPanel] = useState(false);
+  const [skillsTab, setSkillsTab] = useState<'installed' | 'store' | 'shortcuts'>('installed');
+  const [skillStoreSearch, setSkillStoreSearch] = useState('');
   const [skills, setSkills] = useState<InstalledSkill[]>([]);
   const [skillsLoading, setSkillsLoading] = useState(false);
   const [deletingSkill, setDeletingSkill] = useState<string | null>(null);
@@ -102,6 +105,15 @@ export default function StandalonePromptCapture() {
       }
     };
 
+    // needs_skill auto-trigger: open Skill Store tab with capability pre-filled in search
+    const handleSkillStoreTrigger = (_event: any, { capability }: { capability: string; suggestion: string }) => {
+      const query = capability ? capability.replace(/[^a-zA-Z0-9 ]/g, ' ').trim() : '';
+      setSkillStoreSearch(query);
+      setSkillsTab('store');
+      setShowSkillsPanel(true);
+      requestWindowResize();
+    };
+
     ipcRenderer.on('prompt-capture:show', handleShow);
     ipcRenderer.on('prompt-capture:add-highlight', handleAddHighlight);
     ipcRenderer.on('automation:progress', handleProgress);
@@ -110,6 +122,7 @@ export default function StandalonePromptCapture() {
     ipcRenderer.on('voice:response', handleVoiceResponse);
     ipcRenderer.on('skill:list-response', handleSkillListResponse);
     ipcRenderer.on('skill:delete-response', handleSkillDeleteResponse);
+    ipcRenderer.on('skill:store-trigger', handleSkillStoreTrigger);
 
     return () => {
       if (ipcRenderer.removeListener) {
@@ -121,6 +134,7 @@ export default function StandalonePromptCapture() {
         ipcRenderer.removeListener('voice:response', handleVoiceResponse);
         ipcRenderer.removeListener('skill:list-response', handleSkillListResponse);
         ipcRenderer.removeListener('skill:delete-response', handleSkillDeleteResponse);
+        ipcRenderer.removeListener('skill:store-trigger', handleSkillStoreTrigger);
       }
     };
   }, []);
@@ -151,7 +165,7 @@ export default function StandalonePromptCapture() {
 
   useEffect(() => {
     requestWindowResize();
-  }, [highlights, promptText, showSkillsPanel]);
+  }, [highlights, promptText, showSkillsPanel, skillsTab]);
 
   // Stable ref to submit function so the PTT closure can call it after release
   const submitPTTRef = useRef<(text: string, responseLanguage?: string | null) => void>(() => {});
@@ -341,6 +355,8 @@ export default function StandalonePromptCapture() {
       console.log('⚠️ [STANDALONE_PROMPT] No text or highlights, skipping submit');
       return;
     }
+
+    playThinkDropSound();
     
     let finalPrompt = '';
     
@@ -440,8 +456,11 @@ export default function StandalonePromptCapture() {
       const contentHeight = Math.ceil(rect.height);
       const contentWidth = Math.ceil(rect.width);
       
-      const targetHeight = Math.min(Math.max(contentHeight, 120), 600);
-      const targetWidth = Math.min(Math.max(contentWidth, 400), 600);
+      const panelOpen = showSkillsPanel;
+      const maxH = panelOpen ? 740 : 600;
+      const maxW = panelOpen ? 700 : 600;
+      const targetHeight = Math.min(Math.max(contentHeight, 120), maxH);
+      const targetWidth = Math.min(Math.max(contentWidth, 400), maxW);
       
       console.log(`📐 [STANDALONE_PROMPT] Requesting resize to ${targetWidth}x${targetHeight}`);
       ipcRenderer.send('prompt-capture:resize', { width: targetWidth, height: targetHeight });
@@ -778,89 +797,15 @@ export default function StandalonePromptCapture() {
             padding: '6px 12px',
             display: 'flex',
             alignItems: 'center',
-            gap: '10px',
-            flex: 'auto',
+            gap: '6px',
             position: 'sticky',
             bottom: 0,
             backgroundColor: 'rgba(23, 23, 23, 0.95)',
             zIndex: 10,
           }}
         >
-          {/* ⇧⌘C shortcut hint — not clickable, just informational */}
-          <div
-            title="Copy text or a file path, then press ⇧⌘C to tag it as context"
-            style={{
-              display: 'flex', alignItems: 'center', gap: '5px',
-              padding: '4px 8px', borderRadius: '6px',
-              backgroundColor: 'rgba(255,255,255,0.04)',
-              border: '1px solid rgba(255,255,255,0.07)',
-              color: '#9ca3af', cursor: 'default', fontSize: '0.7rem',
-              userSelect: 'none',
-            }}
-          >
-            {/* Keyboard key badges: Shift + Ctrl/Cmd + C */}
-            {([
-              {
-                label: 'shift',
-                content: (
-                  <svg width="10" height="10" viewBox="0 0 10 10" fill="currentColor">
-                    <polygon points="5,1 9,6 7,6 7,9 3,9 3,6 1,6" />
-                  </svg>
-                ),
-              },
-              {
-                label: 'ctrl-cmd',
-                content: <span style={{ fontSize: '0.62rem', fontWeight: 600, lineHeight: 1, letterSpacing: '-0.02em' }}>Ctrl/⌘</span>,
-              },
-              {
-                label: 'C',
-                content: <span style={{ fontSize: '0.7rem', fontWeight: 600, lineHeight: 1 }}>C</span>,
-              },
-            ]).map(({ label, content }, i, arr) => (
-              <span key={label} style={{ display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
-                <span
-                  style={{
-                    display: 'inline-flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    height: '20px',
-                    padding: '0 6px',
-                    borderRadius: '4px',
-                    backgroundColor: 'rgba(255,255,255,0.08)',
-                    color: '#c9d1d9',
-                  }}
-                >
-                  {content}
-                </span>
-                {i < arr.length - 1 && (
-                  <span style={{ color: '#4b5563', fontSize: '0.65rem', lineHeight: 1 }}>+</span>
-                )}
-              </span>
-            ))}
-          </div>
-
-          {/* Voice button — click or ` key to toggle */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: '3px' }}>
-            <VoiceButton
-              mode="push-to-talk"
-              compact={false}
-            />
-            {/* <span
-              title="Press ` (backtick) to start/stop voice"
-              style={{
-                display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-                height: '18px', padding: '0 5px',
-                borderRadius: '4px',
-                backgroundColor: 'rgba(255,255,255,0.06)',
-                border: '1px solid rgba(255,255,255,0.1)',
-                color: '#6b7280',
-                fontSize: '0.65rem', fontWeight: 600, lineHeight: 1,
-                userSelect: 'none', letterSpacing: '0.02em',
-              }}
-            >
-              `
-            </span> */}
-          </div>
+          {/* Voice button — flush left */}
+          <VoiceButton mode="push-to-talk" compact={false} />
 
           {/* File picker button — click to open native file dialog */}
           <button
@@ -892,7 +837,7 @@ export default function StandalonePromptCapture() {
             <span>Attach file</span>
           </button>
 
-          {/* Skills Manager gear button */}
+          {/* Skills Manager gear button — flush right */}
           <button
             title="Manage installed skills"
             onClick={toggleSkillsPanel}
@@ -902,7 +847,7 @@ export default function StandalonePromptCapture() {
               backgroundColor: showSkillsPanel ? 'rgba(139,92,246,0.18)' : 'rgba(255,255,255,0.04)',
               border: `1px solid ${showSkillsPanel ? 'rgba(139,92,246,0.4)' : 'rgba(255,255,255,0.07)'}`,
               color: showSkillsPanel ? '#c4b5fd' : '#9ca3af',
-              cursor: 'pointer', flexShrink: 0,
+              cursor: 'pointer', flexShrink: 0, marginLeft: 'auto',
             }}
             onMouseEnter={e => {
               if (!showSkillsPanel) {
@@ -926,22 +871,6 @@ export default function StandalonePromptCapture() {
             </svg>
           </button>
 
-          <div style={{ flex: 1 }} />
-
-          {/* Esc hint */}
-          {/* <div
-            title="Press Escape to close"
-            style={{
-              display: 'flex', alignItems: 'center', gap: '4px',
-              padding: '4px 8px', borderRadius: '6px',
-              backgroundColor: 'rgba(255,255,255,0.04)',
-              border: '1px solid rgba(255,255,255,0.07)',
-              color: '#4b5563', cursor: 'default', fontSize: '0.7rem',
-              userSelect: 'none',
-            }}
-          >
-            <span style={{ fontFamily: 'ui-monospace, monospace' }}>esc</span>
-          </div> */}
         </div>
 
         {/* ── Skills Manager Panel ──────────────────────────────────────── */}
@@ -949,24 +878,123 @@ export default function StandalonePromptCapture() {
           <div style={{
             borderTop: '1px solid rgba(139,92,246,0.2)',
             backgroundColor: 'rgba(18,18,22,0.98)',
-            maxHeight: '240px',
-            overflowY: 'auto',
             padding: '10px 12px',
           }}>
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
-              <span style={{ color: '#c4b5fd', fontSize: '0.72rem', fontWeight: 600, letterSpacing: '0.04em', textTransform: 'uppercase' }}>
-                Installed Skills
-              </span>
-              <button
-                onClick={loadSkills}
-                title="Refresh list"
-                style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#6b7280', padding: '2px 4px', borderRadius: 4, fontSize: '0.68rem' }}
-                onMouseEnter={e => (e.currentTarget.style.color = '#c4b5fd')}
-                onMouseLeave={e => (e.currentTarget.style.color = '#6b7280')}
-              >
-                ↻
-              </button>
+            {/* Tab bar */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginBottom: 10 }}>
+              {(['installed', 'store', 'shortcuts'] as const).map(tab => (
+                <button key={tab} onClick={() => setSkillsTab(tab)} style={{
+                  padding: '3px 10px', borderRadius: 6, fontSize: '0.69rem', fontWeight: 600,
+                  cursor: 'pointer', border: `1px solid ${skillsTab === tab ? 'rgba(139,92,246,0.5)' : 'rgba(255,255,255,0.08)'}`,
+                  background: skillsTab === tab ? 'rgba(139,92,246,0.18)' : 'transparent',
+                  color: skillsTab === tab ? '#c4b5fd' : '#6b7280', transition: 'all 0.1s',
+                  whiteSpace: 'nowrap',
+                }}>
+                  {tab === 'installed' ? 'Installed' : tab === 'store' ? 'Skill Store' : 'Shortcuts'}
+                </button>
+              ))}
+              {skillsTab === 'installed' && (
+                <button onClick={loadSkills} title="Refresh" style={{
+                  marginLeft: 'auto', background: 'none', border: 'none', cursor: 'pointer',
+                  color: '#6b7280', padding: '2px 4px', borderRadius: 4, fontSize: '0.68rem',
+                }}
+                  onMouseEnter={e => (e.currentTarget.style.color = '#c4b5fd')}
+                  onMouseLeave={e => (e.currentTarget.style.color = '#6b7280')}
+                >↻</button>
+              )}
             </div>
+
+            {/* Skill Store tab */}
+            {skillsTab === 'store' && (
+              <SkillStore
+                initialSearch={skillStoreSearch}
+                onBuildSkill={() => {
+                  setSkillStoreSearch('');
+                  setIsProcessing(true);
+                }}
+              />
+            )}
+
+            {/* Shortcuts tab */}
+            {skillsTab === 'shortcuts' && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                {([
+                  {
+                    keys: [
+                      { content: <svg width="9" height="9" viewBox="0 0 10 10" fill="currentColor"><polygon points="5,1 9,6 7,6 7,9 3,9 3,6 1,6"/></svg> },
+                      { content: <span style={{ fontSize: '0.6rem', fontWeight: 600 }}>Ctrl/⌘</span> },
+                      { content: <span style={{ fontSize: '0.68rem', fontWeight: 600 }}>C</span> },
+                    ],
+                    label: 'Tag selection as context',
+                    desc: 'Copy text or a file path first, then trigger to attach it as context.',
+                  },
+                  {
+                    keys: [
+                      { content: <span style={{ fontSize: '0.68rem', fontWeight: 600 }}>`</span> },
+                    ],
+                    label: 'Toggle voice input',
+                    desc: 'Hold backtick to record voice. Release to transcribe and fill the prompt.',
+                  },
+                  {
+                    keys: [
+                      { content: <span style={{ fontSize: '0.68rem', fontWeight: 600 }}>Enter</span> },
+                    ],
+                    label: 'Submit prompt',
+                    desc: 'Send the current prompt to ThinkDrop. Use Shift+Enter for a newline.',
+                  },
+                  {
+                    keys: [
+                      { content: <span style={{ fontSize: '0.68rem', fontWeight: 600 }}>Esc</span> },
+                    ],
+                    label: 'Hide window',
+                    desc: 'Dismiss the prompt capture window without submitting.',
+                  },
+                  {
+                    keys: [
+                      { content: <svg width="9" height="9" viewBox="0 0 10 10" fill="currentColor"><polygon points="5,1 9,6 7,6 7,9 3,9 3,6 1,6"/></svg> },
+                      { content: <span style={{ fontSize: '0.6rem', fontWeight: 600 }}>Ctrl/⌘</span> },
+                      { content: <span style={{ fontSize: '0.68rem', fontWeight: 600 }}>T</span> },
+                    ],
+                    label: 'Show / hide ThinkDrop',
+                    desc: 'Global hotkey to bring the prompt window into focus from anywhere.',
+                  },
+                ]).map(({ keys, label, desc }, idx) => (
+                  <div key={idx} style={{
+                    display: 'flex', alignItems: 'flex-start', gap: 10,
+                    padding: '7px 9px', borderRadius: 8,
+                    background: 'rgba(255,255,255,0.025)',
+                    border: '1px solid rgba(255,255,255,0.06)',
+                  }}>
+                    {/* Key badges */}
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 3, flexShrink: 0, marginTop: 1 }}>
+                      {keys.map((k, i) => (
+                        <span key={i} style={{ display: 'inline-flex', alignItems: 'center', gap: 2 }}>
+                          <span style={{
+                            display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+                            minWidth: '20px', height: '18px', padding: '0 5px', borderRadius: 4,
+                            backgroundColor: 'rgba(255,255,255,0.08)', color: '#c9d1d9',
+                            fontSize: '0.68rem',
+                          }}>
+                            {k.content}
+                          </span>
+                          {i < keys.length - 1 && (
+                            <span style={{ color: '#4b5563', fontSize: '0.6rem' }}>+</span>
+                          )}
+                        </span>
+                      ))}
+                    </div>
+                    {/* Description */}
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ color: '#c4b5fd', fontSize: '0.7rem', fontWeight: 600, marginBottom: 2 }}>{label}</div>
+                      <div style={{ color: '#6b7280', fontSize: '0.64rem', lineHeight: 1.4 }}>{desc}</div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {/* Installed tab */}
+            {skillsTab === 'installed' && (<div>
 
             {deleteError && (
               <div style={{ color: '#f87171', fontSize: '0.7rem', marginBottom: 6, padding: '4px 8px', borderRadius: 5, backgroundColor: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.2)' }}>
@@ -1113,6 +1141,8 @@ export default function StandalonePromptCapture() {
                   </div>
                 ))}
               </div>
+            )}
+          </div>
             )}
           </div>
         )}
