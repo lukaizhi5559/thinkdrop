@@ -323,8 +323,6 @@ export default function AutomationProgress({ onHeightChange, onActiveChange }: A
   const [evalMessage, setEvalMessage] = useState<string>('');
   const [retryMessage, setRetryMessage] = useState<string>('');
   const [capabilityGap, setCapabilityGap] = useState<{ capability: string; suggestion: string; scaffolded: boolean } | null>(null);
-  const [skillBuildAsking, setSkillBuildAsking] = useState<{ name: string; question: string; options: string[] } | null>(null);
-  const [skillBuildAnswer, setSkillBuildAnswer] = useState('');
   const [skillBuildConfirm, setSkillBuildConfirm] = useState<{ skillName: string; summary: string } | null>(null);
 
   // Notify parent to re-measure height whenever visible content changes
@@ -355,8 +353,6 @@ export default function AutomationProgress({ onHeightChange, onActiveChange }: A
       setIntentType(null);
       setScheduleCountdown(null);
       setCapabilityGap(null);
-      setSkillBuildAsking(null);
-      setSkillBuildAnswer('');
       setSkillBuildConfirm(null);
     };
     ipcRenderer.on('results-window:set-prompt', handleNewPrompt);
@@ -533,30 +529,15 @@ export default function AutomationProgress({ onHeightChange, onActiveChange }: A
       setCapabilityGap({ capability: capability || '', suggestion: suggestion || '', scaffolded: false });
     };
 
-    // skill:build-asking — installSkill needs a secret/API key from the user
-    const handleSkillBuildAsking = (_event: any, { name, question, options }: { name: string; question: string; options: string[] }) => {
-      setSkillBuildAsking({ name: name || '', question: question || '', options: options || [] });
-      setSkillBuildAnswer('');
-    };
-
-    // skill:build-done — clear asking state
-    const handleSkillBuildDone = (_event: any, { ok }: { ok: boolean }) => {
-      if (ok) setSkillBuildAsking(null);
-    };
-
     ipcRenderer.on('automation:progress', handleProgress);
     ipcRenderer.on('ws-bridge:message', handleBridgeMessage);
     ipcRenderer.on('skill:store-trigger', handleSkillStoreTrigger);
-    ipcRenderer.on('skill:build-asking', handleSkillBuildAsking);
-    ipcRenderer.on('skill:build-done', handleSkillBuildDone);
     return () => {
       if (ipcRenderer.removeListener) {
         ipcRenderer.removeListener('automation:progress', handleProgress);
         ipcRenderer.removeListener('results-window:set-prompt', handleNewPrompt);
         ipcRenderer.removeListener('ws-bridge:message', handleBridgeMessage);
         ipcRenderer.removeListener('skill:store-trigger', handleSkillStoreTrigger);
-        ipcRenderer.removeListener('skill:build-asking', handleSkillBuildAsking);
-        ipcRenderer.removeListener('skill:build-done', handleSkillBuildDone);
       }
     };
   }, []);
@@ -844,59 +825,6 @@ export default function AutomationProgress({ onHeightChange, onActiveChange }: A
         />
       )}
 
-      {/* ── Skill build: secret input prompt ─────────────────────────────── */}
-      {skillBuildAsking && (
-        <div style={{ padding: '12px 14px', borderRadius: 10, backgroundColor: 'rgba(99,102,241,0.07)', border: '1px solid rgba(99,102,241,0.35)' }}>
-          <div style={{ color: '#a5b4fc', fontSize: '0.76rem', fontWeight: 600, marginBottom: 4 }}>
-            🔑 Secret required to install <code style={{ fontSize: '0.7rem', background: 'rgba(0,0,0,0.3)', padding: '1px 5px', borderRadius: 3 }}>{skillBuildAsking.name}</code>
-          </div>
-          <div style={{ color: '#9ca3af', fontSize: '0.7rem', marginBottom: 8, lineHeight: 1.4 }}>
-            {skillBuildAsking.question}
-          </div>
-          <div style={{ display: 'flex', gap: 6 }}>
-            <input
-              type="password"
-              value={skillBuildAnswer}
-              onChange={e => setSkillBuildAnswer(e.target.value)}
-              onKeyDown={e => {
-                if (e.key === 'Enter' && skillBuildAnswer.trim()) {
-                  ipcRenderer?.send('skill:build-answer', { name: skillBuildAsking.name, answer: skillBuildAnswer });
-                  setSkillBuildAsking(null);
-                  setSkillBuildAnswer('');
-                }
-              }}
-              placeholder="Paste API key or token…"
-              autoFocus
-              style={{
-                flex: 1, padding: '5px 9px', borderRadius: 6, fontSize: '0.7rem',
-                background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(99,102,241,0.35)',
-                color: '#e5e7eb', outline: 'none',
-              }}
-              onFocus={e => { e.currentTarget.style.borderColor = 'rgba(99,102,241,0.7)'; }}
-              onBlur={e => { e.currentTarget.style.borderColor = 'rgba(99,102,241,0.35)'; }}
-            />
-            <button
-              onClick={() => {
-                if (skillBuildAnswer.trim()) {
-                  ipcRenderer?.send('skill:build-answer', { name: skillBuildAsking.name, answer: skillBuildAnswer });
-                  setSkillBuildAsking(null);
-                  setSkillBuildAnswer('');
-                }
-              }}
-              disabled={!skillBuildAnswer.trim()}
-              style={{
-                padding: '5px 12px', borderRadius: 6, fontSize: '0.7rem', fontWeight: 600,
-                cursor: skillBuildAnswer.trim() ? 'pointer' : 'not-allowed',
-                background: skillBuildAnswer.trim() ? 'rgba(99,102,241,0.25)' : 'rgba(99,102,241,0.07)',
-                border: '1px solid rgba(99,102,241,0.4)', color: skillBuildAnswer.trim() ? '#a5b4fc' : '#4b5563',
-                whiteSpace: 'nowrap',
-              }}
-            >
-              Submit →
-            </button>
-          </div>
-        </div>
-      )}
 
       {/* ── Step list ────────────────────────────────────────────────────── */}
       {steps.length > 0 && (

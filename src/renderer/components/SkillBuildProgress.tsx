@@ -1,5 +1,40 @@
 import { useState } from 'react';
 
+// ── Lightweight JS syntax highlighter ────────────────────────────────────────
+function highlightJS(code: string): string {
+  const esc = (s: string) => s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  // Process line by line to handle comments cleanly
+  return code.split('\n').map(line => {
+    // Full-line // comment
+    const commentMatch = line.match(/^(\s*)((\/\/.*)$)/);
+    if (commentMatch) {
+      return esc(commentMatch[1]) + `<span style="color:#6b7280;font-style:italic">${esc(commentMatch[2])}</span>`;
+    }
+    // Inline // comment — split at first //
+    const inlineIdx = line.indexOf('//');
+    const codePart = inlineIdx >= 0 ? line.slice(0, inlineIdx) : line;
+    const commentPart = inlineIdx >= 0 ? line.slice(inlineIdx) : '';
+
+    let result = esc(codePart)
+      // strings
+      .replace(/(&apos;|&#39;|`[^`]*`|'[^'\\]*(?:\\.[^'\\]*)*'|"[^"\\]*(?:\\.[^"\\]*)*")/g,
+        m => `<span style="color:#86efac">${m}</span>`)
+      // keywords
+      .replace(/\b(const|let|var|function|async|await|return|if|else|for|while|try|catch|throw|new|this|module|exports|require|typeof|instanceof|of|in|class|extends|import|export|default|null|undefined|true|false)\b/g,
+        m => `<span style="color:#c084fc">${m}</span>`)
+      // numbers
+      .replace(/\b(\d+)\b/g, m => `<span style="color:#f9a8d4">${m}</span>`)
+      // function calls / method names
+      .replace(/\b([a-zA-Z_$][\w$]*)(?=\s*\()/g,
+        m => `<span style="color:#93c5fd">${m}</span>`);
+
+    if (commentPart) {
+      result += `<span style="color:#6b7280;font-style:italic">${esc(commentPart)}</span>`;
+    }
+    return result;
+  }).join('\n');
+}
+
 // ── Types ────────────────────────────────────────────────────────────────────
 
 export type BuildPhase =
@@ -34,6 +69,8 @@ export interface SkillBuildState {
   maxRounds: number;
   rounds: BuildRound[];
   question?: string;
+  keyLabel?: string;      // human-readable key name e.g. "Client Id"
+  serviceContext?: string; // service name e.g. "Google / Gmail"
   options?: string[];
   error?: string;
   installedPath?: string;
@@ -244,7 +281,7 @@ function ApiKeyGuide({ secretKey, onOpenUrl }: { secretKey: string; onOpenUrl: (
       >
         <span style={{ fontSize: '0.65rem' }}>{expanded ? '▾' : '▸'}</span>
         <span style={{ fontSize: '0.68rem', color: '#a5b4fc', fontWeight: 600 }}>
-          ℹ️ {guide.title}
+          {guide.title}
         </span>
       </button>
       {expanded && (
@@ -283,17 +320,20 @@ interface Props {
   onOpenUrl?: (url: string) => void;
 }
 
+type SetupMode = 'choose' | 'guided' | 'auto' | 'developer';
+
 export default function SkillBuildProgress({ state, onAnswer, onCancel, onOpenUrl }: Props) {
   const [userInput, setUserInput] = useState('');
+  const [setupMode, setSetupMode] = useState<SetupMode>('choose');
+  const [editedDraft, setEditedDraft] = useState<string>('');
   const [codeExpanded, setCodeExpanded] = useState(false);
   const {
     phase, skillDisplayName, round, maxRounds,
-    rounds, question, options, error, installedPath, tokenCount, draft,
+    rounds, question, keyLabel, serviceContext, options, error, installedPath, tokenCount, draft,
   } = state;
 
-  // Extract secret key name from the question string: "**GMAIL_API_KEY**" or "GMAIL_API_KEY"
-  const secretKeyMatch = question?.match(/\*{0,2}([A-Z][A-Z0-9_]{3,})\*{0,2}/);
-  const currentSecretKey = secretKeyMatch?.[1] || '';
+  // currentSecretKey comes from state.skillBuildCurrentSecretKey via the SkillBuildState
+  const currentSecretKey = (state as any).skillBuildCurrentSecretKey || '';
 
   const handleOpenUrl = (url: string) => {
     if (onOpenUrl) onOpenUrl(url);
@@ -384,24 +424,6 @@ export default function SkillBuildProgress({ state, onAnswer, onCancel, onOpenUr
         )}
       </div>
 
-      {/* ── Asking banner — sticky, like evaluating banner ─────────────────── */}
-      {isAsking && (
-        <div style={{ padding: '10px 14px', borderRadius: 10, backgroundColor: 'rgba(154,52,18,0.15)',
-          border: '1px solid rgba(249,115,22,0.4)', position: 'sticky', top: 0, zIndex: 10 }}>
-          <div className="flex items-center gap-2.5">
-            <div className="w-3 h-3 rounded-full border-2 flex-shrink-0"
-              style={{ borderColor: '#f97316', borderTopColor: 'transparent' }} />
-            <div>
-              <div style={{ color: '#fb923c', fontSize: '0.75rem', fontWeight: 600 }}>
-                🔑 Secret required to install
-              </div>
-              <div style={{ color: '#a3a3a3', fontSize: '0.68rem', marginTop: 2 }}>
-                {question || 'Please provide the required API key or token.'}
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
 
       {/* ── Multi-round fix banner ─────────────────────────────────────────── */}
       {round > 1 && isActive && !isAsking && (
@@ -557,105 +579,255 @@ export default function SkillBuildProgress({ state, onAnswer, onCancel, onOpenUr
               <div className="w-3 h-3 rounded-full border-2 animate-spin flex-shrink-0"
                 style={{ borderColor: '#60a5fa', borderTopColor: 'transparent' }} />
             ) : (
-              <span style={{ fontSize: '0.65rem', color: '#4b5563' }}>{codeExpanded ? '▾' : '▸'}</span>
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#9ca3af" strokeWidth="2.5" strokeLinecap="round"
+                style={{ transition: 'transform 0.15s', transform: codeExpanded ? 'rotate(180deg)' : 'rotate(0deg)', flexShrink: 0 }}>
+                <polyline points="6 9 12 15 18 9"/>
+              </svg>
             )}
-            <span style={{ fontSize: '0.68rem', color: '#6b7280', fontFamily: 'ui-monospace,monospace' }}>
+            <span style={{ fontSize: '0.68rem', color: '#9ca3af', fontFamily: 'ui-monospace,monospace' }}>
               {phase === 'building' ? 'Generating code…'
                 : phase === 'fixing' ? 'Applying fixes…'
                 : draft ? `View generated code (${draft.length} chars)` : 'Code'}
             </span>
             {tokenCount != null && tokenCount > 0 && (phase === 'building' || phase === 'fixing') && (
               <span style={{
-                marginLeft: 'auto', fontSize: '0.6rem', color: '#374151',
+                marginLeft: 'auto', fontSize: '0.6rem', color: '#6b7280',
                 fontFamily: 'ui-monospace,monospace', background: 'rgba(255,255,255,0.04)',
                 padding: '1px 5px', borderRadius: 4, border: '1px solid rgba(255,255,255,0.06)',
               }}>
                 {tokenCount} tokens
               </span>
             )}
-            {draft && phase !== 'building' && phase !== 'fixing' && (
-              <span style={{ marginLeft: 'auto', fontSize: '0.6rem', color: '#374151' }}>
-                {codeExpanded ? 'collapse' : 'expand'}
-              </span>
-            )}
           </button>
           {codeExpanded && draft && (
-            <pre style={{
-              margin: 0, padding: '10px 12px', fontSize: '0.62rem', lineHeight: 1.6,
-              color: '#9ca3af', fontFamily: 'ui-monospace,monospace', whiteSpace: 'pre-wrap',
-              wordBreak: 'break-all', background: 'rgba(0,0,0,0.3)',
-              maxHeight: 280, overflowY: 'auto',
-            }}>
-              {draft}
-            </pre>
+            <pre
+              style={{
+                margin: 0, padding: '10px 12px', fontSize: '0.62rem', lineHeight: 1.6,
+                fontFamily: 'ui-monospace,monospace', whiteSpace: 'pre-wrap',
+                wordBreak: 'break-all', background: 'rgba(0,0,0,0.35)',
+                maxHeight: 280, overflowY: 'auto', color: '#e5e7eb',
+              }}
+              dangerouslySetInnerHTML={{ __html: highlightJS(draft) }}
+            />
           )}
         </div>
       )}
 
-      {/* ── Secret input — inline below the paused install step ───────────── */}
+      {/* ── Secret setup — 3-mode card ──────────────────────────────────────── */}
       {isAsking && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-          {/* API key guidance — expandable how-to */}
-          {currentSecretKey && (
-            <ApiKeyGuide secretKey={currentSecretKey} onOpenUrl={handleOpenUrl} />
+
+          {/* Header: what is needed and for which service */}
+          <div style={{ padding: '10px 12px', borderRadius: 9,
+            background: 'rgba(251,191,36,0.06)', border: '1px solid rgba(251,191,36,0.2)' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#fbbf24" strokeWidth="2" strokeLinecap="round">
+                <circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/>
+              </svg>
+              <span style={{ color: '#fbbf24', fontSize: '0.72rem', fontWeight: 600 }}>
+                Secret required to install
+              </span>
+            </div>
+            <div style={{ color: '#d1d5db', fontSize: '0.7rem', lineHeight: 1.5 }}>
+              {serviceContext ? (
+                <><span style={{ color: '#e5e7eb', fontWeight: 600 }}>{serviceContext}</span>{' — '}</>
+              ) : null}
+              {keyLabel ? (
+                <><span style={{ color: '#a5b4fc', fontFamily: 'ui-monospace,monospace', fontSize: '0.68rem',
+                  background: 'rgba(99,102,241,0.12)', padding: '1px 5px', borderRadius: 3 }}>{keyLabel}</span>{' '}
+                </>
+              ) : null}
+              <span style={{ color: '#9ca3af' }}>{question || 'Required by the skill. Will be stored securely in macOS Keychain.'}</span>
+            </div>
+          </div>
+
+          {/* Mode chooser */}
+          {setupMode === 'choose' && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+              {/* Option 1: Guided (Recommended) */}
+              <button
+                onClick={() => setSetupMode('guided')}
+                style={{
+                  display: 'flex', alignItems: 'flex-start', gap: 10, padding: '10px 12px',
+                  borderRadius: 9, border: '1px solid rgba(34,197,94,0.3)',
+                  background: 'rgba(34,197,94,0.06)', cursor: 'pointer', textAlign: 'left',
+                }}
+              >
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#4ade80" strokeWidth="2" strokeLinecap="round" style={{ flexShrink: 0, marginTop: 1 }}>
+                  <path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/>
+                </svg>
+                <div>
+                  <div style={{ color: '#4ade80', fontSize: '0.72rem', fontWeight: 600, marginBottom: 2 }}>
+                    Step-by-step guide
+                    <span style={{ marginLeft: 6, fontSize: '0.6rem', color: '#86efac',
+                      background: 'rgba(34,197,94,0.15)', padding: '1px 5px', borderRadius: 3, fontWeight: 400 }}>
+                      Recommended
+                    </span>
+                  </div>
+                  <div style={{ color: '#6b7280', fontSize: '0.67rem', lineHeight: 1.4 }}>
+                    We walk you through getting {serviceContext ? `your ${serviceContext} credentials` : 'the required keys'} step by step.
+                  </div>
+                </div>
+              </button>
+
+              {/* Option 2: Auto-setup */}
+              <button
+                onClick={() => { onAnswer?.('__auto_setup__'); }}
+                style={{
+                  display: 'flex', alignItems: 'flex-start', gap: 10, padding: '10px 12px',
+                  borderRadius: 9, border: '1px solid rgba(99,102,241,0.25)',
+                  background: 'rgba(99,102,241,0.05)', cursor: 'pointer', textAlign: 'left',
+                }}
+              >
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#a5b4fc" strokeWidth="2" strokeLinecap="round" style={{ flexShrink: 0, marginTop: 1 }}>
+                  <circle cx="12" cy="12" r="3"/><path d="M12 1v4M12 19v4M4.22 4.22l2.83 2.83M16.95 16.95l2.83 2.83M1 12h4M19 12h4M4.22 19.78l2.83-2.83M16.95 7.05l2.83-2.83"/>
+                </svg>
+                <div>
+                  <div style={{ color: '#a5b4fc', fontSize: '0.72rem', fontWeight: 600, marginBottom: 2 }}>
+                    Do it for me
+                  </div>
+                  <div style={{ color: '#6b7280', fontSize: '0.67rem', lineHeight: 1.4 }}>
+                    ThinkDrop opens the browser and sets up{serviceContext ? ` ${serviceContext}` : ' the service'} for you automatically.
+                  </div>
+                </div>
+              </button>
+
+              {/* Option 3: Developer */}
+              <button
+                onClick={() => { setSetupMode('developer'); setEditedDraft(draft || ''); }}
+                style={{
+                  display: 'flex', alignItems: 'flex-start', gap: 10, padding: '10px 12px',
+                  borderRadius: 9, border: '1px solid rgba(107,114,128,0.2)',
+                  background: 'rgba(107,114,128,0.04)', cursor: 'pointer', textAlign: 'left',
+                }}
+              >
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#9ca3af" strokeWidth="2" strokeLinecap="round" style={{ flexShrink: 0, marginTop: 1 }}>
+                  <polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/>
+                </svg>
+                <div>
+                  <div style={{ color: '#9ca3af', fontSize: '0.72rem', fontWeight: 600, marginBottom: 2 }}>
+                    Edit the code yourself
+                    <span style={{ marginLeft: 6, fontSize: '0.6rem', color: '#6b7280',
+                      background: 'rgba(107,114,128,0.12)', padding: '1px 5px', borderRadius: 3, fontWeight: 400 }}>
+                      Developers only
+                    </span>
+                  </div>
+                  <div style={{ color: '#6b7280', fontSize: '0.67rem', lineHeight: 1.4 }}>
+                    Edit the skill code directly — swap services, add your own logic, hardcode keys.
+                  </div>
+                </div>
+              </button>
+            </div>
           )}
 
-          <div style={{ padding: '10px 12px', borderRadius: 9,
-            background: 'rgba(99,102,241,0.06)', border: '1px solid rgba(99,102,241,0.3)' }}>
-            <div style={{ color: '#a5b4fc', fontSize: '0.71rem', fontWeight: 600, marginBottom: 6 }}>
-              {currentSecretKey
-                ? `Enter your ${currentSecretKey.replace(/_/g, ' ')}`
-                : (question || 'API key required')}
+          {/* ── Guided mode ─────────────────────────────────────────────────── */}
+          {setupMode === 'guided' && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              <button onClick={() => setSetupMode('choose')}
+                style={{ alignSelf: 'flex-start', fontSize: '0.65rem', color: '#6b7280',
+                  background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}>
+                ← Back
+              </button>
+              {currentSecretKey && (
+                <ApiKeyGuide secretKey={currentSecretKey} onOpenUrl={handleOpenUrl} />
+              )}
+              {options && options.length > 0 ? (
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5 }}>
+                  {options.map(opt => (
+                    <button key={opt} onClick={() => onAnswer?.(opt)} style={{
+                      padding: '4px 10px', borderRadius: 6, fontSize: '0.7rem', cursor: 'pointer',
+                      background: 'rgba(139,92,246,0.15)', border: '1px solid rgba(139,92,246,0.4)',
+                      color: '#c4b5fd',
+                    }}>{opt}</button>
+                  ))}
+                </div>
+              ) : (
+                <div style={{ display: 'flex', gap: 6 }}>
+                  <input
+                    type="password"
+                    value={userInput}
+                    onChange={e => setUserInput(e.target.value)}
+                    onKeyDown={e => {
+                      if (e.key === 'Enter' && userInput.trim()) {
+                        onAnswer?.(userInput.trim());
+                        setUserInput('');
+                        setSetupMode('choose');
+                      }
+                    }}
+                    placeholder={`Paste your ${keyLabel || 'API key'}…`}
+                    autoFocus
+                    style={{
+                      flex: 1, padding: '5px 9px', borderRadius: 6, fontSize: '0.7rem',
+                      background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(99,102,241,0.35)',
+                      color: '#e5e7eb', outline: 'none',
+                    }}
+                    onFocus={e => { e.currentTarget.style.borderColor = 'rgba(99,102,241,0.7)'; }}
+                    onBlur={e => { e.currentTarget.style.borderColor = 'rgba(99,102,241,0.35)'; }}
+                  />
+                  <button
+                    onClick={() => { if (userInput.trim()) { onAnswer?.(userInput.trim()); setUserInput(''); setSetupMode('choose'); } }}
+                    disabled={!userInput.trim()}
+                    style={{
+                      padding: '5px 12px', borderRadius: 6, fontSize: '0.7rem', fontWeight: 600,
+                      cursor: userInput.trim() ? 'pointer' : 'not-allowed',
+                      background: userInput.trim() ? 'rgba(99,102,241,0.25)' : 'rgba(99,102,241,0.07)',
+                      border: '1px solid rgba(99,102,241,0.4)',
+                      color: userInput.trim() ? '#a5b4fc' : '#4b5563',
+                      whiteSpace: 'nowrap',
+                    }}
+                  >
+                    Submit →
+                  </button>
+                </div>
+              )}
             </div>
-            {options && options.length > 0 ? (
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5 }}>
-                {options.map(opt => (
-                  <button key={opt} onClick={() => onAnswer?.(opt)} style={{
-                    padding: '4px 10px', borderRadius: 6, fontSize: '0.7rem', cursor: 'pointer',
-                    background: 'rgba(139,92,246,0.15)', border: '1px solid rgba(139,92,246,0.4)',
-                    color: '#c4b5fd',
-                  }}>{opt}</button>
-                ))}
+          )}
+
+
+          {/* ── Developer / edit code mode ───────────────────────────────────── */}
+          {setupMode === 'developer' && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              <button onClick={() => setSetupMode('choose')}
+                style={{ alignSelf: 'flex-start', fontSize: '0.65rem', color: '#6b7280',
+                  background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}>
+                ← Back
+              </button>
+              <div style={{ color: '#9ca3af', fontSize: '0.68rem', lineHeight: 1.4 }}>
+                Edit the skill code below. When done, click <span style={{ color: '#a5b4fc' }}>Save &amp; Install</span>.
               </div>
-            ) : (
-              <div style={{ display: 'flex', gap: 6 }}>
-                <input
-                  type="password"
-                  value={userInput}
-                  onChange={e => setUserInput(e.target.value)}
-                  onKeyDown={e => {
-                    if (e.key === 'Enter' && userInput.trim()) {
-                      onAnswer?.(userInput.trim());
-                      setUserInput('');
-                    }
-                  }}
-                  placeholder="Paste API key or token…"
-                  autoFocus
-                  style={{
-                    flex: 1, padding: '5px 9px', borderRadius: 6, fontSize: '0.7rem',
-                    background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(99,102,241,0.35)',
-                    color: '#e5e7eb', outline: 'none',
-                  }}
-                  onFocus={e => { e.currentTarget.style.borderColor = 'rgba(99,102,241,0.7)'; }}
-                  onBlur={e => { e.currentTarget.style.borderColor = 'rgba(99,102,241,0.35)'; }}
-                />
-                <button
-                  onClick={() => { if (userInput.trim()) { onAnswer?.(userInput.trim()); setUserInput(''); } }}
-                  disabled={!userInput.trim()}
-                  style={{
-                    padding: '5px 12px', borderRadius: 6, fontSize: '0.7rem', fontWeight: 600,
-                    cursor: userInput.trim() ? 'pointer' : 'not-allowed',
-                    background: userInput.trim() ? 'rgba(99,102,241,0.25)' : 'rgba(99,102,241,0.07)',
-                    border: '1px solid rgba(99,102,241,0.4)',
-                    color: userInput.trim() ? '#a5b4fc' : '#4b5563',
-                    whiteSpace: 'nowrap',
-                  }}
-                >
-                  Submit →
-                </button>
-              </div>
-            )}
-          </div>
+              <textarea
+                value={editedDraft}
+                onChange={e => setEditedDraft(e.target.value)}
+                spellCheck={false}
+                style={{
+                  width: '100%', minHeight: 220, padding: '8px 10px',
+                  borderRadius: 7, fontSize: '0.61rem', lineHeight: 1.6,
+                  fontFamily: 'ui-monospace,monospace',
+                  background: 'rgba(0,0,0,0.4)', border: '1px solid rgba(99,102,241,0.25)',
+                  color: '#e5e7eb', outline: 'none', resize: 'vertical', boxSizing: 'border-box',
+                }}
+              />
+              <button
+                onClick={() => {
+                  if (editedDraft.trim()) {
+                    onAnswer?.('__edit_skill__:' + editedDraft.trim());
+                    setSetupMode('choose');
+                  }
+                }}
+                disabled={!editedDraft.trim()}
+                style={{
+                  padding: '6px 14px', borderRadius: 7, fontSize: '0.72rem', fontWeight: 600,
+                  cursor: editedDraft.trim() ? 'pointer' : 'not-allowed',
+                  background: editedDraft.trim() ? 'rgba(99,102,241,0.2)' : 'rgba(99,102,241,0.06)',
+                  border: '1px solid rgba(99,102,241,0.4)',
+                  color: editedDraft.trim() ? '#a5b4fc' : '#4b5563',
+                }}
+              >
+                Save &amp; Install →
+              </button>
+            </div>
+          )}
+
         </div>
       )}
 

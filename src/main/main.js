@@ -1514,16 +1514,37 @@ app.whenReady().then(async () => {
       // the answer node appended a guide offer (_isGuideOffer).
       const intentType = finalState.intent?.type;
       if (finalState.pendingQuestion?.question) {
-        // Persist the full state so the next user reply can resume / re-enter
-        pausedAutomationState = finalState;
-        console.log(`[StateGraph] ASK_USER (${intentType}): pausing — next prompt will resume`);
         const q = finalState.pendingQuestion;
-        if (resultsWindow && !resultsWindow.isDestroyed()) {
-          safeSend(resultsWindow, 'automation:progress', {
-            type: 'ask_user',
+
+        // ── On-demand skill build paused for a secret ──────────────────────────
+        // installSkill set skillBuildPhase='asking' inside an on-demand build run.
+        // Store in pausedSkillBuildState so skill:build-answer can resume it, and
+        // send skill:build-asking so SkillBuildProgress shows the setup card.
+        if (finalState.skillBuildPhase === 'asking') {
+          pausedSkillBuildState = finalState;
+          console.log(`[StateGraph] On-demand skill build ASK_USER: pausing for secret "${finalState.skillBuildCurrentSecretKey}"`);
+          const askingPayload = {
+            name: finalState.skillBuildRequest?.name || '',
             question: q.question,
-            options: q.options || []
-          });
+            keyLabel: q.keyLabel || null,
+            serviceContext: q.serviceContext || null,
+            options: q.options || [],
+          };
+          safeSend(promptCaptureWindow, 'skill:build-asking', askingPayload);
+          if (resultsWindow && !resultsWindow.isDestroyed()) {
+            safeSend(resultsWindow, 'skill:build-asking', askingPayload);
+          }
+        } else {
+          // Persist the full state so the next user reply can resume / re-enter
+          pausedAutomationState = finalState;
+          console.log(`[StateGraph] ASK_USER (${intentType}): pausing — next prompt will resume`);
+          if (resultsWindow && !resultsWindow.isDestroyed()) {
+            safeSend(resultsWindow, 'automation:progress', {
+              type: 'ask_user',
+              question: q.question,
+              options: q.options || []
+            });
+          }
         }
       }
       if (intentType === 'command_automate') {
@@ -1941,6 +1962,8 @@ app.whenReady().then(async () => {
         const askingPayload = {
           name,
           question: finalState.pendingQuestion.question,
+          keyLabel: finalState.pendingQuestion.keyLabel || null,
+          serviceContext: finalState.pendingQuestion.serviceContext || null,
           options: finalState.pendingQuestion.options || [],
         };
         safeSend(promptCaptureWindow, 'skill:build-asking', askingPayload);
@@ -1964,6 +1987,7 @@ app.whenReady().then(async () => {
     }
   });
 
+
   // ─── Skill Store: resume build after user answers a secret prompt ─────────
   ipcMain.on('skill:build-answer', async (event, { name, answer }) => {
     if (!pausedSkillBuildState) {
@@ -1972,6 +1996,71 @@ app.whenReady().then(async () => {
     }
 
     const paused = pausedSkillBuildState;
+
+    // ── Special: Developer mode — user edited the code directly ──────────────
+    if (typeof answer === 'string' && answer.startsWith('__edit_skill__:')) {
+      const editedCode = answer.slice('__edit_skill__:'.length).trim();
+      console.log(`[SkillBuild] Developer edit received — ${editedCode.length} chars. Re-validating...`);
+      pausedSkillBuildState = null;
+
+      // Replace draft and re-run from installSkill — developer owns the code, skip re-validation
+      const editResumeState = {
+        ...paused,
+        skillBuildDraft: editedCode,
+        skillBuildAskQueue: undefined,   // force re-detect secrets from new code
+        skillBuildSecrets: {},
+        pendingQuestion: null,
+        skillBuildPhase: 'installing',
+      };
+
+      try {
+        if (resultsWindow && !resultsWindow.isDestroyed()) {
+          safeSend(resultsWindow, 'automation:progress', { type: 'skill_build_phase', phase: 'installing', skillName: name });
+        }
+        const abortCtrl = new AbortController();
+        const finalState = await stateGraph.execute(editResumeState, null, abortCtrl.signal);
+        if (finalState.skillBuildPhase === 'asking' && finalState.pendingQuestion) {
+          pausedSkillBuildState = finalState;
+          const nextAsk = {
+            name,
+            question: finalState.pendingQuestion.question,
+            keyLabel: finalState.pendingQuestion.keyLabel || null,
+            serviceContext: finalState.pendingQuestion.serviceContext || null,
+            options: finalState.pendingQuestion.options || [],
+          };
+          safeSend(promptCaptureWindow, 'skill:build-asking', nextAsk);
+          if (resultsWindow && !resultsWindow.isDestroyed()) safeSend(resultsWindow, 'skill:build-asking', nextAsk);
+        } else if (finalState.skillBuildPhase === 'done') {
+          const donePayload = { name, ok: true, installedPath: finalState.skillBuildInstalledPath };
+          safeSend(promptCaptureWindow, 'skill:build-done', donePayload);
+          if (resultsWindow && !resultsWindow.isDestroyed()) safeSend(resultsWindow, 'skill:build-done', donePayload);
+        } else {
+          const errPayload = { name, ok: false, error: finalState.skillBuildError || 'Validation failed after edit' };
+          safeSend(promptCaptureWindow, 'skill:build-done', errPayload);
+          if (resultsWindow && !resultsWindow.isDestroyed()) safeSend(resultsWindow, 'skill:build-done', errPayload);
+        }
+      } catch (err) {
+        console.error(`[SkillBuild] Edit-resume error:`, err.message);
+        safeSend(promptCaptureWindow, 'skill:build-done', { name, ok: false, error: err.message });
+      }
+      return;
+    }
+
+    // ── Special: Auto-setup — re-show manual prompt (step-by-step guide directs the user) ──
+    if (answer === '__auto_setup__') {
+      const reAskPayload = {
+        name,
+        question: paused.pendingQuestion?.question || '',
+        keyLabel: paused.pendingQuestion?.keyLabel || null,
+        serviceContext: paused.pendingQuestion?.serviceContext || null,
+        options: paused.pendingQuestion?.options || [],
+      };
+      safeSend(promptCaptureWindow, 'skill:build-asking', reAskPayload);
+      if (resultsWindow && !resultsWindow.isDestroyed()) safeSend(resultsWindow, 'skill:build-asking', reAskPayload);
+      return;
+    }
+
+    // ── Normal path: user pasted an API key/token ─────────────────────────────
     pausedSkillBuildState = null;
 
     const secretKey = paused.skillBuildCurrentSecretKey;
@@ -1990,7 +2079,13 @@ app.whenReady().then(async () => {
 
       if (finalState.skillBuildPhase === 'asking' && finalState.pendingQuestion) {
         pausedSkillBuildState = finalState;
-        const nextAsk = { name, question: finalState.pendingQuestion.question, options: finalState.pendingQuestion.options || [] };
+        const nextAsk = {
+          name,
+          question: finalState.pendingQuestion.question,
+          keyLabel: finalState.pendingQuestion.keyLabel || null,
+          serviceContext: finalState.pendingQuestion.serviceContext || null,
+          options: finalState.pendingQuestion.options || [],
+        };
         safeSend(promptCaptureWindow, 'skill:build-asking', nextAsk);
         if (resultsWindow && !resultsWindow.isDestroyed()) safeSend(resultsWindow, 'skill:build-asking', nextAsk);
       } else if (finalState.skillBuildPhase === 'done') {

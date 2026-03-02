@@ -290,8 +290,8 @@ export default function ResultsWindow() {
     };
 
     // skill:build-asking — installSkill paused for secret; update SkillBuildProgress to 'asking' phase
-    const handleSkillBuildAsking = (_event: any, { question, options }: { name: string; question: string; options: string[] }) => {
-      setSkillBuild(prev => prev ? { ...prev, phase: 'asking', question, options: options || [] } : prev);
+    const handleSkillBuildAsking = (_event: any, { question, keyLabel, serviceContext, options }: { name: string; question: string; keyLabel?: string; serviceContext?: string; options: string[] }) => {
+      setSkillBuild(prev => prev ? { ...prev, phase: 'asking', question, keyLabel: keyLabel || undefined, serviceContext: serviceContext || undefined, options: options || [] } : prev);
       setIsGlowActive(true);
     };
 
@@ -883,7 +883,11 @@ export default function ResultsWindow() {
                 ipcRenderer?.send('skill:build-answer', { name: skillBuild.skillName, answer });
                 setSkillBuild(prev => prev ? { ...prev, phase: 'installing' } : prev);
               }}
-              onCancel={() => setSkillBuild(null)}
+              onCancel={() => {
+                setSkillBuild(null);
+                // Reset AutomationProgress too — it listens for this event
+                ipcRenderer?.emit('results-window:set-prompt');
+              }}
             />
           )}
 

@@ -54,13 +54,13 @@ resolveReferences ──→ parseSkill ──→ parseIntent ──→ enrichInt
                     │                                     │
                     ▼                                     ▼
                planSkills ◄──────────────────────── buildSkill ◄─────────────────────┐
-                    │         evaluateSkills FIX           │                         │
-                    │                                      ▼                         │
+                    │         evaluateSkills FIX          │                          │
+                    │                                     ▼                          │
                     ▼                              validateSkill                     │
              executeCommand ◄──────┐                      │ PASS                     │
-                    │   auto_patch  │                      ▼                         │
+                    │   auto_patch  │                     ▼                          │
                     │ (step failed) │               installSkill                     │
-                    ▼               │                      │                         │
+                    ▼               │                     │                          │
              recoverSkill ──────────┘         ┌───────────┴───────────┐              │
                     │                         │                       │              │
                     │ replan                  │ asking (secret)       │ smoke FAIL   │
