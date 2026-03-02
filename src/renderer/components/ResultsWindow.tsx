@@ -290,8 +290,8 @@ export default function ResultsWindow() {
     };
 
     // skill:build-asking — installSkill paused for secret; update SkillBuildProgress to 'asking' phase
-    const handleSkillBuildAsking = (_event: any, { question, keyLabel, serviceContext, options }: { name: string; question: string; keyLabel?: string; serviceContext?: string; options: string[] }) => {
-      setSkillBuild(prev => prev ? { ...prev, phase: 'asking', question, keyLabel: keyLabel || undefined, serviceContext: serviceContext || undefined, options: options || [] } : prev);
+    const handleSkillBuildAsking = (_event: any, { question, keyLabel, serviceContext, options, autoSetupFailed, scannedFields }: { name: string; question: string; keyLabel?: string; serviceContext?: string; options: string[]; autoSetupFailed?: boolean; scannedFields?: any[] }) => {
+      setSkillBuild(prev => prev ? { ...prev, phase: 'asking', question, keyLabel: keyLabel || undefined, serviceContext: serviceContext || undefined, options: options || [], autoSetupFailed: autoSetupFailed || false, scannedFields: scannedFields || null } : prev);
       setIsGlowActive(true);
     };
 

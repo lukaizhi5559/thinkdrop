@@ -705,6 +705,293 @@ app.whenReady().then(async () => {
   // Connect to VS Code extension (kept for legacy/fallback)
   setTimeout(() => connectToSocket(), 1000);
 
+  // ── Skill daemon re-registration on startup ───────────────────────────────
+  // Scan ~/.thinkdrop/skills/ for any installed skills that registered a launchd
+  // plist. Re-load any plists that exist on disk but are not currently active in
+  // launchd. This survives app reinstalls, OS upgrades, and launchd resets.
+  // Runs 8 seconds after app ready to avoid blocking startup.
+  setTimeout(() => {
+    try {
+      const fs   = require('fs');
+      const path = require('path');
+      const os   = require('os');
+      const { execSync } = require('child_process');
+
+      const skillsBase   = path.join(os.homedir(), '.thinkdrop', 'skills');
+      const launchAgents = path.join(os.homedir(), 'Library', 'LaunchAgents');
+
+      if (!fs.existsSync(skillsBase)) return;
+
+      const skillDirs = fs.readdirSync(skillsBase, { withFileTypes: true })
+        .filter(d => d.isDirectory())
+        .map(d => d.name);
+
+      let loaded = 0;
+      for (const skillName of skillDirs) {
+        const label     = `com.thinkdrop.skill.${skillName}`;
+        const plistPath = path.join(launchAgents, `${label}.plist`);
+        if (!fs.existsSync(plistPath)) continue;
+
+        // Check if already loaded
+        try {
+          execSync(`launchctl list ${label}`, { stdio: 'ignore' });
+          // Already loaded — skip
+        } catch {
+          // Not loaded — re-register
+          try {
+            execSync(`launchctl load "${plistPath}"`, { stdio: 'ignore' });
+            loaded++;
+            console.log(`[SkillDaemon] Re-registered: ${label}`);
+          } catch (loadErr) {
+            console.warn(`[SkillDaemon] Failed to re-register ${label}: ${loadErr.message}`);
+          }
+        }
+      }
+
+      if (loaded > 0) {
+        console.log(`[SkillDaemon] Re-registered ${loaded} skill daemon(s) with launchd`);
+      }
+    } catch (err) {
+      console.warn(`[SkillDaemon] Startup re-registration failed: ${err.message}`);
+    }
+  }, 8000);
+
+  // ── Nightly agent validation: runs at 3am, validates all registered agents ──
+  // Calls validate_agent for every cli.agent and browser.agent in DuckDB.
+  // LLM-powered diagnosis auto-patches broken descriptors and updates status.
+  // Runs silently in the background — no UI unless an agent needs attention.
+  //
+  // Dev/testing: set THINKDROP_VALIDATE_ON_STARTUP=1 in env to fire immediately.
+  // IPC: send 'agent:validate-now' to trigger on demand at any time.
+  (() => {
+    const VALIDATE_HOUR = 3; // 3am local time
+    const COMMAND_SERVICE_URL = 'http://127.0.0.1:3007/command.automate';
+
+    async function runAgentValidation() {
+      console.log('[AgentCron] Starting nightly agent validation...');
+      try {
+        const http = require('http');
+        const callCmd = (skill, args, timeoutMs = 30000) => new Promise((resolve) => {
+          const body = JSON.stringify({ payload: { skill, args } });
+          const req = http.request({
+            hostname: '127.0.0.1', port: 3007, path: '/command.automate',
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) },
+            timeout: timeoutMs,
+          }, res => {
+            let raw = '';
+            res.on('data', c => { raw += c; });
+            res.on('end', () => { try { resolve(JSON.parse(raw)?.data || {}); } catch { resolve({}); } });
+          });
+          req.on('timeout', () => { req.destroy(); resolve({}); });
+          req.on('error', () => resolve({}));
+          req.write(body); req.end();
+        });
+
+        // List all registered agents
+        const listResult = await callCmd('cli.agent', { action: 'list_agents' }, 8000);
+        const agents = listResult?.agents || [];
+        if (agents.length === 0) {
+          console.log('[AgentCron] No registered agents to validate.');
+          return;
+        }
+
+        console.log(`[AgentCron] Validating ${agents.length} agent(s)...`);
+        const results = [];
+
+        for (const agent of agents) {
+          try {
+            const skillName = agent.type === 'browser' ? 'browser.agent' : 'cli.agent';
+            const result = await callCmd(skillName, { action: 'validate_agent', id: agent.id }, 60000);
+            const status = result?.verdict || (result?.healthy ? 'healthy' : 'unknown');
+            results.push({ id: agent.id, type: agent.type, status, summary: result?.summary || '' });
+            console.log(`[AgentCron] ${agent.id} → ${status}${result?.summary ? ': ' + result.summary : ''}`);
+            if (result?.descriptorPatched) {
+              console.log(`[AgentCron] ${agent.id} — descriptor auto-patched`);
+            }
+          } catch (err) {
+            console.warn(`[AgentCron] validate_agent failed for ${agent.id}: ${err.message}`);
+            results.push({ id: agent.id, type: agent.type, status: 'error', summary: err.message });
+          }
+        }
+
+        const degraded = results.filter(r => r.status !== 'healthy');
+        if (degraded.length > 0) {
+          console.warn(`[AgentCron] ${degraded.length} agent(s) need attention: ${degraded.map(r => r.id).join(', ')}`);
+        } else {
+          console.log(`[AgentCron] All ${agents.length} agent(s) healthy.`);
+        }
+      } catch (err) {
+        console.warn(`[AgentCron] Nightly validation failed: ${err.message}`);
+      }
+    }
+
+    async function runSkillHealthCheck() {
+      console.log('[SkillCron] Starting nightly skill health check...');
+      try {
+        const fs   = require('fs');
+        const path = require('path');
+        const os   = require('os');
+        const http = require('http');
+
+        const skillsBase = path.join(os.homedir(), '.thinkdrop', 'skills');
+        if (!fs.existsSync(skillsBase)) return;
+
+        const skillDirs = fs.readdirSync(skillsBase, { withFileTypes: true })
+          .filter(d => d.isDirectory())
+          .map(d => d.name);
+
+        const USER_MEMORY_URL = process.env.USER_MEMORY_URL || 'http://127.0.0.1:3001';
+        const USER_MEMORY_KEY = process.env.USER_MEMORY_KEY || '';
+
+        const updateSkillHealth = (name, status, errorLog) => new Promise(resolve => {
+          const body = JSON.stringify({
+            version: 'mcp.v1', service: 'user-memory', action: 'skill.upsert',
+            payload: { name, status, last_run: new Date().toISOString(), error_log: errorLog || null },
+            context: {}, requestId: `health-${name}-${Date.now()}`,
+          });
+          const req = http.request({
+            hostname: '127.0.0.1', port: parseInt(new URL(USER_MEMORY_URL).port) || 3001,
+            path: '/skill.upsert', method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body), 'Authorization': `Bearer ${USER_MEMORY_KEY}` },
+            timeout: 5000,
+          }, res => { res.resume(); resolve(); });
+          req.on('error', () => resolve());
+          req.on('timeout', () => { req.destroy(); resolve(); });
+          req.write(body); req.end();
+        });
+
+        for (const skillName of skillDirs) {
+          const skillFile = path.join(skillsBase, skillName, 'index.cjs');
+          if (!fs.existsSync(skillFile)) continue;
+
+          const logFile = path.join(skillsBase, skillName, 'skill.log');
+          try {
+            // Check if recently errored by reading last line of skill.log
+            let lastError = null;
+            if (fs.existsSync(logFile)) {
+              const lines = fs.readFileSync(logFile, 'utf8').trim().split('\n').filter(Boolean);
+              const lastLine = lines[lines.length - 1];
+              if (lastLine) {
+                try {
+                  const entry = JSON.parse(lastLine);
+                  if (entry.event === 'error' || entry.error || entry.requiresReauth) {
+                    lastError = entry.error || entry.event || 'unknown_error';
+                  }
+                } catch {}
+              }
+            }
+
+            // Light smoke test: require the skill and call with probe args
+            // Wrapped in a child_process to avoid polluting main process memory
+            const { execFileSync } = require('child_process');
+            const probeScript = `
+              try {
+                const skill = require(${JSON.stringify(skillFile)});
+                skill({ _healthCheck: true }).then(r => {
+                  if (r && r.requiresReauth) process.exit(2);
+                  if (r && r.ok === false && r.error) { process.stderr.write(r.error); process.exit(1); }
+                  process.exit(0);
+                }).catch(e => { process.stderr.write(e.message); process.exit(1); });
+              } catch(e) { process.stderr.write(e.message); process.exit(1); }
+            `;
+            try {
+              execFileSync(process.execPath, ['-e', probeScript], { timeout: 15000, stdio: ['ignore', 'ignore', 'pipe'] });
+              await updateSkillHealth(skillName, 'healthy', null);
+              console.log(`[SkillCron] ${skillName} → healthy`);
+            } catch (probeErr) {
+              const exitCode = probeErr.status;
+              const stderr   = (probeErr.stderr || Buffer.alloc(0)).toString().trim();
+              const status   = exitCode === 2 ? 'token_expired' : 'error';
+              const errorMsg = stderr || lastError || `exit code ${exitCode}`;
+              await updateSkillHealth(skillName, status, errorMsg);
+              console.warn(`[SkillCron] ${skillName} → ${status}: ${errorMsg}`);
+            }
+          } catch (err) {
+            console.warn(`[SkillCron] health check failed for ${skillName}: ${err.message}`);
+          }
+        }
+      } catch (err) {
+        console.warn(`[SkillCron] Nightly skill health check failed: ${err.message}`);
+      }
+    }
+
+    async function runFullValidationCycle() {
+      await runAgentValidation();
+      await runSkillHealthCheck();
+      // Also review seed map for staleness (brew pkg renames, new CLIs, deprecated tools)
+      try {
+        const http = require('http');
+        const callCmd = (skill, args, timeoutMs = 30000) => new Promise((resolve) => {
+          const body = JSON.stringify({ payload: { skill, args } });
+          const req = http.request({
+            hostname: '127.0.0.1', port: 3007, path: '/command.automate',
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) },
+            timeout: timeoutMs,
+          }, res => {
+            let raw = '';
+            res.on('data', c => { raw += c; });
+            res.on('end', () => { try { resolve(JSON.parse(raw)?.data || {}); } catch { resolve({}); } });
+          });
+          req.on('timeout', () => { req.destroy(); resolve({}); });
+          req.on('error', () => resolve({}));
+          req.write(body); req.end();
+        });
+        const seedResult = await callCmd('cli.agent', { action: 'review_seed_map' }, 45000);
+        if (seedResult?.staleEntries?.length > 0) {
+          console.warn(`[AgentCron] Seed map: ${seedResult.staleEntries.length} stale entries — ${seedResult.summary || ''}`);
+          seedResult.staleEntries.forEach(e => console.warn(`  [SeedMap] ${e.service}: ${e.issue}`));
+        }
+        if (seedResult?.missingClis?.length > 0) {
+          console.log(`[AgentCron] Seed map: ${seedResult.missingClis.length} missing CLI(s) suggested`);
+          seedResult.missingClis.forEach(e => console.log(`  [SeedMap] ${e.service}: try ${e.suggestedCli} — ${e.reason}`));
+        }
+      } catch (err) {
+        console.warn(`[AgentCron] Seed map review failed: ${err.message}`);
+      }
+    }
+
+    function scheduleNextValidation() {
+      const now = new Date();
+      const next = new Date(now);
+      next.setHours(VALIDATE_HOUR, 0, 0, 0);
+      if (next <= now) next.setDate(next.getDate() + 1); // already past 3am today
+      const msUntilNext = next.getTime() - now.getTime();
+      console.log(`[AgentCron] Next agent validation scheduled at ${next.toLocaleTimeString()} (in ${Math.round(msUntilNext / 60000)} min)`);
+      setTimeout(async () => {
+        await runFullValidationCycle();
+        setInterval(async () => { await runFullValidationCycle(); }, 24 * 60 * 60 * 1000);
+      }, msUntilNext);
+    }
+
+    // ── On-demand IPC trigger: ipcMain 'agent:validate-now' ─────────────────
+    // Send from renderer or dev tools: ipcRenderer.send('agent:validate-now')
+    // Returns results via 'agent:validate-results' reply event.
+    const { ipcMain } = require('electron');
+    ipcMain.on('agent:validate-now', async (event) => {
+      console.log('[AgentCron] On-demand validation triggered via IPC');
+      try {
+        await runFullValidationCycle();
+        event.reply('agent:validate-results', { ok: true, ts: new Date().toISOString() });
+      } catch (err) {
+        event.reply('agent:validate-results', { ok: false, error: err.message });
+      }
+    });
+
+    // Delay start until MCP services are likely up (10s after app ready)
+    // THINKDROP_VALIDATE_ON_STARTUP=1 → fire immediately after 15s (dev/testing)
+    // Default → wait until 3am
+    if (process.env.THINKDROP_VALIDATE_ON_STARTUP === '1') {
+      console.log('[AgentCron] THINKDROP_VALIDATE_ON_STARTUP=1 — running full validation in 15s');
+      setTimeout(async () => {
+        await runFullValidationCycle();
+      }, 15000);
+    }
+
+    setTimeout(scheduleNextValidation, 10000);
+  })();
+
   // ── Persistent schedule: check on startup ──────────────────────────────────
   // Case 1: App was launched BY launchd for a scheduled task.
   //         Run the skill plan immediately — no user confirmation needed.
@@ -1529,6 +1816,7 @@ app.whenReady().then(async () => {
             keyLabel: q.keyLabel || null,
             serviceContext: q.serviceContext || null,
             options: q.options || [],
+            scannedFields: q.scannedFields || null,
           };
           safeSend(promptCaptureWindow, 'skill:build-asking', askingPayload);
           if (resultsWindow && !resultsWindow.isDestroyed()) {
@@ -1965,6 +2253,7 @@ app.whenReady().then(async () => {
           keyLabel: finalState.pendingQuestion.keyLabel || null,
           serviceContext: finalState.pendingQuestion.serviceContext || null,
           options: finalState.pendingQuestion.options || [],
+          scannedFields: finalState.pendingQuestion.scannedFields || null,
         };
         safeSend(promptCaptureWindow, 'skill:build-asking', askingPayload);
         if (resultsWindow && !resultsWindow.isDestroyed()) {
@@ -2027,6 +2316,7 @@ app.whenReady().then(async () => {
             keyLabel: finalState.pendingQuestion.keyLabel || null,
             serviceContext: finalState.pendingQuestion.serviceContext || null,
             options: finalState.pendingQuestion.options || [],
+            scannedFields: finalState.pendingQuestion.scannedFields || null,
           };
           safeSend(promptCaptureWindow, 'skill:build-asking', nextAsk);
           if (resultsWindow && !resultsWindow.isDestroyed()) safeSend(resultsWindow, 'skill:build-asking', nextAsk);
@@ -2046,25 +2336,117 @@ app.whenReady().then(async () => {
       return;
     }
 
-    // ── Special: Auto-setup — re-show manual prompt (step-by-step guide directs the user) ──
+    // ── Special: Auto-setup — launch browser.agent OAuth flow, then resume ──────
+    // "Do it for me" — calls browser.agent scan_page (headless, ~5s) to discover
+    // the actual credential fields for the service, then immediately surfaces them
+    // as a guided form. No browser launch, no waitForAuth, no OAuth attempt.
+    // Self-healing: if browser.agent run ever fails, validate_agent fires automatically.
     if (answer === '__auto_setup__') {
-      const reAskPayload = {
-        name,
-        question: paused.pendingQuestion?.question || '',
-        keyLabel: paused.pendingQuestion?.keyLabel || null,
-        serviceContext: paused.pendingQuestion?.serviceContext || null,
-        options: paused.pendingQuestion?.options || [],
-      };
-      safeSend(promptCaptureWindow, 'skill:build-asking', reAskPayload);
-      if (resultsWindow && !resultsWindow.isDestroyed()) safeSend(resultsWindow, 'skill:build-asking', reAskPayload);
+      const serviceContext = paused.pendingQuestion?.serviceContext || '';
+      const secretKey      = paused.skillBuildCurrentSecretKey || '';
+      const service        = serviceContext.toLowerCase().replace(/[^a-z0-9]/g, '');
+
+      console.log(`[SkillBuild] Auto-setup: scan_page for service="${service}" secret="${secretKey}"`);
+
+      // "Do it for me" no longer attempts OAuth/browser automation — that always
+      // times out for services like Gmail which require a Google Cloud Console app.
+      // Instead: call scan_page immediately (headless, ~5s), get the real credential
+      // fields, and surface them as a guided form so the user can paste their values.
+      // This is fast, reliable, and works for every service type.
+      const http = require('http');
+      const callBrowserAgent = (args, timeoutMs) => new Promise((resolve) => {
+        const body = JSON.stringify({ payload: { skill: 'browser.agent', args } });
+        const req = http.request({
+          hostname: '127.0.0.1', port: 3007, path: '/command.automate',
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) },
+          timeout: timeoutMs,
+        }, res => {
+          let raw = '';
+          res.on('data', c => { raw += c; });
+          res.on('end', () => { try { resolve(JSON.parse(raw)?.data || {}); } catch { resolve({}); } });
+        });
+        req.on('timeout', () => { req.destroy(); resolve({ ok: false, error: 'timeout' }); });
+        req.on('error', (e) => resolve({ ok: false, error: e.message }));
+        req.write(body); req.end();
+      });
+
+      // Keep paused state so guided form submit can resume the build
+      pausedSkillBuildState = paused;
+
+      (async () => {
+        try {
+          const scanResult = await callBrowserAgent({
+            action: 'scan_page',
+            service: serviceContext || service,
+            secretKey,
+          }, 25000);
+
+          const scannedFields = scanResult?.ok && scanResult.fields?.length
+            ? scanResult.fields
+            : null;
+
+          console.log(`[SkillBuild] Auto-setup: scan_page got ${scannedFields?.length ?? 0} field(s) for ${service}`);
+
+          // Immediately show guided form with discovered fields
+          const guidedPayload = {
+            name,
+            question: paused.pendingQuestion?.question || `Enter your ${serviceContext || service} credentials`,
+            keyLabel: paused.pendingQuestion?.keyLabel || null,
+            serviceContext: paused.pendingQuestion?.serviceContext || null,
+            options: [],
+            scannedFields,
+            autoSetupFailed: true, // switch UI to guided mode
+          };
+          safeSend(promptCaptureWindow, 'skill:build-asking', guidedPayload);
+          if (resultsWindow && !resultsWindow.isDestroyed()) safeSend(resultsWindow, 'skill:build-asking', guidedPayload);
+        } catch (scanErr) {
+          console.error('[SkillBuild] Auto-setup scan_page error:', scanErr.message);
+          // Fallback: show plain guided prompt with whatever we already had
+          const fallbackPayload = {
+            name,
+            question: paused.pendingQuestion?.question || '',
+            keyLabel: paused.pendingQuestion?.keyLabel || null,
+            serviceContext: paused.pendingQuestion?.serviceContext || null,
+            options: paused.pendingQuestion?.options || [],
+            scannedFields: paused.pendingQuestion?.scannedFields || null,
+            autoSetupFailed: true,
+          };
+          safeSend(promptCaptureWindow, 'skill:build-asking', fallbackPayload);
+          if (resultsWindow && !resultsWindow.isDestroyed()) safeSend(resultsWindow, 'skill:build-asking', fallbackPayload);
+        }
+      })();
+
       return;
     }
 
-    // ── Normal path: user pasted an API key/token ─────────────────────────────
+    // ── Normal path: user submitted secret(s) ──────────────────────────────────
     pausedSkillBuildState = null;
 
     const secretKey = paused.skillBuildCurrentSecretKey;
-    const updatedSecrets = { ...(paused.skillBuildSecrets || {}), ...(secretKey ? { [secretKey]: answer } : {}) };
+
+    // __fields__: prefix means the UI submitted multiple scanned fields at once.
+    // Unpack the JSON map and merge every field value into skillBuildSecrets.
+    let updatedSecrets = { ...(paused.skillBuildSecrets || {}) };
+    if (typeof answer === 'string' && answer.startsWith('__fields__:')) {
+      try {
+        const fieldMap = JSON.parse(answer.slice('__fields__:'.length));
+        for (const [fKey, fVal] of Object.entries(fieldMap)) {
+          if (fVal) updatedSecrets[fKey] = fVal;
+        }
+        // Also store under the primary secret key if not already captured
+        if (secretKey && !updatedSecrets[secretKey]) {
+          const firstVal = Object.values(fieldMap).find(v => v);
+          if (firstVal) updatedSecrets[secretKey] = firstVal;
+        }
+        console.log(`[SkillBuild] __fields__: stored ${Object.keys(fieldMap).length} field(s) from multi-field form`);
+      } catch (parseErr) {
+        console.warn('[SkillBuild] __fields__: JSON parse error:', parseErr.message);
+        if (secretKey) updatedSecrets[secretKey] = answer;
+      }
+    } else {
+      if (secretKey) updatedSecrets[secretKey] = answer;
+    }
 
     const resumeState = {
       ...paused,
@@ -2085,6 +2467,7 @@ app.whenReady().then(async () => {
           keyLabel: finalState.pendingQuestion.keyLabel || null,
           serviceContext: finalState.pendingQuestion.serviceContext || null,
           options: finalState.pendingQuestion.options || [],
+          scannedFields: finalState.pendingQuestion.scannedFields || null,
         };
         safeSend(promptCaptureWindow, 'skill:build-asking', nextAsk);
         if (resultsWindow && !resultsWindow.isDestroyed()) safeSend(resultsWindow, 'skill:build-asking', nextAsk);

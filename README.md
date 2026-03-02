@@ -48,55 +48,146 @@ START
   ▼
 resolveReferences ──→ parseSkill ──→ parseIntent ──→ enrichIntent
                                                           │
-                    ┌─────────────────────────────────────┤
-                    │                                     │
-         command_automate                           skill_build
-                    │                                     │
-                    ▼                                     ▼
-               planSkills ◄──────────────────────── buildSkill ◄─────────────────────┐
-                    │         evaluateSkills FIX          │                          │
-                    │                                     ▼                          │
-                    ▼                              validateSkill                     │
-             executeCommand ◄──────┐                      │ PASS                     │
-                    │   auto_patch  │                     ▼                          │
-                    │ (step failed) │               installSkill                     │
-                    ▼               │                     │                          │
-             recoverSkill ──────────┘         ┌───────────┴───────────┐              │
-                    │                         │                       │              │
-                    │ replan                  │ asking (secret)       │ smoke FAIL   │
-                    ▼                         ▼                       └──────────────┘
-             evaluateSkills            logConversation
-                    │                  (paused for user)
-                    │ FIX / PASS
-                    ▼
-               planSkills
+               ┌──────────────────────┬──────────────────┤
+               │                      │                  │
+    command_automate           skill_build      web_search / question / screen_intelligence
+               │                      │                  │
+               ▼                      │          (see Query Pipeline below)
+          planSkills ◄────────────────┘
+          (agent-aware:                │ LLM plans steps using
+           injects healthy             │ installed skills +
+           agent descriptors)          │ agent capabilities
+               │
+               ▼
+         executeCommand ◄─────────────────────────────────────────┐
+               │                                                  │
+               │  step type?                                      │
+               ├── shell.run / browser.act / ui.* ──→ MCP call   │
+               │                                                  │
+               ├── external.skill ──→ skill file exists? ──────── │ yes → run it
+               │                              │ no                │
+               │                              ▼                   │
+               │                    [ON-DEMAND SKILL BUILD]       │
+               │                    show skill_build_confirm ──→ user approves?
+               │                              │ yes               │ no → skip
+               │                              ▼                   │
+               │                    [AGENT AUTO-BUILD]            │
+               │                    cli.agent or browser.agent    │
+               │                    builds service descriptor ─── │
+               │                    (LLM-driven, DuckDB cached)   │
+               │                              │                   │
+               │                              ▼                   │
+               ├── needs_skill ──────────→ buildSkill ────────────┘
+               │   (LLM-named,            (with agent descriptors
+               │    auto-triggers          injected into prompt)
+               │    build pipeline)               │
+               │                                  ▼
+               │                           validateSkill
+               │                    (static + LLM intent + npm research)
+               │                                  │ PASS
+               │                                  ▼
+               │                           installSkill
+               │                    (LLM secret detection →
+               │                     cli.agent silent resolve →
+               │                     browser.agent OAuth delegate →
+               │                     user prompt with enriched hint →
+               │                     Keychain store → npm install →
+               │                     smoke test → launchd plist →
+               │                     DB registration)
+               │                                  │
+               │              ┌───────────────────┴───────────────┐
+               │              │                                   │
+               │       skillBuiltOnDemand?              smoke test FAIL?
+               │              │ yes                               │ yes
+               │              ▼                                   ▼
+               │       resume original plan              buildSkill (fix round)
+               │       at cursor+1 (no loop)             (up to 5 rounds total)
+               │              │
+               │       [back to executeCommand]
+               │
+               ├── step failed ──→ recoverSkill
+               │                       │
+               │          ┌────────────┼────────────┐
+               │          │            │            │
+               │     AUTO_PATCH     REPLAN      ASK_USER
+               │          │            │            │
+               │          ▼            ▼            ▼
+               │   executeCommand  evaluateSkills  logConversation
+               │   (patched step)       │          (paused for user)
+               │                   FIX / PASS
+               │                        │
+               │                   planSkills
+               │
+               └── plan complete ──→ evaluateSkills ──→ logConversation
+                                      (LLM verdict)           │
+                                                       journalProgress ──→ END
 
 
-                    ┌─────────────────── enrichIntent ───────────────────┐
-                    │                                                    │
-              web_search / question                              screen_intelligence
-                    │                                                    │
-                    ▼                                                    ▼
-               webSearch                                      screenIntelligence
-                    │                                          (has answer?) │ no
-                    ▼                                                    ▼
-            retrieveMemory ──→ answer                              vision / answer
-                    │               │
-                    │          synthesize
-                    │               │
-                    └───────┬───────┘
-                            │
-              memory_store / memory_retrieve
-                    │                  │
-               storeMemory       retrieveMemory
-                    │                  │
-                    └──────┬───────────┘
-                           │
-                           ▼
-                    logConversation ──→ journalProgress ──→ END
+Query Pipeline (enrichIntent → web_search / question / screen_intelligence):
+
+          enrichIntent
+               │
+    ┌──────────┴──────────┐
+    │                     │
+ web_search /        screen_intelligence
+ question                 │
+    │              (has answer?) no
+    ▼                     ▼
+ webSearch           vision / answer
+    │
+    ▼
+ retrieveMemory ──→ answer
+    │                  │
+    │             synthesize
+    └──────┬────────────┘
+           │
+   memory_store / memory_retrieve
+           │                 │
+      storeMemory      retrieveMemory
+           └──────┬──────────┘
+                  ▼
+           logConversation ──→ journalProgress ──→ END
 ```
 
-**All nodes** (20 total):
+**Agent Factory Layer** (runs inside command-service, not StateGraph nodes):
+
+```
+cli.agent                          browser.agent
+    │                                   │
+    │  build_agent(service)             │  build_agent(service)
+    │  ─────────────────────            │  ─────────────────────
+    │  1. resolveCLIMeta (LLM)          │  1. resolveBrowserMeta (LLM)
+    │     → DuckDB cli_meta_cache       │     → DuckDB browser_meta_cache
+    │  2. which/brew verify             │  2. Playwright waitForAuth
+    │  3. infer capabilities (LLM)      │  3. infer capabilities (LLM)
+    │  4. write .md descriptor          │  4. write .md descriptor
+    │  5. upsert DuckDB agents table    │  5. upsert DuckDB agents table
+    │                                   │
+    │  validate_agent(id)               │  validate_agent(id)
+    │  ─────────────────────            │  ─────────────────────
+    │  LLM probe → auto-patch           │  LLM DOM check → selector fix
+    │  write status/failure_log         │  write status/failure_log
+    │                                   │
+    └───────────────┬───────────────────┘
+                    │ DuckDB agents table
+                    │ (id, type, service, cli_tool,
+                    │  capabilities[], descriptor,
+                    │  status, last_validated, failure_log)
+                    │
+              planSkills reads ──→ injects healthy agent
+              buildSkill reads       descriptors into LLM prompt
+              installSkill reads ──→ silent credential resolution
+```
+
+**Background jobs** (run in main process):
+
+| Job | Schedule | What it does |
+|---|---|---|
+| Skill daemon re-registration | App startup (+8s) | Re-loads any `~/Library/LaunchAgents/com.thinkdrop.skill.*.plist` not active in launchd |
+| Nightly agent validation | 3am daily | Runs `validate_agent` for every registered agent, auto-patches descriptors |
+| Nightly skill health check | 3am daily | Probe-runs each installed skill, writes `status`/`last_run`/`error_log` to user-memory |
+
+**All StateGraph nodes** (20 total):
 
 | Node | Role |
 |---|---|
@@ -104,13 +195,13 @@ resolveReferences ──→ parseSkill ──→ parseIntent ──→ enrichInt
 | `parseSkill` | Detect if prompt matches an installed skill |
 | `parseIntent` | Classify intent type (command_automate, skill_build, answer, etc.) |
 | `enrichIntent` | Fill profile gaps, re-route based on enriched intent |
-| `planSkills` | LLM step planner with RAG context rules |
-| `executeCommand` | Dispatch skill steps via MCP, loop until plan complete |
+| `planSkills` | LLM step planner with RAG context + healthy agent descriptors injected |
+| `executeCommand` | Dispatch skill steps via MCP; on-demand build for missing skills |
 | `recoverSkill` | Handle step failures: AUTO_PATCH, REPLAN, ASK_USER |
 | `evaluateSkills` | LLM judge — post-run verdict or failure rule derivation |
-| `buildSkill` | Creator Agent — LLM generates `.cjs` skill code |
-| `validateSkill` | 3-layer validator — static + intent fulfillment + corrective feedback |
-| `installSkill` | Dep detection, npm install, smoke test, Keychain, DB registration |
+| `buildSkill` | Creator Agent — LLM generates `.cjs` skill code with agent descriptor context |
+| `validateSkill` | 3-layer validator — static + intent fulfillment + npm research + corrective feedback |
+| `installSkill` | LLM secret detection → agent resolution → Keychain → npm install → launchd daemon → smoke test |
 | `webSearch` | Search via DuckDuckGo / Brave / SearXNG / NewsAPI |
 | `retrieveMemory` | Fetch relevant memories from user-memory-service |
 | `storeMemory` | Save new memory to user-memory-service |
@@ -133,9 +224,11 @@ resolveReferences ──→ parseSkill ──→ parseIntent ──→ enrichInt
 │  │ (port 3007)   │  │ (port 3001)  │  │ (port 3004)  │  │ (port 3006)     │ │
 │  │               │  │              │  │              │  │                 │ │
 │  │ browser.act   │  │ Skills DB    │  │ Sessions     │  │ STT (Whisper)   │ │
-│  │ shell.run     │  │ Context rules│  │ Messages     │  │ TTS (Inworld)   │ │
-│  │ ui.*          │  │ User profile │  │              │  │ VAD, wake word  │ │
-│  │ external.*    │  │ (DuckDB)     │  │              │  │                 │ │
+│  │ shell.run     │  │ Agent DB     │  │ Messages     │  │ TTS (Inworld)   │ │
+│  │ ui.*          │  │ Context rules│  │              │  │ VAD, wake word  │ │
+│  │ external.*    │  │ User profile │  │              │  │                 │ │
+│  │ cli.agent     │  │ (DuckDB)     │  │              │  │                 │ │
+│  │ browser.agent │  │              │  │              │  │                 │ │
 │  └───────────────┘  └──────────────┘  └──────────────┘  └─────────────────┘ │
 │                                                                             │
 │  ┌───────────────┐  ┌──────────────┐  ┌──────────────┐  ┌─────────────────┐ │
@@ -151,10 +244,11 @@ resolveReferences ──→ parseSkill ──→ parseIntent ──→ enrichInt
 ```
 
 **Skill Build Loop** (`buildSkill` → `validateSkill` → `installSkill`):
-1. `buildSkill` — LLM generates a `.cjs` skill file from description
-2. `validateSkill` — 3-layer validator: static checks → intent fulfillment (LLM) → corrective feedback. Fails inject rich `FIX [CATEGORY]:` instructions back to `buildSkill`
-3. `installSkill` — writes file, detects deps, runs `npm install` in skill dir, smoke tests, stores secrets in Keychain, registers in DB
+1. `buildSkill` — LLM generates a `.cjs` skill file; agent descriptors from DuckDB injected into prompt so CLI commands and API patterns are exact
+2. `validateSkill` — 3-layer validator: static security checks → intent fulfillment (LLM) → npm registry research. Failures inject rich `FIX [CATEGORY]:` instructions back to `buildSkill`
+3. `installSkill` — LLM-driven secret detection → `cli.agent` silent credential extraction (or `browser.agent` OAuth delegation) → Keychain store → `npm install` → smoke test → launchd daemon plist registration → user-memory DB registration
 4. Smoke test failures route back to `buildSkill` for another fix cycle (up to 5 rounds total)
+5. On completion, `postBuildResumeCursor` advances to the step *after* the trigger so the original plan resumes without re-triggering the build
 
 ## Skills
 
@@ -178,7 +272,7 @@ Each service is an independent process with its own dependencies:
 
 | Service | Port | Runtime | Purpose |
 |---|---|---|---|
-| `command-service` | 3007 | Node.js | Browser automation (Playwright), shell, UI control, external skill execution |
+| `command-service` | 3007 | Node.js | Browser automation (Playwright), shell, UI control, external skill execution, `cli.agent` + `browser.agent` factory |
 | `user-memory-service` | 3001 | Node.js | Skills DB, context rules, user profile (DuckDB) |
 | `conversation-service` | 3004 | Node.js | Session history, message store |
 | `voice-service` | 3006 | Node.js | STT (Groq Whisper), TTS (Inworld/ElevenLabs), VAD, wake word |
@@ -289,11 +383,11 @@ thinkdrop/
 │       │   ├── installSkill.js          # Installer — deps, Keychain, smoke test, registration
 │       │   ├── planSkills.js            # Planner — LLM step generation with RAG
 │       │   ├── evaluateSkills.js        # Judge — post-run verdict, saves context rules
-│       │   ├── executeCommand.js        # Dispatcher — runs skill steps via MCP
+│       │   ├── executeCommand.js        # Dispatcher — runs skill steps, on-demand skill build trigger
 │       │   └── recoverSkill.js          # Recovery — AUTO_PATCH, REPLAN, ASK_USER
 │       └── prompts/                     # System prompt markdown files
 └── mcp-services/
-    ├── command-service/                 # Playwright, shell, UI, external skills (port 3007)
+    ├── command-service/                 # Playwright, shell, UI, external skills, cli.agent, browser.agent (port 3007)
     ├── thinkdrop-user-memory-service/   # DuckDB — skills, context rules, profile (port 3001)
     ├── conversation-service/            # Session + message history (port 3004)
     ├── voice-service/                   # STT/TTS/VAD pipeline (port 3006)

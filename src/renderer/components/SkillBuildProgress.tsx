@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 
 // ── Lightweight JS syntax highlighter ────────────────────────────────────────
 function highlightJS(code: string): string {
@@ -77,6 +77,16 @@ export interface SkillBuildState {
   tokenCount?: number;    // streamed token count during building
   draft?: string;         // current generated code draft
   smokeTest?: { ok: boolean; output?: string; error?: string }; // post-install smoke test result
+  autoSetupFailed?: boolean; // browser.agent OAuth flow failed — switched back to manual
+  scannedFields?: ScannedField[] | null; // fields from browser.agent scan_page
+}
+
+interface ScannedField {
+  name: string;        // SCREAMING_SNAKE_CASE key e.g. GMAIL_EMAIL
+  label: string;       // Human label e.g. "Email or phone"
+  type: 'email' | 'password' | 'text' | 'url';
+  placeholder?: string;
+  required?: boolean;
 }
 
 // ── API key guidance database ─────────────────────────────────────────────────
@@ -327,13 +337,22 @@ export default function SkillBuildProgress({ state, onAnswer, onCancel, onOpenUr
   const [setupMode, setSetupMode] = useState<SetupMode>('choose');
   const [editedDraft, setEditedDraft] = useState<string>('');
   const [codeExpanded, setCodeExpanded] = useState(false);
+  const [scannedFieldValues, setScannedFieldValues] = useState<Record<string, string>>({});
   const {
     phase, skillDisplayName, round, maxRounds,
     rounds, question, keyLabel, serviceContext, options, error, installedPath, tokenCount, draft,
+    autoSetupFailed, scannedFields,
   } = state;
 
   // currentSecretKey comes from state.skillBuildCurrentSecretKey via the SkillBuildState
   const currentSecretKey = (state as any).skillBuildCurrentSecretKey || '';
+
+  // When browser.agent OAuth fallback fires, switch to guided mode automatically
+  useEffect(() => {
+    if (autoSetupFailed && setupMode === 'auto') {
+      setSetupMode('guided');
+    }
+  }, [autoSetupFailed]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleOpenUrl = (url: string) => {
     if (onOpenUrl) onOpenUrl(url);
@@ -615,7 +634,7 @@ export default function SkillBuildProgress({ state, onAnswer, onCancel, onOpenUr
 
       {/* ── Secret setup — 3-mode card ──────────────────────────────────────── */}
       {isAsking && (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8, paddingBottom: 12 }}>
 
           {/* Header: what is needed and for which service */}
           <div style={{ padding: '10px 12px', borderRadius: 9,
@@ -672,7 +691,7 @@ export default function SkillBuildProgress({ state, onAnswer, onCancel, onOpenUr
 
               {/* Option 2: Auto-setup */}
               <button
-                onClick={() => { onAnswer?.('__auto_setup__'); }}
+                onClick={() => { setSetupMode('auto'); onAnswer?.('__auto_setup__'); }}
                 style={{
                   display: 'flex', alignItems: 'flex-start', gap: 10, padding: '10px 12px',
                   borderRadius: 9, border: '1px solid rgba(99,102,241,0.25)',
@@ -720,73 +739,159 @@ export default function SkillBuildProgress({ state, onAnswer, onCancel, onOpenUr
             </div>
           )}
 
-          {/* ── Guided mode ─────────────────────────────────────────────────── */}
-          {setupMode === 'guided' && (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+          {/* ── Auto mode — browser OAuth in progress ────────────────────── */}
+          {setupMode === 'auto' && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8, paddingBottom: 12 }}>
               <button onClick={() => setSetupMode('choose')}
                 style={{ alignSelf: 'flex-start', fontSize: '0.65rem', color: '#6b7280',
                   background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}>
                 ← Back
               </button>
-              {currentSecretKey && (
-                <ApiKeyGuide secretKey={currentSecretKey} onOpenUrl={handleOpenUrl} />
-              )}
-              {options && options.length > 0 ? (
-                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5 }}>
-                  {options.map(opt => (
-                    <button key={opt} onClick={() => onAnswer?.(opt)} style={{
-                      padding: '4px 10px', borderRadius: 6, fontSize: '0.7rem', cursor: 'pointer',
-                      background: 'rgba(139,92,246,0.15)', border: '1px solid rgba(139,92,246,0.4)',
-                      color: '#c4b5fd',
-                    }}>{opt}</button>
-                  ))}
+              <div style={{
+                display: 'flex', alignItems: 'center', gap: 10, padding: '12px 14px',
+                borderRadius: 9, background: 'rgba(99,102,241,0.07)', border: '1px solid rgba(99,102,241,0.25)',
+              }}>
+                <div className="w-4 h-4 rounded-full border-2 animate-spin flex-shrink-0"
+                  style={{ borderColor: '#a5b4fc', borderTopColor: 'transparent' }} />
+                <div>
+                  <div style={{ color: '#a5b4fc', fontSize: '0.72rem', fontWeight: 600, marginBottom: 2 }}>
+                    Opening browser…
+                  </div>
+                  <div style={{ color: '#6b7280', fontSize: '0.67rem', lineHeight: 1.4 }}>
+                    ThinkDrop is setting up{serviceContext ? ` ${serviceContext}` : ' the service'} automatically.
+                    A browser window will open — complete the sign-in and return here.
+                  </div>
                 </div>
-              ) : (
-                <div style={{ display: 'flex', gap: 6 }}>
-                  <input
-                    type="password"
-                    value={userInput}
-                    onChange={e => setUserInput(e.target.value)}
-                    onKeyDown={e => {
-                      if (e.key === 'Enter' && userInput.trim()) {
-                        onAnswer?.(userInput.trim());
-                        setUserInput('');
-                        setSetupMode('choose');
-                      }
-                    }}
-                    placeholder={`Paste your ${keyLabel || 'API key'}…`}
-                    autoFocus
-                    style={{
-                      flex: 1, padding: '5px 9px', borderRadius: 6, fontSize: '0.7rem',
-                      background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(99,102,241,0.35)',
-                      color: '#e5e7eb', outline: 'none',
-                    }}
-                    onFocus={e => { e.currentTarget.style.borderColor = 'rgba(99,102,241,0.7)'; }}
-                    onBlur={e => { e.currentTarget.style.borderColor = 'rgba(99,102,241,0.35)'; }}
-                  />
-                  <button
-                    onClick={() => { if (userInput.trim()) { onAnswer?.(userInput.trim()); setUserInput(''); setSetupMode('choose'); } }}
-                    disabled={!userInput.trim()}
-                    style={{
-                      padding: '5px 12px', borderRadius: 6, fontSize: '0.7rem', fontWeight: 600,
-                      cursor: userInput.trim() ? 'pointer' : 'not-allowed',
-                      background: userInput.trim() ? 'rgba(99,102,241,0.25)' : 'rgba(99,102,241,0.07)',
-                      border: '1px solid rgba(99,102,241,0.4)',
-                      color: userInput.trim() ? '#a5b4fc' : '#4b5563',
-                      whiteSpace: 'nowrap',
-                    }}
-                  >
-                    Submit →
-                  </button>
-                </div>
-              )}
+              </div>
             </div>
           )}
+
+          {/* ── Guided mode ─────────────────────────────────────────────────── */}
+          {setupMode === 'guided' && (() => {
+            // Multi-field submit: pack all values as __fields__:{...} JSON so main.js
+            // can store each field under its own keytar key
+            const allFilled = scannedFields
+              ? scannedFields.every(f => !f.required || (scannedFieldValues[f.name] || '').trim())
+              : userInput.trim().length > 0;
+
+            const handleSubmit = () => {
+              if (!allFilled) return;
+              if (scannedFields && scannedFields.length > 0) {
+                const packed = '__fields__:' + JSON.stringify(scannedFieldValues);
+                onAnswer?.(packed);
+                setScannedFieldValues({});
+              } else {
+                onAnswer?.(userInput.trim());
+                setUserInput('');
+              }
+              setSetupMode('choose');
+            };
+
+            return (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8, paddingBottom: 12 }}>
+                <button onClick={() => setSetupMode('choose')}
+                  style={{ alignSelf: 'flex-start', fontSize: '0.65rem', color: '#6b7280',
+                    background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}>
+                  ← Back
+                </button>
+                {currentSecretKey && (
+                  <ApiKeyGuide secretKey={currentSecretKey} onOpenUrl={handleOpenUrl} />
+                )}
+                {options && options.length > 0 ? (
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5 }}>
+                    {options.map(opt => (
+                      <button key={opt} onClick={() => onAnswer?.(opt)} style={{
+                        padding: '4px 10px', borderRadius: 6, fontSize: '0.7rem', cursor: 'pointer',
+                        background: 'rgba(139,92,246,0.15)', border: '1px solid rgba(139,92,246,0.4)',
+                        color: '#c4b5fd',
+                      }}>{opt}</button>
+                    ))}
+                  </div>
+                ) : scannedFields && scannedFields.length > 0 ? (
+                  /* ── Multi-field form from page scan ── */
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                    {scannedFields.map((field, idx) => (
+                      <div key={field.name} style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+                        <label style={{ color: '#9ca3af', fontSize: '0.65rem', fontWeight: 500 }}>
+                          {field.label}{field.required && <span style={{ color: '#f87171', marginLeft: 2 }}>*</span>}
+                        </label>
+                        <input
+                          type={field.type === 'password' ? 'password' : field.type === 'email' ? 'email' : 'text'}
+                          value={scannedFieldValues[field.name] || ''}
+                          onChange={e => setScannedFieldValues(prev => ({ ...prev, [field.name]: e.target.value }))}
+                          onKeyDown={e => { if (e.key === 'Enter' && idx === scannedFields.length - 1) handleSubmit(); }}
+                          placeholder={field.placeholder || field.label}
+                          autoFocus={idx === 0}
+                          style={{
+                            padding: '5px 9px', borderRadius: 6, fontSize: '0.7rem',
+                            background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(99,102,241,0.35)',
+                            color: '#e5e7eb', outline: 'none',
+                          }}
+                          onFocus={e => { e.currentTarget.style.borderColor = 'rgba(99,102,241,0.7)'; }}
+                          onBlur={e => { e.currentTarget.style.borderColor = 'rgba(99,102,241,0.35)'; }}
+                        />
+                      </div>
+                    ))}
+                    <button
+                      onClick={handleSubmit}
+                      disabled={!allFilled}
+                      style={{
+                        marginTop: 2, padding: '5px 12px', borderRadius: 6, fontSize: '0.7rem', fontWeight: 600,
+                        alignSelf: 'flex-end',
+                        cursor: allFilled ? 'pointer' : 'not-allowed',
+                        background: allFilled ? 'rgba(99,102,241,0.25)' : 'rgba(99,102,241,0.07)',
+                        border: '1px solid rgba(99,102,241,0.4)',
+                        color: allFilled ? '#a5b4fc' : '#4b5563',
+                        whiteSpace: 'nowrap',
+                      }}
+                    >
+                      Submit →
+                    </button>
+                  </div>
+                ) : (
+                  /* ── Single generic input fallback ── */
+                  <div style={{ display: 'flex', gap: 6 }}>
+                    <input
+                      type="password"
+                      value={userInput}
+                      onChange={e => setUserInput(e.target.value)}
+                      onKeyDown={e => {
+                        if (e.key === 'Enter' && userInput.trim()) handleSubmit();
+                      }}
+                      placeholder={`Paste your ${keyLabel || 'API key'}…`}
+                      autoFocus
+                      style={{
+                        flex: 1, padding: '5px 9px', borderRadius: 6, fontSize: '0.7rem',
+                        background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(99,102,241,0.35)',
+                        color: '#e5e7eb', outline: 'none',
+                      }}
+                      onFocus={e => { e.currentTarget.style.borderColor = 'rgba(99,102,241,0.7)'; }}
+                      onBlur={e => { e.currentTarget.style.borderColor = 'rgba(99,102,241,0.35)'; }}
+                    />
+                    <button
+                      onClick={handleSubmit}
+                      disabled={!allFilled}
+                      style={{
+                        padding: '5px 12px', borderRadius: 6, fontSize: '0.7rem', fontWeight: 600,
+                        cursor: allFilled ? 'pointer' : 'not-allowed',
+                        background: allFilled ? 'rgba(99,102,241,0.25)' : 'rgba(99,102,241,0.07)',
+                        border: '1px solid rgba(99,102,241,0.4)',
+                        color: allFilled ? '#a5b4fc' : '#4b5563',
+                        whiteSpace: 'nowrap',
+                      }}
+                    >
+                      Submit →
+                    </button>
+                  </div>
+                )}
+              </div>
+            );
+          })()}
 
 
           {/* ── Developer / edit code mode ───────────────────────────────────── */}
           {setupMode === 'developer' && (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8, paddingBottom: 12 }}>
               <button onClick={() => setSetupMode('choose')}
                 style={{ alignSelf: 'flex-start', fontSize: '0.65rem', color: '#6b7280',
                   background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}>
