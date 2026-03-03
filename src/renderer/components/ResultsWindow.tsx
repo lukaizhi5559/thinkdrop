@@ -3,6 +3,8 @@ import { RichContentRenderer } from './rich-content';
 import AutomationProgress from './AutomationProgress';
 import SkillBuildProgress, { SkillBuildState, BuildPhase } from './SkillBuildProgress';
 import { playDropSound } from '../utils/thinkDropSound';
+import { TabBar, QueueTab, CronTab } from './TabComponents';
+import type { TabId, QueueItem, CronItem } from './TabComponents';
 
 const ipcRenderer = (window as any).electron?.ipcRenderer;
 
@@ -30,6 +32,11 @@ export default function ResultsWindow() {
   const [showTrigger, setShowTrigger] = useState(0);
   const [isDropping, setIsDropping] = useState(false);
   const hasDroppedRef = useRef(false);
+
+  // ── Tab state ────────────────────────────────────────────────────────────────
+  const [activeTab, setActiveTab] = useState<TabId>('results');
+  const [queueItems, setQueueItems] = useState<QueueItem[]>([]);
+  const [cronItems, setCronItems] = useState<CronItem[]>([]);
 
   // Bridge listener status — shown as a persistent footer when watching, swaps to executing during auto-tasks
   const [bridgeStatus, setBridgeStatus] = useState<{
@@ -285,6 +292,14 @@ export default function ResultsWindow() {
       setSchedulePending({ id: data.id, label: data.label, targetTime: data.targetTime, prompt: data.prompt || '' });
     };
 
+    const handleQueueUpdate = (_event: any, items: QueueItem[]) => {
+      setQueueItems(items);
+    };
+
+    const handleCronUpdate = (_event: any, items: CronItem[]) => {
+      setCronItems(items);
+    };
+
     const handleBridgeStatus = (_event: any, data: any) => {
       setBridgeStatus({ state: data.state, bridgeFile: data.bridgeFile, summary: data.summary });
     };
@@ -309,6 +324,8 @@ export default function ResultsWindow() {
     ipcRenderer.on('bridge:status', handleBridgeStatus);
     ipcRenderer.on('skill:build-asking', handleSkillBuildAsking);
     ipcRenderer.on('skill:build-done', handleSkillBuildDone);
+    ipcRenderer.on('queue:update', handleQueueUpdate);
+    ipcRenderer.on('cron:update', handleCronUpdate);
   
     return () => {
       if (ipcRenderer.removeListener) {
@@ -320,6 +337,8 @@ export default function ResultsWindow() {
         ipcRenderer.removeListener('bridge:status', handleBridgeStatus);
         ipcRenderer.removeListener('skill:build-asking', handleSkillBuildAsking);
         ipcRenderer.removeListener('skill:build-done', handleSkillBuildDone);
+        ipcRenderer.removeListener('queue:update', handleQueueUpdate);
+        ipcRenderer.removeListener('cron:update', handleCronUpdate);
       }
     };
   }, []);
@@ -702,6 +721,9 @@ export default function ResultsWindow() {
           animation: drop-in 0.45s cubic-bezier(0.22, 1, 0.36, 1) forwards;
           transform-origin: top center;
         }
+        @keyframes spin {
+          to { transform: rotate(360deg); }
+        }
         .results-glow-ring {
           position: absolute;
           inset: -1px;
@@ -811,6 +833,39 @@ export default function ResultsWindow() {
         </div>
       </div>
       
+      {/* ── Tab bar ─────────────────────────────────────────────────────────── */}
+      <TabBar
+        active={activeTab}
+        onSelect={setActiveTab}
+        queueCount={queueItems.filter(i => i.status !== 'done').length}
+        cronCount={cronItems.filter(i => i.status === 'active').length}
+      />
+
+      {/* ── Queue tab ───────────────────────────────────────────────────────── */}
+      {activeTab === 'queue' && (
+        <div className="flex-1 overflow-y-auto overflow-x-hidden p-4">
+          <QueueTab
+            items={queueItems}
+            onRerun={(item) => ipcRenderer?.send('queue:rerun', { id: item.id })}
+            onCancel={(item) => ipcRenderer?.send('queue:cancel', { id: item.id })}
+          />
+        </div>
+      )}
+
+      {/* ── Cron tab ────────────────────────────────────────────────────────── */}
+      {activeTab === 'cron' && (
+        <div className="flex-1 overflow-y-auto overflow-x-hidden p-4">
+          <CronTab
+            items={cronItems}
+            onToggle={(item) => ipcRenderer?.send('cron:toggle', { id: item.id })}
+            onDelete={(item) => ipcRenderer?.send('cron:delete', { id: item.id })}
+            onRerun={(item) => ipcRenderer?.send('cron:run-now', { id: item.id })}
+          />
+        </div>
+      )}
+
+      {/* ── Results tab ─────────────────────────────────────────────────────── */}
+      {activeTab === 'results' && (
       <div ref={scrollContainerRef} className="flex-1 overflow-y-auto overflow-x-hidden p-4">
         <div ref={contentRef}>
           {/* Pending schedule notification — shown when app opens with a launchd task registered */}
@@ -904,6 +959,7 @@ export default function ResultsWindow() {
           <div ref={scrollBottomRef} />
         </div>
       </div>
+      )}
       </div>
     </div>
   );

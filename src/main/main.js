@@ -248,6 +248,7 @@ function startOverlayControlServer() {
 const { StateGraphBuilder, RealMCPAdapter, VSCodeLLMBackend } = require('@thinkdrop/stategraph');
 const ThinkDropMCPClient = require('./ThinkDropMCPClient');
 const scheduler = require('./scheduler');
+const queueManager = require('./queueManager');
 
 // Voice Journal — shared state file with voice-service
 const voiceJournal = (() => {
@@ -564,6 +565,11 @@ function createResultsWindow() {
     console.log('[RESULTS_WINDOW] isVisible:', resultsWindow.isVisible());
     console.log('[RESULTS_WINDOW] isDestroyed:', resultsWindow.isDestroyed());
     setTimeout(() => resultsWindow.hide(), 50);
+    // Push initial queue + cron snapshots so tab badges are accurate immediately
+    setTimeout(() => {
+      safeSend(resultsWindow, 'queue:update', queueManager.getQueue());
+      safeSend(resultsWindow, 'cron:update', queueManager.getCron());
+    }, 300);
   });
 
   // Block Vite HMR full-page reloads — they dispose the render frame mid-stream causing
@@ -1078,6 +1084,52 @@ app.whenReady().then(async () => {
     // Don't clear the launchd plist — launchd will still fire at the right time
     // Just remove the notification JSON so it doesn't show again on next normal launch
     scheduler.clearPendingSchedule(id);
+  });
+
+  // ─── Queue + Cron: init broadcast callbacks ───────────────────────────────
+  queueManager.init({
+    queue: (items) => {
+      if (resultsWindow && !resultsWindow.isDestroyed()) {
+        safeSend(resultsWindow, 'queue:update', items);
+      }
+    },
+    cron: (items) => {
+      if (resultsWindow && !resultsWindow.isDestroyed()) {
+        safeSend(resultsWindow, 'cron:update', items);
+      }
+    },
+  });
+
+  // ─── Queue IPC handlers ───────────────────────────────────────────────────
+  ipcMain.on('queue:rerun', (_event, { id }) => {
+    console.log(`[Queue] Rerun requested: ${id}`);
+    const item = queueManager.getQueue().find(i => i.id === id);
+    if (!item) return;
+    queueManager.setQueueStatus(id, 'waiting');
+  });
+
+  ipcMain.on('queue:cancel', (_event, { id }) => {
+    console.log(`[Queue] Cancel requested: ${id}`);
+    queueManager.setQueueStatus(id, 'error', { error: 'Cancelled by user' });
+  });
+
+  // ─── Cron IPC handlers ────────────────────────────────────────────────────
+  ipcMain.on('cron:toggle', (_event, { id }) => {
+    console.log(`[Cron] Toggle: ${id}`);
+    queueManager.toggleCron(id);
+  });
+
+  ipcMain.on('cron:delete', (_event, { id }) => {
+    console.log(`[Cron] Delete: ${id}`);
+    queueManager.removeCron(id);
+  });
+
+  ipcMain.on('cron:run-now', (_event, { id }) => {
+    console.log(`[Cron] Run now: ${id}`);
+    const item = queueManager.getCron().find(i => i.id === id);
+    if (!item) return;
+    // Enqueue as a one-shot run — future: re-trigger stategraph with item's stored prompt
+    queueManager.recordCronRun(id);
   });
 
   // Paused automation state — set when recoverSkill returns ASK_USER, cleared on resume or abort

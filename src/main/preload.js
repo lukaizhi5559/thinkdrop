@@ -38,6 +38,11 @@ contextBridge.exposeInMainWorld('electron', {
         'ptt:input-focus',
         'ptt:input-blur',
         'ptt:keyup',
+        'queue:rerun',
+        'queue:cancel',
+        'cron:toggle',
+        'cron:delete',
+        'cron:run-now',
       ];
       if (validChannels.includes(channel)) {
         ipcRenderer.send(channel, data);
@@ -74,6 +79,8 @@ contextBridge.exposeInMainWorld('electron', {
         'voice:ptt-start',
         'voice:ptt-stop',
         'ptt:transcript',
+        'queue:update',
+        'cron:update',
       ];
       if (validChannels.includes(channel)) {
         ipcRenderer.on(channel, func);
@@ -110,6 +117,8 @@ contextBridge.exposeInMainWorld('electron', {
         'voice:ptt-start',
         'voice:ptt-stop',
         'ptt:transcript',
+        'queue:update',
+        'cron:update',
       ];
       if (validChannels.includes(channel)) {
         ipcRenderer.removeAllListeners(channel);
@@ -146,6 +155,8 @@ contextBridge.exposeInMainWorld('electron', {
         'voice:ptt-start',
         'voice:ptt-stop',
         'ptt:transcript',
+        'queue:update',
+        'cron:update',
       ];
       if (validChannels.includes(channel)) {
         ipcRenderer.removeListener(channel, func);
