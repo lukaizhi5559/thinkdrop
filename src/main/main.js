@@ -1101,16 +1101,28 @@ app.whenReady().then(async () => {
   });
 
   // ─── Queue IPC handlers ───────────────────────────────────────────────────
+
+  ipcMain.on('queue:submit', (_event, { prompt, name } = {}) => {
+    if (!prompt?.trim()) return;
+    console.log(`[Queue] submit: "${prompt.slice(0, 80)}"`);
+    queueManager.submitToCreator(prompt, { name }).catch((err) => {
+      console.error('[Queue] submitToCreator error:', err.message);
+    });
+  });
+
   ipcMain.on('queue:rerun', (_event, { id }) => {
     console.log(`[Queue] Rerun requested: ${id}`);
     const item = queueManager.getQueue().find(i => i.id === id);
     if (!item) return;
-    queueManager.setQueueStatus(id, 'waiting');
+    queueManager.removeQueueItem(id);
+    queueManager.submitToCreator(item.prompt, { name: item.projectName }).catch((err) => {
+      console.error('[Queue] rerun submitToCreator error:', err.message);
+    });
   });
 
   ipcMain.on('queue:cancel', (_event, { id }) => {
     console.log(`[Queue] Cancel requested: ${id}`);
-    queueManager.setQueueStatus(id, 'error', { error: 'Cancelled by user' });
+    queueManager.cancelCreator(id);
   });
 
   // ─── Cron IPC handlers ────────────────────────────────────────────────────
@@ -1444,6 +1456,9 @@ app.whenReady().then(async () => {
       try { targetContents.send('ws-bridge:message', { type: 'chunk', text: token }); } catch (_) {}
     };
 
+    // Per-invocation flag: fire queue:started + queue:enqueued only once per stategraph run
+    let _queueNotifiedOnce = false;
+
     // Progress callback: forward automation progress events to ResultsWindow (and prompt window for glow)
     const progressCallback = (event) => {
       const logStr = event.type === 'all_done'
@@ -1458,9 +1473,23 @@ app.whenReady().then(async () => {
       } else if (event.type === 'all_done') {
         activeScheduleCountdown = null;
       }
-      if (resultsWindow && !resultsWindow.isDestroyed()) {
+      // command_automate queued: fire ONCE on the very first 'planning' event.
+      // Do NOT forward any 'planning' automation:progress events to resultsWindow —
+      // queue:enqueued switches it to Queue tab and planning events would fight that.
+      if (event.type === 'planning') {
+        if (!_queueNotifiedOnce) {
+          _queueNotifiedOnce = true;
+          if (promptCaptureWindow && !promptCaptureWindow.isDestroyed()) {
+            safeSend(promptCaptureWindow, 'queue:started', {});
+          }
+          if (resultsWindow && !resultsWindow.isDestroyed()) {
+            safeSend(resultsWindow, 'queue:enqueued', {});
+          }
+        }
+        // Never forward 'planning' events to resultsWindow — Queue tab owns this
+      } else if (resultsWindow && !resultsWindow.isDestroyed()) {
         safeSend(resultsWindow, 'automation:progress', event);
-      } else {
+      } else if (!resultsWindow || resultsWindow.isDestroyed()) {
         console.warn('[ProgressCallback] resultsWindow not available for event:', event.type);
       }
       // Forward all_done to promptCaptureWindow so its glow clears
@@ -1576,6 +1605,82 @@ app.whenReady().then(async () => {
           }
         }, 5 * 60 * 1000);
       });
+    };
+
+    // ── gatherContext callbacks ────────────────────────────────────────────────
+    // gatherAnswerCallback: waits for user to type/speak an answer in StandalonePromptCapture.
+    // Resolved by 'gather:answer' IPC (sent when user submits the prompt capture input
+    // while gatherContext is active).
+    let pendingGatherResolve = null;
+    const handleGatherAnswer = (_event, { answer }) => {
+      console.log(`[GatherContext] IPC received: gather:answer — "${(answer || '').slice(0, 60)}"`);
+      if (pendingGatherResolve) {
+        const resolve = pendingGatherResolve;
+        pendingGatherResolve = null;
+        resolve(answer || '');
+      } else {
+        console.warn('[GatherContext] Received gather:answer but no pending resolve — ignoring');
+      }
+    };
+    ipcMain.on('gather:answer', handleGatherAnswer);
+
+    const gatherAnswerCallback = () => {
+      return new Promise((resolve) => {
+        pendingGatherResolve = resolve;
+        console.log('[GatherContext] Waiting for user answer…');
+        // 10-minute timeout
+        setTimeout(() => {
+          if (pendingGatherResolve === resolve) {
+            console.warn('[GatherContext] Timed out waiting for answer — skipping question');
+            pendingGatherResolve = null;
+            resolve(null);
+          }
+        }, 10 * 60 * 1000);
+      });
+    };
+
+    // gatherCredentialCallback: prompts the user for a sensitive value, stores it in keytar,
+    // and resolves with { stored: true }. The actual secret never touches state.
+    const gatherCredentialCallback = (credentialKey) => {
+      return new Promise((resolve) => {
+        // Emit credential prompt to Queue tab via progressCallback
+        // The UI shows a CLI-style masked input — user submits via gather:credential IPC
+        let pendingCredResolve = resolve;
+        const handleCredSubmit = async (_event, { key, value }) => {
+          if (key !== credentialKey) return; // not our credential
+          ipcMain.off('gather:credential', handleCredSubmit);
+          if (!value) { pendingCredResolve({ stored: false }); return; }
+          try {
+            const keytar = require('keytar');
+            await keytar.setPassword('thinkdrop', credentialKey, value);
+            console.log(`[GatherContext] Stored credential: ${credentialKey}`);
+            pendingCredResolve({ stored: true });
+          } catch (e) {
+            console.error(`[GatherContext] keytar store failed for ${credentialKey}:`, e.message);
+            pendingCredResolve({ stored: false, error: e.message });
+          }
+        };
+        ipcMain.on('gather:credential', handleCredSubmit);
+        // 10-minute timeout
+        setTimeout(() => {
+          ipcMain.off('gather:credential', handleCredSubmit);
+          if (pendingCredResolve) {
+            pendingCredResolve({ stored: false });
+            pendingCredResolve = null;
+          }
+        }, 10 * 60 * 1000);
+      });
+    };
+
+    // keytarCheckCallback: checks if a credential already exists in keytar
+    const keytarCheckCallback = async (credentialKey) => {
+      try {
+        const keytar = require('keytar');
+        const value = await keytar.getPassword('thinkdrop', credentialKey);
+        return { found: !!value };
+      } catch (_) {
+        return { found: false };
+      }
     };
 
     try {
@@ -1754,6 +1859,27 @@ app.whenReady().then(async () => {
           } // end non-guide-offer branch
         }
       } else {
+        // ── queueBridge: drives Queue tab phase transitions from creatorPlanning ──
+        // Enqueues the prompt immediately so the Queue tab shows the item while the
+        // stategraph is planning. Phase callbacks (planning/building/testing/done/error)
+        // are called by creatorPlanning.js as the creator pipeline progresses.
+        let _queueItemId = null;
+        const queueBridge = {
+          enqueue: (promptText) => {
+            _queueItemId = queueManager.enqueue(promptText);
+            // Auto-switch Queue tab badge so user knows something is running
+            if (resultsWindow && !resultsWindow.isDestroyed()) {
+              safeSend(resultsWindow, 'queue:update', queueManager.getQueue());
+            }
+            return _queueItemId;
+          },
+          setPhase: (id, status, extra = {}) => {
+            const itemId = id || _queueItemId;
+            if (!itemId) return;
+            queueManager.setQueueStatus(itemId, status, extra);
+          },
+        };
+
         initialState = {
           message: prompt,
           selectedText,
@@ -1762,6 +1888,10 @@ app.whenReady().then(async () => {
           confirmInstallCallback,
           confirmGuideCallback,
           isGuideCancelled,
+          gatherAnswerCallback,
+          gatherCredentialCallback,
+          keytarCheckCallback,
+          queueBridge,
           activeBrowserSessionId: currentBrowserSessionId || null,
           activeBrowserUrl: currentBrowserUrl || null,
           responseLanguage: responseLanguage || null,

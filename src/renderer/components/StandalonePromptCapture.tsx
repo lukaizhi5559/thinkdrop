@@ -114,6 +114,11 @@ export default function StandalonePromptCapture() {
       requestWindowResize();
     };
 
+    // command_automate queued: task is now running in background — return to normal
+    const handleQueueStarted = () => {
+      setIsProcessing(false);
+    };
+
     ipcRenderer.on('prompt-capture:show', handleShow);
     ipcRenderer.on('prompt-capture:add-highlight', handleAddHighlight);
     ipcRenderer.on('automation:progress', handleProgress);
@@ -123,6 +128,7 @@ export default function StandalonePromptCapture() {
     ipcRenderer.on('skill:list-response', handleSkillListResponse);
     ipcRenderer.on('skill:delete-response', handleSkillDeleteResponse);
     ipcRenderer.on('skill:store-trigger', handleSkillStoreTrigger);
+    ipcRenderer.on('queue:started', handleQueueStarted);
 
     return () => {
       if (ipcRenderer.removeListener) {
@@ -135,6 +141,7 @@ export default function StandalonePromptCapture() {
         ipcRenderer.removeListener('skill:list-response', handleSkillListResponse);
         ipcRenderer.removeListener('skill:delete-response', handleSkillDeleteResponse);
         ipcRenderer.removeListener('skill:store-trigger', handleSkillStoreTrigger);
+        ipcRenderer.removeListener('queue:started', handleQueueStarted);
       }
     };
   }, []);

@@ -31,6 +31,7 @@ interface Step {
 
 type AutomationPhase =
   | 'idle'
+  | 'gathering'
   | 'planning'
   | 'executing'
   | 'done'
@@ -40,6 +41,28 @@ type AutomationPhase =
   | 'schedule_wait'
   | 'evaluating'
   | 'retrying_with_fix';
+
+interface GatherQuestion {
+  id: string;
+  question: string;
+  hint: string | null;
+  type: 'choice' | 'text' | 'credential';
+  options: string[] | null;
+  links: { label: string; url: string }[];
+}
+
+interface GatherCredential {
+  credentialKey: string;
+  question: string;
+  hint: string | null;
+  helpUrl: string | null;
+}
+
+interface GatherConfirm {
+  question: string;
+  credentialKey: string;
+  confirmId: string;
+}
 
 interface AskUserPrompt {
   question: string;
@@ -324,6 +347,11 @@ export default function AutomationProgress({ onHeightChange, onActiveChange }: A
   const [retryMessage, setRetryMessage] = useState<string>('');
   const [capabilityGap, setCapabilityGap] = useState<{ capability: string; suggestion: string; scaffolded: boolean } | null>(null);
   const [skillBuildConfirm, setSkillBuildConfirm] = useState<{ skillName: string; summary: string } | null>(null);
+  const [gatherQuestion, setGatherQuestion] = useState<GatherQuestion | null>(null);
+  const [gatherCredential, setGatherCredential] = useState<GatherCredential | null>(null);
+  const [gatherConfirm, setGatherConfirm] = useState<GatherConfirm | null>(null);
+  const [gatherCredentialValue, setGatherCredentialValue] = useState('');
+  const [gatherCredentialStored, setGatherCredentialStored] = useState<string | null>(null);
 
   // Notify parent to re-measure height whenever visible content changes
   useEffect(() => {
@@ -354,6 +382,11 @@ export default function AutomationProgress({ onHeightChange, onActiveChange }: A
       setScheduleCountdown(null);
       setCapabilityGap(null);
       setSkillBuildConfirm(null);
+      setGatherQuestion(null);
+      setGatherCredential(null);
+      setGatherConfirm(null);
+      setGatherCredentialValue('');
+      setGatherCredentialStored(null);
     };
     ipcRenderer.on('results-window:set-prompt', handleNewPrompt);
 
@@ -452,6 +485,73 @@ export default function AutomationProgress({ onHeightChange, onActiveChange }: A
 
         case 'schedule_tick':
           setScheduleCountdown(prev => prev ? { ...prev, remainingMs: data.remainingMs, label: data.description || prev.label } : prev);
+          break;
+
+        case 'gather_start':
+          setPhase('gathering');
+          setGatherQuestion(null);
+          setGatherCredential(null);
+          setGatherConfirm(null);
+          break;
+
+        case 'gather_question':
+          setPhase('gathering');
+          setGatherCredential(null);
+          setGatherConfirm(null);
+          setGatherQuestion({
+            id: data.id,
+            question: data.question,
+            hint: data.hint || null,
+            type: data.type || 'text',
+            options: data.options || null,
+            links: data.links || [],
+          });
+          break;
+
+        case 'gather_credential':
+          setPhase('gathering');
+          setGatherQuestion(null);
+          setGatherConfirm(null);
+          setGatherCredentialValue('');
+          setGatherCredential({
+            credentialKey: data.credentialKey,
+            question: data.question,
+            hint: data.hint || null,
+            helpUrl: data.helpUrl || null,
+          });
+          break;
+
+        case 'gather_credential_stored':
+          setGatherCredentialStored(data.credentialKey);
+          setGatherCredential(null);
+          setTimeout(() => setGatherCredentialStored(null), 3000);
+          break;
+
+        case 'gather_confirm':
+          setPhase('gathering');
+          setGatherQuestion(null);
+          setGatherCredential(null);
+          setGatherConfirm({
+            question: data.question,
+            credentialKey: data.credentialKey,
+            confirmId: data.confirmId,
+          });
+          break;
+
+        case 'gather_confirmed':
+          setGatherConfirm(null);
+          break;
+
+        case 'gather_complete':
+          setGatherQuestion(null);
+          setGatherCredential(null);
+          setGatherConfirm(null);
+          setPhase('planning');
+          setPlanMessage('Starting build…');
+          break;
+
+        case 'gather_answer_received':
+          setGatherQuestion(null);
           break;
 
         case 'skill_build_confirm':
@@ -568,6 +668,22 @@ export default function AutomationProgress({ onHeightChange, onActiveChange }: A
     ipcRenderer?.send('guide:cancel');
   };
 
+  const handleGatherOptionClick = (option: string) => {
+    setGatherQuestion(null);
+    ipcRenderer?.send('gather:answer', { answer: option });
+  };
+
+  const handleGatherCredentialSubmit = () => {
+    if (!gatherCredential || !gatherCredentialValue.trim()) return;
+    ipcRenderer?.send('gather:credential', { key: gatherCredential.credentialKey, value: gatherCredentialValue });
+    setGatherCredentialValue('');
+  };
+
+  const handleGatherConfirm = (yes: boolean) => {
+    setGatherConfirm(null);
+    ipcRenderer?.send('gather:answer', { answer: yes ? 'yes' : 'no' });
+  };
+
   if (phase === 'idle') return null;
 
   const doneCount = steps.filter(s => s.status === 'done').length;
@@ -577,6 +693,15 @@ export default function AutomationProgress({ onHeightChange, onActiveChange }: A
     <div className="space-y-3">
       {/* ── Phase header ─────────────────────────────────────────────────── */}
       <div className="flex items-center gap-2">
+        {phase === 'gathering' && (
+          <>
+            <div className="w-3.5 h-3.5 rounded-full border-2 animate-spin flex-shrink-0"
+              style={{ borderColor: '#a78bfa', borderTopColor: 'transparent' }} />
+            <span className="text-sm font-medium" style={{ color: '#a78bfa' }}>
+              Gathering requirements…
+            </span>
+          </>
+        )}
         {phase === 'planning' && (
           <>
             <div className="w-3.5 h-3.5 rounded-full border-2 animate-spin flex-shrink-0"
@@ -707,6 +832,185 @@ export default function AutomationProgress({ onHeightChange, onActiveChange }: A
               </div>
               <div style={{ color: '#a3a3a3', fontSize: '0.68rem', marginTop: 2 }}>
                 A correction rule was saved. Replanning now — no action needed.
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Gather: question card ────────────────────────────────────────── */}
+      {gatherQuestion && (
+        <div style={{ padding: '12px 14px', borderRadius: 10, backgroundColor: 'rgba(167,139,250,0.07)', border: '1px solid rgba(167,139,250,0.3)' }}>
+          <div className="flex items-start gap-2" style={{ marginBottom: 8 }}>
+            <div style={{ fontSize: '0.9rem', lineHeight: 1, marginTop: 1, flexShrink: 0 }}>🔍</div>
+            <div style={{ flex: 1 }}>
+              <div style={{ color: '#c4b5fd', fontSize: '0.76rem', fontWeight: 600, marginBottom: 4 }}>
+                {gatherQuestion.question}
+              </div>
+              {gatherQuestion.hint && (
+                <div style={{ color: '#6b7280', fontSize: '0.68rem', marginBottom: 6 }}>
+                  {gatherQuestion.hint}
+                </div>
+              )}
+              {/* Choice options */}
+              {gatherQuestion.options && gatherQuestion.options.length > 0 && (
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 6 }}>
+                  {gatherQuestion.options.map((opt) => (
+                    <button
+                      key={opt}
+                      onClick={() => handleGatherOptionClick(opt)}
+                      style={{
+                        padding: '4px 10px', borderRadius: 6, cursor: 'pointer',
+                        backgroundColor: 'rgba(167,139,250,0.12)', border: '1px solid rgba(167,139,250,0.35)',
+                        color: '#c4b5fd', fontSize: '0.69rem', fontWeight: 500,
+                      }}
+                      onMouseEnter={e => (e.currentTarget.style.backgroundColor = 'rgba(167,139,250,0.22)')}
+                      onMouseLeave={e => (e.currentTarget.style.backgroundColor = 'rgba(167,139,250,0.12)')}
+                    >
+                      {opt}
+                    </button>
+                  ))}
+                </div>
+              )}
+              {/* Helpful links */}
+              {gatherQuestion.links && gatherQuestion.links.length > 0 && (
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                  {gatherQuestion.links.map((link) => (
+                    <a
+                      key={link.url}
+                      href="#"
+                      onClick={e => { e.preventDefault(); ipcRenderer?.send('shell:open-url', link.url); }}
+                      style={{ color: '#818cf8', fontSize: '0.67rem', textDecoration: 'underline', textDecorationStyle: 'dotted' }}
+                    >
+                      ↗ {link.label}
+                    </a>
+                  ))}
+                </div>
+              )}
+              {/* For text-type questions: hint to answer in the prompt bar */}
+              {(!gatherQuestion.options || gatherQuestion.options.length === 0) && (
+                <div style={{ color: '#4b5563', fontSize: '0.67rem', marginTop: 4 }}>
+                  Type your answer in the prompt bar below ↓
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Gather: credential input card ────────────────────────────────── */}
+      {gatherCredential && (
+        <div style={{ padding: '12px 14px', borderRadius: 10, backgroundColor: 'rgba(16,185,129,0.06)', border: '1px solid rgba(16,185,129,0.25)' }}>
+          <div className="flex items-start gap-2" style={{ marginBottom: 8 }}>
+            <div style={{ fontSize: '0.9rem', lineHeight: 1, marginTop: 1, flexShrink: 0 }}>🔑</div>
+            <div style={{ flex: 1 }}>
+              <div style={{ color: '#6ee7b7', fontSize: '0.76rem', fontWeight: 600, marginBottom: 2 }}>
+                {gatherCredential.question}
+              </div>
+              {gatherCredential.hint && (
+                <div style={{ color: '#6b7280', fontSize: '0.68rem', marginBottom: 6 }}>
+                  {gatherCredential.hint}
+                </div>
+              )}
+              {gatherCredential.helpUrl && (
+                <a
+                  href="#"
+                  onClick={e => { e.preventDefault(); ipcRenderer?.send('shell:open-url', gatherCredential.helpUrl!); }}
+                  style={{ display: 'inline-block', color: '#818cf8', fontSize: '0.67rem', textDecoration: 'underline', textDecorationStyle: 'dotted', marginBottom: 8 }}
+                >
+                  ↗ Open credentials page
+                </a>
+              )}
+              {/* CLI-style masked input */}
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                <span style={{ color: '#10b981', fontSize: '0.72rem', fontFamily: 'monospace', flexShrink: 0 }}>
+                  {gatherCredential.credentialKey} =
+                </span>
+                <input
+                  type="password"
+                  value={gatherCredentialValue}
+                  onChange={e => setGatherCredentialValue(e.target.value)}
+                  onKeyDown={e => { if (e.key === 'Enter') handleGatherCredentialSubmit(); }}
+                  placeholder="Paste value here…"
+                  autoFocus
+                  style={{
+                    flex: 1, background: 'rgba(0,0,0,0.35)', border: '1px solid rgba(16,185,129,0.35)',
+                    borderRadius: 5, padding: '4px 8px', color: '#d1fae5', fontSize: '0.72rem',
+                    fontFamily: 'monospace', outline: 'none',
+                  }}
+                />
+                <button
+                  onClick={handleGatherCredentialSubmit}
+                  disabled={!gatherCredentialValue.trim()}
+                  style={{
+                    padding: '4px 10px', borderRadius: 5, cursor: gatherCredentialValue.trim() ? 'pointer' : 'not-allowed',
+                    backgroundColor: gatherCredentialValue.trim() ? 'rgba(16,185,129,0.2)' : 'rgba(16,185,129,0.05)',
+                    border: '1px solid rgba(16,185,129,0.35)',
+                    color: '#6ee7b7', fontSize: '0.69rem', fontWeight: 600,
+                    opacity: gatherCredentialValue.trim() ? 1 : 0.4,
+                  }}
+                >
+                  Store
+                </button>
+              </div>
+              <div style={{ color: '#374151', fontSize: '0.65rem', marginTop: 4 }}>
+                Stored securely in keychain — never logged or shared
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Gather: stored confirmation flash ────────────────────────────── */}
+      {gatherCredentialStored && (
+        <div style={{ padding: '8px 14px', borderRadius: 8, backgroundColor: 'rgba(34,197,94,0.08)', border: '1px solid rgba(34,197,94,0.25)', display: 'flex', alignItems: 'center', gap: 8 }}>
+          <div className="flex-shrink-0 w-3.5 h-3.5 rounded-full flex items-center justify-center"
+            style={{ backgroundColor: '#22c55e' }}>
+            <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="3"
+              strokeLinecap="round" strokeLinejoin="round">
+              <polyline points="20 6 9 17 4 12" />
+            </svg>
+          </div>
+          <span style={{ color: '#86efac', fontSize: '0.72rem', fontWeight: 500 }}>
+            <code style={{ fontFamily: 'monospace', color: '#4ade80' }}>{gatherCredentialStored}</code> stored in keychain
+          </span>
+        </div>
+      )}
+
+      {/* ── Gather: confirm existing credential card ──────────────────────── */}
+      {gatherConfirm && (
+        <div style={{ padding: '12px 14px', borderRadius: 10, backgroundColor: 'rgba(99,102,241,0.07)', border: '1px solid rgba(99,102,241,0.3)' }}>
+          <div className="flex items-start gap-2" style={{ marginBottom: 8 }}>
+            <div style={{ fontSize: '0.9rem', lineHeight: 1, marginTop: 1, flexShrink: 0 }}>🗝️</div>
+            <div style={{ flex: 1 }}>
+              <div style={{ color: '#a5b4fc', fontSize: '0.76rem', fontWeight: 600, marginBottom: 4 }}>
+                {gatherConfirm.question}
+              </div>
+              <div style={{ display: 'flex', gap: 6 }}>
+                <button
+                  onClick={() => handleGatherConfirm(true)}
+                  style={{
+                    padding: '4px 12px', borderRadius: 6, cursor: 'pointer',
+                    backgroundColor: 'rgba(99,102,241,0.15)', border: '1px solid rgba(99,102,241,0.4)',
+                    color: '#c7d2fe', fontSize: '0.69rem', fontWeight: 600,
+                  }}
+                  onMouseEnter={e => (e.currentTarget.style.backgroundColor = 'rgba(99,102,241,0.28)')}
+                  onMouseLeave={e => (e.currentTarget.style.backgroundColor = 'rgba(99,102,241,0.15)')}
+                >
+                  Yes, use them
+                </button>
+                <button
+                  onClick={() => handleGatherConfirm(false)}
+                  style={{
+                    padding: '4px 12px', borderRadius: 6, cursor: 'pointer',
+                    backgroundColor: 'rgba(107,114,128,0.1)', border: '1px solid rgba(107,114,128,0.3)',
+                    color: '#9ca3af', fontSize: '0.69rem', fontWeight: 500,
+                  }}
+                  onMouseEnter={e => (e.currentTarget.style.backgroundColor = 'rgba(107,114,128,0.2)')}
+                  onMouseLeave={e => (e.currentTarget.style.backgroundColor = 'rgba(107,114,128,0.1)')}
+                >
+                  Enter new ones
+                </button>
               </div>
             </div>
           </div>

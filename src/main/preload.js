@@ -1,4 +1,5 @@
 const { contextBridge, ipcRenderer } = require('electron');
+console.log('[Preload] Loaded — queue:started + queue:enqueued channels active');
 
 contextBridge.exposeInMainWorld('electron', {
   ipcRenderer: {
@@ -38,6 +39,7 @@ contextBridge.exposeInMainWorld('electron', {
         'ptt:input-focus',
         'ptt:input-blur',
         'ptt:keyup',
+        'queue:submit',
         'queue:rerun',
         'queue:cancel',
         'cron:toggle',
@@ -80,6 +82,8 @@ contextBridge.exposeInMainWorld('electron', {
         'voice:ptt-stop',
         'ptt:transcript',
         'queue:update',
+        'queue:started',
+        'queue:enqueued',
         'cron:update',
       ];
       if (validChannels.includes(channel)) {
@@ -118,6 +122,8 @@ contextBridge.exposeInMainWorld('electron', {
         'voice:ptt-stop',
         'ptt:transcript',
         'queue:update',
+        'queue:started',
+        'queue:enqueued',
         'cron:update',
       ];
       if (validChannels.includes(channel)) {
@@ -156,6 +162,8 @@ contextBridge.exposeInMainWorld('electron', {
         'voice:ptt-stop',
         'ptt:transcript',
         'queue:update',
+        'queue:started',
+        'queue:enqueued',
         'cron:update',
       ];
       if (validChannels.includes(channel)) {

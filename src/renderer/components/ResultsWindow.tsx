@@ -22,6 +22,8 @@ export default function ResultsWindow() {
   const [isAutomationMode, setIsAutomationMode] = useState(false);
   // Ref to prevent AutomationProgress from re-enabling automation mode once streaming starts
   const streamingStartedRef = useRef(false);
+  // Set when queue:enqueued fires — suppresses automation:progress so Results tab stays clean
+  const isQueuedTaskRef = useRef(false);
   
   const [isGlowActive, setIsGlowActive] = useState(false);
   const glowOffTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -35,8 +37,23 @@ export default function ResultsWindow() {
 
   // ── Tab state ────────────────────────────────────────────────────────────────
   const [activeTab, setActiveTab] = useState<TabId>('results');
+  const activeTabRef = useRef<TabId>('results');
   const [queueItems, setQueueItems] = useState<QueueItem[]>([]);
   const [cronItems, setCronItems] = useState<CronItem[]>([]);
+  // Unread badge: set when activity fires in a non-active tab, cleared on tab switch
+  const [unreadTabs, setUnreadTabs] = useState<Set<TabId>>(new Set());
+
+  const handleTabSelect = (tab: TabId) => {
+    activeTabRef.current = tab;
+    setActiveTab(tab);
+    setUnreadTabs(prev => { const next = new Set(prev); next.delete(tab); return next; });
+  };
+
+  const markUnread = (tab: TabId) => {
+    if (activeTabRef.current !== tab) {
+      setUnreadTabs(prev => new Set(prev).add(tab));
+    }
+  };
 
   // Bridge listener status — shown as a persistent footer when watching, swaps to executing during auto-tasks
   const [bridgeStatus, setBridgeStatus] = useState<{
@@ -187,6 +204,7 @@ export default function ResultsWindow() {
       // Reset all state for new prompt
       streamingStartedRef.current = false;
       hasDroppedRef.current = false;
+      isQueuedTaskRef.current = false;
       setInstallOutput([]);
       setPromptText(text);
       setStreamingResponse('');
@@ -206,6 +224,13 @@ export default function ResultsWindow() {
     };
 
     const handleAutomationProgress = (_event: any, data: any) => {
+      // Suppress automation progress display for queued tasks — Queue tab handles it
+      if (isQueuedTaskRef.current) {
+        if (data?.type === 'all_done') {
+          isQueuedTaskRef.current = false;
+        }
+        return;
+      }
       if (data?.type === 'planning') {
         // Automation started — clear the thinking spinner (AutomationProgress takes over)
         setIsThinking(false);
@@ -249,6 +274,7 @@ export default function ResultsWindow() {
       } else if (data?.type === 'all_done') {
         // Automation finished — keep isAutomationMode true so AutomationProgress stays visible
         // and 'Waiting for response...' placeholder doesn't flash. Resets on next planning event.
+        markUnread('results');
         setIsThinking(false);
         setIsStreaming(false);
         setInstallPrompt(null);
@@ -293,11 +319,36 @@ export default function ResultsWindow() {
     };
 
     const handleQueueUpdate = (_event: any, items: QueueItem[]) => {
-      setQueueItems(items);
+      setQueueItems(prev => {
+        // Mark queue tab unread if a status changed while it's not active
+        const prevMap = new Map(prev.map(i => [i.id, i.status]));
+        const hasNew = items.some(i => prevMap.get(i.id) !== i.status || !prevMap.has(i.id));
+        if (hasNew) markUnread('queue');
+        return items;
+      });
     };
 
     const handleCronUpdate = (_event: any, items: CronItem[]) => {
-      setCronItems(items);
+      setCronItems(prev => {
+        const prevMap = new Map(prev.map(i => [i.id, i.status]));
+        const hasNew = items.some(i => prevMap.get(i.id) !== i.status || !prevMap.has(i.id));
+        if (hasNew) markUnread('cron');
+        return items;
+      });
+    };
+
+    // command_automate was queued — stop thinking spinner, switch to Queue tab so user
+    // sees the live progress there and can keep using Results for other prompts.
+    const handleQueueEnqueued = () => {
+      isQueuedTaskRef.current = true;
+      setIsThinking(false);
+      setIsStreaming(false);
+      setIsAutomationMode(false);
+      setPromptText('');
+      setStreamingResponse('');
+      if (glowOffTimerRef.current) clearTimeout(glowOffTimerRef.current);
+      setIsGlowActive(false);
+      handleTabSelect('queue');
     };
 
     const handleBridgeStatus = (_event: any, data: any) => {
@@ -326,6 +377,7 @@ export default function ResultsWindow() {
     ipcRenderer.on('skill:build-done', handleSkillBuildDone);
     ipcRenderer.on('queue:update', handleQueueUpdate);
     ipcRenderer.on('cron:update', handleCronUpdate);
+    ipcRenderer.on('queue:enqueued', handleQueueEnqueued);
   
     return () => {
       if (ipcRenderer.removeListener) {
@@ -339,6 +391,7 @@ export default function ResultsWindow() {
         ipcRenderer.removeListener('skill:build-done', handleSkillBuildDone);
         ipcRenderer.removeListener('queue:update', handleQueueUpdate);
         ipcRenderer.removeListener('cron:update', handleCronUpdate);
+        ipcRenderer.removeListener('queue:enqueued', handleQueueEnqueued);
       }
     };
   }, []);
@@ -836,37 +889,41 @@ export default function ResultsWindow() {
       {/* ── Tab bar ─────────────────────────────────────────────────────────── */}
       <TabBar
         active={activeTab}
-        onSelect={setActiveTab}
+        onSelect={handleTabSelect}
         queueCount={queueItems.filter(i => i.status !== 'done').length}
         cronCount={cronItems.filter(i => i.status === 'active').length}
+        unreadTabs={unreadTabs}
       />
 
-      {/* ── Queue tab ───────────────────────────────────────────────────────── */}
-      {activeTab === 'queue' && (
-        <div className="flex-1 overflow-y-auto overflow-x-hidden p-4">
-          <QueueTab
-            items={queueItems}
-            onRerun={(item) => ipcRenderer?.send('queue:rerun', { id: item.id })}
-            onCancel={(item) => ipcRenderer?.send('queue:cancel', { id: item.id })}
-          />
-        </div>
-      )}
+      {/* ── Queue tab — always mounted, hidden when inactive ────────────────── */}
+      <div
+        className="overflow-y-auto overflow-x-hidden p-4"
+        style={{ display: activeTab === 'queue' ? 'flex' : 'none', flex: 1, flexDirection: 'column' }}
+      >
+        <QueueTab
+          items={queueItems}
+          onRerun={(item) => ipcRenderer?.send('queue:rerun', { id: item.id })}
+          onCancel={(item) => ipcRenderer?.send('queue:cancel', { id: item.id })}
+        />
+      </div>
 
-      {/* ── Cron tab ────────────────────────────────────────────────────────── */}
-      {activeTab === 'cron' && (
-        <div className="flex-1 overflow-y-auto overflow-x-hidden p-4">
-          <CronTab
-            items={cronItems}
-            onToggle={(item) => ipcRenderer?.send('cron:toggle', { id: item.id })}
-            onDelete={(item) => ipcRenderer?.send('cron:delete', { id: item.id })}
-            onRerun={(item) => ipcRenderer?.send('cron:run-now', { id: item.id })}
-          />
-        </div>
-      )}
+      {/* ── Cron tab — always mounted, hidden when inactive ─────────────────── */}
+      <div
+        className="overflow-y-auto overflow-x-hidden p-4"
+        style={{ display: activeTab === 'cron' ? 'flex' : 'none', flex: 1, flexDirection: 'column' }}
+      >
+        <CronTab
+          items={cronItems}
+          onToggle={(item) => ipcRenderer?.send('cron:toggle', { id: item.id })}
+          onDelete={(item) => ipcRenderer?.send('cron:delete', { id: item.id })}
+          onRerun={(item) => ipcRenderer?.send('cron:run-now', { id: item.id })}
+        />
+      </div>
 
-      {/* ── Results tab ─────────────────────────────────────────────────────── */}
-      {activeTab === 'results' && (
-      <div ref={scrollContainerRef} className="flex-1 overflow-y-auto overflow-x-hidden p-4">
+      {/* ── Results tab — always mounted, hidden when inactive ──────────────── */}
+      <div ref={scrollContainerRef} className="flex-1 overflow-y-auto overflow-x-hidden p-4"
+        style={{ display: activeTab === 'results' ? 'flex' : 'none', flexDirection: 'column' }}
+      >
         <div ref={contentRef}>
           {/* Pending schedule notification — shown when app opens with a launchd task registered */}
           {schedulePending && (
@@ -959,7 +1016,6 @@ export default function ResultsWindow() {
           <div ref={scrollBottomRef} />
         </div>
       </div>
-      )}
       </div>
     </div>
   );
