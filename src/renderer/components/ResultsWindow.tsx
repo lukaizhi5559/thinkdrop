@@ -3,8 +3,8 @@ import { RichContentRenderer } from './rich-content';
 import AutomationProgress from './AutomationProgress';
 import SkillBuildProgress, { SkillBuildState, BuildPhase } from './SkillBuildProgress';
 import { playDropSound } from '../utils/thinkDropSound';
-import { TabBar, QueueTab, CronTab } from './TabComponents';
-import type { TabId, QueueItem, CronItem } from './TabComponents';
+import { TabBar, QueueTab, CronTab, SkillsTab } from './TabComponents';
+import type { TabId, QueueItem, CronItem, SkillItem } from './TabComponents';
 
 const ipcRenderer = (window as any).electron?.ipcRenderer;
 
@@ -40,6 +40,7 @@ export default function ResultsWindow() {
   const activeTabRef = useRef<TabId>('results');
   const [queueItems, setQueueItems] = useState<QueueItem[]>([]);
   const [cronItems, setCronItems] = useState<CronItem[]>([]);
+  const [skillItems, setSkillItems] = useState<SkillItem[]>([]);
   // Unread badge: set when activity fires in a non-active tab, cleared on tab switch
   const [unreadTabs, setUnreadTabs] = useState<Set<TabId>>(new Set());
 
@@ -47,6 +48,12 @@ export default function ResultsWindow() {
     activeTabRef.current = tab;
     setActiveTab(tab);
     setUnreadTabs(prev => { const next = new Set(prev); next.delete(tab); return next; });
+    if (tab === 'skills') {
+      ipcRenderer?.send('skills:list');
+    }
+    if (tab === 'cron') {
+      ipcRenderer?.send('cron:list');
+    }
   };
 
   const markUnread = (tab: TabId) => {
@@ -367,6 +374,11 @@ export default function ResultsWindow() {
       if (ok) setTimeout(() => setIsGlowActive(false), 1000);
     };
 
+    // skills:update — sent by main.js in response to skills:list or after a new skill is installed
+    const handleSkillsUpdate = (_event: any, items: SkillItem[]) => {
+      setSkillItems(items || []);
+    };
+
     ipcRenderer.on('results-window:display-error', handleDisplayError);
     ipcRenderer.on('results-window:set-prompt', handlePromptText);
     ipcRenderer.on('results-window:show', handleWindowShow);
@@ -378,6 +390,7 @@ export default function ResultsWindow() {
     ipcRenderer.on('queue:update', handleQueueUpdate);
     ipcRenderer.on('cron:update', handleCronUpdate);
     ipcRenderer.on('queue:enqueued', handleQueueEnqueued);
+    ipcRenderer.on('skills:update', handleSkillsUpdate);
   
     return () => {
       if (ipcRenderer.removeListener) {
@@ -392,6 +405,7 @@ export default function ResultsWindow() {
         ipcRenderer.removeListener('queue:update', handleQueueUpdate);
         ipcRenderer.removeListener('cron:update', handleCronUpdate);
         ipcRenderer.removeListener('queue:enqueued', handleQueueEnqueued);
+        ipcRenderer.removeListener('skills:update', handleSkillsUpdate);
       }
     };
   }, []);
@@ -892,6 +906,7 @@ export default function ResultsWindow() {
         onSelect={handleTabSelect}
         queueCount={queueItems.filter(i => i.status !== 'done').length}
         cronCount={cronItems.filter(i => i.status === 'active').length}
+        skillsCount={skillItems.length}
         unreadTabs={unreadTabs}
       />
 
@@ -917,6 +932,22 @@ export default function ResultsWindow() {
           onToggle={(item) => ipcRenderer?.send('cron:toggle', { id: item.id })}
           onDelete={(item) => ipcRenderer?.send('cron:delete', { id: item.id })}
           onRerun={(item) => ipcRenderer?.send('cron:run-now', { id: item.id })}
+        />
+      </div>
+
+      {/* ── Skills tab — always mounted, hidden when inactive ────────────────── */}
+      <div
+        className="overflow-y-auto overflow-x-hidden p-4"
+        style={{ display: activeTab === 'skills' ? 'flex' : 'none', flex: 1, flexDirection: 'column' }}
+      >
+        <SkillsTab
+          items={skillItems}
+          onSaveSecret={(skillName, key, value) =>
+            ipcRenderer?.send('skills:save-secret', { skillName, key, value })
+          }
+          onOpenCode={(filePath) =>
+            ipcRenderer?.send('skills:open-code', { filePath })
+          }
         />
       </div>
 

@@ -502,7 +502,7 @@ export default function AutomationProgress({ onHeightChange, onActiveChange }: A
             id: data.id,
             question: data.question,
             hint: data.hint || null,
-            type: data.type || 'text',
+            type: data.inputType || data.type || 'text',
             options: data.options || null,
             links: data.links || [],
           });

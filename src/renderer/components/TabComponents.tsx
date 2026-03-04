@@ -2,7 +2,7 @@ import React from 'react';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
-export type TabId = 'results' | 'queue' | 'cron';
+export type TabId = 'results' | 'queue' | 'cron' | 'skills';
 
 export type QueueStatus = 'waiting' | 'planning' | 'building' | 'testing' | 'skill_building' | 'done' | 'error';
 export interface ReviewRound {
@@ -23,6 +23,21 @@ export interface QueueItem {
   rounds?: ReviewRound[];
   skillName?: string;
   skillSecrets?: string[];
+}
+
+export interface SkillSecret {
+  key: string;
+  stored: boolean; // whether keytar has a value
+}
+export type SkillStatus = 'ok' | 'missing_secrets' | 'error';
+export interface SkillItem {
+  name: string;         // dot-notation: gmail.daily.summary
+  filePath: string;     // ~/.thinkdrop/skills/<name>/index.cjs
+  trigger: string;
+  schedule: string;
+  secrets: SkillSecret[];
+  status: SkillStatus;
+  projectId?: string;
 }
 
 export type CronStatus = 'active' | 'idle' | 'paused' | 'error';
@@ -71,19 +86,30 @@ export function CronIcon({ active }: { active: boolean }) {
   );
 }
 
+export function SkillsIcon({ active }: { active: boolean }) {
+  return (
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="none"
+      stroke={active ? '#f97316' : '#6b7280'} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/>
+    </svg>
+  );
+}
+
 // ── Tab bar ───────────────────────────────────────────────────────────────────
 
-export function TabBar({ active, onSelect, queueCount, cronCount, unreadTabs }: {
+export function TabBar({ active, onSelect, queueCount, cronCount, skillsCount, unreadTabs }: {
   active: TabId;
   onSelect: (tab: TabId) => void;
   queueCount: number;
   cronCount: number;
+  skillsCount?: number;
   unreadTabs?: Set<TabId>;
 }) {
   const tabs: { id: TabId; label: string; icon: React.ReactNode; badge?: number; activeColor: string }[] = [
     { id: 'results', label: 'Results', icon: <ResultsIcon active={active === 'results'} />, activeColor: '#60a5fa' },
     { id: 'queue',   label: 'Queue',   icon: <QueueIcon   active={active === 'queue'}   />, badge: queueCount, activeColor: '#a78bfa' },
     { id: 'cron',    label: 'Cron',    icon: <CronIcon    active={active === 'cron'}    />, badge: cronCount,  activeColor: '#34d399' },
+    { id: 'skills',  label: 'Skills',  icon: <SkillsIcon  active={active === 'skills'}  />, activeColor: '#f97316' },
   ];
 
   return (
@@ -453,6 +479,192 @@ export function CronTab({ items, onToggle, onDelete, onRerun }: {
     <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
       {items.map(item => (
         <CronItemCard key={item.id} item={item} onToggle={onToggle} onDelete={onDelete} onRerun={onRerun} />
+      ))}
+    </div>
+  );
+}
+
+// ── Skills tab ────────────────────────────────────────────────────────────────
+
+const SKILL_STATUS_CONFIG: Record<SkillStatus, { label: string; color: string; bg: string; border: string; dot: string }> = {
+  ok:              { label: 'Ready',           color: '#4ade80', bg: 'rgba(74,222,128,0.04)',  border: 'rgba(74,222,128,0.16)',  dot: '#22c55e' },
+  missing_secrets: { label: 'Missing secrets', color: '#f59e0b', bg: 'rgba(245,158,11,0.04)',  border: 'rgba(245,158,11,0.18)',  dot: '#f59e0b' },
+  error:           { label: 'Error',           color: '#f87171', bg: 'rgba(248,113,113,0.04)', border: 'rgba(248,113,113,0.18)', dot: '#ef4444' },
+};
+
+function SkillItemCard({ item, onSaveSecret, onOpenCode }: {
+  item: SkillItem;
+  onSaveSecret: (skillName: string, key: string, value: string) => void;
+  onOpenCode: (filePath: string) => void;
+}) {
+  const [expanded, setExpanded] = React.useState(false);
+  const [secretValues, setSecretValues] = React.useState<Record<string, string>>({});
+  const [savedKeys, setSavedKeys] = React.useState<Set<string>>(new Set());
+  const cfg = SKILL_STATUS_CONFIG[item.status];
+  const missingCount = item.secrets.filter(s => !s.stored).length;
+
+  const handleSave = (key: string) => {
+    const val = (secretValues[key] || '').trim();
+    if (!val) return;
+    onSaveSecret(item.name, key, val);
+    setSavedKeys(prev => new Set(prev).add(key));
+    setSecretValues(prev => ({ ...prev, [key]: '' }));
+  };
+
+  return (
+    <div style={{ borderRadius: 9, overflow: 'hidden', backgroundColor: cfg.bg, border: `1px solid ${cfg.border}`, transition: 'all 0.15s' }}>
+
+      {/* ── Header: click anywhere to toggle secrets form ── */}
+      <div style={{ padding: '10px 12px', cursor: 'pointer', userSelect: 'none' }} onClick={() => setExpanded(e => !e)}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 9 }}>
+
+          {/* Status dot */}
+          <div style={{
+            width: 9, height: 9, borderRadius: '50%', flexShrink: 0,
+            backgroundColor: cfg.dot,
+            boxShadow: item.status === 'ok' ? `0 0 5px ${cfg.dot}` : 'none',
+          }} />
+
+          {/* Name + status badge */}
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+              <span style={{ fontSize: '0.72rem', color: '#e5e7eb', fontWeight: 600, fontFamily: 'ui-monospace,monospace', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                {item.name}
+              </span>
+              <span style={{ fontSize: '0.58rem', color: cfg.color, background: 'rgba(255,255,255,0.05)', padding: '1px 5px', borderRadius: 3, border: `1px solid ${cfg.border}`, flexShrink: 0 }}>
+                {cfg.label}
+              </span>
+              {missingCount > 0 && (
+                <span style={{ fontSize: '0.58rem', color: '#f59e0b', background: 'rgba(245,158,11,0.08)', padding: '1px 5px', borderRadius: 3, border: '1px solid rgba(245,158,11,0.2)', flexShrink: 0 }}>
+                  {missingCount} secret{missingCount > 1 ? 's' : ''} missing
+                </span>
+              )}
+            </div>
+            {item.trigger && (
+              <div style={{ fontSize: '0.6rem', color: '#6b7280', marginTop: 2, fontStyle: 'italic', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                "{item.trigger}"
+              </div>
+            )}
+          </div>
+
+          {/* Open code button */}
+          <button
+            onClick={(e) => { e.stopPropagation(); onOpenCode(item.filePath); }}
+            title="Open skill code"
+            style={{ padding: '4px 7px', borderRadius: 5, cursor: 'pointer', flexShrink: 0, background: 'rgba(96,165,250,0.08)', border: '1px solid rgba(96,165,250,0.2)', color: '#60a5fa', display: 'flex', alignItems: 'center' }}
+          >
+            <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/>
+            </svg>
+          </button>
+
+          {/* Chevron */}
+          <span style={{ color: '#4b5563', fontSize: '0.55rem', flexShrink: 0 }}>{expanded ? '▲' : '▼'}</span>
+        </div>
+      </div>
+
+      {/* ── Expanded: secrets/env form ── */}
+      {expanded && (
+        <div style={{ borderTop: '1px solid rgba(255,255,255,0.06)', padding: '10px 12px 12px', display: 'flex', flexDirection: 'column', gap: 8 }}>
+          <div style={{ fontSize: '0.6rem', color: '#6b7280', marginBottom: 2 }}>
+            Secrets stored securely in keytar — never saved to disk as plain text.
+          </div>
+
+          {item.secrets.length === 0 ? (
+            <div style={{ fontSize: '0.65rem', color: '#4b5563', fontStyle: 'italic' }}>No secrets required.</div>
+          ) : (
+            item.secrets.map(secret => {
+              const isSaved = savedKeys.has(secret.key);
+              return (
+                <div key={secret.key} style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                  {/* Key label + stored badge */}
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                    <span style={{ fontSize: '0.65rem', color: '#d1d5db', fontFamily: 'ui-monospace,monospace', fontWeight: 600 }}>
+                      {secret.key}
+                    </span>
+                    {secret.stored && !isSaved && (
+                      <span style={{ fontSize: '0.55rem', color: '#4ade80', background: 'rgba(74,222,128,0.1)', padding: '1px 5px', borderRadius: 3, border: '1px solid rgba(74,222,128,0.2)' }}>
+                        ✓ stored
+                      </span>
+                    )}
+                    {isSaved && (
+                      <span style={{ fontSize: '0.55rem', color: '#4ade80', background: 'rgba(74,222,128,0.1)', padding: '1px 5px', borderRadius: 3, border: '1px solid rgba(74,222,128,0.2)' }}>
+                        ✓ saved
+                      </span>
+                    )}
+                    {!secret.stored && !isSaved && (
+                      <span style={{ fontSize: '0.55rem', color: '#f59e0b', background: 'rgba(245,158,11,0.08)', padding: '1px 5px', borderRadius: 3, border: '1px solid rgba(245,158,11,0.2)' }}>
+                        not set
+                      </span>
+                    )}
+                  </div>
+                  {/* Value input + Save */}
+                  <div style={{ display: 'flex', gap: 6 }}>
+                    <input
+                      type="password"
+                      placeholder={secret.stored ? '••••••••  (update)' : 'Enter value…'}
+                      value={secretValues[secret.key] || ''}
+                      onChange={e => setSecretValues(prev => ({ ...prev, [secret.key]: e.target.value }))}
+                      onKeyDown={e => { if (e.key === 'Enter') handleSave(secret.key); }}
+                      onClick={e => e.stopPropagation()}
+                      style={{
+                        flex: 1, padding: '5px 8px', borderRadius: 5, fontSize: '0.65rem',
+                        background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.1)',
+                        color: '#e5e7eb', outline: 'none', fontFamily: 'ui-monospace,monospace',
+                      }}
+                    />
+                    <button
+                      onClick={(e) => { e.stopPropagation(); handleSave(secret.key); }}
+                      disabled={!(secretValues[secret.key] || '').trim()}
+                      style={{
+                        padding: '5px 10px', borderRadius: 5, fontSize: '0.62rem', cursor: 'pointer', fontWeight: 600, flexShrink: 0,
+                        background: (secretValues[secret.key] || '').trim() ? 'rgba(249,115,22,0.15)' : 'rgba(255,255,255,0.04)',
+                        border: (secretValues[secret.key] || '').trim() ? '1px solid rgba(249,115,22,0.35)' : '1px solid rgba(255,255,255,0.08)',
+                        color: (secretValues[secret.key] || '').trim() ? '#fb923c' : '#4b5563',
+                      }}
+                    >
+                      Save
+                    </button>
+                  </div>
+                </div>
+              );
+            })
+          )}
+
+          {/* Schedule line */}
+          {item.schedule && item.schedule !== 'on_demand' && (
+            <div style={{ marginTop: 4, display: 'flex', alignItems: 'center', gap: 5, fontSize: '0.6rem', color: '#6b7280' }}>
+              <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="#34d399" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>
+              </svg>
+              <span style={{ fontFamily: 'ui-monospace,monospace', color: '#34d399' }}>{item.schedule}</span>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+export function SkillsTab({ items, onSaveSecret, onOpenCode }: {
+  items: SkillItem[];
+  onSaveSecret: (skillName: string, key: string, value: string) => void;
+  onOpenCode: (filePath: string) => void;
+}) {
+  if (items.length === 0) {
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '36px 16px', gap: 10, opacity: 0.5 }}>
+        <SkillsIcon active={false} />
+        <span style={{ color: '#6b7280', fontSize: '0.72rem', textAlign: 'center', lineHeight: 1.6 }}>
+          No skills installed yet.<br/>Built skills appear here with their env and secrets.
+        </span>
+      </div>
+    );
+  }
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+      {items.map(item => (
+        <SkillItemCard key={item.name} item={item} onSaveSecret={onSaveSecret} onOpenCode={onOpenCode} />
       ))}
     </div>
   );

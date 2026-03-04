@@ -30,6 +30,9 @@ export default function StandalonePromptCapture() {
   const pttAudioChunksRef = useRef<Blob[]>([]);
   const pttStreamRef = useRef<MediaStream | null>(null);
 
+  // gatherContext intercept — when true, submit routes to gather:answer instead of stategraph:process
+  const [gatherPending, setGatherPending] = useState(false);
+
   // Skills Manager state
   const [showSkillsPanel, setShowSkillsPanel] = useState(false);
   const [skillsTab, setSkillsTab] = useState<'installed' | 'store' | 'shortcuts'>('installed');
@@ -114,6 +117,11 @@ export default function StandalonePromptCapture() {
       requestWindowResize();
     };
 
+    // gatherContext active: route submit to gather:answer instead of stategraph:process
+    const handleGatherPending = (_event: any, { active }: { active: boolean }) => {
+      setGatherPending(active);
+    };
+
     // command_automate queued: task is now running in background — return to normal
     const handleQueueStarted = () => {
       setIsProcessing(false);
@@ -129,6 +137,7 @@ export default function StandalonePromptCapture() {
     ipcRenderer.on('skill:delete-response', handleSkillDeleteResponse);
     ipcRenderer.on('skill:store-trigger', handleSkillStoreTrigger);
     ipcRenderer.on('queue:started', handleQueueStarted);
+    ipcRenderer.on('gather:pending', handleGatherPending);
 
     return () => {
       if (ipcRenderer.removeListener) {
@@ -142,6 +151,7 @@ export default function StandalonePromptCapture() {
         ipcRenderer.removeListener('skill:delete-response', handleSkillDeleteResponse);
         ipcRenderer.removeListener('skill:store-trigger', handleSkillStoreTrigger);
         ipcRenderer.removeListener('queue:started', handleQueueStarted);
+        ipcRenderer.removeListener('gather:pending', handleGatherPending);
       }
     };
   }, []);
@@ -395,14 +405,21 @@ export default function StandalonePromptCapture() {
     console.log('🔍 [STANDALONE_PROMPT] ipcRenderer available?', !!ipcRenderer);
     
     if (ipcRenderer) {
-      // Route through StateGraph pipeline (intent → MCP services → LLM answer)
-      console.log('🧠 [STANDALONE_PROMPT] Sending to StateGraph pipeline');
-      ipcRenderer.send('stategraph:process', {
-        prompt: finalPrompt.trim(),
-        selectedText: highlights.join('\n'),
-      });
-      setIsProcessing(true);
-      console.log('✅ [STANDALONE_PROMPT] Message sent to StateGraph');
+      if (gatherPending) {
+        // gatherContext is waiting for an answer — route directly to gather:answer
+        console.log('📋 [STANDALONE_PROMPT] gather:pending active — routing to gather:answer');
+        ipcRenderer.send('gather:answer', { answer: finalPrompt.trim() });
+        setGatherPending(false);
+      } else {
+        // Route through StateGraph pipeline (intent → MCP services → LLM answer)
+        console.log('🧠 [STANDALONE_PROMPT] Sending to StateGraph pipeline');
+        ipcRenderer.send('stategraph:process', {
+          prompt: finalPrompt.trim(),
+          selectedText: highlights.join('\n'),
+        });
+        setIsProcessing(true);
+        console.log('✅ [STANDALONE_PROMPT] Message sent to StateGraph');
+      }
     } else {
       console.error('❌ [STANDALONE_PROMPT] ipcRenderer is not available!');
     }
@@ -579,9 +596,14 @@ export default function StandalonePromptCapture() {
           animation: prompt-border-sweep 3.2s linear infinite, think-breathe 1.6s ease-in-out infinite;
           opacity: 1;
         }
+        .prompt-glow-ring.gathering {
+          background: conic-gradient(from var(--prompt-angle), transparent 60%, #f59e0b 78%, #fbbf24 86%, #f59e0b 93%, transparent);
+          animation: prompt-border-sweep 1.8s linear infinite;
+          opacity: 1;
+        }
       `}</style>
       <div style={{ position: 'relative' }}>
-        <div className={`prompt-glow-ring${isPTTActive ? ' ptt' : isProcessing ? ' thinking' : ''}`} />
+        <div className={`prompt-glow-ring${isPTTActive ? ' ptt' : gatherPending ? ' gathering' : isProcessing ? ' thinking' : ''}`} />
         <div
           ref={containerRef}
           className="rounded-xl shadow-2xl backdrop-blur-md"
@@ -590,8 +612,8 @@ export default function StandalonePromptCapture() {
           onDragLeave={handleDragLeave}
           style={{
             backgroundColor: 'rgba(23, 23, 23, 0.95)',
-            border: isDragOver ? '1px solid rgba(59, 130, 246, 0.6)' : '1px solid rgba(255, 255, 255, 0.08)',
-            boxShadow: isDragOver ? '0 0 0 2px rgba(59, 130, 246, 0.2)' : undefined,
+            border: isDragOver ? '1px solid rgba(59, 130, 246, 0.6)' : gatherPending ? '1px solid rgba(245, 158, 11, 0.4)' : '1px solid rgba(255, 255, 255, 0.08)',
+            boxShadow: isDragOver ? '0 0 0 2px rgba(59, 130, 246, 0.2)' : gatherPending ? '0 0 0 2px rgba(245, 158, 11, 0.1)' : undefined,
             minWidth: '400px',
             maxWidth: '600px',
             maxHeight: '600px',
@@ -731,7 +753,7 @@ export default function StandalonePromptCapture() {
                 onKeyDown={handleKeyDown}
                 onFocus={() => ipcRenderer?.send('ptt:input-focus')}
                 onBlur={() => ipcRenderer?.send('ptt:input-blur')}
-                placeholder="Ask anything"
+                placeholder={gatherPending ? 'Type your answer here and press Enter…' : 'Ask anything'}
                 className="text-sm whitespace-pre-wrap break-words resize-none focus:outline-none"
                 style={{
                   color: '#e5e7eb',

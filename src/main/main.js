@@ -206,6 +206,33 @@ function startOverlayControlServer() {
       return;
     }
 
+    // ── POST /skill.schedule — skillCreator registers a cron entry for a scheduled skill
+    if (req.url === '/skill.schedule') {
+      let body = '';
+      req.on('data', chunk => { body += chunk; });
+      req.on('end', () => {
+        try {
+          const { skillName, schedule, trigger } = JSON.parse(body || '{}');
+          if (skillName && schedule && schedule !== 'on_demand') {
+            const cronId = `skill_${skillName.replace(/\./g, '_')}`;
+            if (!queueManager.getCron().find(i => i.id === cronId)) {
+              queueManager.registerCron({
+                id: cronId,
+                label: trigger || skillName,
+                schedule,
+                plistLabel: `com.thinkdrop.skill.${skillName}`,
+              });
+              console.log(`[Skills] Registered cron via /skill.schedule: ${skillName} @ ${schedule}`);
+            }
+          }
+          res.writeHead(200).end(JSON.stringify({ ok: true }));
+        } catch (err) {
+          res.writeHead(400).end(JSON.stringify({ error: err.message }));
+        }
+      });
+      return;
+    }
+
     const hide = req.url === '/overlay/hide';
     const show = req.url === '/overlay/show';
 
@@ -272,6 +299,10 @@ let llmBackend = null;
 let currentSessionId = null; // Persists across prompts for conversation continuity
 let currentBrowserSessionId = null; // Persists active Playwright session across prompts
 let currentBrowserUrl = null;        // Last known URL in the active Playwright session
+
+// Module-level gather:answer resolver — set per-question, cleared on answer.
+// Registered ONCE (not per stategraph:process run) to avoid listener accumulation.
+let pendingGatherResolve = null;
 
 // Active schedule countdown — set when a schedule step is running, cleared when done/cancelled
 // Used to warn the user before closing the app mid-countdown
@@ -762,6 +793,64 @@ app.whenReady().then(async () => {
     }
   }, 8000);
 
+  // ── Scheduled skill cron registration on startup ─────────────────────────
+  // Fetch all installed skills from user-memory MCP and register any with a
+  // non-on_demand schedule into the cron tab so they appear in the UI.
+  // Runs 10 seconds after app ready (after queueManager.init has been called).
+  setTimeout(async () => {
+    try {
+      const http = require('http');
+      const memPort = parseInt(process.env.MEMORY_SERVICE_PORT || '3001', 10);
+
+      const _memApiKey = process.env.MCP_USER_MEMORY_API_KEY || process.env.USER_MEMORY_API_KEY || process.env.MCP_API_KEY || '';
+      function _mcpPost(apiPath, action, payload) {
+        return new Promise((resolve) => {
+          const b = JSON.stringify({ version: 'mcp.v1', service: 'user-memory', action, payload, requestId: 'boot-' + Date.now() });
+          const req = http.request({
+            hostname: '127.0.0.1', port: memPort, path: apiPath, method: 'POST',
+            headers: {
+              'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(b),
+              ...(_memApiKey ? { 'Authorization': `Bearer ${_memApiKey}` } : {}),
+            },
+            timeout: 6000,
+          }, (res) => {
+            let raw = '';
+            res.on('data', (c) => { raw += c; });
+            res.on('end', () => { try { resolve(JSON.parse(raw)); } catch(_) { resolve(null); } });
+          });
+          req.on('error', () => resolve(null));
+          req.on('timeout', () => { req.destroy(); resolve(null); });
+          req.write(b); req.end();
+        });
+      }
+
+      const listRes = await _mcpPost('/skill.list', 'skill.list', {});
+      const listRows = listRes?.data?.results || listRes?.result?.results || [];
+
+      for (const row of (listRows || [])) {
+        const skillName = row.name || '';
+        if (!skillName) continue;
+        // Fetch full skill to get contract_md
+        const getRes = await _mcpPost('/skill.get', 'skill.get', { name: skillName });
+        const full = getRes?.data || null;
+        const cm = full?.contractMd || '';
+        const fmMatch = cm.match(/^---\s*\n([\s\S]*?)\n---/);
+        const fm = fmMatch ? fmMatch[1] : '';
+        const scheduleMatch = fm.match(/^schedule\s*:\s*(.+)$/m);
+        const triggerMatch  = fm.match(/^trigger\s*:\s*(.+)$/m);
+        const schedule = scheduleMatch ? scheduleMatch[1].trim() : 'on_demand';
+        if (!schedule || schedule === 'on_demand') continue;
+        const cronId = `skill_${skillName.replace(/\./g, '_')}`;
+        if (queueManager.getCron().find(i => i.id === cronId)) continue;
+        const trigger = triggerMatch ? triggerMatch[1].trim() : skillName;
+        queueManager.registerCron({ id: cronId, label: trigger, schedule, plistLabel: `com.thinkdrop.skill.${skillName}` });
+        console.log(`[SkillCron] Registered cron for: ${skillName} @ ${schedule}`);
+      }
+    } catch (err) {
+      console.warn(`[SkillCron] Startup cron registration failed: ${err.message}`);
+    }
+  }, 10000);
+
   // ── Nightly agent validation: runs at 3am, validates all registered agents ──
   // Calls validate_agent for every cli.agent and browser.agent in DuckDB.
   // LLM-powered diagnosis auto-patches broken descriptors and updates status.
@@ -1144,6 +1233,19 @@ app.whenReady().then(async () => {
     queueManager.recordCronRun(id);
   });
 
+  // ─── Skill schedule registration (called by skillCreator after writing skill) ──
+  // Accepts HTTP POST from command-service: { skillName, schedule, trigger }
+  // schedule is a cron expression like "0 21 * * *"
+  ipcMain.on('skill:schedule-register', (_event, { skillName, schedule, trigger } = {}) => {
+    if (!skillName || !schedule || schedule === 'on_demand') return;
+    const cronId = `skill_${skillName.replace(/\./g, '_')}`;
+    // Avoid duplicate registration
+    if (queueManager.getCron().find(i => i.id === cronId)) return;
+    const label = `${trigger || skillName} (daily)`;
+    queueManager.registerCron({ id: cronId, label, schedule, plistLabel: `com.thinkdrop.skill.${skillName}` });
+    console.log(`[Skills] Registered cron for skill: ${skillName} @ ${schedule}`);
+  });
+
   // Paused automation state — set when recoverSkill returns ASK_USER, cleared on resume or abort
   let pausedAutomationState = null;
   let pausedSkillBuildState = null; // set when installSkill pauses for ASK_USER (secrets)
@@ -1421,6 +1523,21 @@ app.whenReady().then(async () => {
     }
   });
 
+  // ─── gather:answer — registered ONCE (not per stategraph:process run) ────
+  ipcMain.on('gather:answer', (_event, { answer }) => {
+    console.log(`[GatherContext] IPC received: gather:answer — "${(answer || '').slice(0, 60)}"`);
+    if (pendingGatherResolve) {
+      const resolve = pendingGatherResolve;
+      pendingGatherResolve = null;
+      if (promptCaptureWindow && !promptCaptureWindow.isDestroyed()) {
+        safeSend(promptCaptureWindow, 'gather:pending', { active: false });
+      }
+      resolve(answer || '');
+    } else {
+      console.warn('[GatherContext] Received gather:answer but no pending resolve — ignoring');
+    }
+  });
+
   // ─── StateGraph: Process prompt through full pipeline ────────────────────
   ipcMain.on('stategraph:process', async (event, { prompt, selectedText = '', sessionId = null, userId = 'default_user', responseLanguage = null }) => {
     console.log('🧠 [StateGraph] Processing prompt:', prompt.substring(0, 80), responseLanguage ? `(responseLanguage: ${responseLanguage})` : '');
@@ -1609,30 +1726,24 @@ app.whenReady().then(async () => {
 
     // ── gatherContext callbacks ────────────────────────────────────────────────
     // gatherAnswerCallback: waits for user to type/speak an answer in StandalonePromptCapture.
-    // Resolved by 'gather:answer' IPC (sent when user submits the prompt capture input
-    // while gatherContext is active).
-    let pendingGatherResolve = null;
-    const handleGatherAnswer = (_event, { answer }) => {
-      console.log(`[GatherContext] IPC received: gather:answer — "${(answer || '').slice(0, 60)}"`);
-      if (pendingGatherResolve) {
-        const resolve = pendingGatherResolve;
-        pendingGatherResolve = null;
-        resolve(answer || '');
-      } else {
-        console.warn('[GatherContext] Received gather:answer but no pending resolve — ignoring');
-      }
-    };
-    ipcMain.on('gather:answer', handleGatherAnswer);
-
+    // NOTE: the actual ipcMain.on('gather:answer') listener is registered ONCE at module level
+    // (see below) — NOT here per-run, to avoid MaxListenersExceeded accumulation.
     const gatherAnswerCallback = () => {
       return new Promise((resolve) => {
         pendingGatherResolve = resolve;
         console.log('[GatherContext] Waiting for user answer…');
+        // Tell prompt bar to intercept next submit as gather:answer
+        if (promptCaptureWindow && !promptCaptureWindow.isDestroyed()) {
+          safeSend(promptCaptureWindow, 'gather:pending', { active: true });
+        }
         // 10-minute timeout
         setTimeout(() => {
           if (pendingGatherResolve === resolve) {
             console.warn('[GatherContext] Timed out waiting for answer — skipping question');
             pendingGatherResolve = null;
+            if (promptCaptureWindow && !promptCaptureWindow.isDestroyed()) {
+              safeSend(promptCaptureWindow, 'gather:pending', { active: false });
+            }
             resolve(null);
           }
         }, 10 * 60 * 1000);
@@ -2046,6 +2157,11 @@ app.whenReady().then(async () => {
             savedFilePaths: finalState.savedFilePaths || [],
             answer: finalState.answer || '',
           });
+          // Auto-refresh Skills + Cron tabs whenever a creator skill was just built
+          if (finalState.creatorSkillName) {
+            ipcMain.emit('skills:list');
+            ipcMain.emit('cron:list');
+          }
         }
         // Do NOT send ws-bridge:message for normal completion — AutomationProgress shows it
       }
@@ -2866,6 +2982,210 @@ app.whenReady().then(async () => {
 
   ipcMain.handle('ws-bridge:is-connected', () => {
     return vscodeConnected;
+  });
+
+  // ─── Skills: list / save-secret / open-code ───────────────────────────────
+  ipcMain.on('skills:list', async () => {
+    try {
+      const http = require('http');
+      const fsMod = require('fs');
+      const osMod = require('os');
+      const pathMod = require('path');
+      const memPort = parseInt(process.env.MEMORY_SERVICE_PORT || '3001', 10);
+      const memApiKey = process.env.MCP_USER_MEMORY_API_KEY || process.env.USER_MEMORY_API_KEY || process.env.MCP_API_KEY || '';
+      const authHeaders = memApiKey ? { 'Authorization': `Bearer ${memApiKey}` } : {};
+
+      const body = JSON.stringify({ version: 'mcp.v1', service: 'user-memory', action: 'skill.list', payload: {}, requestId: 'skills-list-' + Date.now() });
+      const listRows = await new Promise((resolve) => {
+        const req = http.request({
+          hostname: '127.0.0.1', port: memPort,
+          path: '/skill.list', method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body), ...authHeaders },
+          timeout: 6000,
+        }, (res) => {
+          let raw = '';
+          res.on('data', (c) => { raw += c; });
+          res.on('end', () => {
+            try {
+              const parsed = JSON.parse(raw);
+              const list = parsed?.data?.results || parsed?.result?.results || parsed?.data || [];
+              resolve(Array.isArray(list) ? list : []);
+            } catch(_) { resolve([]); }
+          });
+        });
+        req.on('error', () => resolve([]));
+        req.on('timeout', () => { req.destroy(); resolve([]); });
+        req.write(body); req.end();
+      });
+
+      // Fetch full contract_md per skill via skill.get (list omits contract_md for perf)
+      function skillGet(name) {
+        return new Promise((resolve) => {
+          const gb = JSON.stringify({ version: 'mcp.v1', service: 'user-memory', action: 'skill.get', payload: { name }, requestId: 'sg-' + Date.now() });
+          const req = http.request({
+            hostname: '127.0.0.1', port: memPort,
+            path: '/skill.get', method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(gb), ...authHeaders },
+            timeout: 4000,
+          }, (res) => {
+            let raw = '';
+            res.on('data', (c) => { raw += c; });
+            res.on('end', () => {
+              try { resolve(JSON.parse(raw)?.data || null); } catch(_) { resolve(null); }
+            });
+          });
+          req.on('error', () => resolve(null));
+          req.on('timeout', () => { req.destroy(); resolve(null); });
+          req.write(gb); req.end();
+        });
+      }
+
+      // Fallback: scan ~/.thinkdrop/skills/ for creator-built skills not yet in user-memory
+      function scanLocalSkills() {
+        const skillsDir = pathMod.join(osMod.homedir(), '.thinkdrop', 'skills');
+        if (!fsMod.existsSync(skillsDir)) return [];
+        const dirs = fsMod.readdirSync(skillsDir, { withFileTypes: true })
+          .filter(d => d.isDirectory());
+        return dirs.map(d => {
+          const skillPath = pathMod.join(skillsDir, d.name, 'index.cjs');
+          if (!fsMod.existsSync(skillPath)) return null;
+          // Try to read package.json for schedule/secrets metadata
+          let pkgData = {};
+          try { pkgData = JSON.parse(fsMod.readFileSync(pathMod.join(skillsDir, d.name, 'package.json'), 'utf8')); } catch(_) {}
+          const name = d.name; // dot-notation directory name
+          return { name, execPath: skillPath, source: 'local' };
+        }).filter(Boolean);
+      }
+
+      const keytar = (() => { try { return require('keytar'); } catch(_) { return null; } })();
+
+      // Merge user-memory rows with local fallback (local wins if name not in memory)
+      const memNames = new Set((listRows || []).map(r => r.name));
+      const localRows = scanLocalSkills().filter(r => !memNames.has(r.name));
+      const allRows = [...(listRows || []), ...localRows];
+
+      const items = await Promise.all(allRows.map(async (row) => {
+        const full = row.source === 'local' ? null : await skillGet(row.name);
+        const cm = full?.contractMd || '';
+        const fmMatch = cm.match(/^---\s*\n([\s\S]*?)\n---/);
+        const fm = fmMatch ? fmMatch[1] : '';
+        const triggerMatch  = fm.match(/^trigger\s*:\s*(.+)$/m);
+        const scheduleMatch = fm.match(/^schedule\s*:\s*(.+)$/m);
+        const secretsMatch  = fm.match(/^secrets\s*:\s*(.+)$/m);
+        const trigger  = triggerMatch  ? triggerMatch[1].trim()  : (row.name || '');
+        const schedule = scheduleMatch ? scheduleMatch[1].trim() : 'on_demand';
+        let secretKeys = [];
+        if (secretsMatch) {
+          secretKeys = secretsMatch[1].split(/[\s,]+/).map(s => s.trim()).filter(Boolean);
+        }
+
+        const secrets = await Promise.all(secretKeys.map(async (key) => {
+          let stored = false;
+          if (keytar) {
+            // Check both the namespaced key (skill:name:KEY) and bare key for backwards compat
+            try { stored = !!(await keytar.getPassword('thinkdrop', `skill:${row.name}:${key}`)) ||
+                           !!(await keytar.getPassword('thinkdrop', key)); } catch(_) {}
+          }
+          return { key, stored };
+        }));
+        const missingCount = secrets.filter(s => !s.stored).length;
+        return {
+          name:     row.name || '',
+          filePath: row.execPath || full?.execPath || '',
+          trigger,
+          schedule,
+          secrets,
+          status:   missingCount > 0 ? 'missing_secrets' : 'ok',
+        };
+      }));
+      if (resultsWindow && !resultsWindow.isDestroyed()) safeSend(resultsWindow, 'skills:update', items);
+    } catch (e) {
+      console.error('[Skills] skills:list failed:', e.message);
+      if (resultsWindow && !resultsWindow.isDestroyed()) safeSend(resultsWindow, 'skills:update', []);
+    }
+  });
+
+  ipcMain.on('skills:save-secret', async (_event, { skillName, key, value }) => {
+    try {
+      const keytar = require('keytar');
+      await keytar.setPassword('thinkdrop', key, value);
+      console.log(`[Skills] Stored secret ${key} for skill ${skillName}`);
+      // Refresh skills list so stored badges update
+      if (resultsWindow && !resultsWindow.isDestroyed()) {
+        ipcMain.emit('skills:list');
+      }
+    } catch (e) {
+      console.error('[Skills] skills:save-secret failed:', e.message);
+    }
+  });
+
+  ipcMain.on('skills:open-code', (_event, { filePath }) => {
+    const { shell } = require('electron');
+    shell.openPath(filePath).catch(e => console.error('[Skills] open-code failed:', e.message));
+  });
+
+  // ─── Cron: list scheduled skills from skill-scheduler ─────────────────────
+  ipcMain.on('cron:list', async () => {
+    try {
+      const http = require('http');
+      const cmdPort = parseInt(process.env.SERVICE_PORT || process.env.COMMAND_SERVICE_PORT || '3007', 10);
+      const jobs = await new Promise((resolve) => {
+        const req = http.request({
+          hostname: '127.0.0.1', port: cmdPort,
+          path: '/skill.schedule/list', method: 'GET',
+          timeout: 4000,
+        }, (res) => {
+          let raw = '';
+          res.on('data', c => { raw += c; });
+          res.on('end', () => {
+            try { resolve(JSON.parse(raw)?.jobs || []); } catch (_) { resolve([]); }
+          });
+        });
+        req.on('error', () => resolve([]));
+        req.on('timeout', () => { req.destroy(); resolve([]); });
+        req.end();
+      });
+
+      const items = jobs.map(j => ({
+        id:       j.skillName,
+        label:    j.skillName,
+        schedule: j.schedule,
+        status:   'active',
+        type:     j.type || 'cron',
+      }));
+      if (resultsWindow && !resultsWindow.isDestroyed()) safeSend(resultsWindow, 'cron:update', items);
+    } catch (e) {
+      console.error('[Cron] cron:list failed:', e.message);
+      if (resultsWindow && !resultsWindow.isDestroyed()) safeSend(resultsWindow, 'cron:update', []);
+    }
+  });
+
+  ipcMain.on('cron:toggle', (_event, { id }) => {
+    console.log('[Cron] cron:toggle not yet implemented for id:', id);
+  });
+
+  ipcMain.on('cron:delete', (_event, { id }) => {
+    console.log('[Cron] cron:delete not yet implemented for id:', id);
+  });
+
+  ipcMain.on('cron:run-now', async (_event, { id }) => {
+    try {
+      const http = require('http');
+      const cmdPort = parseInt(process.env.SERVICE_PORT || process.env.COMMAND_SERVICE_PORT || '3007', 10);
+      // id is the skillName (e.g. "gmail.daily.summary")
+      const skillName = id;
+      const body = JSON.stringify({ skill: 'external.skill', args: { name: skillName } });
+      const req = http.request({
+        hostname: '127.0.0.1', port: cmdPort,
+        path: '/command.automate', method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) },
+        timeout: 5000,
+      }, (res) => { res.resume(); });
+      req.on('error', () => {});
+      req.write(body); req.end();
+    } catch (e) {
+      console.error('[Cron] cron:run-now failed:', e.message);
+    }
   });
 
   // ─── Bridge Auto-Listener ─────────────────────────────────────────────────
