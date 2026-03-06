@@ -1,8 +1,9 @@
 import React from 'react';
+import SkillStore from './SkillStore';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
-export type TabId = 'results' | 'queue' | 'cron' | 'skills';
+export type TabId = 'results' | 'queue' | 'cron' | 'skills' | 'store';
 
 export type QueueStatus = 'waiting' | 'planning' | 'building' | 'testing' | 'skill_building' | 'done' | 'error';
 export interface ReviewRound {
@@ -27,15 +28,25 @@ export interface QueueItem {
 
 export interface SkillSecret {
   key: string;
-  stored: boolean; // whether keytar has a value
+  stored: boolean;       // whether keytar has a value
+  preview?: string;      // first 8 chars of stored value for masked display
 }
-export type SkillStatus = 'ok' | 'missing_secrets' | 'error';
+export interface OAuthConnection {
+  provider: string;      // 'google' | 'github' | 'microsoft'
+  connected: boolean;    // whether a valid token is stored in keytar
+  tokenKey: string;      // keytar key, e.g. 'oauth:google:gmail.daily.summary'
+  scopes?: string;       // space-separated OAuth scopes
+  accountHint?: string;  // e.g. email address for display
+}
+export type SkillStatus = 'ok' | 'missing_secrets' | 'needs_auth' | 'error';
 export interface SkillItem {
   name: string;         // dot-notation: gmail.daily.summary
   filePath: string;     // ~/.thinkdrop/skills/<name>/index.cjs
   trigger: string;
   schedule: string;
+  description?: string;
   secrets: SkillSecret[];
+  oauthConnections?: OAuthConnection[];
   status: SkillStatus;
   projectId?: string;
 }
@@ -95,14 +106,22 @@ export function SkillsIcon({ active }: { active: boolean }) {
   );
 }
 
+export function StoreIcon({ active }: { active: boolean }) {
+  return (
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="none"
+      stroke={active ? '#a78bfa' : '#6b7280'} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M6 2L3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4z"/><line x1="3" y1="6" x2="21" y2="6"/><path d="M16 10a4 4 0 0 1-8 0"/>
+    </svg>
+  );
+}
+
 // ── Tab bar ───────────────────────────────────────────────────────────────────
 
-export function TabBar({ active, onSelect, queueCount, cronCount, skillsCount, unreadTabs }: {
+export function TabBar({ active, onSelect, queueCount, cronCount, unreadTabs }: {
   active: TabId;
   onSelect: (tab: TabId) => void;
   queueCount: number;
   cronCount: number;
-  skillsCount?: number;
   unreadTabs?: Set<TabId>;
 }) {
   const tabs: { id: TabId; label: string; icon: React.ReactNode; badge?: number; activeColor: string }[] = [
@@ -110,6 +129,7 @@ export function TabBar({ active, onSelect, queueCount, cronCount, skillsCount, u
     { id: 'queue',   label: 'Queue',   icon: <QueueIcon   active={active === 'queue'}   />, badge: queueCount, activeColor: '#a78bfa' },
     { id: 'cron',    label: 'Cron',    icon: <CronIcon    active={active === 'cron'}    />, badge: cronCount,  activeColor: '#34d399' },
     { id: 'skills',  label: 'Skills',  icon: <SkillsIcon  active={active === 'skills'}  />, activeColor: '#f97316' },
+    { id: 'store',   label: 'Store',   icon: <StoreIcon   active={active === 'store'}   />, activeColor: '#a78bfa' },
   ];
 
   return (
@@ -438,19 +458,29 @@ function CronItemCard({ item, onToggle, onDelete, onRerun }: {
         </div>
         <div style={{ display: 'flex', gap: 4, flexShrink: 0 }}>
           <button onClick={() => onRerun(item)} title="Run now"
-            style={{ padding: '3px 7px', borderRadius: 5, fontSize: '0.62rem', cursor: 'pointer',
+            style={{ padding: '4px 7px', borderRadius: 5, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center',
               background: 'rgba(96,165,250,0.1)', border: '1px solid rgba(96,165,250,0.25)', color: '#93c5fd' }}>
-            ▶
+            {/* Replay / re-run icon — circular arrow */}
+            <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M1 4v6h6"/><path d="M3.51 15a9 9 0 1 0 .49-4.57"/>
+            </svg>
           </button>
           <button onClick={() => onToggle(item)} title={item.status === 'paused' ? 'Resume' : 'Pause'}
-            style={{ padding: '3px 7px', borderRadius: 5, fontSize: '0.62rem', cursor: 'pointer',
-              background: 'rgba(245,158,11,0.1)', border: '1px solid rgba(245,158,11,0.25)', color: '#fbbf24' }}>
-            {item.status === 'paused' ? '⏵' : '⏸'}
-          </button>
-          <button onClick={() => onDelete(item)} title="Delete"
-            style={{ padding: '3px 7px', borderRadius: 5, fontSize: '0.62rem', cursor: 'pointer',
-              background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.2)', color: '#f87171' }}>
-            ✕
+            style={{ padding: '4px 7px', borderRadius: 5, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center',
+              background: item.status === 'paused' ? 'rgba(74,222,128,0.1)' : 'rgba(245,158,11,0.1)',
+              border: item.status === 'paused' ? '1px solid rgba(74,222,128,0.25)' : '1px solid rgba(245,158,11,0.25)',
+              color: item.status === 'paused' ? '#4ade80' : '#fbbf24' }}>
+            {item.status === 'paused' ? (
+              /* Play triangle for resume */
+              <svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor" stroke="none">
+                <polygon points="5,3 19,12 5,21"/>
+              </svg>
+            ) : (
+              /* Two bars for pause */
+              <svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor" stroke="none">
+                <rect x="6" y="4" width="4" height="16" rx="1"/><rect x="14" y="4" width="4" height="16" rx="1"/>
+              </svg>
+            )}
           </button>
         </div>
       </div>
@@ -489,19 +519,351 @@ export function CronTab({ items, onToggle, onDelete, onRerun }: {
 const SKILL_STATUS_CONFIG: Record<SkillStatus, { label: string; color: string; bg: string; border: string; dot: string }> = {
   ok:              { label: 'Ready',           color: '#4ade80', bg: 'rgba(74,222,128,0.04)',  border: 'rgba(74,222,128,0.16)',  dot: '#22c55e' },
   missing_secrets: { label: 'Missing secrets', color: '#f59e0b', bg: 'rgba(245,158,11,0.04)',  border: 'rgba(245,158,11,0.18)',  dot: '#f59e0b' },
+  needs_auth:      { label: 'Needs auth',      color: '#60a5fa', bg: 'rgba(96,165,250,0.04)',  border: 'rgba(96,165,250,0.18)',  dot: '#3b82f6' },
   error:           { label: 'Error',           color: '#f87171', bg: 'rgba(248,113,113,0.04)', border: 'rgba(248,113,113,0.18)', dot: '#ef4444' },
 };
 
-function SkillItemCard({ item, onSaveSecret, onOpenCode }: {
+const OAUTH_PROVIDER_META: Record<string, { label: string; color: string }> = {
+  google:     { label: 'Google',              color: '#4285F4' },
+  github:     { label: 'GitHub',              color: '#e5e7eb' },
+  microsoft:  { label: 'Microsoft',           color: '#00a4ef' },
+  facebook:   { label: 'Facebook / Meta',     color: '#1877F2' },
+  twitter:    { label: 'Twitter / X',         color: '#1DA1F2' },
+  linkedin:   { label: 'LinkedIn',            color: '#0A66C2' },
+  slack:      { label: 'Slack',               color: '#4A154B' },
+  notion:     { label: 'Notion',              color: '#e5e7eb' },
+  spotify:    { label: 'Spotify',             color: '#1DB954' },
+  dropbox:    { label: 'Dropbox',             color: '#0061FF' },
+  discord:    { label: 'Discord',             color: '#5865F2' },
+  zoom:       { label: 'Zoom',                color: '#2D8CFF' },
+  atlassian:  { label: 'Atlassian (Jira)',    color: '#0052CC' },
+  salesforce: { label: 'Salesforce',          color: '#00A1E0' },
+  hubspot:    { label: 'HubSpot',             color: '#FF7A59' },
+};
+
+// ── Known scopes per provider: { value, label, description } ─────────────────
+const OAUTH_KNOWN_SCOPES: Record<string, { value: string; label: string; desc: string }[]> = {
+  google: [
+    { value: 'https://www.googleapis.com/auth/userinfo.email',   label: 'Email (identity)',  desc: 'Read your email address' },
+    { value: 'https://www.googleapis.com/auth/userinfo.profile', label: 'Profile',           desc: 'Read your basic profile' },
+    { value: 'https://www.googleapis.com/auth/gmail.readonly',   label: 'Gmail read-only',   desc: 'Read (but not send) Gmail messages' },
+    { value: 'https://www.googleapis.com/auth/gmail.modify',     label: 'Gmail read+write',  desc: 'Read and modify Gmail messages' },
+    { value: 'https://www.googleapis.com/auth/gmail.send',       label: 'Gmail send',        desc: 'Send email on your behalf' },
+    { value: 'https://www.googleapis.com/auth/calendar.readonly',label: 'Calendar read',     desc: 'Read calendar events' },
+    { value: 'https://www.googleapis.com/auth/calendar',         label: 'Calendar read+write',desc: 'Read and write calendar events' },
+    { value: 'https://www.googleapis.com/auth/drive.readonly',   label: 'Drive read',        desc: 'Read files in Google Drive' },
+    { value: 'https://www.googleapis.com/auth/drive',            label: 'Drive read+write',  desc: 'Read and write Google Drive files' },
+    { value: 'https://www.googleapis.com/auth/spreadsheets',     label: 'Sheets',            desc: 'Read and write Google Sheets' },
+    { value: 'https://www.googleapis.com/auth/documents',        label: 'Docs',              desc: 'Read and write Google Docs' },
+    { value: 'https://www.googleapis.com/auth/youtube.readonly', label: 'YouTube read',      desc: 'Read YouTube data' },
+  ],
+  github: [
+    { value: 'read:user',   label: 'Read user',    desc: 'Read your public profile' },
+    { value: 'user:email',  label: 'Email',        desc: 'Read your email addresses' },
+    { value: 'repo',        label: 'Repos (full)', desc: 'Read and write repositories' },
+    { value: 'public_repo', label: 'Public repos', desc: 'Read and write public repos only' },
+    { value: 'gist',        label: 'Gists',        desc: 'Create and update gists' },
+    { value: 'read:org',    label: 'Read org',     desc: 'Read organization info' },
+    { value: 'workflow',    label: 'Workflows',    desc: 'Update GitHub Actions workflows' },
+  ],
+  microsoft: [
+    { value: 'openid',              label: 'OpenID',          desc: 'Basic sign-in' },
+    { value: 'profile',             label: 'Profile',         desc: 'Read your profile' },
+    { value: 'email',               label: 'Email (identity)',desc: 'Read your email address' },
+    { value: 'offline_access',      label: 'Offline access',  desc: 'Keep you signed in (refresh token)' },
+    { value: 'Mail.Read',           label: 'Mail read',       desc: 'Read your email' },
+    { value: 'Mail.ReadWrite',      label: 'Mail read+write', desc: 'Read and modify your email' },
+    { value: 'Mail.Send',           label: 'Mail send',       desc: 'Send email on your behalf' },
+    { value: 'Calendars.Read',      label: 'Calendar read',   desc: 'Read calendar events' },
+    { value: 'Calendars.ReadWrite', label: 'Calendar read+write', desc: 'Read and write calendar events' },
+    { value: 'Files.Read',          label: 'Files read',      desc: 'Read OneDrive files' },
+    { value: 'Files.ReadWrite',     label: 'Files read+write',desc: 'Read and write OneDrive files' },
+    { value: 'Contacts.ReadWrite',  label: 'Contacts',        desc: 'Read and write contacts' },
+    { value: 'ChannelMessage.Send', label: 'Teams messages',  desc: 'Send Teams channel messages' },
+  ],
+  slack: [
+    { value: 'openid',           label: 'OpenID',         desc: 'Basic sign-in' },
+    { value: 'profile',          label: 'Profile',        desc: 'Read your Slack profile' },
+    { value: 'email',            label: 'Email',          desc: 'Read your email address' },
+    { value: 'chat:write',       label: 'Send messages',  desc: 'Post messages in channels' },
+    { value: 'channels:read',    label: 'Read channels',  desc: 'List public channels' },
+    { value: 'channels:history', label: 'Channel history',desc: 'Read messages in channels' },
+    { value: 'users:read',       label: 'Read users',     desc: 'List workspace users' },
+    { value: 'files:write',      label: 'Upload files',   desc: 'Upload files to Slack' },
+    { value: 'reactions:write',  label: 'Add reactions',  desc: 'Add emoji reactions' },
+  ],
+  github_read: [],
+  spotify: [
+    { value: 'user-read-email',          label: 'Email',           desc: 'Read your email address' },
+    { value: 'user-read-private',        label: 'Private info',    desc: 'Read subscription and country' },
+    { value: 'playlist-read-private',    label: 'Read playlists',  desc: 'Read your playlists' },
+    { value: 'playlist-modify-public',   label: 'Edit public playlists', desc: 'Create/edit public playlists' },
+    { value: 'playlist-modify-private',  label: 'Edit private playlists', desc: 'Create/edit private playlists' },
+    { value: 'user-library-read',        label: 'Read library',    desc: 'Read saved tracks/albums' },
+    { value: 'user-library-modify',      label: 'Edit library',    desc: 'Save/remove tracks' },
+    { value: 'user-top-read',            label: 'Top artists/tracks', desc: 'Read top listening data' },
+  ],
+  discord: [
+    { value: 'identify', label: 'Identity',     desc: 'Read your username and avatar' },
+    { value: 'email',    label: 'Email',         desc: 'Read your email address' },
+    { value: 'guilds',   label: 'Servers',       desc: 'List servers you belong to' },
+    { value: 'guilds.join', label: 'Join servers', desc: 'Add you to a server' },
+    { value: 'messages.read', label: 'Read messages', desc: 'Read DMs (limited)' },
+  ],
+  dropbox: [
+    { value: 'account_info.read',  label: 'Account info',   desc: 'Read your account details' },
+    { value: 'files.content.read', label: 'Read files',     desc: 'Read files and folders' },
+    { value: 'files.content.write',label: 'Write files',    desc: 'Create and edit files' },
+    { value: 'sharing.read',       label: 'Read shares',    desc: 'Read shared links' },
+    { value: 'sharing.write',      label: 'Create shares',  desc: 'Create shared links' },
+  ],
+  zoom: [
+    { value: 'user:read',           label: 'User info',       desc: 'Read your profile' },
+    { value: 'meeting:read',        label: 'Read meetings',   desc: 'List and read meetings' },
+    { value: 'meeting:write',       label: 'Write meetings',  desc: 'Create and update meetings' },
+    { value: 'recording:read',      label: 'Read recordings', desc: 'Access cloud recordings' },
+  ],
+  atlassian: [
+    { value: 'read:me',                        label: 'Identity',         desc: 'Read your profile' },
+    { value: 'offline_access',                 label: 'Offline access',   desc: 'Keep signed in' },
+    { value: 'read:jira-work',                 label: 'Read Jira work',   desc: 'Read Jira issues/projects' },
+    { value: 'write:jira-work',                label: 'Write Jira work',  desc: 'Create/update Jira issues' },
+    { value: 'read:jira-user',                 label: 'Read Jira users',  desc: 'Read Jira user info' },
+    { value: 'read:confluence-content.all',    label: 'Read Confluence',  desc: 'Read Confluence pages' },
+    { value: 'write:confluence-content',       label: 'Write Confluence', desc: 'Create/edit Confluence pages' },
+  ],
+  salesforce: [
+    { value: 'openid',         label: 'OpenID',       desc: 'Basic sign-in' },
+    { value: 'profile',        label: 'Profile',      desc: 'Read your profile' },
+    { value: 'email',          label: 'Email',        desc: 'Read your email' },
+    { value: 'api',            label: 'API access',   desc: 'Access Salesforce APIs' },
+    { value: 'refresh_token',  label: 'Refresh token',desc: 'Stay signed in' },
+    { value: 'chatter_api',    label: 'Chatter API',  desc: 'Access Chatter' },
+  ],
+  hubspot: [
+    { value: 'crm.objects.contacts.read',  label: 'Read contacts',  desc: 'Read CRM contacts' },
+    { value: 'crm.objects.contacts.write', label: 'Write contacts', desc: 'Create/update contacts' },
+    { value: 'crm.objects.deals.read',     label: 'Read deals',     desc: 'Read CRM deals' },
+    { value: 'crm.objects.deals.write',    label: 'Write deals',    desc: 'Create/update deals' },
+    { value: 'crm.objects.companies.read', label: 'Read companies', desc: 'Read CRM companies' },
+    { value: 'content',                    label: 'Content',        desc: 'Access website/blog content' },
+  ],
+  linkedin: [
+    { value: 'openid',        label: 'OpenID',       desc: 'Basic sign-in' },
+    { value: 'profile',       label: 'Profile',      desc: 'Read your name and photo' },
+    { value: 'email',         label: 'Email',        desc: 'Read your email address' },
+    { value: 'w_member_social', label: 'Post',       desc: 'Post on your behalf' },
+    { value: 'r_liteprofile', label: 'Lite profile', desc: 'Read basic profile info' },
+  ],
+  facebook: [
+    { value: 'email',          label: 'Email',          desc: 'Read your email address' },
+    { value: 'public_profile', label: 'Public profile', desc: 'Read your public profile' },
+    { value: 'pages_read_engagement', label: 'Read pages', desc: 'Read Page engagement data' },
+    { value: 'pages_manage_posts',    label: 'Manage page posts', desc: 'Create posts on Pages' },
+  ],
+  twitter: [
+    { value: 'tweet.read',     label: 'Read tweets',   desc: 'Read tweets and timelines' },
+    { value: 'tweet.write',    label: 'Write tweets',  desc: 'Post tweets on your behalf' },
+    { value: 'users.read',     label: 'Read users',    desc: 'Read user profiles' },
+    { value: 'offline.access', label: 'Offline access',desc: 'Keep signed in (refresh token)' },
+    { value: 'follows.read',   label: 'Read follows',  desc: 'Read who you follow' },
+    { value: 'dm.read',        label: 'Read DMs',      desc: 'Read direct messages' },
+  ],
+  notion: [
+    { value: '', label: 'Full access', desc: 'Notion uses a single token scope — all permissions set in the integration settings on notion.so' },
+  ],
+};
+
+function OAuthConnectRow({ conn, skillName, onConnect, onScopesChange }: {
+  conn: OAuthConnection;
+  skillName: string;
+  onConnect: (skillName: string, provider: string, tokenKey: string, scopes?: string) => void;
+  onScopesChange: (skillName: string, provider: string, scopes: string) => void;
+}) {
+  const [connecting, setConnecting] = React.useState(false);
+  const [scopeOpen, setScopeOpen] = React.useState(false);
+  const meta = OAUTH_PROVIDER_META[conn.provider] || { label: conn.provider, color: '#9ca3af' };
+  const knownScopes = OAUTH_KNOWN_SCOPES[conn.provider] || [];
+
+  // Parse currently active scopes into a Set for checkbox state
+  const activeScopes = React.useMemo(
+    () => new Set((conn.scopes || '').split(/\s+/).filter(Boolean)),
+    [conn.scopes]
+  );
+  const [selectedScopes, setSelectedScopes] = React.useState<Set<string>>(activeScopes);
+  // Sync when conn.scopes changes from parent (after skills:list refresh)
+  React.useEffect(() => {
+    setSelectedScopes(new Set((conn.scopes || '').split(/\s+/).filter(Boolean)));
+  }, [conn.scopes]);
+
+  const handleConnect = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    setConnecting(true);
+    const scopeStr = [...selectedScopes].join(' ');
+    onConnect(skillName, conn.provider, conn.tokenKey, scopeStr || conn.scopes);
+    setTimeout(() => setConnecting(false), 45000);
+  };
+
+  const handleScopeToggle = (scopeValue: string) => {
+    if (!scopeValue) return; // notion single-scope case
+    setSelectedScopes(prev => {
+      const next = new Set(prev);
+      if (next.has(scopeValue)) { next.delete(scopeValue); } else { next.add(scopeValue); }
+      return next;
+    });
+  };
+
+  const handleScopesSave = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    const scopeStr = [...selectedScopes].join(' ');
+    onScopesChange(skillName, conn.provider, scopeStr);
+    setScopeOpen(false);
+  };
+
+  const hasChanges = [...selectedScopes].sort().join(' ') !== [...activeScopes].sort().join(' ');
+
+  // Scopes to display in summary (unknown scopes not in catalog shown as-is)
+  const catalogValues = new Set(knownScopes.map(s => s.value));
+  const unknownActive = [...activeScopes].filter(s => !catalogValues.has(s));
+
+  return (
+    <div style={{
+      borderRadius: 7,
+      background: conn.connected ? 'rgba(74,222,128,0.04)' : 'rgba(255,255,255,0.03)',
+      border: conn.connected ? '1px solid rgba(74,222,128,0.2)' : '1px solid rgba(255,255,255,0.08)',
+      overflow: 'hidden',
+    }}>
+      {/* ── Main row ── */}
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 10px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          {/* Provider dot */}
+          <div style={{ width: 8, height: 8, borderRadius: '50%', backgroundColor: meta.color, flexShrink: 0 }} />
+          <div>
+            <div style={{ fontSize: '0.65rem', color: '#d1d5db', fontWeight: 600 }}>
+              {meta.label} OAuth
+            </div>
+            {conn.connected && conn.accountHint && (
+              <div style={{ fontSize: '0.58rem', color: '#6b7280', marginTop: 1 }}>{conn.accountHint}</div>
+            )}
+            {/* Scope summary — click to edit */}
+            {knownScopes.length > 0 && (
+              <button
+                onClick={e => { e.stopPropagation(); setScopeOpen(o => !o); }}
+                style={{
+                  marginTop: 3, padding: '1px 5px', borderRadius: 3, fontSize: '0.54rem', cursor: 'pointer',
+                  background: scopeOpen ? 'rgba(99,102,241,0.15)' : 'rgba(255,255,255,0.04)',
+                  border: scopeOpen ? '1px solid rgba(99,102,241,0.4)' : '1px solid rgba(255,255,255,0.1)',
+                  color: scopeOpen ? '#a5b4fc' : '#6b7280',
+                  fontFamily: 'ui-monospace,monospace', display: 'flex', alignItems: 'center', gap: 4,
+                }}
+              >
+                <span>{[...activeScopes].length} scope{[...activeScopes].length !== 1 ? 's' : ''}</span>
+                <span style={{ opacity: 0.6 }}>{scopeOpen ? '▲' : '▼'} edit</span>
+              </button>
+            )}
+          </div>
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+          {conn.connected && (
+            <span style={{ fontSize: '0.55rem', color: '#4ade80', background: 'rgba(74,222,128,0.1)', padding: '1px 5px', borderRadius: 3, border: '1px solid rgba(74,222,128,0.2)' }}>
+              ✓ connected
+            </span>
+          )}
+          <button
+            onClick={handleConnect}
+            disabled={connecting}
+            style={{
+              padding: '4px 10px', borderRadius: 5, fontSize: '0.62rem', cursor: connecting ? 'wait' : 'pointer', fontWeight: 600, flexShrink: 0,
+              background: connecting ? 'rgba(255,255,255,0.04)' : conn.connected ? 'rgba(255,255,255,0.06)' : 'rgba(66,133,244,0.12)',
+              border: connecting ? '1px solid rgba(255,255,255,0.08)' : conn.connected ? '1px solid rgba(255,255,255,0.12)' : '1px solid rgba(66,133,244,0.35)',
+              color: connecting ? '#4b5563' : conn.connected ? '#9ca3af' : '#93bbff',
+            }}
+          >
+            {connecting ? 'Opening…' : conn.connected ? 'Reconnect' : 'Connect'}
+          </button>
+        </div>
+      </div>
+
+      {/* ── Scope editor panel ── */}
+      {scopeOpen && (
+        <div
+          onClick={e => e.stopPropagation()}
+          style={{ borderTop: '1px solid rgba(255,255,255,0.06)', padding: '8px 10px', background: 'rgba(0,0,0,0.2)' }}
+        >
+          <div style={{ fontSize: '0.58rem', color: '#6b7280', marginBottom: 6 }}>
+            Select the permissions this skill needs. Changes apply on next Connect.
+            {conn.connected && <span style={{ color: '#f59e0b' }}> You'll need to Reconnect for scope changes to take effect.</span>}
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+            {knownScopes.map(scope => (
+              <label
+                key={scope.value || 'notion-full'}
+                style={{ display: 'flex', alignItems: 'flex-start', gap: 7, cursor: scope.value ? 'pointer' : 'default', padding: '3px 0' }}
+              >
+                <input
+                  type="checkbox"
+                  checked={scope.value ? selectedScopes.has(scope.value) : true}
+                  disabled={!scope.value}
+                  onChange={() => handleScopeToggle(scope.value)}
+                  style={{ marginTop: 2, accentColor: meta.color, flexShrink: 0 }}
+                />
+                <div>
+                  <span style={{ fontSize: '0.62rem', color: '#d1d5db', fontWeight: 600 }}>{scope.label}</span>
+                  <span style={{ fontSize: '0.57rem', color: '#4b5563', marginLeft: 5 }}>{scope.desc}</span>
+                  {scope.value && (
+                    <div style={{ fontSize: '0.52rem', color: '#374151', fontFamily: 'ui-monospace,monospace', marginTop: 1 }}>{scope.value}</div>
+                  )}
+                </div>
+              </label>
+            ))}
+            {unknownActive.map(s => (
+              <label key={s} style={{ display: 'flex', alignItems: 'flex-start', gap: 7, cursor: 'pointer', padding: '3px 0' }}>
+                <input
+                  type="checkbox"
+                  checked={selectedScopes.has(s)}
+                  onChange={() => handleScopeToggle(s)}
+                  style={{ marginTop: 2, accentColor: meta.color, flexShrink: 0 }}
+                />
+                <div>
+                  <span style={{ fontSize: '0.62rem', color: '#9ca3af' }}>{s}</span>
+                  <span style={{ fontSize: '0.57rem', color: '#4b5563', marginLeft: 5 }}>custom scope</span>
+                </div>
+              </label>
+            ))}
+          </div>
+          {hasChanges && (
+            <button
+              onClick={handleScopesSave}
+              style={{
+                marginTop: 8, padding: '4px 12px', borderRadius: 5, fontSize: '0.62rem', cursor: 'pointer', fontWeight: 600,
+                background: 'rgba(99,102,241,0.15)', border: '1px solid rgba(99,102,241,0.4)', color: '#a5b4fc',
+              }}
+            >
+              Save scope changes
+            </button>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function SkillItemCard({ item, onSaveSecret, onOpenCode, onOAuthConnect, onScopesChange, onDelete }: {
   item: SkillItem;
   onSaveSecret: (skillName: string, key: string, value: string) => void;
   onOpenCode: (filePath: string) => void;
+  onOAuthConnect: (skillName: string, provider: string, tokenKey: string, scopes?: string) => void;
+  onScopesChange: (skillName: string, provider: string, scopes: string) => void;
+  onDelete: (skillName: string) => void;
 }) {
   const [expanded, setExpanded] = React.useState(false);
   const [secretValues, setSecretValues] = React.useState<Record<string, string>>({});
   const [savedKeys, setSavedKeys] = React.useState<Set<string>>(new Set());
+  const [confirmDelete, setConfirmDelete] = React.useState(false);
   const cfg = SKILL_STATUS_CONFIG[item.status];
   const missingCount = item.secrets.filter(s => !s.stored).length;
+  const unconnectedOAuth = (item.oauthConnections || []).filter(c => !c.connected).length;
+  const totalMissing = missingCount + unconnectedOAuth;
 
   const handleSave = (key: string) => {
     const val = (secretValues[key] || '').trim();
@@ -534,9 +896,9 @@ function SkillItemCard({ item, onSaveSecret, onOpenCode }: {
               <span style={{ fontSize: '0.58rem', color: cfg.color, background: 'rgba(255,255,255,0.05)', padding: '1px 5px', borderRadius: 3, border: `1px solid ${cfg.border}`, flexShrink: 0 }}>
                 {cfg.label}
               </span>
-              {missingCount > 0 && (
+              {totalMissing > 0 && (
                 <span style={{ fontSize: '0.58rem', color: '#f59e0b', background: 'rgba(245,158,11,0.08)', padding: '1px 5px', borderRadius: 3, border: '1px solid rgba(245,158,11,0.2)', flexShrink: 0 }}>
-                  {missingCount} secret{missingCount > 1 ? 's' : ''} missing
+                  {totalMissing} {totalMissing === 1 ? 'action' : 'actions'} needed
                 </span>
               )}
             </div>
@@ -558,77 +920,132 @@ function SkillItemCard({ item, onSaveSecret, onOpenCode }: {
             </svg>
           </button>
 
+          {/* Delete button — two-step confirm */}
+          {!confirmDelete ? (
+            <button
+              onClick={(e) => { e.stopPropagation(); setConfirmDelete(true); }}
+              title="Delete skill"
+              style={{ padding: '4px 7px', borderRadius: 5, cursor: 'pointer', flexShrink: 0, background: 'rgba(239,68,68,0.07)', border: '1px solid rgba(239,68,68,0.18)', color: '#f87171', display: 'flex', alignItems: 'center' }}
+            >
+              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4h6v2"/>
+              </svg>
+            </button>
+          ) : (
+            <div onClick={e => e.stopPropagation()} style={{ display: 'flex', alignItems: 'center', gap: 4, background: 'rgba(239,68,68,0.12)', border: '1px solid rgba(239,68,68,0.35)', borderRadius: 5, padding: '3px 6px' }}>
+              <span style={{ fontSize: '0.58rem', color: '#f87171', whiteSpace: 'nowrap' }}>Delete?</span>
+              <button onClick={(e) => { e.stopPropagation(); onDelete(item.name); }} style={{ padding: '2px 6px', borderRadius: 4, cursor: 'pointer', fontSize: '0.58rem', fontWeight: 700, background: 'rgba(239,68,68,0.25)', border: '1px solid rgba(239,68,68,0.5)', color: '#fca5a5' }}>Yes</button>
+              <button onClick={(e) => { e.stopPropagation(); setConfirmDelete(false); }} style={{ padding: '2px 6px', borderRadius: 4, cursor: 'pointer', fontSize: '0.58rem', background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)', color: '#6b7280' }}>No</button>
+            </div>
+          )}
+
           {/* Chevron */}
           <span style={{ color: '#4b5563', fontSize: '0.55rem', flexShrink: 0 }}>{expanded ? '▲' : '▼'}</span>
         </div>
       </div>
 
-      {/* ── Expanded: secrets/env form ── */}
+      {/* ── Expanded: OAuth + secrets form ── */}
       {expanded && (
         <div style={{ borderTop: '1px solid rgba(255,255,255,0.06)', padding: '10px 12px 12px', display: 'flex', flexDirection: 'column', gap: 8 }}>
-          <div style={{ fontSize: '0.6rem', color: '#6b7280', marginBottom: 2 }}>
-            Secrets stored securely in keytar — never saved to disk as plain text.
-          </div>
 
-          {item.secrets.length === 0 ? (
+          {/* Description */}
+          {item.description && (
+            <div style={{ fontSize: '0.63rem', color: '#9ca3af', lineHeight: 1.5, marginBottom: 2 }}>
+              {item.description}
+            </div>
+          )}
+
+          {/* ── OAuth connections ── */}
+          {(item.oauthConnections || []).length > 0 && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+              <div style={{ fontSize: '0.58rem', color: '#4b5563', marginBottom: 1 }}>
+                OAuth — authenticate once, skill uses the stored token automatically.
+              </div>
+              {(item.oauthConnections || []).map(conn => (
+                <OAuthConnectRow
+                  key={conn.provider}
+                  conn={conn}
+                  skillName={item.name}
+                  onConnect={onOAuthConnect}
+                  onScopesChange={onScopesChange}
+                />
+              ))}
+            </div>
+          )}
+
+          {/* ── API key secrets ── */}
+          {item.secrets.length > 0 && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+              <div style={{ fontSize: '0.58rem', color: '#4b5563' }}>
+                API keys — stored securely in keytar, never on disk as plain text.
+              </div>
+              {item.secrets.map(secret => {
+                const isSaved = savedKeys.has(secret.key);
+                const maskedCurrent = secret.stored && secret.preview
+                  ? secret.preview + '••••••••'
+                  : secret.stored ? '••••••••' : null;
+                return (
+                  <div key={secret.key} style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                      <span style={{ fontSize: '0.65rem', color: '#d1d5db', fontFamily: 'ui-monospace,monospace', fontWeight: 600 }}>
+                        {secret.key}
+                      </span>
+                      {secret.stored && !isSaved && (
+                        <span style={{ fontSize: '0.55rem', color: '#4ade80', background: 'rgba(74,222,128,0.1)', padding: '1px 5px', borderRadius: 3, border: '1px solid rgba(74,222,128,0.2)' }}>
+                          ✓ stored
+                        </span>
+                      )}
+                      {isSaved && (
+                        <span style={{ fontSize: '0.55rem', color: '#4ade80', background: 'rgba(74,222,128,0.1)', padding: '1px 5px', borderRadius: 3, border: '1px solid rgba(74,222,128,0.2)' }}>
+                          ✓ updated
+                        </span>
+                      )}
+                      {!secret.stored && !isSaved && (
+                        <span style={{ fontSize: '0.55rem', color: '#f59e0b', background: 'rgba(245,158,11,0.08)', padding: '1px 5px', borderRadius: 3, border: '1px solid rgba(245,158,11,0.2)' }}>
+                          not set
+                        </span>
+                      )}
+                    </div>
+                    {maskedCurrent && !isSaved && (
+                      <div style={{ fontSize: '0.6rem', color: '#6b7280', fontFamily: 'ui-monospace,monospace', letterSpacing: '0.02em' }}>
+                        {maskedCurrent}
+                      </div>
+                    )}
+                    <div style={{ display: 'flex', gap: 6 }}>
+                      <input
+                        type="password"
+                        placeholder={secret.stored ? 'Replace value…' : 'Enter value…'}
+                        value={secretValues[secret.key] || ''}
+                        onChange={e => setSecretValues(prev => ({ ...prev, [secret.key]: e.target.value }))}
+                        onKeyDown={e => { if (e.key === 'Enter') handleSave(secret.key); }}
+                        onClick={e => e.stopPropagation()}
+                        style={{
+                          flex: 1, padding: '5px 8px', borderRadius: 5, fontSize: '0.65rem',
+                          background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.1)',
+                          color: '#e5e7eb', outline: 'none', fontFamily: 'ui-monospace,monospace',
+                        }}
+                      />
+                      <button
+                        onClick={(e) => { e.stopPropagation(); handleSave(secret.key); }}
+                        disabled={!(secretValues[secret.key] || '').trim()}
+                        style={{
+                          padding: '5px 10px', borderRadius: 5, fontSize: '0.62rem', cursor: 'pointer', fontWeight: 600, flexShrink: 0,
+                          background: (secretValues[secret.key] || '').trim() ? 'rgba(249,115,22,0.15)' : 'rgba(255,255,255,0.04)',
+                          border: (secretValues[secret.key] || '').trim() ? '1px solid rgba(249,115,22,0.35)' : '1px solid rgba(255,255,255,0.08)',
+                          color: (secretValues[secret.key] || '').trim() ? '#fb923c' : '#4b5563',
+                        }}
+                      >
+                        Save
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
+          {item.secrets.length === 0 && (item.oauthConnections || []).length === 0 && (
             <div style={{ fontSize: '0.65rem', color: '#4b5563', fontStyle: 'italic' }}>No secrets required.</div>
-          ) : (
-            item.secrets.map(secret => {
-              const isSaved = savedKeys.has(secret.key);
-              return (
-                <div key={secret.key} style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-                  {/* Key label + stored badge */}
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                    <span style={{ fontSize: '0.65rem', color: '#d1d5db', fontFamily: 'ui-monospace,monospace', fontWeight: 600 }}>
-                      {secret.key}
-                    </span>
-                    {secret.stored && !isSaved && (
-                      <span style={{ fontSize: '0.55rem', color: '#4ade80', background: 'rgba(74,222,128,0.1)', padding: '1px 5px', borderRadius: 3, border: '1px solid rgba(74,222,128,0.2)' }}>
-                        ✓ stored
-                      </span>
-                    )}
-                    {isSaved && (
-                      <span style={{ fontSize: '0.55rem', color: '#4ade80', background: 'rgba(74,222,128,0.1)', padding: '1px 5px', borderRadius: 3, border: '1px solid rgba(74,222,128,0.2)' }}>
-                        ✓ saved
-                      </span>
-                    )}
-                    {!secret.stored && !isSaved && (
-                      <span style={{ fontSize: '0.55rem', color: '#f59e0b', background: 'rgba(245,158,11,0.08)', padding: '1px 5px', borderRadius: 3, border: '1px solid rgba(245,158,11,0.2)' }}>
-                        not set
-                      </span>
-                    )}
-                  </div>
-                  {/* Value input + Save */}
-                  <div style={{ display: 'flex', gap: 6 }}>
-                    <input
-                      type="password"
-                      placeholder={secret.stored ? '••••••••  (update)' : 'Enter value…'}
-                      value={secretValues[secret.key] || ''}
-                      onChange={e => setSecretValues(prev => ({ ...prev, [secret.key]: e.target.value }))}
-                      onKeyDown={e => { if (e.key === 'Enter') handleSave(secret.key); }}
-                      onClick={e => e.stopPropagation()}
-                      style={{
-                        flex: 1, padding: '5px 8px', borderRadius: 5, fontSize: '0.65rem',
-                        background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.1)',
-                        color: '#e5e7eb', outline: 'none', fontFamily: 'ui-monospace,monospace',
-                      }}
-                    />
-                    <button
-                      onClick={(e) => { e.stopPropagation(); handleSave(secret.key); }}
-                      disabled={!(secretValues[secret.key] || '').trim()}
-                      style={{
-                        padding: '5px 10px', borderRadius: 5, fontSize: '0.62rem', cursor: 'pointer', fontWeight: 600, flexShrink: 0,
-                        background: (secretValues[secret.key] || '').trim() ? 'rgba(249,115,22,0.15)' : 'rgba(255,255,255,0.04)',
-                        border: (secretValues[secret.key] || '').trim() ? '1px solid rgba(249,115,22,0.35)' : '1px solid rgba(255,255,255,0.08)',
-                        color: (secretValues[secret.key] || '').trim() ? '#fb923c' : '#4b5563',
-                      }}
-                    >
-                      Save
-                    </button>
-                  </div>
-                </div>
-              );
-            })
           )}
 
           {/* Schedule line */}
@@ -646,26 +1063,64 @@ function SkillItemCard({ item, onSaveSecret, onOpenCode }: {
   );
 }
 
-export function SkillsTab({ items, onSaveSecret, onOpenCode }: {
+export function SkillsTab({ items, onSaveSecret, onOpenCode, onUploadSkill, onOAuthConnect, onScopesChange, onDelete }: {
   items: SkillItem[];
   onSaveSecret: (skillName: string, key: string, value: string) => void;
   onOpenCode: (filePath: string) => void;
+  onUploadSkill?: () => void;
+  onOAuthConnect: (skillName: string, provider: string, tokenKey: string, scopes?: string) => void;
+  onScopesChange: (skillName: string, provider: string, scopes: string) => void;
+  onDelete: (skillName: string) => void;
 }) {
-  if (items.length === 0) {
-    return (
-      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '36px 16px', gap: 10, opacity: 0.5 }}>
-        <SkillsIcon active={false} />
-        <span style={{ color: '#6b7280', fontSize: '0.72rem', textAlign: 'center', lineHeight: 1.6 }}>
-          No skills installed yet.<br/>Built skills appear here with their env and secrets.
-        </span>
-      </div>
-    );
-  }
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-      {items.map(item => (
-        <SkillItemCard key={item.name} item={item} onSaveSecret={onSaveSecret} onOpenCode={onOpenCode} />
-      ))}
+      {/* Upload Skill header button */}
+      <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 2 }}>
+        <button
+          onClick={onUploadSkill}
+          style={{
+            display: 'flex', alignItems: 'center', gap: 5,
+            padding: '5px 10px', borderRadius: 6, fontSize: '0.62rem', cursor: 'pointer', fontWeight: 600,
+            background: 'rgba(249,115,22,0.1)', border: '1px solid rgba(249,115,22,0.3)', color: '#fb923c',
+          }}
+        >
+          <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+            <polyline points="17 8 12 3 7 8"/>
+            <line x1="12" y1="3" x2="12" y2="15"/>
+          </svg>
+          Upload Skill
+        </button>
+      </div>
+
+      {items.length === 0 ? (
+        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '28px 16px', gap: 10, opacity: 0.5 }}>
+          <SkillsIcon active={false} />
+          <span style={{ color: '#6b7280', fontSize: '0.72rem', textAlign: 'center', lineHeight: 1.6 }}>
+            No skills installed yet.<br/>Built skills appear here with their env and secrets.
+          </span>
+        </div>
+      ) : (
+        items.map(item => (
+          <SkillItemCard key={item.name} item={item} onSaveSecret={onSaveSecret} onOpenCode={onOpenCode} onOAuthConnect={onOAuthConnect} onScopesChange={onScopesChange} onDelete={onDelete} />
+        ))
+      )}
+    </div>
+  );
+}
+
+// ── Store tab ─────────────────────────────────────────────────────────────────
+
+export function StoreTab({ initialSearch, onBuildSkill }: {
+  initialSearch?: string;
+  onBuildSkill?: () => void;
+}) {
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', flex: 1 }}>
+      <SkillStore
+        initialSearch={initialSearch || ''}
+        onBuildSkill={onBuildSkill || (() => {})}
+      />
     </div>
   );
 }

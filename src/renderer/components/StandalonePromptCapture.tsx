@@ -1,7 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import VoiceButton from './VoiceButton';
 import { playThinkDropSound } from '../utils/thinkDropSound';
-import SkillStore from './SkillStore';
 
 const ipcRenderer = (window as any).electron?.ipcRenderer;
 
@@ -35,8 +34,7 @@ export default function StandalonePromptCapture() {
 
   // Skills Manager state
   const [showSkillsPanel, setShowSkillsPanel] = useState(false);
-  const [skillsTab, setSkillsTab] = useState<'installed' | 'store' | 'shortcuts'>('installed');
-  const [skillStoreSearch, setSkillStoreSearch] = useState('');
+  const skillsTab = 'shortcuts' as const;
   const [skills, setSkills] = useState<InstalledSkill[]>([]);
   const [skillsLoading, setSkillsLoading] = useState(false);
   const [deletingSkill, setDeletingSkill] = useState<string | null>(null);
@@ -108,14 +106,9 @@ export default function StandalonePromptCapture() {
       }
     };
 
-    // needs_skill auto-trigger: open Skill Store tab with capability pre-filled in search
-    const handleSkillStoreTrigger = (_event: any, { capability }: { capability: string; suggestion: string }) => {
-      const query = capability ? capability.replace(/[^a-zA-Z0-9 ]/g, ' ').trim() : '';
-      setSkillStoreSearch(query);
-      setSkillsTab('store');
-      setShowSkillsPanel(true);
-      requestWindowResize();
-    };
+    // needs_skill auto-trigger: skill:store-trigger is now handled by ResultsWindow
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    const handleSkillStoreTrigger = (_event: any, _data: any) => {};
 
     // gatherContext active: route submit to gather:answer instead of stategraph:process
     const handleGatherPending = (_event: any, { active }: { active: boolean }) => {
@@ -909,40 +902,11 @@ export default function StandalonePromptCapture() {
             backgroundColor: 'rgba(18,18,22,0.98)',
             padding: '10px 12px',
           }}>
-            {/* Tab bar */}
-            <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginBottom: 10 }}>
-              {(['installed', 'store', 'shortcuts'] as const).map(tab => (
-                <button key={tab} onClick={() => setSkillsTab(tab)} style={{
-                  padding: '3px 10px', borderRadius: 6, fontSize: '0.69rem', fontWeight: 600,
-                  cursor: 'pointer', border: `1px solid ${skillsTab === tab ? 'rgba(139,92,246,0.5)' : 'rgba(255,255,255,0.08)'}`,
-                  background: skillsTab === tab ? 'rgba(139,92,246,0.18)' : 'transparent',
-                  color: skillsTab === tab ? '#c4b5fd' : '#6b7280', transition: 'all 0.1s',
-                  whiteSpace: 'nowrap',
-                }}>
-                  {tab === 'installed' ? 'Installed' : tab === 'store' ? 'Skill Store' : 'Shortcuts'}
-                </button>
-              ))}
-              {skillsTab === 'installed' && (
-                <button onClick={loadSkills} title="Refresh" style={{
-                  marginLeft: 'auto', background: 'none', border: 'none', cursor: 'pointer',
-                  color: '#6b7280', padding: '2px 4px', borderRadius: 4, fontSize: '0.68rem',
-                }}
-                  onMouseEnter={e => (e.currentTarget.style.color = '#c4b5fd')}
-                  onMouseLeave={e => (e.currentTarget.style.color = '#6b7280')}
-                >↻</button>
-              )}
+            {/* Settings header */}
+            <div style={{ fontSize: '0.6rem', color: '#6b7280', marginBottom: 10, fontWeight: 600, letterSpacing: '0.05em', textTransform: 'uppercase' }}
+            >
+              Settings
             </div>
-
-            {/* Skill Store tab */}
-            {skillsTab === 'store' && (
-              <SkillStore
-                initialSearch={skillStoreSearch}
-                onBuildSkill={() => {
-                  setSkillStoreSearch('');
-                  setIsProcessing(true);
-                }}
-              />
-            )}
 
             {/* Shortcuts tab */}
             {skillsTab === 'shortcuts' && (
@@ -1022,8 +986,8 @@ export default function StandalonePromptCapture() {
               </div>
             )}
 
-            {/* Installed tab */}
-            {skillsTab === 'installed' && (<div>
+            {/* Installed tab — moved to ResultsWindow Skills tab */}
+            {false && (<div>
 
             {deleteError && (
               <div style={{ color: '#f87171', fontSize: '0.7rem', marginBottom: 6, padding: '4px 8px', borderRadius: 5, backgroundColor: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.2)' }}>

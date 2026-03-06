@@ -8,3 +8,4 @@ dist-renderer/
 .yarn
 .service-pids
 oc-mimic-skills/
+.playwright-cli

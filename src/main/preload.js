@@ -49,6 +49,10 @@ contextBridge.exposeInMainWorld('electron', {
         'skills:list',
         'skills:save-secret',
         'skills:open-code',
+        'skills:upload',
+        'skills:oauth-connect',
+        'skills:update-oauth-scopes',
+        'skills:delete',
         'gather:answer',
         'gather:credential',
       ];

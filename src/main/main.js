@@ -1,5 +1,11 @@
 // Entry point — ThinkDrop managed
 require('dotenv').config();
+// Also load command-service .env as a fallback for OAuth credentials and service config.
+// Values already set by the root .env take precedence (override: false).
+require('dotenv').config({
+  path: require('path').join(__dirname, '..', '..', 'mcp-services', 'command-service', '.env'),
+  override: false,
+});
 const { app, BrowserWindow, ipcMain, screen, globalShortcut, clipboard } = require('electron');
 
 // Safe IPC send — guards against "Render frame was disposed" crash that occurs when
@@ -1215,9 +1221,29 @@ app.whenReady().then(async () => {
   });
 
   // ─── Cron IPC handlers ────────────────────────────────────────────────────
-  ipcMain.on('cron:toggle', (_event, { id }) => {
+  ipcMain.on('cron:toggle', async (_event, { id }) => {
     console.log(`[Cron] Toggle: ${id}`);
-    queueManager.toggleCron(id);
+    // Toggle local pause state (id === skillName from cron:list)
+    const wasPaused = _pausedCrons.has(id);
+    if (wasPaused) { _pausedCrons.delete(id); } else { _pausedCrons.add(id); }
+    const newStatus = wasPaused ? 'active' : 'paused';
+    const action    = wasPaused ? 'resume' : 'pause';
+    // Push updated status to renderer immediately — no need to re-fetch full list
+    if (resultsWindow && !resultsWindow.isDestroyed()) {
+      ipcMain.emit('cron:list');
+    }
+    // Tell command-service scheduler to pause/resume
+    const cmdPort = parseInt(process.env.SERVICE_PORT || process.env.COMMAND_SERVICE_PORT || '3007', 10);
+    const body = JSON.stringify({ skillName: id, action });
+    const req = require('http').request({
+      hostname: '127.0.0.1', port: cmdPort,
+      path: '/skill.schedule/toggle', method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) },
+      timeout: 3000,
+    }, res => { res.resume(); });
+    req.on('error', () => {}); // non-fatal
+    req.write(body); req.end();
+    console.log(`[Cron] ${id} → ${newStatus}`);
   });
 
   ipcMain.on('cron:delete', (_event, { id }) => {
@@ -1225,13 +1251,7 @@ app.whenReady().then(async () => {
     queueManager.removeCron(id);
   });
 
-  ipcMain.on('cron:run-now', (_event, { id }) => {
-    console.log(`[Cron] Run now: ${id}`);
-    const item = queueManager.getCron().find(i => i.id === id);
-    if (!item) return;
-    // Enqueue as a one-shot run — future: re-trigger stategraph with item's stored prompt
-    queueManager.recordCronRun(id);
-  });
+  // cron:run-now handled below (real HTTP dispatch to command-service)
 
   // ─── Skill schedule registration (called by skillCreator after writing skill) ──
   // Accepts HTTP POST from command-service: { skillName, schedule, trigger }
@@ -1590,21 +1610,15 @@ app.whenReady().then(async () => {
       } else if (event.type === 'all_done') {
         activeScheduleCountdown = null;
       }
-      // command_automate queued: fire ONCE on the very first 'planning' event.
-      // Do NOT forward any 'planning' automation:progress events to resultsWindow —
-      // queue:enqueued switches it to Queue tab and planning events would fight that.
-      if (event.type === 'planning') {
-        if (!_queueNotifiedOnce) {
-          _queueNotifiedOnce = true;
-          if (promptCaptureWindow && !promptCaptureWindow.isDestroyed()) {
-            safeSend(promptCaptureWindow, 'queue:started', {});
-          }
-          if (resultsWindow && !resultsWindow.isDestroyed()) {
-            safeSend(resultsWindow, 'queue:enqueued', {});
-          }
+      // Forward all automation:progress events (including 'planning') to ResultsWindow.
+      // Results tab owns inline automation display — do NOT auto-switch to Queue tab.
+      if (event.type === 'planning' && !_queueNotifiedOnce) {
+        _queueNotifiedOnce = true;
+        if (promptCaptureWindow && !promptCaptureWindow.isDestroyed()) {
+          safeSend(promptCaptureWindow, 'queue:started', {});
         }
-        // Never forward 'planning' events to resultsWindow — Queue tab owns this
-      } else if (resultsWindow && !resultsWindow.isDestroyed()) {
+      }
+      if (resultsWindow && !resultsWindow.isDestroyed()) {
         safeSend(resultsWindow, 'automation:progress', event);
       } else if (!resultsWindow || resultsWindow.isDestroyed()) {
         console.warn('[ProgressCallback] resultsWindow not available for event:', event.type);
@@ -3072,30 +3086,116 @@ app.whenReady().then(async () => {
         const triggerMatch  = fm.match(/^trigger\s*:\s*(.+)$/m);
         const scheduleMatch = fm.match(/^schedule\s*:\s*(.+)$/m);
         const secretsMatch  = fm.match(/^secrets\s*:\s*(.+)$/m);
+        const oauthMatch       = fm.match(/^oauth\s*:\s*(.+)$/m);
+        const oauthScopesMatch = fm.match(/^oauth_scopes\s*:\s*(.+)$/m);
         const trigger  = triggerMatch  ? triggerMatch[1].trim()  : (row.name || '');
         const schedule = scheduleMatch ? scheduleMatch[1].trim() : 'on_demand';
         let secretKeys = [];
         if (secretsMatch) {
           secretKeys = secretsMatch[1].split(/[\s,]+/).map(s => s.trim()).filter(Boolean);
         }
-
-        const secrets = await Promise.all(secretKeys.map(async (key) => {
-          let stored = false;
-          if (keytar) {
-            // Check both the namespaced key (skill:name:KEY) and bare key for backwards compat
-            try { stored = !!(await keytar.getPassword('thinkdrop', `skill:${row.name}:${key}`)) ||
-                           !!(await keytar.getPassword('thinkdrop', key)); } catch(_) {}
+        // Parse oauth: field — comma-separated providers e.g. "google" or "google, github"
+        let oauthProviders = [];
+        if (oauthMatch) {
+          oauthProviders = oauthMatch[1].split(/[\s,]+/).map(s => s.trim().toLowerCase()).filter(Boolean);
+        }
+        // Parse oauth_scopes: field — JSON object or "provider:scope1 scope2, provider2:scope3"
+        // e.g.  oauth_scopes: google=https://www.googleapis.com/auth/calendar, slack=chat:write
+        const skillOauthScopes = {};
+        if (oauthScopesMatch) {
+          for (const part of oauthScopesMatch[1].split(',')) {
+            const eq = part.indexOf('=');
+            if (eq !== -1) {
+              const p = part.slice(0, eq).trim().toLowerCase();
+              const s = part.slice(eq + 1).trim();
+              if (p && s) skillOauthScopes[p] = s;
+            }
           }
-          return { key, stored };
+        }
+
+        // Extract description from contractMd body (after frontmatter) or row.description
+        let description = full?.description || row.description || '';
+        if (!description && cm) {
+          const bodyAfterFm = cm.replace(/^---\s*\n[\s\S]*?\n---\s*\n/, '').trim();
+          const firstLine = bodyAfterFm.split('\n').find(l => l.trim() && !l.startsWith('#'));
+          if (firstLine) description = firstLine.trim().slice(0, 200);
+        }
+
+        // Filter out OAuth client credentials — those come from .env, not user input
+        const USER_SECRET_KEYS = secretKeys.filter(k => !/(CLIENT_ID|CLIENT_SECRET)$/i.test(k));
+
+        const secrets = await Promise.all(USER_SECRET_KEYS.map(async (key) => {
+          let stored = false;
+          let preview = undefined;
+          if (keytar) {
+            try {
+              // Always check skill: namespace first (written by skills:save-secret)
+              const val = (await keytar.getPassword('thinkdrop', `skill:${row.name}:${key}`)) ||
+                          (await keytar.getPassword('thinkdrop', key));
+              stored = !!val;
+              if (val && val.length >= 4) preview = val.slice(0, 8);
+            } catch(_) {}
+          }
+          return { key, stored, preview };
         }));
+
+        // Check OAuth token status per provider
+        // Broad identity-level defaults — NOT scope-restricted to any single product.
+        // Skills that need specific scopes should declare oauth_scopes: in their contract frontmatter.
+        // e.g.  oauth_scopes: google=https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/calendar
+        const OAUTH_SCOPE_DEFAULTS = {
+          google:     'https://www.googleapis.com/auth/userinfo.email https://www.googleapis.com/auth/userinfo.profile',
+          github:     'read:user user:email',
+          microsoft:  'openid profile email offline_access',
+          facebook:   'email public_profile',
+          twitter:    'tweet.read users.read offline.access',
+          linkedin:   'openid profile email',
+          slack:      'openid profile email',
+          notion:     '',
+          spotify:    'user-read-email user-read-private',
+          dropbox:    'account_info.read',
+          discord:    'identify email',
+          zoom:       'user:read',
+          atlassian:  'read:me offline_access',
+          salesforce: 'openid profile email',
+          hubspot:    'crm.objects.contacts.read',
+        };
+        const oauthConnections = await Promise.all(oauthProviders.map(async (provider) => {
+          const tokenKey = `oauth:${provider}:${row.name}`;
+          let connected = false;
+          let accountHint;
+          if (keytar) {
+            try {
+              const raw = await keytar.getPassword('thinkdrop', tokenKey);
+              if (raw) {
+                connected = true;
+                try {
+                  const tok = JSON.parse(raw);
+                  accountHint = tok.email || tok.account || undefined;
+                } catch(_) {}
+              }
+            } catch(_) {}
+          }
+          // Use skill-declared scopes if present, otherwise broad identity defaults
+          const scopes = skillOauthScopes[provider] || OAUTH_SCOPE_DEFAULTS[provider] || '';
+          return { provider, connected, tokenKey, scopes, accountHint };
+        }));
+
         const missingCount = secrets.filter(s => !s.stored).length;
+        const unconnectedOAuth = oauthConnections.filter(c => !c.connected).length;
+        // Differentiate: missing API secrets vs OAuth not yet connected
+        const status = missingCount > 0 ? 'missing_secrets'
+                     : unconnectedOAuth > 0 ? 'needs_auth'
+                     : 'ok';
         return {
-          name:     row.name || '',
-          filePath: row.execPath || full?.execPath || '',
+          name:             row.name || '',
+          filePath:         row.execPath || full?.execPath || '',
           trigger,
           schedule,
+          description:      description || undefined,
           secrets,
-          status:   missingCount > 0 ? 'missing_secrets' : 'ok',
+          oauthConnections: oauthConnections.length > 0 ? oauthConnections : undefined,
+          status,
         };
       }));
       if (resultsWindow && !resultsWindow.isDestroyed()) safeSend(resultsWindow, 'skills:update', items);
@@ -3108,8 +3208,10 @@ app.whenReady().then(async () => {
   ipcMain.on('skills:save-secret', async (_event, { skillName, key, value }) => {
     try {
       const keytar = require('keytar');
-      await keytar.setPassword('thinkdrop', key, value);
-      console.log(`[Skills] Stored secret ${key} for skill ${skillName}`);
+      // Always store under skill:<name>:<key> so external.skill can find it
+      const keytarKey = `skill:${skillName}:${key}`;
+      await keytar.setPassword('thinkdrop', keytarKey, value);
+      console.log(`[Skills] Stored secret ${keytarKey}`);
       // Refresh skills list so stored badges update
       if (resultsWindow && !resultsWindow.isDestroyed()) {
         ipcMain.emit('skills:list');
@@ -3119,16 +3221,622 @@ app.whenReady().then(async () => {
     }
   });
 
+  ipcMain.on('skills:delete', async (_event, { skillName }) => {
+    try {
+      const fsMod   = require('fs');
+      const pathMod = require('path');
+      const osMod   = require('os');
+      const http    = require('http');
+      let keytar; try { keytar = require('keytar'); } catch(_) {}
+
+      // 1. Delete skill file from ~/.thinkdrop/skills/<name>/
+      const skillDir = pathMod.join(osMod.homedir(), '.thinkdrop', 'skills', skillName);
+      if (fsMod.existsSync(skillDir)) {
+        fsMod.rmSync(skillDir, { recursive: true, force: true });
+        console.log(`[Skills] Deleted skill dir: ${skillDir}`);
+      }
+
+      // 2. Remove from user-memory MCP
+      const memApiKey = process.env.MCP_USER_MEMORY_API_KEY || process.env.USER_MEMORY_API_KEY || process.env.MCP_API_KEY || 'k7F9qLp3XzR2vH8sT1mN4bC0yW6uJ5eQG4tY9bH2wQ6nM1vS8xR3cL5pZ0kF7uDe';
+      const delBody = JSON.stringify({ version: 'mcp.v1', service: 'user-memory', action: 'skill.delete', payload: { name: skillName }, requestId: 'delete-' + Date.now() });
+      await new Promise(resolve => {
+        const req = http.request({
+          hostname: '127.0.0.1', port: parseInt(process.env.MEMORY_SERVICE_PORT || '3001', 10),
+          path: '/skill.delete', method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${memApiKey}`, 'Content-Length': Buffer.byteLength(delBody) },
+        }, res => { res.resume(); resolve(); });
+        req.on('error', () => resolve());
+        req.write(delBody); req.end();
+      });
+      console.log(`[Skills] Removed skill from user-memory: ${skillName}`);
+
+      // 3. Remove from cron (in-memory queueManager)
+      queueManager.removeCron(skillName);
+
+      // 4. Clean up keytar secrets for this skill
+      try {
+        const kt = require('keytar');
+        const allCreds = await kt.findCredentials('thinkdrop');
+        const prefix = `skill:${skillName}:`;
+        await Promise.all(allCreds
+          .filter(c => c.account.startsWith(prefix) || c.account.startsWith(`oauth:`) && c.account.endsWith(`:${skillName}`))
+          .map(c => kt.deletePassword('thinkdrop', c.account).catch(() => {})));
+      } catch (_) {}
+
+      console.log(`[Skills] Deleted skill: ${skillName}`);
+      // Refresh both tabs
+      ipcMain.emit('skills:list');
+      ipcMain.emit('cron:list');
+    } catch (e) {
+      console.error('[Skills] skills:delete failed:', e.message);
+    }
+  });
+
   ipcMain.on('skills:open-code', (_event, { filePath }) => {
     const { shell } = require('electron');
     shell.openPath(filePath).catch(e => console.error('[Skills] open-code failed:', e.message));
   });
+
+  // ─── Skills: OAuth connect flow ───────────────────────────────────────────
+  // Opens a BrowserWindow to the provider auth URL, captures the redirect code,
+  // exchanges it for tokens, stores the token JSON in keytar under tokenKey.
+  ipcMain.on('skills:oauth-connect', async (_event, { skillName, provider, tokenKey, scopes }) => {
+    const { BrowserWindow: OWin } = require('electron');
+    const https = require('https');
+    const http  = require('http');
+    const crypto = require('crypto');
+    const keytar = (() => { try { return require('keytar'); } catch(_) { return null; } })();
+
+    // ── Per-provider OAuth config ──────────────────────────────────────────
+    // redirectPort range: 9742-9759 (one unique port per provider)
+    const OAUTH_CONFIG = {
+      google: {
+        authBase:     'https://accounts.google.com/o/oauth2/v2/auth',
+        tokenUrl:     'https://oauth2.googleapis.com/token',
+        defaultScope: 'https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/userinfo.email',
+        redirectPort: 9742,
+        clientIdKey:  `skill:${skillName}:GOOGLE_CLIENT_ID`,
+        clientSecretKey: `skill:${skillName}:GOOGLE_CLIENT_SECRET`,
+      },
+      github: {
+        authBase:     'https://github.com/login/oauth/authorize',
+        tokenUrl:     'https://github.com/login/oauth/access_token',
+        defaultScope: 'repo user',
+        redirectPort: 9743,
+        clientIdKey:  `skill:${skillName}:GITHUB_CLIENT_ID`,
+        clientSecretKey: `skill:${skillName}:GITHUB_CLIENT_SECRET`,
+      },
+      microsoft: {
+        authBase:     'https://login.microsoftonline.com/common/oauth2/v2.0/authorize',
+        tokenUrl:     'https://login.microsoftonline.com/common/oauth2/v2.0/token',
+        defaultScope: 'Mail.Read offline_access',
+        redirectPort: 9744,
+        clientIdKey:  `skill:${skillName}:MICROSOFT_CLIENT_ID`,
+        clientSecretKey: `skill:${skillName}:MICROSOFT_CLIENT_SECRET`,
+      },
+      facebook: {
+        authBase:     'https://www.facebook.com/v19.0/dialog/oauth',
+        tokenUrl:     'https://graph.facebook.com/v19.0/oauth/access_token',
+        defaultScope: 'email public_profile',
+        redirectPort: 9745,
+        clientIdKey:  `skill:${skillName}:FACEBOOK_CLIENT_ID`,
+        clientSecretKey: `skill:${skillName}:FACEBOOK_CLIENT_SECRET`,
+      },
+      twitter: {
+        authBase:     'https://twitter.com/i/oauth2/authorize',
+        tokenUrl:     'https://api.twitter.com/2/oauth2/token',
+        defaultScope: 'tweet.read users.read offline.access',
+        redirectPort: 9746,
+        clientIdKey:  `skill:${skillName}:TWITTER_CLIENT_ID`,
+        clientSecretKey: `skill:${skillName}:TWITTER_CLIENT_SECRET`,
+        pkce: true, // Twitter OAuth2 requires PKCE
+      },
+      linkedin: {
+        authBase:     'https://www.linkedin.com/oauth/v2/authorization',
+        tokenUrl:     'https://www.linkedin.com/oauth/v2/accessToken',
+        defaultScope: 'openid profile email',
+        redirectPort: 9747,
+        clientIdKey:  `skill:${skillName}:LINKEDIN_CLIENT_ID`,
+        clientSecretKey: `skill:${skillName}:LINKEDIN_CLIENT_SECRET`,
+      },
+      slack: {
+        authBase:     'https://slack.com/oauth/v2/authorize',
+        tokenUrl:     'https://slack.com/api/oauth.v2.access',
+        defaultScope: 'channels:read chat:write users:read',
+        redirectPort: 9748,
+        clientIdKey:  `skill:${skillName}:SLACK_CLIENT_ID`,
+        clientSecretKey: `skill:${skillName}:SLACK_CLIENT_SECRET`,
+      },
+      notion: {
+        authBase:     'https://api.notion.com/v1/oauth/authorize',
+        tokenUrl:     'https://api.notion.com/v1/oauth/token',
+        defaultScope: '',
+        redirectPort: 9749,
+        clientIdKey:  `skill:${skillName}:NOTION_CLIENT_ID`,
+        clientSecretKey: `skill:${skillName}:NOTION_CLIENT_SECRET`,
+        basicAuth: true, // Notion token exchange uses HTTP Basic auth
+      },
+      spotify: {
+        authBase:     'https://accounts.spotify.com/authorize',
+        tokenUrl:     'https://accounts.spotify.com/api/token',
+        defaultScope: 'user-read-email user-read-private playlist-read-private',
+        redirectPort: 9750,
+        clientIdKey:  `skill:${skillName}:SPOTIFY_CLIENT_ID`,
+        clientSecretKey: `skill:${skillName}:SPOTIFY_CLIENT_SECRET`,
+      },
+      dropbox: {
+        authBase:     'https://www.dropbox.com/oauth2/authorize',
+        tokenUrl:     'https://api.dropboxapi.com/oauth2/token',
+        defaultScope: 'account_info.read files.content.read',
+        redirectPort: 9751,
+        clientIdKey:  `skill:${skillName}:DROPBOX_CLIENT_ID`,
+        clientSecretKey: `skill:${skillName}:DROPBOX_CLIENT_SECRET`,
+      },
+      discord: {
+        authBase:     'https://discord.com/api/oauth2/authorize',
+        tokenUrl:     'https://discord.com/api/oauth2/token',
+        defaultScope: 'identify email guilds',
+        redirectPort: 9752,
+        clientIdKey:  `skill:${skillName}:DISCORD_CLIENT_ID`,
+        clientSecretKey: `skill:${skillName}:DISCORD_CLIENT_SECRET`,
+      },
+      zoom: {
+        authBase:     'https://zoom.us/oauth/authorize',
+        tokenUrl:     'https://zoom.us/oauth/token',
+        defaultScope: 'meeting:read user:read',
+        redirectPort: 9753,
+        clientIdKey:  `skill:${skillName}:ZOOM_CLIENT_ID`,
+        clientSecretKey: `skill:${skillName}:ZOOM_CLIENT_SECRET`,
+        basicAuth: true, // Zoom token exchange uses HTTP Basic auth
+      },
+      atlassian: {
+        authBase:     'https://auth.atlassian.com/authorize',
+        tokenUrl:     'https://auth.atlassian.com/oauth/token',
+        defaultScope: 'read:jira-work write:jira-work read:jira-user offline_access',
+        redirectPort: 9754,
+        clientIdKey:  `skill:${skillName}:ATLASSIAN_CLIENT_ID`,
+        clientSecretKey: `skill:${skillName}:ATLASSIAN_CLIENT_SECRET`,
+      },
+      salesforce: {
+        authBase:     'https://login.salesforce.com/services/oauth2/authorize',
+        tokenUrl:     'https://login.salesforce.com/services/oauth2/token',
+        defaultScope: 'api refresh_token',
+        redirectPort: 9755,
+        clientIdKey:  `skill:${skillName}:SALESFORCE_CLIENT_ID`,
+        clientSecretKey: `skill:${skillName}:SALESFORCE_CLIENT_SECRET`,
+      },
+      hubspot: {
+        authBase:     'https://app.hubspot.com/oauth/authorize',
+        tokenUrl:     'https://api.hubapi.com/oauth/v1/token',
+        defaultScope: 'crm.objects.contacts.read crm.objects.contacts.write',
+        redirectPort: 9756,
+        clientIdKey:  `skill:${skillName}:HUBSPOT_CLIENT_ID`,
+        clientSecretKey: `skill:${skillName}:HUBSPOT_CLIENT_SECRET`,
+      },
+    };
+
+    const cfg = OAUTH_CONFIG[provider];
+    if (!cfg) {
+      console.error(`[OAuth] Unknown provider: ${provider}`);
+      return;
+    }
+
+    // Read client_id + client_secret from process.env (set by ThinkDrop in .env)
+    // Supports both naming conventions:
+    //   GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET  (root .env)
+    //   GOOGLE_CLOUD_CLIENT_ID / GOOGLE_CLOUD_CLIENT_SECRET  (command-service .env)
+    const providerUpper = provider.toUpperCase();
+    let clientId     = process.env[`${providerUpper}_CLIENT_ID`]
+                    || (provider === 'google' ? process.env.GOOGLE_CLOUD_CLIENT_ID : undefined);
+    let clientSecret = process.env[`${providerUpper}_CLIENT_SECRET`]
+                    || (provider === 'google' ? process.env.GOOGLE_CLOUD_CLIENT_SECRET : undefined);
+
+    // Fallback: check keytar in case user stored them manually earlier
+    if ((!clientId || !clientSecret) && keytar) {
+      clientId     = clientId     || await keytar.getPassword('thinkdrop', cfg.clientIdKey).catch(() => null);
+      clientSecret = clientSecret || await keytar.getPassword('thinkdrop', cfg.clientSecretKey).catch(() => null);
+    }
+
+    if (!clientId || !clientSecret) {
+      const { dialog } = require('electron');
+      dialog.showMessageBox(resultsWindow, {
+        type: 'info',
+        title: `${provider} OAuth Setup`,
+        message: `To enable ${provider} OAuth, add these to your ThinkDrop .env file:\n\n  ${providerUpper}_CLIENT_ID=your_client_id\n  ${providerUpper}_CLIENT_SECRET=your_client_secret\n\nGet these from the ${provider} developer console, then restart ThinkDrop.`,
+        buttons: ['OK'],
+      });
+      return;
+    }
+
+    const redirectPort = cfg.redirectPort;
+    // Google Desktop/installed app clients use http://localhost:PORT (no path)
+    // Web app clients use http://localhost:PORT/oauth/callback
+    // We detect installed vs web by checking GOOGLE_OAUTH_TYPE env or defaulting to installed
+    const isGoogleInstalled = provider === 'google' && process.env.GOOGLE_OAUTH_TYPE !== 'web';
+    const redirectUri  = isGoogleInstalled
+      ? `http://localhost:${redirectPort}`
+      : `http://localhost:${redirectPort}/oauth/callback`;
+    const state        = crypto.randomBytes(16).toString('hex');
+    const scopeStr     = scopes || cfg.defaultScope;
+
+    // PKCE support (required for Twitter/X OAuth2)
+    let codeVerifier, codeChallenge;
+    if (cfg.pkce) {
+      codeVerifier  = crypto.randomBytes(32).toString('base64url');
+      codeChallenge = crypto.createHash('sha256').update(codeVerifier).digest('base64url');
+    }
+
+    // Build auth URL — only add Google-specific params for google
+    const authParams = {
+      client_id:     clientId,
+      redirect_uri:  redirectUri,
+      response_type: 'code',
+      state,
+    };
+    if (scopeStr) authParams.scope = scopeStr;
+    if (provider === 'google') {
+      authParams.access_type = 'offline';
+      authParams.prompt      = 'consent';
+    }
+    if (cfg.pkce) {
+      authParams.code_challenge        = codeChallenge;
+      authParams.code_challenge_method = 'S256';
+    }
+    const authUrl = `${cfg.authBase}?${new URLSearchParams(authParams).toString()}`;
+
+    // Start local redirect-catcher server
+    const codePromise = new Promise((resolve, reject) => {
+      const server = http.createServer((req, res) => {
+        try {
+          const url = new URL(req.url, `http://localhost:${redirectPort}`);
+          const code  = url.searchParams.get('code');
+          const rState = url.searchParams.get('state');
+          if (code && rState === state) {
+            res.writeHead(200, { 'Content-Type': 'text/html' });
+            res.end('<html><body style="font-family:sans-serif;background:#111;color:#4ade80;padding:40px"><h2>✓ Connected!</h2><p>You can close this window.</p></body></html>');
+            server.close();
+            resolve(code);
+          } else {
+            res.writeHead(400); res.end('Bad request');
+          }
+        } catch(e) {
+          res.writeHead(500); res.end('Error');
+          reject(e);
+        }
+      });
+      server.listen(redirectPort, '127.0.0.1', () => {
+        console.log(`[OAuth] Redirect listener on port ${redirectPort}`);
+      });
+      server.on('error', reject);
+      setTimeout(() => { server.close(); reject(new Error('OAuth timeout')); }, 300000);
+    });
+
+    // Open OAuth window
+    const authWin = new OWin({
+      width: 520, height: 700,
+      title: `Connect ${provider}`,
+      webPreferences: { nodeIntegration: false, contextIsolation: true },
+    });
+    authWin.loadURL(authUrl);
+    authWin.show();
+
+    let code;
+    try {
+      code = await codePromise;
+    } catch(e) {
+      console.error(`[OAuth] Failed to get code: ${e.message}`);
+      if (!authWin.isDestroyed()) authWin.close();
+      return;
+    }
+    if (!authWin.isDestroyed()) authWin.close();
+
+    // Exchange code for tokens
+    try {
+      const tokenParams = {
+        code,
+        redirect_uri:  redirectUri,
+        grant_type:    'authorization_code',
+      };
+      // basicAuth providers (Notion, Zoom) send credentials in Authorization header
+      // pkce providers (Twitter) send code_verifier instead of client_secret in body
+      if (!cfg.basicAuth) {
+        tokenParams.client_id     = clientId;
+        tokenParams.client_secret = clientSecret;
+      }
+      if (cfg.pkce && codeVerifier) {
+        tokenParams.code_verifier = codeVerifier;
+        tokenParams.client_id     = clientId; // Twitter still needs client_id in body
+      }
+      const tokenBody = new URLSearchParams(tokenParams).toString();
+
+      const tokenHeaders = {
+        'Content-Type':   'application/x-www-form-urlencoded',
+        'Accept':         'application/json',
+        'Content-Length': Buffer.byteLength(tokenBody),
+      };
+      if (cfg.basicAuth) {
+        tokenHeaders['Authorization'] = 'Basic ' + Buffer.from(`${clientId}:${clientSecret}`).toString('base64');
+      }
+
+      console.log(`[OAuth] Token exchange → ${cfg.tokenUrl} | client_id=${clientId?.slice(0,12)}… | redirect_uri=${redirectUri}`);
+      const tokenData = await new Promise((resolve, reject) => {
+        const tokenUrlObj = new URL(cfg.tokenUrl);
+        const isHttps = tokenUrlObj.protocol === 'https:';
+        const lib = isHttps ? https : http;
+        const req = lib.request({
+          hostname: tokenUrlObj.hostname,
+          path:     tokenUrlObj.pathname + tokenUrlObj.search,
+          method:   'POST',
+          headers:  tokenHeaders,
+        }, (res) => {
+          let d = ''; res.on('data', c => { d += c; }); res.on('end', () => {
+            console.log(`[OAuth] Token response (${res.statusCode}):`, d.slice(0, 500));
+            try { resolve(JSON.parse(d)); } catch(e) { reject(e); }
+          });
+        });
+        req.on('error', reject);
+        req.write(tokenBody); req.end();
+      });
+
+      if (tokenData.error) {
+        // invalid_client almost always means redirect URI not whitelisted in provider console
+        if ((tokenData.error === 'invalid_client' || tokenData.error === 'redirect_uri_mismatch') && provider === 'google') {
+          const { dialog } = require('electron');
+          dialog.showMessageBox(resultsWindow, {
+            type: 'warning',
+            title: 'Google OAuth Setup Required',
+            message: `Google rejected the OAuth connection.\n\nTo fix this, add the following URI to your Google Cloud Console:\n\n  ${redirectUri}\n\nSteps:\n1. Open console.cloud.google.com\n2. APIs & Services → Credentials\n3. Click your OAuth 2.0 Client ID\n4. Under "Authorized redirect URIs" → Add URI:\n   ${redirectUri}\n5. Save, then try connecting again.\n\nRaw error: ${tokenData.error_description || tokenData.error}`,
+            buttons: ['Open Google Console', 'Close'],
+          }).then(({ response }) => {
+            if (response === 0) {
+              require('electron').shell.openExternal('https://console.cloud.google.com/apis/credentials');
+            }
+          });
+          return;
+        }
+        throw new Error(`${tokenData.error}: ${tokenData.error_description || ''}`.trim());
+      }
+
+      // Try to fetch account hint (email/username) for display in Skills tab
+      let email;
+      const USERINFO_ENDPOINTS = {
+        google:    { host: 'www.googleapis.com',      path: '/oauth2/v2/userinfo',      field: 'email' },
+        github:    { host: 'api.github.com',           path: '/user',                    field: 'login', headers: { 'User-Agent': 'ThinkDrop' } },
+        microsoft: { host: 'graph.microsoft.com',      path: '/v1.0/me',                field: 'mail' },
+        spotify:   { host: 'api.spotify.com',          path: '/v1/me',                  field: 'email' },
+        discord:   { host: 'discord.com',              path: '/api/users/@me',           field: 'email' },
+        slack:     { host: 'slack.com',                path: '/api/users.identity',      field: null }, // Slack returns nested object
+        linkedin:  { host: 'api.linkedin.com',         path: '/v2/emailAddress?q=members&projection=(elements*(handle~))', field: null },
+        twitter:   { host: 'api.twitter.com',          path: '/2/users/me',             field: null }, // returns data.username
+        zoom:      { host: 'api.zoom.us',              path: '/v2/users/me',            field: 'email' },
+        hubspot:   { host: 'api.hubapi.com',           path: '/oauth/v1/access-tokens/' + tokenData.access_token, field: 'user' },
+      };
+      if (tokenData.access_token && USERINFO_ENDPOINTS[provider]) {
+        try {
+          const ep = USERINFO_ENDPOINTS[provider];
+          const info = await new Promise((resolve) => {
+            const req = https.request({
+              hostname: ep.host,
+              path: ep.path,
+              headers: { 'Authorization': `Bearer ${tokenData.access_token}`, ...(ep.headers || {}) },
+            }, (res) => { let d = ''; res.on('data', c => { d += c; }); res.on('end', () => { try { resolve(JSON.parse(d)); } catch(_) { resolve({}); } }); });
+            req.on('error', () => resolve({})); req.end();
+          });
+          if (ep.field) {
+            email = info[ep.field];
+          } else if (provider === 'twitter') {
+            email = info.data?.username ? '@' + info.data.username : undefined;
+          } else if (provider === 'slack') {
+            email = info.user?.email;
+          } else if (provider === 'linkedin') {
+            email = info.elements?.[0]?.['handle~']?.emailAddress;
+          }
+        } catch(_) {}
+      }
+
+      // Store token in keytar
+      const tokenJson = JSON.stringify({ ...tokenData, email, storedAt: new Date().toISOString() });
+      if (keytar) await keytar.setPassword('thinkdrop', tokenKey, tokenJson);
+      console.log(`[OAuth] Stored ${provider} token for skill ${skillName} → ${tokenKey}${email ? ' (' + email + ')' : ''}`);
+
+      // Also store in the format external.skill expects for googleapis (token path or env)
+      if (provider === 'google') {
+        const fsMod = require('fs'); const pathMod = require('path'); const osMod = require('os');
+        const tokDir = pathMod.join(osMod.homedir(), '.thinkdrop', 'tokens');
+        if (!fsMod.existsSync(tokDir)) fsMod.mkdirSync(tokDir, { recursive: true });
+        const safeName = skillName.replace(/[^a-z0-9.-]/g, '-');
+        fsMod.writeFileSync(pathMod.join(tokDir, `${safeName}.json`), JSON.stringify(tokenData, null, 2), 'utf8');
+        console.log(`[OAuth] Wrote Google token file: ~/.thinkdrop/tokens/${safeName}.json`);
+      }
+
+      // Refresh Skills tab
+      ipcMain.emit('skills:list');
+    } catch(e) {
+      console.error(`[OAuth] Token exchange failed: ${e.message}`);
+    }
+  });
+
+  // ─── Skills: update oauth_scopes for a provider in the contract frontmatter ─
+  ipcMain.on('skills:update-oauth-scopes', async (_event, { skillName, provider, scopes }) => {
+    try {
+      const http = require('http');
+      const memApiKey = process.env.MCP_USER_MEMORY_API_KEY || process.env.USER_MEMORY_API_KEY || process.env.MCP_API_KEY || 'default_key';
+      const memPort = parseInt(process.env.MEMORY_SERVICE_PORT || '3001', 10);
+
+      // Fetch current contractMd
+      const current = await new Promise((resolve, reject) => {
+        const body = JSON.stringify({ version: 'mcp.v1', service: 'user-memory', action: 'skill.get', payload: { name: skillName }, requestId: 'scope-get-' + Date.now() });
+        const req = http.request({
+          hostname: '127.0.0.1', port: memPort, path: '/skill.get', method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${memApiKey}`, 'Content-Length': Buffer.byteLength(body) },
+        }, res => { let d = ''; res.on('data', c => { d += c; }); res.on('end', () => { try { resolve(JSON.parse(d)); } catch(e) { reject(e); } }); });
+        req.on('error', reject); req.write(body); req.end();
+      });
+
+      const contractMd = current?.result?.contractMd || current?.contractMd || '';
+      if (!contractMd) {
+        console.warn(`[Skills] skills:update-oauth-scopes — no contractMd found for ${skillName}`);
+        return;
+      }
+
+      // Parse existing oauth_scopes map from frontmatter
+      const fmMatch = contractMd.match(/^---\s*\n([\s\S]*?)\n---/);
+      const fm = fmMatch ? fmMatch[1] : '';
+      const existingScopesMatch = fm.match(/^oauth_scopes\s*:\s*(.+)$/m);
+      const scopesMap = {};
+      if (existingScopesMatch) {
+        for (const part of existingScopesMatch[1].split(',')) {
+          const eq = part.indexOf('=');
+          if (eq !== -1) {
+            const p = part.slice(0, eq).trim().toLowerCase();
+            const s = part.slice(eq + 1).trim();
+            if (p) scopesMap[p] = s;
+          }
+        }
+      }
+
+      // Update the specific provider's scopes
+      if (scopes && scopes.trim()) {
+        scopesMap[provider] = scopes.trim();
+      } else {
+        delete scopesMap[provider]; // empty = revert to defaults
+      }
+
+      const newScopeLine = Object.keys(scopesMap).length > 0
+        ? 'oauth_scopes: ' + Object.entries(scopesMap).map(([p, s]) => `${p}=${s}`).join(', ')
+        : null;
+
+      // Rewrite frontmatter
+      let updatedMd;
+      if (existingScopesMatch) {
+        // Replace existing oauth_scopes line
+        updatedMd = newScopeLine
+          ? contractMd.replace(/^oauth_scopes\s*:.*$/m, newScopeLine)
+          : contractMd.replace(/^oauth_scopes\s*:.*\n?/m, '');
+      } else if (newScopeLine) {
+        // Insert after oauth: line if present, otherwise before closing ---
+        if (/^oauth\s*:/m.test(fm)) {
+          updatedMd = contractMd.replace(/^(oauth\s*:.+)$/m, `$1\n${newScopeLine}`);
+        } else {
+          updatedMd = contractMd.replace(/\n---/, `\n${newScopeLine}\n---`);
+        }
+      } else {
+        updatedMd = contractMd; // no change
+      }
+
+      // Persist updated contract
+      const upsertBody = JSON.stringify({ version: 'mcp.v1', service: 'user-memory', action: 'skill.upsert', payload: { name: skillName, contractMd: updatedMd }, requestId: 'scope-upsert-' + Date.now() });
+      await new Promise(resolve => {
+        const req = http.request({
+          hostname: '127.0.0.1', port: memPort, path: '/skill.upsert', method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${memApiKey}`, 'Content-Length': Buffer.byteLength(upsertBody) },
+        }, res => { res.resume(); resolve(); });
+        req.on('error', () => resolve()); req.write(upsertBody); req.end();
+      });
+
+      console.log(`[Skills] Updated oauth_scopes for ${provider} on ${skillName}: ${scopes || '(cleared)'}`);
+      ipcMain.emit('skills:list');
+    } catch (e) {
+      console.error('[Skills] skills:update-oauth-scopes failed:', e.message);
+    }
+  });
+
+  // ─── Skills: upload a skill directory into ~/.thinkdrop/skills/ ───────────
+  ipcMain.on('skills:upload', async () => {
+    try {
+      const { dialog } = require('electron');
+      const fsMod = require('fs');
+      const osMod = require('os');
+      const pathMod = require('path');
+
+      const { canceled, filePaths } = await dialog.showOpenDialog(resultsWindow || undefined, {
+        title: 'Select Skill Directory',
+        properties: ['openDirectory'],
+        buttonLabel: 'Upload Skill',
+      });
+      if (canceled || !filePaths.length) return;
+
+      const srcDir = filePaths[0];
+      const dirName = pathMod.basename(srcDir);
+      const skillsBase = pathMod.join(osMod.homedir(), '.thinkdrop', 'skills');
+      const destDir = pathMod.join(skillsBase, dirName);
+
+      // Copy directory recursively
+      fsMod.mkdirSync(destDir, { recursive: true });
+      function copyDir(src, dest) {
+        for (const entry of fsMod.readdirSync(src, { withFileTypes: true })) {
+          const s = pathMod.join(src, entry.name);
+          const d = pathMod.join(dest, entry.name);
+          if (entry.name === 'node_modules') continue; // skip node_modules
+          if (entry.isDirectory()) { fsMod.mkdirSync(d, { recursive: true }); copyDir(s, d); }
+          else { fsMod.copyFileSync(s, d); }
+        }
+      }
+      copyDir(srcDir, destDir);
+
+      // Derive skill name from directory name (hyphens or underscores → dots)
+      const skillName = dirName.replace(/[-_]+/g, '.').replace(/\.+/g, '.').replace(/^\.|\.$/, '').toLowerCase();
+      const execPath = pathMod.join(destDir, 'index.cjs');
+      if (!fsMod.existsSync(execPath)) {
+        console.error('[Skills] skills:upload — no index.cjs found in uploaded directory');
+        return;
+      }
+
+      // Register in user-memory
+      const http = require('http');
+      const memPort = parseInt(process.env.MEMORY_SERVICE_PORT || '3001', 10);
+      const memApiKey = process.env.MCP_USER_MEMORY_API_KEY || process.env.USER_MEMORY_API_KEY || process.env.MCP_API_KEY || '';
+      const regBody = JSON.stringify({
+        version: 'mcp.v1', service: 'user-memory', action: 'skill.upsert',
+        payload: { name: skillName, execPath, execType: 'node', enabled: true, description: `Uploaded from ${dirName}` },
+        requestId: 'upload-' + Date.now(),
+      });
+      await new Promise((resolve) => {
+        const req = http.request({
+          hostname: '127.0.0.1', port: memPort, path: '/skill.upsert', method: 'POST',
+          headers: {
+            'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(regBody),
+            ...(memApiKey ? { 'Authorization': `Bearer ${memApiKey}` } : {}),
+          },
+          timeout: 6000,
+        }, (res) => { res.resume(); resolve(); });
+        req.on('error', resolve); req.on('timeout', () => { req.destroy(); resolve(); });
+        req.write(regBody); req.end();
+      });
+
+      console.log(`[Skills] Uploaded skill: ${skillName} → ${destDir}`);
+      // Refresh skills tab
+      ipcMain.emit('skills:list');
+    } catch (e) {
+      console.error('[Skills] skills:upload failed:', e.message);
+    }
+  });
+
+  // ─── Cron: local pause state (keyed by skillName from scheduler) ───────────
+  const _pausedCrons = new Set();
 
   // ─── Cron: list scheduled skills from skill-scheduler ─────────────────────
   ipcMain.on('cron:list', async () => {
     try {
       const http = require('http');
       const cmdPort = parseInt(process.env.SERVICE_PORT || process.env.COMMAND_SERVICE_PORT || '3007', 10);
+
+      // Trigger immediate re-sync from user-memory so list is always fresh
+      await new Promise((resolve) => {
+        const req = http.request({
+          hostname: '127.0.0.1', port: cmdPort,
+          path: '/skill.schedule/sync', method: 'POST',
+          headers: { 'Content-Length': '0' },
+          timeout: 3000,
+        }, (res) => { res.resume(); resolve(); });
+        req.on('error', resolve);
+        req.on('timeout', () => { req.destroy(); resolve(); });
+        req.end();
+      });
+
+      // Brief wait for sync to complete before reading the list
+      await new Promise(r => setTimeout(r, 1500));
+
       const jobs = await new Promise((resolve) => {
         const req = http.request({
           hostname: '127.0.0.1', port: cmdPort,
@@ -3150,7 +3858,7 @@ app.whenReady().then(async () => {
         id:       j.skillName,
         label:    j.skillName,
         schedule: j.schedule,
-        status:   'active',
+        status:   _pausedCrons.has(j.skillName) ? 'paused' : 'active',
         type:     j.type || 'cron',
       }));
       if (resultsWindow && !resultsWindow.isDestroyed()) safeSend(resultsWindow, 'cron:update', items);
@@ -3160,29 +3868,31 @@ app.whenReady().then(async () => {
     }
   });
 
-  ipcMain.on('cron:toggle', (_event, { id }) => {
-    console.log('[Cron] cron:toggle not yet implemented for id:', id);
-  });
-
-  ipcMain.on('cron:delete', (_event, { id }) => {
-    console.log('[Cron] cron:delete not yet implemented for id:', id);
-  });
-
   ipcMain.on('cron:run-now', async (_event, { id }) => {
+    console.log(`[Cron] Run now: ${id}`);
     try {
       const http = require('http');
       const cmdPort = parseInt(process.env.SERVICE_PORT || process.env.COMMAND_SERVICE_PORT || '3007', 10);
-      // id is the skillName (e.g. "gmail.daily.summary")
       const skillName = id;
-      const body = JSON.stringify({ skill: 'external.skill', args: { name: skillName } });
+      const body = JSON.stringify({ payload: { skill: 'external.skill', args: { name: skillName } } });
       const req = http.request({
         hostname: '127.0.0.1', port: cmdPort,
         path: '/command.automate', method: 'POST',
         headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) },
-        timeout: 5000,
-      }, (res) => { res.resume(); });
-      req.on('error', () => {});
-      req.write(body); req.end();
+        timeout: 30000,
+      }, (res) => {
+        let data = '';
+        res.on('data', chunk => { data += chunk; });
+        res.on('end', () => {
+          console.log(`[Cron] Run now result for ${skillName} (HTTP ${res.statusCode}):`, data.slice(0, 300));
+          queueManager.recordCronRun(skillName);
+        });
+      });
+      req.on('error', (e) => {
+        console.error(`[Cron] cron:run-now HTTP error for ${skillName}:`, e.message);
+      });
+      req.write(body);
+      req.end();
     } catch (e) {
       console.error('[Cron] cron:run-now failed:', e.message);
     }

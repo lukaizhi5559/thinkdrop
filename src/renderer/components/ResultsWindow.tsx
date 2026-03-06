@@ -3,7 +3,7 @@ import { RichContentRenderer } from './rich-content';
 import AutomationProgress from './AutomationProgress';
 import SkillBuildProgress, { SkillBuildState, BuildPhase } from './SkillBuildProgress';
 import { playDropSound } from '../utils/thinkDropSound';
-import { TabBar, QueueTab, CronTab, SkillsTab } from './TabComponents';
+import { TabBar, QueueTab, CronTab, SkillsTab, StoreTab } from './TabComponents';
 import type { TabId, QueueItem, CronItem, SkillItem } from './TabComponents';
 
 const ipcRenderer = (window as any).electron?.ipcRenderer;
@@ -41,6 +41,7 @@ export default function ResultsWindow() {
   const [queueItems, setQueueItems] = useState<QueueItem[]>([]);
   const [cronItems, setCronItems] = useState<CronItem[]>([]);
   const [skillItems, setSkillItems] = useState<SkillItem[]>([]);
+  const [skillStoreSearch, setSkillStoreSearch] = useState<string>('');
   // Unread badge: set when activity fires in a non-active tab, cleared on tab switch
   const [unreadTabs, setUnreadTabs] = useState<Set<TabId>>(new Set());
 
@@ -53,6 +54,9 @@ export default function ResultsWindow() {
     }
     if (tab === 'cron') {
       ipcRenderer?.send('cron:list');
+    }
+    if (tab === 'store') {
+      setSkillStoreSearch('');
     }
   };
 
@@ -379,6 +383,15 @@ export default function ResultsWindow() {
       setSkillItems(items || []);
     };
 
+    // skill:store-trigger — sent when ThinkDrop auto-routes to skill store (e.g. needs_skill)
+    const handleSkillStoreTrigger = (_event: any, { capability }: { capability: string; suggestion: string }) => {
+      const query = capability ? capability.replace(/[^a-zA-Z0-9 ]/g, ' ').trim() : '';
+      setSkillStoreSearch(query);
+      activeTabRef.current = 'store';
+      setActiveTab('store');
+      setUnreadTabs(prev => { const next = new Set(prev); next.delete('store'); return next; });
+    };
+
     ipcRenderer.on('results-window:display-error', handleDisplayError);
     ipcRenderer.on('results-window:set-prompt', handlePromptText);
     ipcRenderer.on('results-window:show', handleWindowShow);
@@ -391,6 +404,7 @@ export default function ResultsWindow() {
     ipcRenderer.on('cron:update', handleCronUpdate);
     ipcRenderer.on('queue:enqueued', handleQueueEnqueued);
     ipcRenderer.on('skills:update', handleSkillsUpdate);
+    ipcRenderer.on('skill:store-trigger', handleSkillStoreTrigger);
   
     return () => {
       if (ipcRenderer.removeListener) {
@@ -406,6 +420,7 @@ export default function ResultsWindow() {
         ipcRenderer.removeListener('cron:update', handleCronUpdate);
         ipcRenderer.removeListener('queue:enqueued', handleQueueEnqueued);
         ipcRenderer.removeListener('skills:update', handleSkillsUpdate);
+        ipcRenderer.removeListener('skill:store-trigger', handleSkillStoreTrigger);
       }
     };
   }, []);
@@ -906,7 +921,6 @@ export default function ResultsWindow() {
         onSelect={handleTabSelect}
         queueCount={queueItems.filter(i => i.status !== 'done').length}
         cronCount={cronItems.filter(i => i.status === 'active').length}
-        skillsCount={skillItems.length}
         unreadTabs={unreadTabs}
       />
 
@@ -948,6 +962,29 @@ export default function ResultsWindow() {
           onOpenCode={(filePath) =>
             ipcRenderer?.send('skills:open-code', { filePath })
           }
+          onUploadSkill={() =>
+            ipcRenderer?.send('skills:upload')
+          }
+          onOAuthConnect={(skillName, provider, tokenKey, scopes) =>
+            ipcRenderer?.send('skills:oauth-connect', { skillName, provider, tokenKey, scopes })
+          }
+          onScopesChange={(skillName, provider, scopes) =>
+            ipcRenderer?.send('skills:update-oauth-scopes', { skillName, provider, scopes })
+          }
+          onDelete={(skillName) =>
+            ipcRenderer?.send('skills:delete', { skillName })
+          }
+        />
+      </div>
+
+      {/* ── Store tab — always mounted, hidden when inactive ────────────────── */}
+      <div
+        className="overflow-y-auto overflow-x-hidden p-4"
+        style={{ display: activeTab === 'store' ? 'flex' : 'none', flex: 1, flexDirection: 'column' }}
+      >
+        <StoreTab
+          initialSearch={skillStoreSearch}
+          onBuildSkill={() => setActiveTab('results')}
         />
       </div>
 
