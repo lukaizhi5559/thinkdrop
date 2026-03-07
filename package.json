@@ -6,6 +6,7 @@
   "type": "commonjs",
   "scripts": {
     "dev": "concurrently \"yarn dev:main\" \"yarn dev:renderer\"",
+    "dev:full": "yarn start:services && sleep 3 && concurrently \"yarn dev:main\" \"yarn dev:renderer\"",
     "dev:main": "electron src/main/main.js",
     "dev:renderer": "NODE_NO_WARNINGS=1 vite",
     "build": "yarn build:renderer && electron-builder",

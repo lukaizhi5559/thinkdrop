@@ -8,7 +8,7 @@
  *   4. Final summary on completion or error banner on failure
  */
 
-import { useEffect, useState, useMemo } from 'react';
+import { useEffect, useState, useMemo, useRef } from 'react';
 import { semanticSkillSearch, SkillMatch } from '../utils/semanticSkillSearch';
 
 const ipcRenderer = (window as any).electron?.ipcRenderer;
@@ -353,6 +353,9 @@ export default function AutomationProgress({ onHeightChange, onActiveChange }: A
   const [gatherCredentialValue, setGatherCredentialValue] = useState('');
   const [gatherCredentialStored, setGatherCredentialStored] = useState<string | null>(null);
 
+  // Refs for auto-scrolling to the active step
+  const stepRefs = useRef<Map<number, HTMLDivElement>>(new Map());
+
   // Notify parent to re-measure height whenever visible content changes
   useEffect(() => {
     onHeightChange?.();
@@ -423,6 +426,11 @@ export default function AutomationProgress({ onHeightChange, onActiveChange }: A
               ? { ...s, status: 'running', description: data.description || s.description }
               : s
           ));
+          // Scroll the active step into view
+          setTimeout(() => {
+            const el = stepRefs.current.get(data.stepIndex);
+            if (el) el.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+          }, 60);
           break;
 
         case 'step_done':
@@ -436,10 +444,7 @@ export default function AutomationProgress({ onHeightChange, onActiveChange }: A
           if (data.skill === 'shell.run' && data.stdout && data.stdout.includes('Scaffolded at')) {
             setCapabilityGap(prev => prev ? { ...prev, scaffolded: true } : prev);
           }
-          // Auto-expand steps that have meaningful stdout (skip needs_skill — rendered as card)
-          if (data.stdout && data.stdout.trim().length > 0 && data.skill !== 'needs_skill') {
-            setExpandedSteps(prev => new Set([...prev, data.stepIndex]));
-          }
+          // Steps are collapsed by default — user can expand by clicking
           // Also accumulate at bottom-level for all_done fallback
           if (data.savedFilePath && data.savedFilePath.startsWith('/')) {
             setSavedFilePaths(prev => {
@@ -1143,7 +1148,7 @@ export default function AutomationProgress({ onHeightChange, onActiveChange }: A
             const isExpanded = expandedSteps.has(step.index);
 
             return (
-              <div key={step.index}>
+              <div key={step.index} ref={(el) => { if (el) stepRefs.current.set(step.index, el); else stepRefs.current.delete(step.index); }}>
                 {/* Step row */}
                 <div
                   className="flex items-start gap-2.5"
@@ -1167,11 +1172,9 @@ export default function AutomationProgress({ onHeightChange, onActiveChange }: A
                     {step.status === 'done' && !isExpanded && (() => {
                       const out = step.stdout?.trim() || '';
                       if (out.length === 0) {
-                        const desc = step.description?.toLowerCase() || '';
-                        const isSearch = desc.includes('find') || desc.includes('search') || desc.includes('locate') || desc.includes('look');
                         return (
                           <div className="text-xs mt-0.5" style={{ color: '#6b7280' }}>
-                            {isSearch ? 'No results found' : 'No output'}
+                            Done
                           </div>
                         );
                       }
