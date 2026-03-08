@@ -658,7 +658,7 @@ export default function AutomationProgress({ onHeightChange, onActiveChange }: A
 
   const handleOptionClick = (option: string) => {
     setAskUserPrompt(null);
-    ipcRenderer?.send('stategraph:process', { prompt: option, selectedText: '' });
+    ipcRenderer?.send('prompt-queue:submit', { prompt: option, selectedText: '' });
   };
 
   const handleGuideContinue = () => {

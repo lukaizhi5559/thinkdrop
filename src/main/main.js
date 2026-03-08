@@ -282,6 +282,7 @@ const { StateGraphBuilder, RealMCPAdapter, VSCodeLLMBackend } = require('@thinkd
 const ThinkDropMCPClient = require('./ThinkDropMCPClient');
 const scheduler = require('./scheduler');
 const queueManager = require('./queueManager');
+const promptQueue = require('./promptQueue');
 
 // Voice Journal — shared state file with voice-service
 const voiceJournal = (() => {
@@ -1195,6 +1196,49 @@ app.whenReady().then(async () => {
     },
   });
 
+  // ─── Prompt Queue: init (serial stategraph runner) ────────────────────────
+  promptQueue.init({
+    broadcast: (items) => {
+      if (resultsWindow && !resultsWindow.isDestroyed()) {
+        safeSend(resultsWindow, 'prompt-queue:update', items);
+      }
+    },
+    runPrompt: (item) => {
+      // Called by promptQueue when it's time to execute an item.
+      // Delegates to the shared stategraph runner below.
+      runPromptThroughStateGraph(item.prompt, {
+        selectedText: item.selectedText || '',
+        responseLanguage: item.responseLanguage || null,
+        promptQueueId: item.id,
+      });
+    },
+    alertRestart: (items, countdownMs) => {
+      if (resultsWindow && !resultsWindow.isDestroyed()) {
+        safeSend(resultsWindow, 'prompt-queue:restart-alert', { items, countdownMs });
+      }
+    },
+  });
+
+  // ─── Prompt Queue IPC handlers ────────────────────────────────────────────
+
+  ipcMain.on('prompt-queue:submit', (_event, { prompt, selectedText = '', responseLanguage = null } = {}) => {
+    if (!prompt?.trim()) return;
+    const id = promptQueue.enqueue(prompt.trim(), { selectedText, responseLanguage });
+    console.log(`[PromptQueue] IPC prompt-queue:submit → enqueued id=${id}`);
+  });
+
+  ipcMain.on('prompt-queue:cancel', (_event, { id } = {}) => {
+    if (!id) return;
+    promptQueue.cancel(id);
+  });
+
+  ipcMain.on('prompt-queue:dismiss-alert', () => {
+    promptQueue.dismissRestartAlert();
+    if (resultsWindow && !resultsWindow.isDestroyed()) {
+      safeSend(resultsWindow, 'prompt-queue:restart-cancel', {});
+    }
+  });
+
   // ─── Queue IPC handlers ───────────────────────────────────────────────────
 
   ipcMain.on('queue:submit', (_event, { prompt, name } = {}) => {
@@ -1558,8 +1602,18 @@ app.whenReady().then(async () => {
     }
   });
 
-  // ─── StateGraph: Process prompt through full pipeline ────────────────────
-  ipcMain.on('stategraph:process', async (event, { prompt, selectedText = '', sessionId = null, userId = 'default_user', responseLanguage = null }) => {
+  // ─── StateGraph: Route prompt through the serial prompt queue ────────────
+  // All stategraph:process calls now go through the prompt queue so prompts
+  // are serialized (printer-queue model). The queue calls runPromptThroughStateGraph
+  // when a slot opens up.
+  ipcMain.on('stategraph:process', (_event, { prompt, selectedText = '', sessionId = null, responseLanguage = null } = {}) => {
+    if (!prompt?.trim()) return;
+    console.log('🧠 [StateGraph] Enqueuing prompt via prompt-queue:', prompt.substring(0, 80));
+    promptQueue.enqueue(prompt.trim(), { selectedText: selectedText || '', responseLanguage: responseLanguage || null });
+  });
+
+  // ─── StateGraph: Core execution — called by promptQueue serially ─────────
+  async function runPromptThroughStateGraph(prompt, { selectedText = '', sessionId = null, userId = 'default_user', responseLanguage = null, promptQueueId = null } = {}) {
     console.log('🧠 [StateGraph] Processing prompt:', prompt.substring(0, 80), responseLanguage ? `(responseLanguage: ${responseLanguage})` : '');
 
     // Track this prompt so clipboard monitor won't re-capture it as a highlight
@@ -1571,6 +1625,7 @@ app.whenReady().then(async () => {
       if (resultsWindow && !resultsWindow.isDestroyed()) {
         safeSend(resultsWindow, 'ws-bridge:error', 'StateGraph not initialized');
       }
+      if (promptQueueId) promptQueue.markDone(promptQueueId, { error: 'StateGraph not initialized' });
       return;
     }
 
@@ -2269,8 +2324,12 @@ app.whenReady().then(async () => {
       pendingInstallResolve = null;
       pendingGuideResolve = null;
       guideCancelled = false;
+      // Mark prompt queue item done so the next pending prompt can start
+      if (promptQueueId) {
+        promptQueue.markDone(promptQueueId);
+      }
     }
-  });
+  }
 
   globalShortcut.register('CommandOrControl+Shift+Space', () => {
     if (promptCaptureWindow) {
@@ -3914,10 +3973,25 @@ app.whenReady().then(async () => {
 
   ipcMain.on('cron:run-now', async (_event, { id }) => {
     console.log(`[Cron] Run now: ${id}`);
+    const skillName = id;
+    // Helper to broadcast updated cron list with an error status for the affected skill
+    const broadcastCronError = (errMsg) => {
+      try {
+        const items = queueManager.getCron().map(j => ({
+          id:       j.skillName,
+          label:    j.skillName,
+          schedule: j.schedule,
+          nextRun:  j.nextRun ? new Date(j.nextRun).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : undefined,
+          lastRun:  j.lastRun ? new Date(j.lastRun).toLocaleString() : undefined,
+          status:   j.skillName === skillName ? 'error' : (_pausedCrons.has(j.skillName) ? 'paused' : 'active'),
+          lastError: j.skillName === skillName ? errMsg : undefined,
+        }));
+        if (resultsWindow && !resultsWindow.isDestroyed()) safeSend(resultsWindow, 'cron:update', items);
+      } catch (_) {}
+    };
     try {
       const http = require('http');
       const cmdPort = parseInt(process.env.SERVICE_PORT || process.env.COMMAND_SERVICE_PORT || '3007', 10);
-      const skillName = id;
       const body = JSON.stringify({ payload: { skill: 'external.skill', args: { name: skillName } } });
       const req = http.request({
         hostname: '127.0.0.1', port: cmdPort,
@@ -3929,16 +4003,27 @@ app.whenReady().then(async () => {
         res.on('data', chunk => { data += chunk; });
         res.on('end', () => {
           console.log(`[Cron] Run now result for ${skillName} (HTTP ${res.statusCode}):`, data.slice(0, 300));
+          try {
+            const parsed = JSON.parse(data);
+            const result = parsed.data || parsed;
+            if (!result.ok && result.error) {
+              console.warn(`[Cron] ${skillName} run failed: ${result.error}`);
+              broadcastCronError(result.error);
+              return;
+            }
+          } catch (_) {}
           queueManager.recordCronRun(skillName);
         });
       });
       req.on('error', (e) => {
         console.error(`[Cron] cron:run-now HTTP error for ${skillName}:`, e.message);
+        broadcastCronError(e.message);
       });
       req.write(body);
       req.end();
     } catch (e) {
       console.error('[Cron] cron:run-now failed:', e.message);
+      broadcastCronError(e.message);
     }
   });
 

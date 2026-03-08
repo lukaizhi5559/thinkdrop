@@ -55,6 +55,9 @@ contextBridge.exposeInMainWorld('electron', {
         'skills:delete',
         'gather:answer',
         'gather:credential',
+        'prompt-queue:submit',
+        'prompt-queue:cancel',
+        'prompt-queue:dismiss-alert',
       ];
       if (validChannels.includes(channel)) {
         ipcRenderer.send(channel, data);
@@ -97,6 +100,9 @@ contextBridge.exposeInMainWorld('electron', {
         'cron:update',
         'skills:update',
         'gather:pending',
+        'prompt-queue:update',
+        'prompt-queue:restart-alert',
+        'prompt-queue:restart-cancel',
       ];
       if (validChannels.includes(channel)) {
         ipcRenderer.on(channel, func);
@@ -139,6 +145,9 @@ contextBridge.exposeInMainWorld('electron', {
         'cron:update',
         'skills:update',
         'gather:pending',
+        'prompt-queue:update',
+        'prompt-queue:restart-alert',
+        'prompt-queue:restart-cancel',
       ];
       if (validChannels.includes(channel)) {
         ipcRenderer.removeAllListeners(channel);
@@ -181,6 +190,9 @@ contextBridge.exposeInMainWorld('electron', {
         'cron:update',
         'skills:update',
         'gather:pending',
+        'prompt-queue:update',
+        'prompt-queue:restart-alert',
+        'prompt-queue:restart-cancel',
       ];
       if (validChannels.includes(channel)) {
         ipcRenderer.removeListener(channel, func);

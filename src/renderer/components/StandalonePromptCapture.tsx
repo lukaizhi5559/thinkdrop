@@ -406,14 +406,14 @@ export default function StandalonePromptCapture() {
         ipcRenderer.send('gather:answer', { answer: finalPrompt.trim() });
         setGatherPending(false);
       } else {
-        // Route through StateGraph pipeline (intent → MCP services → LLM answer)
-        console.log('🧠 [STANDALONE_PROMPT] Sending to StateGraph pipeline');
-        ipcRenderer.send('stategraph:process', {
+        // Route through the serial prompt queue (printer-queue model)
+        // Submit is always unblocked — queue handles serialization
+        console.log('🧠 [STANDALONE_PROMPT] Enqueuing prompt via prompt-queue:submit');
+        ipcRenderer.send('prompt-queue:submit', {
           prompt: finalPrompt.trim(),
           selectedText: highlights.join('\n'),
         });
-        setIsProcessing(true);
-        console.log('✅ [STANDALONE_PROMPT] Message sent to StateGraph');
+        console.log('✅ [STANDALONE_PROMPT] Prompt enqueued');
       }
     } else {
       console.error('❌ [STANDALONE_PROMPT] ipcRenderer is not available!');
@@ -428,14 +428,13 @@ export default function StandalonePromptCapture() {
   // No TTS — response appears in the results window as text, same as typing and pressing Enter.
   submitPTTRef.current = (text: string, responseLanguage: string | null = null) => {
     if (!text.trim()) return;
-    console.log('[PTT] Submitting via stategraph:process:', text, responseLanguage ? `(respond in: ${responseLanguage})` : '');
+    console.log('[PTT] Submitting via prompt-queue:submit:', text, responseLanguage ? `(respond in: ${responseLanguage})` : '');
     let finalPrompt = '';
     if (highlights.length > 0) finalPrompt = highlights.map((h: string) =>
       (h.startsWith('[File:') || h.startsWith('[Folder:')) ? h : `[Highlighted: ${h}]`
     ).join('\n') + '\n\n';
     finalPrompt += text.trim();
-    ipcRenderer?.send('stategraph:process', { prompt: finalPrompt, selectedText: highlights.join('\n'), responseLanguage });
-    setIsProcessing(true);
+    ipcRenderer?.send('prompt-queue:submit', { prompt: finalPrompt, selectedText: highlights.join('\n'), responseLanguage });
     setPromptText('');
     setHighlights([]);
   };

@@ -6,6 +6,20 @@ import SkillStore from './SkillStore';
 export type TabId = 'results' | 'queue' | 'cron' | 'skills' | 'store';
 
 export type QueueStatus = 'waiting' | 'planning' | 'building' | 'testing' | 'skill_building' | 'done' | 'error';
+
+// ── Prompt Queue types (serial stategraph runner) ─────────────────────────────
+export type PQStatus = 'pending' | 'running' | 'done' | 'error' | 'cancelled';
+export interface PromptQueueItem {
+  id: string;
+  prompt: string;
+  selectedText: string;
+  responseLanguage: string | null;
+  status: PQStatus;
+  createdAt: number;
+  startedAt: number | null;
+  doneAt: number | null;
+  error: string | null;
+}
 export interface ReviewRound {
   round: number;
   verdict: 'pass' | 'pass-with-warnings' | 'fail';
@@ -60,6 +74,7 @@ export interface CronItem {
   lastRun?: string;
   status: CronStatus;
   plistLabel?: string;
+  lastError?: string;
 }
 
 // ── Tab bar icons ─────────────────────────────────────────────────────────────
@@ -454,6 +469,12 @@ function CronItemCard({ item, onToggle, onDelete, onRerun }: {
             </span>
             {item.nextRun && <span style={{ color: '#4b5563' }}>Next: {item.nextRun}</span>}
             {item.lastRun && <span style={{ color: '#374151' }}>Last: {item.lastRun}</span>}
+            {item.status === 'error' && item.lastError && (
+              <span style={{ color: '#f87171', fontSize: '0.62rem', lineHeight: 1.4, wordBreak: 'break-word', maxWidth: 220 }}
+                title={item.lastError}>
+                ⚠ {item.lastError.length > 60 ? item.lastError.slice(0, 60) + '…' : item.lastError}
+              </span>
+            )}
           </div>
         </div>
         <div style={{ display: 'flex', gap: 4, flexShrink: 0 }}>
@@ -1105,6 +1126,84 @@ export function SkillsTab({ items, onSaveSecret, onOpenCode, onUploadSkill, onOA
           <SkillItemCard key={item.name} item={item} onSaveSecret={onSaveSecret} onOpenCode={onOpenCode} onOAuthConnect={onOAuthConnect} onScopesChange={onScopesChange} onDelete={onDelete} />
         ))
       )}
+    </div>
+  );
+}
+
+// ── Prompt Queue section (serial stategraph runner) ───────────────────────────
+
+function useElapsedPQ(startedAt: number | null, active: boolean) {
+  const [elapsed, setElapsed] = React.useState(startedAt ? Date.now() - startedAt : 0);
+  React.useEffect(() => {
+    if (!active || !startedAt) return;
+    const t = setInterval(() => setElapsed(Date.now() - startedAt), 1000);
+    return () => clearInterval(t);
+  }, [active, startedAt]);
+  return elapsed;
+}
+
+function PromptQueueItemCard({ item, onCancel }: { item: PromptQueueItem; onCancel: (id: string) => void }) {
+  const isRunning = item.status === 'running';
+  const elapsed = useElapsedPQ(item.startedAt, isRunning);
+  const elapsedSec = Math.floor(elapsed / 1000);
+  const elapsedStr = elapsedSec < 60 ? `${elapsedSec}s` : `${Math.floor(elapsedSec / 60)}m ${elapsedSec % 60}s`;
+  const preview = item.prompt.length > 90 ? item.prompt.slice(0, 90) + '…' : item.prompt;
+
+  const statusColor = isRunning ? '#60a5fa' : '#9ca3af';
+  const statusBg   = isRunning ? 'rgba(96,165,250,0.06)' : 'rgba(255,255,255,0.03)';
+  const statusBorder = isRunning ? 'rgba(96,165,250,0.18)' : 'rgba(255,255,255,0.07)';
+  const statusLabel = isRunning ? 'Running' : 'Waiting';
+
+  return (
+    <div style={{ borderRadius: 9, backgroundColor: statusBg, border: `1px solid ${statusBorder}`, padding: '10px 12px', transition: 'all 0.15s' }}>
+      <div style={{ display: 'flex', alignItems: 'flex-start', gap: 9 }}>
+        <div style={{ flexShrink: 0, paddingTop: 2 }}>
+          {isRunning ? (
+            <div style={{ position: 'relative', width: 14, height: 14 }}>
+              <div style={{ position: 'absolute', inset: 0, borderRadius: '50%', border: `2px solid ${statusColor}20` }} />
+              <div style={{ position: 'absolute', inset: 0, borderRadius: '50%', border: `2px solid ${statusColor}`, borderTopColor: 'transparent', borderRightColor: 'transparent', animation: 'spin 0.9s linear infinite' }} />
+              <div style={{ position: 'absolute', inset: '3px', borderRadius: '50%', backgroundColor: statusColor, opacity: 0.7 }} />
+            </div>
+          ) : (
+            <div style={{ width: 10, height: 10, borderRadius: '50%', border: `1.5px solid ${statusColor}`, marginTop: 2 }} />
+          )}
+        </div>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ fontSize: '0.71rem', color: '#d1d5db', lineHeight: 1.45 }}>{preview}</div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 5, flexWrap: 'wrap' }}>
+            <span style={{ fontSize: '0.6rem', color: statusColor, fontWeight: 600, background: statusBg, padding: '1px 5px', borderRadius: 3, border: `1px solid ${statusBorder}` }}>
+              {statusLabel}
+            </span>
+            {isRunning && (
+              <span style={{ fontSize: '0.6rem', color: statusColor, fontFamily: 'ui-monospace,monospace', opacity: 0.85 }}>{elapsedStr}</span>
+            )}
+          </div>
+        </div>
+        {item.status === 'pending' && (
+          <button
+            onClick={() => onCancel(item.id)}
+            style={{ padding: '3px 8px', borderRadius: 5, fontSize: '0.62rem', cursor: 'pointer', flexShrink: 0,
+              background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.25)', color: '#f87171' }}
+          >✕</button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+export function PromptQueueSection({ items, onCancel }: {
+  items: PromptQueueItem[];
+  onCancel: (id: string) => void;
+}) {
+  if (items.length === 0) return null;
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+      <div style={{ fontSize: '0.62rem', color: '#4b5563', fontWeight: 600, letterSpacing: '0.05em', textTransform: 'uppercase', padding: '0 2px 2px' }}>
+        Prompt Queue — {items.length} item{items.length > 1 ? 's' : ''}
+      </div>
+      {items.map(item => (
+        <PromptQueueItemCard key={item.id} item={item} onCancel={onCancel} />
+      ))}
     </div>
   );
 }

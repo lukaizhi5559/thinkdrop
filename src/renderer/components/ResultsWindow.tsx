@@ -3,8 +3,8 @@ import { RichContentRenderer } from './rich-content';
 import AutomationProgress from './AutomationProgress';
 import SkillBuildProgress, { SkillBuildState, BuildPhase } from './SkillBuildProgress';
 import { playDropSound } from '../utils/thinkDropSound';
-import { TabBar, QueueTab, CronTab, SkillsTab, StoreTab } from './TabComponents';
-import type { TabId, QueueItem, CronItem, SkillItem } from './TabComponents';
+import { TabBar, QueueTab, CronTab, SkillsTab, StoreTab, PromptQueueSection } from './TabComponents';
+import type { TabId, QueueItem, CronItem, SkillItem, PromptQueueItem } from './TabComponents';
 
 const ipcRenderer = (window as any).electron?.ipcRenderer;
 
@@ -44,6 +44,13 @@ export default function ResultsWindow() {
   const [skillStoreSearch, setSkillStoreSearch] = useState<string>('');
   // Unread badge: set when activity fires in a non-active tab, cleared on tab switch
   const [unreadTabs, setUnreadTabs] = useState<Set<TabId>>(new Set());
+
+  // ── Prompt Queue (serial stategraph runner) ──────────────────────────────
+  // Items here are pending/running prompts waiting for stategraph execution
+  const [promptQueueItems, setPromptQueueItems] = useState<PromptQueueItem[]>([]);
+  // Restart alert: shown when app restarts with unfinished prompts from last session
+  const [restartAlert, setRestartAlert] = useState<{ items: PromptQueueItem[]; countdownSec: number } | null>(null);
+  const restartCountdownRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const handleTabSelect = (tab: TabId) => {
     activeTabRef.current = tab;
@@ -339,6 +346,37 @@ export default function ResultsWindow() {
       });
     };
 
+    const handlePromptQueueUpdate = (_event: any, items: PromptQueueItem[]) => {
+      setPromptQueueItems(items);
+      if (items.length > 0) markUnread('queue');
+    };
+
+    const handleRestartAlert = (_event: any, { items, countdownMs }: { items: PromptQueueItem[]; countdownMs: number }) => {
+      const totalSec = Math.ceil(countdownMs / 1000);
+      setRestartAlert({ items, countdownSec: totalSec });
+      // Auto-switch to Queue tab so user sees the alert
+      activeTabRef.current = 'queue';
+      setActiveTab('queue');
+      // Tick down every second
+      if (restartCountdownRef.current) clearInterval(restartCountdownRef.current);
+      restartCountdownRef.current = setInterval(() => {
+        setRestartAlert(prev => {
+          if (!prev) { clearInterval(restartCountdownRef.current!); return null; }
+          const next = prev.countdownSec - 1;
+          if (next <= 0) {
+            clearInterval(restartCountdownRef.current!);
+            return null;
+          }
+          return { ...prev, countdownSec: next };
+        });
+      }, 1000);
+    };
+
+    const handleRestartCancel = () => {
+      setRestartAlert(null);
+      if (restartCountdownRef.current) clearInterval(restartCountdownRef.current);
+    };
+
     const handleCronUpdate = (_event: any, items: CronItem[]) => {
       setCronItems(prev => {
         const prevMap = new Map(prev.map(i => [i.id, i.status]));
@@ -405,6 +443,9 @@ export default function ResultsWindow() {
     ipcRenderer.on('queue:enqueued', handleQueueEnqueued);
     ipcRenderer.on('skills:update', handleSkillsUpdate);
     ipcRenderer.on('skill:store-trigger', handleSkillStoreTrigger);
+    ipcRenderer.on('prompt-queue:update', handlePromptQueueUpdate);
+    ipcRenderer.on('prompt-queue:restart-alert', handleRestartAlert);
+    ipcRenderer.on('prompt-queue:restart-cancel', handleRestartCancel);
   
     return () => {
       if (ipcRenderer.removeListener) {
@@ -421,6 +462,9 @@ export default function ResultsWindow() {
         ipcRenderer.removeListener('queue:enqueued', handleQueueEnqueued);
         ipcRenderer.removeListener('skills:update', handleSkillsUpdate);
         ipcRenderer.removeListener('skill:store-trigger', handleSkillStoreTrigger);
+        ipcRenderer.removeListener('prompt-queue:update', handlePromptQueueUpdate);
+        ipcRenderer.removeListener('prompt-queue:restart-alert', handleRestartAlert);
+        ipcRenderer.removeListener('prompt-queue:restart-cancel', handleRestartCancel);
       }
     };
   }, []);
@@ -490,7 +534,7 @@ export default function ResultsWindow() {
   const handleActionChip = (chip: string) => {
     setActionChips([]);
     if (ipcRenderer) {
-      ipcRenderer.send('stategraph:process', { prompt: chip, selectedText: '' });
+      ipcRenderer.send('prompt-queue:submit', { prompt: chip, selectedText: '' });
     }
   };
 
@@ -919,7 +963,7 @@ export default function ResultsWindow() {
       <TabBar
         active={activeTab}
         onSelect={handleTabSelect}
-        queueCount={queueItems.filter(i => i.status !== 'done').length}
+        queueCount={queueItems.filter(i => i.status !== 'done').length + promptQueueItems.length}
         cronCount={cronItems.filter(i => i.status === 'active').length}
         unreadTabs={unreadTabs}
       />
@@ -927,8 +971,46 @@ export default function ResultsWindow() {
       {/* ── Queue tab — always mounted, hidden when inactive ────────────────── */}
       <div
         className="overflow-y-auto overflow-x-hidden p-4"
-        style={{ display: activeTab === 'queue' ? 'flex' : 'none', flex: 1, flexDirection: 'column' }}
+        style={{ display: activeTab === 'queue' ? 'flex' : 'none', flex: 1, flexDirection: 'column', gap: 8 }}
       >
+        {restartAlert && (
+          <div style={{
+            borderRadius: 9, padding: '10px 14px',
+            backgroundColor: 'rgba(245,158,11,0.07)',
+            border: '1px solid rgba(245,158,11,0.3)',
+            display: 'flex', flexDirection: 'column', gap: 6,
+          }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#f59e0b" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/>
+              </svg>
+              <span style={{ color: '#fbbf24', fontSize: '0.72rem', fontWeight: 600 }}>
+                {restartAlert.items.length} unfinished prompt{restartAlert.items.length > 1 ? 's' : ''} from last session
+              </span>
+              <span style={{
+                marginLeft: 'auto', fontSize: '0.68rem', fontWeight: 700,
+                color: '#f59e0b', fontFamily: 'ui-monospace,monospace',
+                background: 'rgba(245,158,11,0.15)', padding: '1px 6px', borderRadius: 4,
+              }}>
+                {restartAlert.countdownSec}s
+              </span>
+            </div>
+            <p style={{ color: '#9ca3af', fontSize: '0.68rem', margin: 0, lineHeight: 1.4 }}>
+              Will auto-trigger in {restartAlert.countdownSec} second{restartAlert.countdownSec !== 1 ? 's' : ''}. Cancel to discard.
+            </p>
+            <div style={{ display: 'flex', gap: 6 }}>
+              <button
+                onClick={() => ipcRenderer?.send('prompt-queue:dismiss-alert')}
+                style={{ padding: '3px 12px', borderRadius: 5, fontSize: '0.68rem', cursor: 'pointer',
+                  background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.25)', color: '#f87171', fontWeight: 500 }}
+              >Cancel — discard</button>
+            </div>
+          </div>
+        )}
+        <PromptQueueSection
+          items={promptQueueItems}
+          onCancel={(id) => ipcRenderer?.send('prompt-queue:cancel', { id })}
+        />
         <QueueTab
           items={queueItems}
           onRerun={(item) => ipcRenderer?.send('queue:rerun', { id: item.id })}
