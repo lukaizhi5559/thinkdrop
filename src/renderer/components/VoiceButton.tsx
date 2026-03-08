@@ -98,8 +98,8 @@ export default function VoiceButton({ mode = 'push-to-talk', onTranscript, onRes
         if (audioQueueRef.current.length > 0) {
           drainQueue();
         } else {
-          // Post-TTS cooldown: suppress VAD for 2.5s so speaker output isn't re-captured
-          ttsCooldownUntilRef.current = Date.now() + 2500;
+          // Post-TTS cooldown: suppress VAD for 1.2s so speaker output isn't re-captured
+          ttsCooldownUntilRef.current = Date.now() + 1200;
           setVoiceState('idle');
           setTranscript('');
         }
@@ -118,11 +118,16 @@ export default function VoiceButton({ mode = 'push-to-talk', onTranscript, onRes
       });
     };
 
-    const handleResponse = (_e: any, data: { text: string; audioBase64: string; audioFormat: string; language: string; lane?: string; durationEstimateMs?: number }) => {
+    const handleResponse = (_e: any, data: { text: string; audioBase64: string; audioFormat: string; language: string; lane?: string; durationEstimateMs?: number; triggered?: boolean }) => {
       const lane = data.lane || 'fast';
       console.log('[VoiceButton] voice:response received, lane:', lane, 'audioFormat:', data.audioFormat, 'b64 length:', data.audioBase64?.length);
-      // Pipeline complete — unlock VAD so next utterance can be captured
-      vadSendingRef.current = false;
+      // Unlock VAD unless this fast-lane response has a stategraph escalation in-flight.
+      // If triggered=true the stategraph result is still processing — keep VAD locked so the
+      // user can't accidentally re-trigger while ThinkDrop is working on the escalated task.
+      // VAD will be unlocked when the stategraph voice:response arrives (lane=stategraph).
+      if (lane !== 'fast' || !data.triggered) {
+        vadSendingRef.current = false;
+      }
       setDetectedLanguage(data.language || '');
       onResponseRef.current?.(data.text, data.audioBase64, data.audioFormat);
 
@@ -140,7 +145,7 @@ export default function VoiceButton({ mode = 'push-to-talk', onTranscript, onRes
       if (data.audioBase64) {
         // Pre-set cooldown based on known duration so VAD stays closed during playback
         if (data.durationEstimateMs) {
-          ttsCooldownUntilRef.current = Date.now() + data.durationEstimateMs + 1500;
+          ttsCooldownUntilRef.current = Date.now() + data.durationEstimateMs + 800;
         }
         audioQueueRef.current.push({ base64: data.audioBase64, format: data.audioFormat || 'mp3', lane });
         drainQueue();
@@ -374,7 +379,7 @@ export default function VoiceButton({ mode = 'push-to-talk', onTranscript, onRes
 
     const VAD_SPEECH_THRESHOLD = 28;   // RMS 0-255: absolute floor
     const VAD_DELTA_MULTIPLIER = 1.8;  // must be 1.8x above rolling baseline to trigger
-    const VAD_SILENCE_MS = 2200;       // ms of silence before sending — 2200ms allows natural mid-sentence breathing pauses
+    const VAD_SILENCE_MS = 1800;       // ms of silence before sending — 1800ms handles multi-clause speech (natural breath pauses ~500-800ms between clauses without fragmenting a single request)
     const VAD_MIN_SPEECH_MS = 300;     // ignore clips shorter than this
     const VAD_MAX_SPEECH_MS = 12000;   // max utterance before force-send
 

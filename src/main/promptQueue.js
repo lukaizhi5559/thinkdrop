@@ -272,11 +272,43 @@ function getVisible() {
     .sort((a, b) => a.createdAt - b.createdAt);
 }
 
+/**
+ * Track an externally-driven prompt (e.g. /voice/inject) in the queue UI.
+ * Inserts the item directly as 'running' without going through _tryAdvance,
+ * so it doesn't interfere with the normal serial prompt queue.
+ * Call markDone(id) when the external execution completes.
+ * @param {string} prompt
+ * @param {object} [opts]
+ * @param {string} [opts.selectedText]
+ * @param {string|null} [opts.responseLanguage]
+ * @returns {string} id
+ */
+function trackExternal(prompt, { selectedText = '', responseLanguage = null } = {}) {
+  const id = _uid();
+  const item = {
+    id,
+    prompt,
+    selectedText,
+    responseLanguage,
+    status: 'running',
+    createdAt: Date.now(),
+    startedAt: Date.now(),
+    doneAt: null,
+    error: null,
+  };
+  _items.set(id, item);
+  _save();
+  _broadcast();
+  console.log(`[PromptQueue] Tracking external: "${prompt.slice(0, 60)}" id=${id}`);
+  return id;
+}
+
 module.exports = {
   init,
   enqueue,
   cancel,
   markDone,
+  trackExternal,
   dismissRestartAlert,
   getRunningId,
   getVisible,

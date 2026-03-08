@@ -770,7 +770,7 @@ export default function StandalonePromptCapture() {
                 onKeyDown={handleKeyDown}
                 onFocus={() => ipcRenderer?.send('ptt:input-focus')}
                 onBlur={() => ipcRenderer?.send('ptt:input-blur')}
-                placeholder={gatherPending ? 'Type your answer here and press Enter…' : 'Ask anything'}
+                placeholder={gatherPending ? 'Type your answer here and press Enter…' : 'Ask or Drag-n-Drop anything'}
                 className="text-sm whitespace-pre-wrap break-words resize-none focus:outline-none"
                 style={{
                   color: '#e5e7eb',
@@ -880,7 +880,7 @@ export default function StandalonePromptCapture() {
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
               <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
             </svg>
-            <span>Attach file</span>
+            <span>Attach file or folder</span>
           </button>
 
           {/* Skills Manager gear button — flush right */}

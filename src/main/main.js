@@ -50,27 +50,36 @@ function startOverlayControlServer() {
       req.on('data', chunk => { body += chunk; });
       req.on('end', async () => {
         try {
-          const { message, sessionId, source, responseLanguage: injectResponseLanguage = null } = JSON.parse(body || '{}');
+          const { message, sessionId, source, responseLanguage: injectResponseLanguage = null, voiceOnly = false } = JSON.parse(body || '{}');
           if (!message) {
             res.writeHead(400);
             res.end(JSON.stringify({ error: 'message is required' }));
             return;
           }
-          console.log(`[VoiceInject] Received: "${message.substring(0, 80)}" (source: ${source || 'voice'})`);
+          console.log(`[VoiceInject] Received: "${message.substring(0, 80)}" (source: ${source || 'voice'}, voiceOnly: ${voiceOnly})`);
+
+          // Track voice-inject tasks in the Queue tab so they show as 'running'.
+          // We only track voiceOnly=true (background escalations) — non-voiceOnly
+          // tasks are visible in the Results window already.
+          const _pqId = voiceOnly ? promptQueue.trackExternal(message, { responseLanguage: injectResponseLanguage }) : null;
 
           if (!stateGraph) {
+            if (_pqId) promptQueue.markDone(_pqId, { error: 'StateGraph not initialized' });
             res.writeHead(503);
             res.end(JSON.stringify({ ok: false, error: 'StateGraph not initialized' }));
             return;
           }
 
-          // Notify renderer so it can show the prompt in the UI
-          if (promptCaptureWindow && !promptCaptureWindow.isDestroyed()) {
-            safeSend(promptCaptureWindow, 'voice:inject-prompt', { message, sessionId, source: source || 'voice' });
-          }
-          // Reset Results window state for the new voice prompt
-          if (resultsWindow && !resultsWindow.isDestroyed()) {
-            safeSend(resultsWindow, 'results-window:set-prompt', message);
+          // voiceOnly=true: background escalation from fast lane voice response.
+          // Do NOT touch the ResultsWindow — it may be showing something else.
+          // Only notify promptCaptureWindow for IPC plumbing (session routing etc).
+          if (!voiceOnly) {
+            if (promptCaptureWindow && !promptCaptureWindow.isDestroyed()) {
+              safeSend(promptCaptureWindow, 'voice:inject-prompt', { message, sessionId, source: source || 'voice' });
+            }
+            if (resultsWindow && !resultsWindow.isDestroyed()) {
+              safeSend(resultsWindow, 'results-window:set-prompt', message);
+            }
           }
 
           // Flush stale cancel/pause signals before starting so previous-session
@@ -88,7 +97,7 @@ function startOverlayControlServer() {
           const tokens = [];
           const streamCallback = (token) => {
             tokens.push(token);
-            if (resultsWindow && !resultsWindow.isDestroyed()) {
+            if (!voiceOnly && resultsWindow && !resultsWindow.isDestroyed()) {
               safeSend(resultsWindow, 'ws-bridge:message', { type: 'chunk', text: token });
             }
           };
@@ -163,16 +172,27 @@ function startOverlayControlServer() {
             summary: answer.substring(0, 120),
           });
 
-          // Signal stream end to renderer
-          if (resultsWindow && !resultsWindow.isDestroyed()) {
+          // Mark Queue tab item done
+          if (_pqId) promptQueue.markDone(_pqId);
+
+          // Signal stream end to renderer (not for voice-only background escalations)
+          if (!voiceOnly && resultsWindow && !resultsWindow.isDestroyed()) {
             safeSend(resultsWindow, 'ws-bridge:message', { type: 'done' });
           }
 
           res.writeHead(200);
-          res.end(JSON.stringify({ ok: true, answer, intent, hadLiveStream: tokens.length > 0 }));
+          res.end(JSON.stringify({
+            ok: true,
+            answer,
+            intent,
+            hadLiveStream: tokens.length > 0,
+            commandOutput: finalState.commandOutput || '',
+            skillResults: (finalState.skillResults || []).map(r => ({ skill: r.skill, ok: r.ok, stdout: r.stdout, result: r.result, args: r.args, description: r.description })),
+          }));
         } catch (err) {
           console.error('[VoiceInject] Error:', err.message);
           voiceJournal.graphError({ intent: 'unknown', error: err.message });
+          if (_pqId) promptQueue.markDone(_pqId, { error: err.message });
           res.writeHead(200);
           res.end(JSON.stringify({ ok: false, error: err.message, answer: '' }));
         }
@@ -1489,6 +1509,7 @@ app.whenReady().then(async () => {
             language: result.detectedLanguage,
             lane: result.lane,
             durationEstimateMs: result.durationEstimateMs || null,
+            triggered: !!(result.triggered),
           });
       } else {
         console.log('🎙️ [Voice] No audioBase64 in result — no TTS to play');
@@ -1575,6 +1596,7 @@ app.whenReady().then(async () => {
             language: result.detectedLanguage,
             lane: result.lane,
             durationEstimateMs: result.durationEstimateMs || null,
+            triggered: !!(result.triggered),
           });
       }
       voiceJournal.setVoiceStatus('idle');
@@ -3339,22 +3361,43 @@ app.whenReady().then(async () => {
         console.log(`[Skills] Deleted skill dir: ${skillDir}`);
       }
 
-      // 2. Remove from user-memory MCP
+      // 2. Remove from user-memory MCP (route: POST /skill.remove)
       const memApiKey = process.env.MCP_USER_MEMORY_API_KEY || process.env.USER_MEMORY_API_KEY || process.env.MCP_API_KEY || 'k7F9qLp3XzR2vH8sT1mN4bC0yW6uJ5eQG4tY9bH2wQ6nM1vS8xR3cL5pZ0kF7uDe';
-      const delBody = JSON.stringify({ version: 'mcp.v1', service: 'user-memory', action: 'skill.delete', payload: { name: skillName }, requestId: 'delete-' + Date.now() });
+      const delBody = JSON.stringify({ version: 'mcp.v1', service: 'user-memory', action: 'skill.remove', payload: { name: skillName }, requestId: 'delete-' + Date.now() });
       await new Promise(resolve => {
         const req = http.request({
           hostname: '127.0.0.1', port: parseInt(process.env.MEMORY_SERVICE_PORT || '3001', 10),
-          path: '/skill.delete', method: 'POST',
+          path: '/skill.remove', method: 'POST',
           headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${memApiKey}`, 'Content-Length': Buffer.byteLength(delBody) },
-        }, res => { res.resume(); resolve(); });
-        req.on('error', () => resolve());
+        }, res => {
+          let raw = ''; res.on('data', c => { raw += c; }); res.on('end', () => {
+            try { const r = JSON.parse(raw); if (!r?.data?.deleted) console.warn(`[Skills] skill.remove unexpected response: ${raw.slice(0, 200)}`); } catch (_) {}
+            resolve();
+          });
+        });
+        req.on('error', (e) => { console.error(`[Skills] skill.remove HTTP error: ${e.message}`); resolve(); });
         req.write(delBody); req.end();
       });
       console.log(`[Skills] Removed skill from user-memory: ${skillName}`);
 
-      // 3. Remove from cron (in-memory queueManager)
-      queueManager.removeCron(skillName);
+      // 3. Remove from cron — both queueManager (UI) and command-service scheduler
+      const cronId = `skill_${skillName.replace(/\./g, '_')}`;
+      queueManager.removeCron(cronId);
+      // Tell command-service's skill-scheduler to stop the node-cron job immediately (awaited)
+      const cmdPort = parseInt(process.env.SERVICE_PORT || process.env.COMMAND_SERVICE_PORT || '3007', 10);
+      const unschedBody = JSON.stringify({ skillName });
+      await new Promise(resolve => {
+        const unschedReq = require('http').request({
+          hostname: '127.0.0.1', port: cmdPort,
+          path: '/skill.unschedule', method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(unschedBody) },
+          timeout: 5000,
+        }, res => { res.resume(); resolve(); });
+        unschedReq.on('error', () => resolve());
+        unschedReq.on('timeout', () => { unschedReq.destroy(); resolve(); });
+        unschedReq.write(unschedBody);
+        unschedReq.end();
+      });
 
       // 4. Clean up keytar secrets for this skill
       try {
