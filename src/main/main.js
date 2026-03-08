@@ -1815,15 +1815,58 @@ app.whenReady().then(async () => {
         const paused = pausedAutomationState;
         const userReply = prompt.trim().toLowerCase();
 
-        // Detect if the new prompt is clearly a fresh/unrelated request rather than
-        // an answer to the paused question. Fresh prompts typically:
-        // - Ask a question about the past ("what have I been doing", "what did I do")
-        // - Start a completely new task ("send email to...", "open Slack", "search for...")
-        // - Are clearly not one of the offered options
-        const isFreshPrompt = (
-          /\b(what have i been|what did i|what was i|summarize|recap|history|last hour|last \d+ min)\b/i.test(prompt) ||
-          /^(send|open|search|find|create|delete|move|copy|download|install|run|start|stop|quit|close|show|list|check|get|set|go to|navigate|book|buy|schedule|remind)\b/i.test(prompt.trim())
-        );
+        // ── Part A: TTL expiry ────────────────────────────────────────────────
+        // If the paused state is older than 90 seconds the user has clearly moved on.
+        // Skip any semantic check — it's always a fresh task.
+        const PAUSED_TTL_MS = 90_000;
+        const pausedAge = paused._pausedAt ? (Date.now() - paused._pausedAt) : Infinity;
+        const isExpired = pausedAge > PAUSED_TTL_MS;
+
+        // ── Part C: Semantic check via voice-service embedding classifier ─────
+        // Compare new prompt against the paused question text using cosine similarity.
+        // Falls back to regex heuristic if voice-service is unavailable.
+        let isFreshPrompt = isExpired;
+        if (!isFreshPrompt) {
+          try {
+            const http = require('http');
+            const classifyResult = await new Promise((resolve, reject) => {
+              const body = JSON.stringify({
+                payload: {
+                  prompt: prompt.trim(),
+                  pausedQuestion: paused.pendingQuestion?.question || paused.message || ''
+                }
+              });
+              const req = http.request(
+                { hostname: '127.0.0.1', port: 3006, path: '/voice.classify', method: 'POST',
+                  headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) } },
+                (res) => {
+                  let data = '';
+                  res.on('data', d => { data += d; });
+                  res.on('end', () => {
+                    try { resolve(JSON.parse(data)?.data || {}); } catch (_) { resolve({}); }
+                  });
+                }
+              );
+              req.on('error', reject);
+              req.setTimeout(1500, () => { req.destroy(); reject(new Error('timeout')); });
+              req.write(body);
+              req.end();
+            });
+            if (typeof classifyResult.isFreshTask === 'boolean') {
+              isFreshPrompt = classifyResult.isFreshTask;
+              console.log(`[StateGraph] ASK_USER resume: semantic check → isFreshTask=${isFreshPrompt} similarity=${classifyResult.similarity?.toFixed(3)} isAction=${classifyResult.isActionCommand} age=${Math.round(pausedAge/1000)}s`);
+            } else {
+              throw new Error('no isFreshTask in response');
+            }
+          } catch (classifyErr) {
+            // Voice-service unavailable — fall back to regex heuristic
+            console.log(`[StateGraph] ASK_USER resume: semantic check unavailable (${classifyErr.message}), using regex fallback`);
+            isFreshPrompt = (
+              /\b(what have i been|what did i|what was i|summarize|recap|history|last hour|last \d+ min)\b/i.test(prompt) ||
+              /^(send|open|search|find|create|delete|move|copy|download|install|run|start|stop|quit|close|show|list|check|get|set|go to|goto|navigate|nav|book|buy|schedule|remind|pull up|look up|browse|visit|take me|switch to|jump to)\b/i.test(prompt.trim())
+            );
+          }
+        }
 
         if (isFreshPrompt) {
           console.log('[StateGraph] ASK_USER resume: new prompt looks like a fresh request — clearing paused state and processing fresh');
@@ -1954,6 +1997,7 @@ app.whenReady().then(async () => {
             };
           } else {
             // User provided a custom answer — inject it as recoveryContext and replan
+            // (isFreshPrompt already handled the "new task typed as reply" case above)
             console.log('[StateGraph] ASK_USER resume: user provided answer — replanning with context');
             initialState = {
               ...paused,
@@ -2131,7 +2175,7 @@ app.whenReady().then(async () => {
           }
         } else {
           // Persist the full state so the next user reply can resume / re-enter
-          pausedAutomationState = finalState;
+          pausedAutomationState = { ...finalState, _pausedAt: Date.now() };
           console.log(`[StateGraph] ASK_USER (${intentType}): pausing — next prompt will resume`);
           if (resultsWindow && !resultsWindow.isDestroyed()) {
             safeSend(resultsWindow, 'automation:progress', {
@@ -2146,7 +2190,7 @@ app.whenReady().then(async () => {
         // Enrichment gap question — entity or profile info missing, asking user before proceeding.
         // Send the question as a visible message and pause state so next reply resumes the command.
         if (finalState.enrichmentNeeded?.length > 0 && finalState.answer && !finalState.pendingQuestion) {
-          pausedAutomationState = finalState;
+          pausedAutomationState = { ...finalState, _pausedAt: Date.now() };
           console.log(`[StateGraph] Enrichment gap (${intentType}): pausing for entity info — next prompt will resume`);
           if (resultsWindow && !resultsWindow.isDestroyed()) {
             // Strip internal routing markers before showing to user

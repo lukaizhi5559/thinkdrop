@@ -371,7 +371,9 @@ export default function StandalonePromptCapture() {
     let finalPrompt = '';
     
     if (highlights.length > 0) {
-      finalPrompt = highlights.map(h => `[Highlighted: ${h}]`).join('\n') + '\n\n';
+      finalPrompt = highlights.map(h =>
+        (h.startsWith('[File:') || h.startsWith('[Folder:')) ? h : `[Highlighted: ${h}]`
+      ).join('\n') + '\n\n';
     }
     
     finalPrompt += promptText;
@@ -428,7 +430,9 @@ export default function StandalonePromptCapture() {
     if (!text.trim()) return;
     console.log('[PTT] Submitting via stategraph:process:', text, responseLanguage ? `(respond in: ${responseLanguage})` : '');
     let finalPrompt = '';
-    if (highlights.length > 0) finalPrompt = highlights.map((h: string) => `[Highlighted: ${h}]`).join('\n') + '\n\n';
+    if (highlights.length > 0) finalPrompt = highlights.map((h: string) =>
+      (h.startsWith('[File:') || h.startsWith('[Folder:')) ? h : `[Highlighted: ${h}]`
+    ).join('\n') + '\n\n';
     finalPrompt += text.trim();
     ipcRenderer?.send('stategraph:process', { prompt: finalPrompt, selectedText: highlights.join('\n'), responseLanguage });
     setIsProcessing(true);
@@ -527,8 +531,15 @@ export default function StandalonePromptCapture() {
     const files = Array.from(e.dataTransfer.files);
     if (files.length === 0) return;
     files.forEach(file => {
-      const path = (file as any).path;
-      if (path) {
+      const path = (file as any).path as string | undefined;
+      if (!path) return;
+      // Folders dropped from Finder have size 0 and no lastModified in some cases,
+      // but the most reliable signal in Electron is file.size === 0 AND no extension.
+      const hasExtension = /\.[a-zA-Z0-9]{1,10}$/.test(path.split('/').pop() || '');
+      const isFolder = (file.size === 0 && !hasExtension) || file.type === '';
+      if (isFolder) {
+        handleAddHighlight(null, `[Folder: ${path}]`);
+      } else {
         handleAddHighlight(null, `[File: ${path}]`);
       }
     });
@@ -645,7 +656,9 @@ export default function StandalonePromptCapture() {
                 {highlights.map((highlight, index) => {
                   // Detect tag type for icon + label
                   const fileMatch = highlight.match(/^\[File:\s*(.+)\]$/);
+                  const folderMatch = highlight.match(/^\[Folder:\s*(.+)\]$/);
                   const isFile = !!fileMatch;
+                  const isFolder = !!folderMatch;
                   const isApp = highlight.match(/^\[File:.*\.app\]$/);
 
                   let label: string;
@@ -653,7 +666,19 @@ export default function StandalonePromptCapture() {
                   let borderColor: string;
                   let icon: React.ReactNode;
 
-                  if (isFile) {
+                  if (isFolder) {
+                    const fullPath = folderMatch![1].trim();
+                    const folderName = fullPath.split('/').pop() || fullPath;
+                    label = folderName;
+                    chipColor = 'rgba(251, 191, 36, 0.12)';
+                    borderColor = 'rgba(251, 191, 36, 0.35)';
+                    icon = (
+                      // Folder icon
+                      <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                        <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
+                      </svg>
+                    );
+                  } else if (isFile) {
                     const fullPath = fileMatch![1].trim();
                     const fileName = fullPath.split('/').pop() || fullPath;
                     label = fileName;
@@ -687,7 +712,7 @@ export default function StandalonePromptCapture() {
                     );
                   }
 
-                  const iconColor = isApp ? '#c4b5fd' : isFile ? '#93c5fd' : '#6ee7b7';
+                  const iconColor = isFolder ? '#fbbf24' : isApp ? '#c4b5fd' : isFile ? '#93c5fd' : '#6ee7b7';
 
                   return (
                     <div
