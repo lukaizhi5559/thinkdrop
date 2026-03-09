@@ -124,6 +124,15 @@ function setQueueStatus(id, status, { error, round, skillName, skillSecrets } = 
     ...(skillSecrets != null ? { skillSecrets } : {}),
   });
   _broadcastQueueNow();
+  // Auto-remove terminal items after 30s so the Queue tab stays clean
+  if (status === 'done' || status === 'failed' || status === 'cancelled') {
+    setTimeout(() => {
+      if (_queue.has(id)) {
+        _queue.delete(id);
+        _broadcastQueueNow();
+      }
+    }, 30_000);
+  }
 }
 
 /**

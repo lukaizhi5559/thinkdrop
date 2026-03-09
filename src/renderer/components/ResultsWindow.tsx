@@ -34,6 +34,8 @@ export default function ResultsWindow() {
   const [showTrigger, setShowTrigger] = useState(0);
   const [isDropping, setIsDropping] = useState(false);
   const hasDroppedRef = useRef(false);
+  // Synthesis/streaming response block is collapsed by default; user can expand
+  const [isSynthesisCollapsed, setIsSynthesisCollapsed] = useState(true);
 
   // ── Tab state ────────────────────────────────────────────────────────────────
   const [activeTab, setActiveTab] = useState<TabId>('results');
@@ -228,6 +230,7 @@ export default function ResultsWindow() {
       setStreamingResponse('');
       setIsStreaming(false);
       setIsThinking(true);
+      setIsSynthesisCollapsed(true);
       setIsAutomationMode(false); // AutomationProgress will self-activate on 'planning' event
       if (glowOffTimerRef.current) clearTimeout(glowOffTimerRef.current);
       setIsGlowActive(true);
@@ -242,8 +245,11 @@ export default function ResultsWindow() {
     };
 
     const handleAutomationProgress = (_event: any, data: any) => {
-      // Suppress automation progress display for queued tasks — Queue tab handles it
-      if (isQueuedTaskRef.current) {
+      // Suppress automation progress display for queued tasks — Queue tab handles it.
+      // EXCEPTION: gather_* events (credential/question prompts) must ALWAYS pass through
+      // so the user sees the credential input UI even when a task is running from the queue.
+      const isGatherEvent = typeof data?.type === 'string' && data.type.startsWith('gather_');
+      if (isQueuedTaskRef.current && !isGatherEvent) {
         if (data?.type === 'all_done') {
           isQueuedTaskRef.current = false;
         }
@@ -297,6 +303,8 @@ export default function ResultsWindow() {
         setIsStreaming(false);
         setInstallPrompt(null);
         setIsInstalling(false);
+        // Expand synthesis block so user sees the completed result; they can collapse manually
+        setIsSynthesisCollapsed(false);
         glowOffTimerRef.current = setTimeout(() => setIsGlowActive(false), 400);
       } else if (data?.type === 'skill_build_phase') {
         // Skill build pipeline progress — update SkillBuildProgress state
@@ -800,9 +808,15 @@ export default function ResultsWindow() {
       );
     }
 
+    // In automation mode the streamingResponse is the synthesize output — show it collapsible.
+    // Outside automation mode (plain LLM answer) always show it expanded.
+    const showCollapsible = isAutomationMode && !!streamingResponse;
+    // Auto-expand while streaming so the user sees content arriving
+    const synthesisExpanded = isStreaming ? true : !isSynthesisCollapsed;
+
     return (
       <div className={`space-y-4${isDropping ? ' drop-animate' : ''}`}>
-        {streamingResponse && (
+        {streamingResponse && !showCollapsible && (
           <div className="relative">
             <RichContentRenderer 
               content={injectFileLinks(streamingResponse)}
@@ -812,6 +826,54 @@ export default function ResultsWindow() {
             />
             {isStreaming && (
               <span className="inline-block w-1.5 h-4 bg-blue-500 animate-pulse ml-1" />
+            )}
+          </div>
+        )}
+
+        {showCollapsible && (
+          <div className="rounded-lg overflow-hidden" style={{ border: '1px solid rgba(255,255,255,0.08)', marginTop: '5px' }}>
+            {/* Collapsible header */}
+            <button
+              className="w-full flex items-center justify-between px-3 py-2 text-xs font-medium"
+              style={{
+                backgroundColor: 'rgba(59,130,246,0.08)',
+                color: '#93c5fd',
+                cursor: 'pointer',
+                userSelect: 'none',
+              }}
+              onClick={() => !isStreaming && setIsSynthesisCollapsed(prev => !prev)}
+              onMouseEnter={e => (e.currentTarget.style.backgroundColor = 'rgba(59,130,246,0.14)')}
+              onMouseLeave={e => (e.currentTarget.style.backgroundColor = 'rgba(59,130,246,0.08)')}
+            >
+              <div className="flex items-center gap-1.5">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/>
+                </svg>
+                <span>Summary</span>
+                {isStreaming && <span className="inline-block w-1.5 h-1.5 rounded-full bg-blue-400 animate-pulse ml-1" />}
+              </div>
+              <svg
+                width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
+                style={{ transform: synthesisExpanded ? 'rotate(180deg)' : 'rotate(0deg)', transition: 'transform 0.15s', flexShrink: 0 }}
+              >
+                <polyline points="6 9 12 15 18 9" />
+              </svg>
+            </button>
+
+            {/* Collapsible body */}
+            {synthesisExpanded && (
+              <div className="px-3 py-2.5 relative" style={{ backgroundColor: 'rgba(0,0,0,0.25)' }}>
+                <RichContentRenderer
+                  content={injectFileLinks(streamingResponse)}
+                  animated={!isStreaming}
+                  className="text-sm"
+                  onFileLinkClick={openFilePath}
+                />
+                {isStreaming && (
+                  <span className="inline-block w-1.5 h-4 bg-blue-500 animate-pulse ml-1" />
+                )}
+              </div>
             )}
           </div>
         )}

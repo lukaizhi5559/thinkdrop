@@ -97,6 +97,22 @@ function _getSnapshot() {
  */
 function enqueue(prompt, { selectedText = '', responseLanguage = null } = {}) {
   const id = _uid();
+
+  // If a new prompt comes in while crashed-session items are still pending restart,
+  // cancel those crashed items so they don't race with the new one.
+  if (_restartCountdownTimer) {
+    clearTimeout(_restartCountdownTimer);
+    _restartCountdownTimer = null;
+    for (const [itemId, item] of _items) {
+      if (item.status === 'pending') {
+        _items.set(itemId, { ...item, status: 'cancelled', doneAt: Date.now() });
+        console.log(`[PromptQueue] Cancelled stale restart item: ${itemId}`);
+      }
+    }
+    _save();
+    _broadcast();
+  }
+
   /** @type {PromptQueueItem} */
   const item = {
     id,
@@ -220,8 +236,8 @@ function init({ broadcast, runPrompt, alertRestart }) {
 
   if (crashedItems.length > 0) {
     console.log(`[PromptQueue] Found ${crashedItems.length} unfinished prompt(s) from last session`);
-    // Alert the user with a 10-second countdown
-    const COUNTDOWN_MS = 10000;
+    // Alert the user with a 60-second countdown — long enough to dismiss gather-interrupted prompts
+    const COUNTDOWN_MS = 60000;
     alertRestart(crashedItems, COUNTDOWN_MS);
 
     _restartCountdownTimer = setTimeout(() => {

@@ -2019,6 +2019,17 @@ app.whenReady().then(async () => {
           const wantsDone = /\b(done|clicked|confirmed|complete|finished)\b/i.test(chosenOption);
           // "I'm logged in" — user completed login; resume plan from current skillCursor (no replan)
           const wantsLoginContinue = /logged.?in|signed.?in|i.?m in/i.test(chosenOption) || chosenOption === "I'm logged in — continue";
+          // "Install [X] skill" / "Create and install [X] skill" — user asked to install or
+          // build a missing skill. Inject a targeted skill.install plan WITHOUT replanning
+          // the full original task. Extract the skill name from the pending question context
+          // (failedStep) or from the reply itself.
+          const installSkillMatch = /(?:create\s+and\s+install|install(?:ing)?)\s+(?:the\s+)?['"]?([a-z0-9._-]+)['"]?\s+skill/i.exec(chosenOption)
+            || /^install\s+skill$/i.exec(chosenOption)
+            || /install\s+texting\s+tool/i.exec(chosenOption)
+            || /^create\s+and\s+install\s+this\s+skill$/i.exec(chosenOption);
+          const wantsInstallSkill = !!installSkillMatch
+            || /^install\s+(skill|texting|sms|text)/i.test(chosenOption.trim())
+            || /^create\s+and\s+install/i.test(chosenOption.trim());
           if (wantsAbort) {
             // User wants to abort — notify and return immediately, do NOT re-run the graph
             console.log('[StateGraph] ASK_USER resume: user chose abort — stopping, not replanning');
@@ -2050,6 +2061,120 @@ app.whenReady().then(async () => {
               stepRetryCount: 0,
               activeBrowserSessionId: paused.activeBrowserSessionId || currentBrowserSessionId || null,
               activeBrowserUrl: paused.activeBrowserUrl || currentBrowserUrl || null,
+              context: { ...paused.context, sessionId: sessionId || currentSessionId }
+            };
+          } else if (paused.pendingQuestion?._isScoutSelect) {
+            // ── Scout provider select: user picked a CLI/API provider from the Scout card ──
+            // Re-enter at gatherContext with forceSkillBuild=true and gatheredContext pre-set
+            // so creatorPlanning fast-path picks it up immediately (no Q&A loop needed).
+            const scoutMatches = paused.pendingQuestion?.context?.scoutMatches || paused.scoutMatches || [];
+            const scoutCapability = paused.pendingQuestion?.context?.capability || paused.scoutCapability || '';
+
+            // Map user reply to the chosen match (either "provider (type)" format or index)
+            let chosenMatch = scoutMatches[0]; // default: first match
+            const replyLower = chosenOption.toLowerCase().replace(/\s*\([^)]+\)/, '').trim();
+            const byName = scoutMatches.find(m => m.provider.toLowerCase() === replyLower);
+            const byIdx = parseInt(userReply, 10) - 1;
+            if (byName) chosenMatch = byName;
+            else if (!isNaN(byIdx) && byIdx >= 0 && byIdx < scoutMatches.length) chosenMatch = scoutMatches[byIdx];
+
+            console.log(`[StateGraph] Scout select: "${chosenOption}" → provider "${chosenMatch?.provider}" (${chosenMatch?.type}) for "${scoutCapability}"`);
+
+            const isCli = chosenMatch?.type === 'cli';
+            const gatheredContext = {
+              services: [chosenMatch?.provider || scoutCapability],
+              timezone: null,
+              schedule: null,
+              knownSecrets: [],
+              links: chosenMatch?.config?.links || [],
+              resolvedAnswers: {},
+              cliMatch: isCli ? { capability: chosenMatch.capability, provider: chosenMatch.provider, config: chosenMatch.config } : null,
+              apiMatch: !isCli ? { capability: chosenMatch.capability, provider: chosenMatch.provider, config: chosenMatch.config } : null,
+            };
+
+            initialState = {
+              ...paused,
+              message: paused.message,
+              streamCallback,
+              progressCallback,
+              confirmInstallCallback,
+              confirmGuideCallback,
+              isGuideCancelled,
+              failedStep: null,
+              pendingQuestion: null,
+              recoveryAction: null,
+              scoutPending: false,
+              // Inject gathered context so creatorPlanning uses the chosen provider
+              gatheredContext,
+              forceSkillBuild: true,
+              gatherContextSkipped: false,
+              skillPlan: null,
+              skillCursor: 0,
+              stepRetryCount: 0,
+              commandExecuted: false,
+              context: { ...paused.context, sessionId: sessionId || currentSessionId }
+            };
+          } else if (wantsInstallSkill) {
+            // User chose to install a missing skill — inject a targeted skill.install plan
+            // WITHOUT replanning the full original task. After install, resume from the
+            // failed external.skill step so the original plan continues automatically.
+            const failedSkillName = paused.failedStep?.skill === 'external.skill'
+              ? (paused.failedStep?.args?.name || paused.pendingQuestion?.context?.args?.name || null)
+              : null;
+            // For needs_skill steps: derive dot-notation skill name from capability arg
+            const needsSkillCapability = paused.failedStep?.skill === 'needs_skill'
+              ? (paused.failedStep?.args?.name || paused.failedStep?.args?.capability || null)
+              : null;
+            const needsSkillDotName = needsSkillCapability
+              ? needsSkillCapability.toLowerCase().trim()
+                  .replace(/[^a-z0-9\s]/g, '')      // strip non-alphanum
+                  .replace(/\s+/g, '.')             // spaces → dots
+                  .replace(/\.{2,}/g, '.')          // collapse double-dots
+                  .replace(/^\.|\.$/, '')            // trim leading/trailing dots
+                  .split('.').slice(0, 3).join('.')  // max 3 parts
+              : null;
+            // Try to extract skill name from the reply text (e.g. "Install 'send.text' skill")
+            // but skip generic captures like 'this', 'a', 'the', 'my'
+            const rawReplyMatch = installSkillMatch?.[1] || null;
+            const GENERIC_WORDS = ['this', 'a', 'the', 'my', 'new', 'it', 'that'];
+            const replySkillName = (rawReplyMatch && !GENERIC_WORDS.includes(rawReplyMatch.toLowerCase())) ? rawReplyMatch : null;
+            const targetSkillName = failedSkillName || replySkillName || needsSkillDotName || 'unknown.skill';
+            console.log(`[StateGraph] ASK_USER resume: install skill "${targetSkillName}" — injecting skill.install plan`);
+            const installPlan = [{
+              skill: 'skill.install',
+              args: {
+                skillPath: `${require('os').homedir()}/.thinkdrop/skills/${targetSkillName}/skill.md`,
+                name: targetSkillName,
+                description: `${targetSkillName} skill`,
+              },
+              description: `Install skill: ${targetSkillName}`,
+            }];
+            // Store original plan so executeCommand can splice it back in after install
+            const originalPlan = Array.isArray(paused.skillPlan) ? paused.skillPlan : [];
+            const originalCursor = paused.skillCursor || 0;
+            // Build combined plan: [skill.install, ...remaining original steps from cursor onwards]
+            const remainingOriginalSteps = originalPlan.slice(originalCursor);
+            const combinedPlan = [...installPlan, ...remainingOriginalSteps];
+            initialState = {
+              ...paused,
+              message: paused.message,
+              streamCallback,
+              progressCallback,
+              confirmInstallCallback,
+              confirmGuideCallback,
+              isGuideCancelled,
+              failedStep: null,
+              pendingQuestion: null,
+              recoveryAction: null,
+              recoveryContext: null,
+              answer: undefined,
+              commandExecuted: false,
+              // Combined plan: install first, then resume remaining original steps
+              skillPlan: combinedPlan,
+              skillCursor: 0,
+              stepRetryCount: 0,
+              // resumeFromLogin=true tells planSkills to skip LLM replanning and use the injected plan
+              resumeFromLogin: true,
               context: { ...paused.context, sessionId: sessionId || currentSessionId }
             };
           } else if (wantsSkip || wantsDone) {
@@ -2106,23 +2231,17 @@ app.whenReady().then(async () => {
         }
       } else {
         // ── queueBridge: drives Queue tab phase transitions from creatorPlanning ──
-        // Enqueues the prompt immediately so the Queue tab shows the item while the
-        // stategraph is planning. Phase callbacks (planning/building/testing/done/error)
-        // are called by creatorPlanning.js as the creator pipeline progresses.
-        let _queueItemId = null;
+        // Pre-create one queueManager item so the Queue tab shows progress while
+        // the stategraph is running. creatorPlanning calls setPhase(null,...) to
+        // update status — it never calls enqueue() so there is exactly ONE item.
+        const _queueItemId = queueManager.enqueue(prompt);
+        if (resultsWindow && !resultsWindow.isDestroyed()) {
+          safeSend(resultsWindow, 'queue:update', queueManager.getQueue());
+        }
         const queueBridge = {
-          enqueue: (promptText) => {
-            _queueItemId = queueManager.enqueue(promptText);
-            // Auto-switch Queue tab badge so user knows something is running
-            if (resultsWindow && !resultsWindow.isDestroyed()) {
-              safeSend(resultsWindow, 'queue:update', queueManager.getQueue());
-            }
-            return _queueItemId;
-          },
-          setPhase: (id, status, extra = {}) => {
-            const itemId = id || _queueItemId;
-            if (!itemId) return;
-            queueManager.setQueueStatus(itemId, status, extra);
+          setPhase: (_id, status, extra = {}) => {
+            // _id is always null now (creatorPlanning passes null); use _queueItemId
+            queueManager.setQueueStatus(_queueItemId, status, extra);
           },
         };
 
@@ -3186,13 +3305,47 @@ app.whenReady().then(async () => {
         const dirs = fsMod.readdirSync(skillsDir, { withFileTypes: true })
           .filter(d => d.isDirectory());
         return dirs.map(d => {
-          const skillPath = pathMod.join(skillsDir, d.name, 'index.cjs');
-          if (!fsMod.existsSync(skillPath)) return null;
-          // Try to read package.json for schedule/secrets metadata
-          let pkgData = {};
-          try { pkgData = JSON.parse(fsMod.readFileSync(pathMod.join(skillsDir, d.name, 'package.json'), 'utf8')); } catch(_) {}
-          const name = d.name; // dot-notation directory name
-          return { name, execPath: skillPath, source: 'local' };
+          const skillDir = pathMod.join(skillsDir, d.name);
+          const cjsPath  = pathMod.join(skillDir, 'index.cjs');
+          const cliJson  = pathMod.join(skillDir, 'cli.json');
+          const apiJson  = pathMod.join(skillDir, 'api.json');
+          const skillMd  = pathMod.join(skillDir, 'skill.md');
+
+          if (fsMod.existsSync(cjsPath)) {
+            // Standard code-gen skill
+            return { name: d.name, execPath: cjsPath, source: 'local' };
+          } else if (fsMod.existsSync(skillMd) && (fsMod.existsSync(cliJson) || fsMod.existsSync(apiJson))) {
+            // CLI/API Scout skill — has skill.md + cli.json/api.json but no index.cjs yet
+            let description = '';
+            let secretKeys = [];
+            let schedule = 'on_demand';
+            try {
+              const md = fsMod.readFileSync(skillMd, 'utf8');
+              const fmMatch = md.match(/^---\s*\n([\s\S]*?)\n---/);
+              const fm = fmMatch ? fmMatch[1] : '';
+              const schedM = fm.match(/^schedule\s*:\s*(.+)$/m);
+              if (schedM) schedule = schedM[1].trim();
+              // Parse secrets block (YAML list)
+              const secretsBlockMatch = fm.match(/^secrets\s*:\s*\n((?:\s+-\s+\S+\s*\n?)+)/m);
+              if (secretsBlockMatch) {
+                secretKeys = secretsBlockMatch[1].split('\n')
+                  .map(l => l.replace(/^\s*-\s*/, '').trim())
+                  .filter(Boolean);
+              }
+              // Inline secrets: secrets: KEY1, KEY2
+              const secretsInlineMatch = fm.match(/^secrets\s*:\s*([^\n]+)$/m);
+              if (secretsInlineMatch && !secretsBlockMatch) {
+                secretKeys = secretsInlineMatch[1].split(/[\s,]+/).map(s => s.trim()).filter(Boolean);
+              }
+              // Description from first body line after frontmatter
+              const body = md.replace(/^---\s*\n[\s\S]*?\n---\s*\n/, '').trim();
+              const firstLine = body.split('\n').find(l => l.trim() && !l.startsWith('#'));
+              if (firstLine) description = firstLine.trim().slice(0, 200);
+            } catch(_) {}
+            const descriptorPath = fsMod.existsSync(cliJson) ? cliJson : apiJson;
+            return { name: d.name, execPath: descriptorPath, source: 'local_scout', description, secretKeys, schedule };
+          }
+          return null;
         }).filter(Boolean);
       }
 
@@ -3204,7 +3357,8 @@ app.whenReady().then(async () => {
       const allRows = [...(listRows || []), ...localRows];
 
       const items = await Promise.all(allRows.map(async (row) => {
-        const full = row.source === 'local' ? null : await skillGet(row.name);
+        const isScout = row.source === 'local_scout';
+        const full = (row.source === 'local' || isScout) ? null : await skillGet(row.name);
         const cm = full?.contractMd || '';
         const fmMatch = cm.match(/^---\s*\n([\s\S]*?)\n---/);
         const fm = fmMatch ? fmMatch[1] : '';
@@ -3214,9 +3368,11 @@ app.whenReady().then(async () => {
         const oauthMatch       = fm.match(/^oauth\s*:\s*(.+)$/m);
         const oauthScopesMatch = fm.match(/^oauth_scopes\s*:\s*(.+)$/m);
         const trigger  = triggerMatch  ? triggerMatch[1].trim()  : (row.name || '');
-        const schedule = scheduleMatch ? scheduleMatch[1].trim() : 'on_demand';
-        let secretKeys = [];
-        if (secretsMatch) {
+        // Scout skills have pre-parsed schedule/secrets from skill.md
+        const schedule = isScout ? (row.schedule || 'on_demand')
+                       : scheduleMatch ? scheduleMatch[1].trim() : 'on_demand';
+        let secretKeys = isScout ? (row.secretKeys || []) : [];
+        if (!isScout && secretsMatch) {
           secretKeys = secretsMatch[1].split(/[\s,]+/).map(s => s.trim()).filter(Boolean);
         }
         // Parse oauth: field — comma-separated providers e.g. "google" or "google, github"
