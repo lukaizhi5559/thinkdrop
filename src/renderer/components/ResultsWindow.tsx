@@ -3,8 +3,8 @@ import { RichContentRenderer } from './rich-content';
 import AutomationProgress from './AutomationProgress';
 import SkillBuildProgress, { SkillBuildState, BuildPhase } from './SkillBuildProgress';
 import { playDropSound } from '../utils/thinkDropSound';
-import { TabBar, QueueTab, CronTab, SkillsTab, StoreTab, PromptQueueSection } from './TabComponents';
-import type { TabId, QueueItem, CronItem, SkillItem, PromptQueueItem } from './TabComponents';
+import { TabBar, QueueTab, CronTab, SkillsTab, StoreTab, ConnectionsTab, PromptQueueSection } from './TabComponents';
+import type { TabId, QueueItem, CronItem, SkillItem, PromptQueueItem, ConnectionItem } from './TabComponents';
 
 const ipcRenderer = (window as any).electron?.ipcRenderer;
 
@@ -44,6 +44,7 @@ export default function ResultsWindow() {
   const [cronItems, setCronItems] = useState<CronItem[]>([]);
   const [skillItems, setSkillItems] = useState<SkillItem[]>([]);
   const [skillStoreSearch, setSkillStoreSearch] = useState<string>('');
+  const [connectionItems, setConnectionItems] = useState<ConnectionItem[]>([]);
   // Unread badge: set when activity fires in a non-active tab, cleared on tab switch
   const [unreadTabs, setUnreadTabs] = useState<Set<TabId>>(new Set());
 
@@ -63,6 +64,9 @@ export default function ResultsWindow() {
     }
     if (tab === 'cron') {
       ipcRenderer?.send('cron:list');
+    }
+    if (tab === 'connections') {
+      ipcRenderer?.send('connections:list');
     }
     if (tab === 'store') {
       setSkillStoreSearch('');
@@ -295,6 +299,21 @@ export default function ResultsWindow() {
         // ASK_USER pause — clear install spinner if still showing
         setIsInstalling(false);
         setInstallPrompt(null);
+      } else if (data?.type === 'skill_setup_complete') {
+        // Skill was just built (build-only flow) — switch to Skills tab so user
+        // sees the new skill card with credential fields right away.
+        setIsThinking(false);
+        setIsStreaming(false);
+        setInstallPrompt(null);
+        setIsInstalling(false);
+        glowOffTimerRef.current = setTimeout(() => setIsGlowActive(false), 400);
+        // Refresh skills list then open Skills tab
+        ipcRenderer.send('skills:refresh');
+        setTimeout(() => {
+          activeTabRef.current = 'skills';
+          setActiveTab('skills');
+          markUnread('skills');
+        }, 600);
       } else if (data?.type === 'all_done') {
         // Automation finished — keep isAutomationMode true so AutomationProgress stays visible
         // and 'Waiting for response...' placeholder doesn't flash. Resets on next planning event.
@@ -429,6 +448,11 @@ export default function ResultsWindow() {
       setSkillItems(items || []);
     };
 
+    // connections:update — sent by main.js in response to connections:list or after connect/disconnect
+    const handleConnectionsUpdate = (_event: any, items: ConnectionItem[]) => {
+      setConnectionItems(items || []);
+    };
+
     // skill:store-trigger — sent when ThinkDrop auto-routes to skill store (e.g. needs_skill)
     const handleSkillStoreTrigger = (_event: any, { capability }: { capability: string; suggestion: string }) => {
       const query = capability ? capability.replace(/[^a-zA-Z0-9 ]/g, ' ').trim() : '';
@@ -450,6 +474,7 @@ export default function ResultsWindow() {
     ipcRenderer.on('cron:update', handleCronUpdate);
     ipcRenderer.on('queue:enqueued', handleQueueEnqueued);
     ipcRenderer.on('skills:update', handleSkillsUpdate);
+    ipcRenderer.on('connections:update', handleConnectionsUpdate);
     ipcRenderer.on('skill:store-trigger', handleSkillStoreTrigger);
     ipcRenderer.on('prompt-queue:update', handlePromptQueueUpdate);
     ipcRenderer.on('prompt-queue:restart-alert', handleRestartAlert);
@@ -469,6 +494,7 @@ export default function ResultsWindow() {
         ipcRenderer.removeListener('cron:update', handleCronUpdate);
         ipcRenderer.removeListener('queue:enqueued', handleQueueEnqueued);
         ipcRenderer.removeListener('skills:update', handleSkillsUpdate);
+        ipcRenderer.removeListener('connections:update', handleConnectionsUpdate);
         ipcRenderer.removeListener('skill:store-trigger', handleSkillStoreTrigger);
         ipcRenderer.removeListener('prompt-queue:update', handlePromptQueueUpdate);
         ipcRenderer.removeListener('prompt-queue:restart-alert', handleRestartAlert);
@@ -1118,6 +1144,23 @@ export default function ResultsWindow() {
           onDelete={(skillName) =>
             ipcRenderer?.send('skills:delete', { skillName })
           }
+        />
+      </div>
+
+      {/* ── Connections tab — always mounted, hidden when inactive ─────────── */}
+      <div
+        className="overflow-y-auto overflow-x-hidden p-4"
+        style={{ display: activeTab === 'connections' ? 'flex' : 'none', flex: 1, flexDirection: 'column' }}
+      >
+        <ConnectionsTab
+          items={connectionItems}
+          onConnect={(provider, tokenKey, scopes) =>
+            ipcRenderer?.send('connections:connect', { provider, tokenKey, scopes })
+          }
+          onDisconnect={(provider, tokenKey) =>
+            ipcRenderer?.send('connections:disconnect', { provider, tokenKey })
+          }
+          onRefresh={() => ipcRenderer?.send('connections:list')}
         />
       </div>
 

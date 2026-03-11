@@ -3,7 +3,17 @@ import SkillStore from './SkillStore';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
-export type TabId = 'results' | 'queue' | 'cron' | 'skills' | 'store';
+export type TabId = 'results' | 'queue' | 'cron' | 'skills' | 'store' | 'connections';
+
+export interface ConnectionItem {
+  provider: string;       // 'github' | 'google' | 'microsoft' etc.
+  label: string;          // Display name: 'GitHub', 'Google', etc.
+  connected: boolean;
+  accountHint?: string;   // email/username hint from stored token
+  tokenKey: string;       // keytar key: 'oauth:<provider>'
+  scopes: string;         // default scopes
+  color: string;          // brand color for the icon/badge
+}
 
 export type QueueStatus = 'waiting' | 'planning' | 'building' | 'testing' | 'skill_building' | 'done' | 'error';
 
@@ -130,6 +140,16 @@ export function StoreIcon({ active }: { active: boolean }) {
   );
 }
 
+export function ConnectionsIcon({ active }: { active: boolean }) {
+  return (
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="none"
+      stroke={active ? '#38bdf8' : '#6b7280'} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/>
+      <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>
+    </svg>
+  );
+}
+
 // ── Tab bar ───────────────────────────────────────────────────────────────────
 
 export function TabBar({ active, onSelect, queueCount, cronCount, unreadTabs }: {
@@ -140,20 +160,22 @@ export function TabBar({ active, onSelect, queueCount, cronCount, unreadTabs }: 
   unreadTabs?: Set<TabId>;
 }) {
   const tabs: { id: TabId; label: string; icon: React.ReactNode; badge?: number; activeColor: string }[] = [
-    { id: 'results', label: 'Results', icon: <ResultsIcon active={active === 'results'} />, activeColor: '#60a5fa' },
-    { id: 'queue',   label: 'Queue',   icon: <QueueIcon   active={active === 'queue'}   />, badge: queueCount, activeColor: '#a78bfa' },
-    { id: 'cron',    label: 'Cron',    icon: <CronIcon    active={active === 'cron'}    />, badge: cronCount,  activeColor: '#34d399' },
-    { id: 'skills',  label: 'Skills',  icon: <SkillsIcon  active={active === 'skills'}  />, activeColor: '#f97316' },
-    { id: 'store',   label: 'Store',   icon: <StoreIcon   active={active === 'store'}   />, activeColor: '#a78bfa' },
+    { id: 'results',     label: 'Results',  icon: <ResultsIcon     active={active === 'results'}     />, activeColor: '#60a5fa' },
+    { id: 'queue',       label: 'Queue',    icon: <QueueIcon       active={active === 'queue'}       />, badge: queueCount, activeColor: '#a78bfa' },
+    { id: 'cron',        label: 'Cron',     icon: <CronIcon        active={active === 'cron'}        />, badge: cronCount,  activeColor: '#34d399' },
+    { id: 'skills',      label: 'Skills',   icon: <SkillsIcon      active={active === 'skills'}      />, activeColor: '#f97316' },
+    { id: 'connections', label: 'Connect',  icon: <ConnectionsIcon active={active === 'connections'} />, activeColor: '#38bdf8' },
+    { id: 'store',       label: 'Store',    icon: <StoreIcon       active={active === 'store'}       />, activeColor: '#a78bfa' },
   ];
 
   return (
     <div style={{
-      display: 'flex', alignItems: 'center', gap: 2,
-      padding: '0 8px',
+      display: 'flex', alignItems: 'center', gap: 0,
+      padding: '0 4px',
       borderBottom: '1px solid rgba(255,255,255,0.08)',
       backgroundColor: 'rgba(0,0,0,0.15)',
       flexShrink: 0,
+      overflow: 'hidden',
     }}>
       {tabs.map(tab => {
         const isActive = active === tab.id;
@@ -162,20 +184,21 @@ export function TabBar({ active, onSelect, queueCount, cronCount, unreadTabs }: 
             key={tab.id}
             onClick={() => onSelect(tab.id)}
             style={{
-              display: 'flex', alignItems: 'center', gap: 5,
-              padding: '6px 10px',
+              display: 'flex', alignItems: 'center', gap: 4,
+              padding: '6px 7px',
               border: 'none', background: 'none', cursor: 'pointer',
               borderBottom: isActive ? `2px solid ${tab.activeColor}` : '2px solid transparent',
               marginBottom: -1,
               color: isActive ? tab.activeColor : '#6b7280',
-              fontSize: '0.7rem', fontWeight: isActive ? 600 : 400,
+              fontSize: '0.65rem', fontWeight: isActive ? 600 : 400,
               transition: 'all 0.15s',
               position: 'relative',
+              whiteSpace: 'nowrap', flex: '1 1 0', justifyContent: 'center', minWidth: 0,
             }}
             title={tab.label}
           >
             {tab.icon}
-            <span>{tab.label}</span>
+            <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', minWidth: 0 }}>{tab.label}</span>
             {tab.badge != null && tab.badge > 0 && (
               <span style={{
                 fontSize: '0.58rem', fontWeight: 700, minWidth: 14, height: 14,
@@ -877,12 +900,14 @@ function SkillItemCard({ item, onSaveSecret, onOpenCode, onOAuthConnect, onScope
   onScopesChange: (skillName: string, provider: string, scopes: string) => void;
   onDelete: (skillName: string) => void;
 }) {
-  const [expanded, setExpanded] = React.useState(false);
+  const cfg = SKILL_STATUS_CONFIG[item.status];
+  const missingCount = item.secrets.filter(s => !s.stored).length;
+  const unconnectedOAuthCount = (item.oauthConnections || []).filter(c => !c.connected).length;
+  // Auto-expand when there are missing secrets/OAuth so user sees input fields immediately
+  const [expanded, setExpanded] = React.useState(missingCount > 0 || unconnectedOAuthCount > 0);
   const [secretValues, setSecretValues] = React.useState<Record<string, string>>({});
   const [savedKeys, setSavedKeys] = React.useState<Set<string>>(new Set());
   const [confirmDelete, setConfirmDelete] = React.useState(false);
-  const cfg = SKILL_STATUS_CONFIG[item.status];
-  const missingCount = item.secrets.filter(s => !s.stored).length;
   const unconnectedOAuth = (item.oauthConnections || []).filter(c => !c.connected).length;
   const totalMissing = missingCount + unconnectedOAuth;
 
@@ -1204,6 +1229,184 @@ export function PromptQueueSection({ items, onCancel }: {
       {items.map(item => (
         <PromptQueueItemCard key={item.id} item={item} onCancel={onCancel} />
       ))}
+    </div>
+  );
+}
+
+// ── Connections tab ───────────────────────────────────────────────────────────
+
+const PROVIDER_META: Record<string, { label: string; color: string; scopes: string; logo: string }> = {
+  github:    { label: 'GitHub',      color: '#e5e7eb', scopes: 'read:user user:email repo',                                                         logo: 'GH' },
+  google:    { label: 'Google',      color: '#4285f4', scopes: 'https://www.googleapis.com/auth/userinfo.email https://www.googleapis.com/auth/userinfo.profile https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/calendar', logo: 'G' },
+  microsoft: { label: 'Microsoft',   color: '#00a4ef', scopes: 'openid profile email offline_access Calendars.ReadWrite Mail.Read',                 logo: 'MS' },
+  slack:     { label: 'Slack',       color: '#4a154b', scopes: 'openid profile email channels:read chat:write',                                      logo: 'SL' },
+  notion:    { label: 'Notion',      color: '#ffffff', scopes: '',                                                                                   logo: 'N' },
+  spotify:   { label: 'Spotify',     color: '#1db954', scopes: 'user-read-email user-read-private user-library-read',                                logo: 'SP' },
+  dropbox:   { label: 'Dropbox',     color: '#0061ff', scopes: 'account_info.read files.content.read',                                              logo: 'DB' },
+  discord:   { label: 'Discord',     color: '#5865f2', scopes: 'identify email',                                                                     logo: 'DC' },
+  linkedin:  { label: 'LinkedIn',    color: '#0a66c2', scopes: 'openid profile email',                                                               logo: 'LI' },
+  zoom:      { label: 'Zoom',        color: '#2d8cff', scopes: 'user:read meeting:write',                                                            logo: 'ZM' },
+  atlassian: { label: 'Atlassian',   color: '#0052cc', scopes: 'read:me offline_access',                                                             logo: 'AT' },
+  salesforce:{ label: 'Salesforce',  color: '#00a1e0', scopes: 'openid profile email',                                                               logo: 'SF' },
+  hubspot:   { label: 'HubSpot',     color: '#ff7a59', scopes: 'crm.objects.contacts.read oauth',                                                   logo: 'HS' },
+  facebook:  { label: 'Facebook',    color: '#1877f2', scopes: 'email public_profile',                                                               logo: 'FB' },
+  twitter:   { label: 'Twitter/X',   color: '#1da1f2', scopes: 'tweet.read users.read offline.access',                                              logo: 'TW' },
+};
+
+function ProviderCard({ item, onConnect, onDisconnect }: {
+  item: ConnectionItem;
+  onConnect: (provider: string, tokenKey: string, scopes: string) => void;
+  onDisconnect: (provider: string, tokenKey: string) => void;
+}) {
+  const [connecting, setConnecting] = React.useState(false);
+  const [disconnecting, setDisconnecting] = React.useState(false);
+  const meta = PROVIDER_META[item.provider];
+
+  const handleConnect = () => {
+    setConnecting(true);
+    onConnect(item.provider, item.tokenKey, item.scopes);
+    setTimeout(() => setConnecting(false), 60000);
+  };
+
+  const handleDisconnect = () => {
+    setDisconnecting(true);
+    onDisconnect(item.provider, item.tokenKey);
+    setTimeout(() => setDisconnecting(false), 3000);
+  };
+
+  return (
+    <div style={{
+      borderRadius: 10,
+      border: item.connected
+        ? '1px solid rgba(56,189,248,0.25)'
+        : '1px solid rgba(255,255,255,0.07)',
+      backgroundColor: item.connected
+        ? 'rgba(56,189,248,0.05)'
+        : 'rgba(255,255,255,0.02)',
+      padding: '11px 12px',
+      display: 'flex', alignItems: 'center', gap: 10,
+      transition: 'all 0.15s',
+    }}>
+      {/* Logo badge */}
+      <div style={{
+        width: 32, height: 32, borderRadius: 8, flexShrink: 0,
+        backgroundColor: item.connected ? 'rgba(56,189,248,0.12)' : 'rgba(255,255,255,0.06)',
+        border: `1px solid ${item.connected ? 'rgba(56,189,248,0.3)' : 'rgba(255,255,255,0.1)'}`,
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+        fontSize: '0.58rem', fontWeight: 800, color: item.connected ? item.color : '#4b5563',
+        fontFamily: 'ui-monospace,monospace', letterSpacing: '-0.02em',
+      }}>
+        {meta?.logo || item.provider.slice(0, 2).toUpperCase()}
+      </div>
+
+      {/* Provider name + account hint */}
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ fontSize: '0.71rem', fontWeight: 600, color: item.connected ? '#e5e7eb' : '#6b7280' }}>
+          {item.label}
+        </div>
+        {item.connected && item.accountHint ? (
+          <div style={{ fontSize: '0.6rem', color: '#38bdf8', marginTop: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            {item.accountHint}
+          </div>
+        ) : item.connected ? (
+          <div style={{ fontSize: '0.6rem', color: '#4ade80', marginTop: 1 }}>Connected</div>
+        ) : (
+          <div style={{ fontSize: '0.6rem', color: '#4b5563', marginTop: 1 }}>Not connected</div>
+        )}
+      </div>
+
+      {/* Connected badge */}
+      {item.connected && (
+        <div style={{
+          width: 7, height: 7, borderRadius: '50%', flexShrink: 0,
+          backgroundColor: '#4ade80',
+          boxShadow: '0 0 6px #4ade80',
+        }} />
+      )}
+
+      {/* Action button */}
+      {item.connected ? (
+        <button
+          onClick={handleDisconnect}
+          disabled={disconnecting}
+          style={{
+            padding: '4px 10px', borderRadius: 5, fontSize: '0.62rem', cursor: disconnecting ? 'wait' : 'pointer',
+            background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.2)',
+            color: disconnecting ? '#4b5563' : '#f87171', flexShrink: 0, fontWeight: 500,
+          }}
+        >
+          {disconnecting ? '…' : 'Disconnect'}
+        </button>
+      ) : (
+        <button
+          onClick={handleConnect}
+          disabled={connecting}
+          style={{
+            padding: '4px 10px', borderRadius: 5, fontSize: '0.62rem', cursor: connecting ? 'wait' : 'pointer',
+            background: connecting ? 'rgba(56,189,248,0.04)' : 'rgba(56,189,248,0.12)',
+            border: '1px solid rgba(56,189,248,0.3)',
+            color: connecting ? '#4b5563' : '#38bdf8', flexShrink: 0, fontWeight: 600,
+          }}
+        >
+          {connecting ? 'Opening…' : 'Connect'}
+        </button>
+      )}
+    </div>
+  );
+}
+
+export function ConnectionsTab({ items, onConnect, onDisconnect, onRefresh }: {
+  items: ConnectionItem[];
+  onConnect: (provider: string, tokenKey: string, scopes: string) => void;
+  onDisconnect: (provider: string, tokenKey: string) => void;
+  onRefresh: () => void;
+}) {
+  const connectedCount = items.filter(i => i.connected).length;
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+      {/* Header */}
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '2px 2px 4px' }}>
+        <div>
+          <div style={{ fontSize: '0.72rem', fontWeight: 600, color: '#e5e7eb' }}>OAuth Connections</div>
+          <div style={{ fontSize: '0.6rem', color: '#4b5563', marginTop: 1 }}>
+            {connectedCount} of {items.length} connected — tokens stored in keychain
+          </div>
+        </div>
+        <button
+          onClick={onRefresh}
+          title="Refresh connection status"
+          style={{
+            padding: '4px 8px', borderRadius: 5, cursor: 'pointer',
+            background: 'rgba(56,189,248,0.08)', border: '1px solid rgba(56,189,248,0.2)',
+            color: '#38bdf8', fontSize: '0.6rem',
+          }}
+        >
+          ↻
+        </button>
+      </div>
+
+      {/* Info banner */}
+      <div style={{
+        padding: '8px 10px', borderRadius: 7,
+        backgroundColor: 'rgba(56,189,248,0.05)',
+        border: '1px solid rgba(56,189,248,0.15)',
+        fontSize: '0.62rem', color: '#7dd3fc', lineHeight: 1.5,
+      }}>
+        Connect your accounts once — any skill that needs GitHub, Google, Microsoft, etc. will use these tokens automatically.
+      </div>
+
+      {/* Provider cards */}
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
+        {items.map(item => (
+          <ProviderCard
+            key={item.provider}
+            item={item}
+            onConnect={onConnect}
+            onDisconnect={onDisconnect}
+          />
+        ))}
+      </div>
     </div>
   );
 }

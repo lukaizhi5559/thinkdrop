@@ -1885,6 +1885,63 @@ app.whenReady().then(async () => {
       }
     };
 
+    // gatherOAuthCallback: triggered by gather_oauth progress event in Queue tab.
+    // The UI sends gather:oauth_connect IPC → this callback delegates to the same
+    // OAuth flow used by the Skills tab Connect button (skills:oauth-connect).
+    // Resolves with { connected: true } when keytar has the token, or { connected: false }
+    // if skipped or timed out.
+    const gatherOAuthCallback = (provider, tokenKey) => {
+      return new Promise((resolve) => {
+        let settled = false;
+        const settle = (result) => {
+          if (settled) return;
+          settled = true;
+          ipcMain.off('gather:oauth_connect', handleConnect);
+          ipcMain.off('gather:oauth_skip',    handleSkip);
+          resolve(result);
+        };
+
+        const handleConnect = async (_event, { provider: p, tokenKey: tk, scopes, skillName }) => {
+          if (p !== provider) return; // not our provider
+          console.log(`[GatherOAuth] OAuth connect requested for ${p}, delegating to skills:oauth-connect`);
+          // Delegate to the existing OAuth flow — it handles everything including keytar storage
+          ipcMain.emit('skills:oauth-connect', null, { skillName: skillName || p, provider: p, tokenKey: tk, scopes });
+          // Poll keytar until the token appears (the OAuth flow stores it asynchronously)
+          const kt = (() => { try { return require('keytar'); } catch(_) { return null; } })();
+          if (!kt) { settle({ connected: false }); return; }
+          let attempts = 0;
+          const poll = setInterval(async () => {
+            attempts++;
+            try {
+              const val = await kt.getPassword('thinkdrop', tk);
+              if (val) {
+                clearInterval(poll);
+                console.log(`[GatherOAuth] Token stored for ${p} at ${tk}`);
+                // Emit the connected event back to the UI via progressCallback
+                progressCallback({ type: 'gather_oauth_connected', provider: p, tokenKey: tk });
+                settle({ connected: true });
+              }
+            } catch (_) {}
+            if (attempts >= 120) { // 2 min max poll (120 × 1000ms)
+              clearInterval(poll);
+              settle({ connected: false });
+            }
+          }, 1000);
+        };
+
+        const handleSkip = (_event, { provider: p }) => {
+          if (p !== provider) return;
+          settle({ connected: false });
+        };
+
+        ipcMain.on('gather:oauth_connect', handleConnect);
+        ipcMain.on('gather:oauth_skip',    handleSkip);
+
+        // 10-minute hard timeout
+        setTimeout(() => settle({ connected: false }), 10 * 60 * 1000);
+      });
+    };
+
     try {
       // If there's a paused automation waiting for user input, resume it
       let initialState;
@@ -2231,19 +2288,23 @@ app.whenReady().then(async () => {
         }
       } else {
         // ── queueBridge: drives Queue tab phase transitions from creatorPlanning ──
-        // Pre-create one queueManager item so the Queue tab shows progress while
-        // the stategraph is running. creatorPlanning calls setPhase(null,...) to
-        // update status — it never calls enqueue() so there is exactly ONE item.
-        const _queueItemId = queueManager.enqueue(prompt);
-        if (resultsWindow && !resultsWindow.isDestroyed()) {
-          safeSend(resultsWindow, 'queue:update', queueManager.getQueue());
+        // Only create a real queueManager entry when the prompt is NOT already tracked
+        // by promptQueue (promptQueueId set) — otherwise we get a double Queue tab entry.
+        let queueBridge;
+        if (promptQueueId) {
+          // Prompt already visible in Queue tab via PromptQueueSection — use no-op bridge
+          queueBridge = { setPhase: () => {} };
+        } else {
+          const _queueItemId = queueManager.enqueue(prompt);
+          if (resultsWindow && !resultsWindow.isDestroyed()) {
+            safeSend(resultsWindow, 'queue:update', queueManager.getQueue());
+          }
+          queueBridge = {
+            setPhase: (_id, status, extra = {}) => {
+              queueManager.setQueueStatus(_queueItemId, status, extra);
+            },
+          };
         }
-        const queueBridge = {
-          setPhase: (_id, status, extra = {}) => {
-            // _id is always null now (creatorPlanning passes null); use _queueItemId
-            queueManager.setQueueStatus(_queueItemId, status, extra);
-          },
-        };
 
         initialState = {
           message: prompt,
@@ -2256,6 +2317,7 @@ app.whenReady().then(async () => {
           gatherAnswerCallback,
           gatherCredentialCallback,
           keytarCheckCallback,
+          gatherOAuthCallback,
           queueBridge,
           activeBrowserSessionId: currentBrowserSessionId || null,
           activeBrowserUrl: currentBrowserUrl || null,
@@ -3364,7 +3426,6 @@ app.whenReady().then(async () => {
         const fm = fmMatch ? fmMatch[1] : '';
         const triggerMatch  = fm.match(/^trigger\s*:\s*(.+)$/m);
         const scheduleMatch = fm.match(/^schedule\s*:\s*(.+)$/m);
-        const secretsMatch  = fm.match(/^secrets\s*:\s*(.+)$/m);
         const oauthMatch       = fm.match(/^oauth\s*:\s*(.+)$/m);
         const oauthScopesMatch = fm.match(/^oauth_scopes\s*:\s*(.+)$/m);
         const trigger  = triggerMatch  ? triggerMatch[1].trim()  : (row.name || '');
@@ -3372,8 +3433,20 @@ app.whenReady().then(async () => {
         const schedule = isScout ? (row.schedule || 'on_demand')
                        : scheduleMatch ? scheduleMatch[1].trim() : 'on_demand';
         let secretKeys = isScout ? (row.secretKeys || []) : [];
-        if (!isScout && secretsMatch) {
-          secretKeys = secretsMatch[1].split(/[\s,]+/).map(s => s.trim()).filter(Boolean);
+        if (!isScout) {
+          // Block list format:  secrets:\n  - KEY1\n  - KEY2
+          const secretsBlockMatch = fm.match(/^secrets\s*:\s*\n((?:[ \t]+-[ \t]+\S+[ \t]*\n?)+)/m);
+          if (secretsBlockMatch) {
+            secretKeys = secretsBlockMatch[1].split('\n')
+              .map(l => l.replace(/^[ \t]+-[ \t]+/, '').trim())
+              .filter(Boolean);
+          } else {
+            // Inline format:  secrets: KEY1, KEY2
+            const secretsInlineMatch = fm.match(/^secrets\s*:\s*([^\n]+)$/m);
+            if (secretsInlineMatch) {
+              secretKeys = secretsInlineMatch[1].split(/[\s,]+/).map(s => s.trim()).filter(Boolean);
+            }
+          }
         }
         // Parse oauth: field — comma-separated providers e.g. "google" or "google, github"
         let oauthProviders = [];
@@ -3403,7 +3476,27 @@ app.whenReady().then(async () => {
         }
 
         // Filter out OAuth client credentials — those come from .env, not user input
-        const USER_SECRET_KEYS = secretKeys.filter(k => !/(CLIENT_ID|CLIENT_SECRET)$/i.test(k));
+        // Also filter secrets covered by an OAuth provider already declared in the contract:
+        //   github  → GH_TOKEN, GITHUB_TOKEN, GITHUB_ACCESS_TOKEN
+        //   microsoft/outlook → OUTLOOK_*, MICROSOFT_TOKEN, MS_TOKEN, MSGRAPH_TOKEN
+        //   google  → GOOGLE_TOKEN, GCLOUD_TOKEN
+        //   slack   → SLACK_TOKEN, SLACK_BOT_TOKEN
+        //   notion  → NOTION_TOKEN
+        const OAUTH_SECRET_PATTERNS = {
+          github:    /^(GH_TOKEN|GITHUB_TOKEN|GITHUB_ACCESS_TOKEN|GITHUB_PAT)$/i,
+          microsoft: /^(OUTLOOK_|MICROSOFT_TOKEN|MS_TOKEN|MSGRAPH_TOKEN)/i,
+          google:    /^(GOOGLE_TOKEN|GCLOUD_TOKEN|GOOGLE_ACCESS_TOKEN)/i,
+          slack:     /^(SLACK_TOKEN|SLACK_BOT_TOKEN|SLACK_ACCESS_TOKEN)/i,
+          notion:    /^(NOTION_TOKEN|NOTION_ACCESS_TOKEN)/i,
+        };
+        const USER_SECRET_KEYS = secretKeys.filter(k => {
+          if (/(CLIENT_ID|CLIENT_SECRET|REDIRECT_URI)$/i.test(k)) return false;
+          // Suppress secrets covered by a declared OAuth provider
+          for (const [provider, pattern] of Object.entries(OAUTH_SECRET_PATTERNS)) {
+            if (oauthProviders.includes(provider) && pattern.test(k)) return false;
+          }
+          return true;
+        });
 
         const secrets = await Promise.all(USER_SECRET_KEYS.map(async (key) => {
           let stored = false;
@@ -3484,6 +3577,10 @@ app.whenReady().then(async () => {
       console.error('[Skills] skills:list failed:', e.message);
       if (resultsWindow && !resultsWindow.isDestroyed()) safeSend(resultsWindow, 'skills:update', []);
     }
+  });
+
+  ipcMain.on('skills:refresh', () => {
+    ipcMain.emit('skills:list');
   });
 
   ipcMain.on('skills:save-secret', async (_event, { skillName, key, value }) => {
@@ -3740,13 +3837,35 @@ app.whenReady().then(async () => {
     }
 
     if (!clientId || !clientSecret) {
-      const { dialog } = require('electron');
-      dialog.showMessageBox(resultsWindow, {
+      const { dialog, shell } = require('electron');
+      const CONSOLE_URLS = {
+        github:    'https://github.com/settings/developers',
+        google:    'https://console.cloud.google.com/apis/credentials',
+        microsoft: 'https://portal.azure.com/#view/Microsoft_AAD_RegisteredApps/ApplicationsListBlade',
+        facebook:  'https://developers.facebook.com/apps/',
+        twitter:   'https://developer.twitter.com/en/portal/dashboard',
+        linkedin:  'https://www.linkedin.com/developers/apps',
+        slack:     'https://api.slack.com/apps',
+        notion:    'https://www.notion.so/my-integrations',
+        spotify:   'https://developer.spotify.com/dashboard',
+        dropbox:   'https://www.dropbox.com/developers/apps',
+        discord:   'https://discord.com/developers/applications',
+        zoom:      'https://marketplace.zoom.us/develop/create',
+        atlassian: 'https://developer.atlassian.com/console/myapps/',
+        salesforce:'https://login.salesforce.com/setup/secur/RemoteAccessList.apexp',
+        hubspot:   'https://app.hubspot.com/developer/apps',
+      };
+      const redirectUriPreview = `http://localhost:${cfg.redirectPort}/oauth/callback`;
+      const consoleUrl = CONSOLE_URLS[provider];
+      const { response } = await dialog.showMessageBox(resultsWindow, {
         type: 'info',
         title: `${provider} OAuth Setup`,
-        message: `To enable ${provider} OAuth, add these to your ThinkDrop .env file:\n\n  ${providerUpper}_CLIENT_ID=your_client_id\n  ${providerUpper}_CLIENT_SECRET=your_client_secret\n\nGet these from the ${provider} developer console, then restart ThinkDrop.`,
-        buttons: ['OK'],
+        message: `To enable ${provider} OAuth, add these to your ThinkDrop .env file:\n\n  ${providerUpper}_CLIENT_ID=your_client_id\n  ${providerUpper}_CLIENT_SECRET=your_client_secret\n\nIn your ${provider} app settings, add this redirect URI:\n  ${redirectUriPreview}\n\nThen restart ThinkDrop.`,
+        buttons: consoleUrl ? ['Open Developer Console', 'Close'] : ['OK'],
       });
+      if (consoleUrl && response === 0) {
+        shell.openExternal(consoleUrl);
+      }
       return;
     }
 
@@ -3956,6 +4075,96 @@ app.whenReady().then(async () => {
     } catch(e) {
       console.error(`[OAuth] Token exchange failed: ${e.message}`);
     }
+  });
+
+  // ─── Connections: global OAuth provider list / connect / disconnect ──────────
+  // These handlers manage global tokens stored as oauth:<provider> in keytar.
+  // One connected provider covers all skills that need it — no per-skill tokens.
+
+  const ALL_PROVIDERS = [
+    { provider: 'github',     label: 'GitHub',     color: '#e5e7eb', scopes: 'read:user user:email repo',                                                              redirectPort: 9742 },
+    { provider: 'google',     label: 'Google',     color: '#4285f4', scopes: 'https://www.googleapis.com/auth/userinfo.email https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/calendar', redirectPort: 9743 },
+    { provider: 'microsoft',  label: 'Microsoft',  color: '#00a4ef', scopes: 'openid profile email offline_access Calendars.ReadWrite Mail.Read',                      redirectPort: 9744 },
+    { provider: 'slack',      label: 'Slack',      color: '#4a154b', scopes: 'openid profile email channels:read chat:write',                                          redirectPort: 9745 },
+    { provider: 'notion',     label: 'Notion',     color: '#ffffff', scopes: '',                                                                                       redirectPort: 9746 },
+    { provider: 'spotify',    label: 'Spotify',    color: '#1db954', scopes: 'user-read-email user-read-private user-library-read',                                    redirectPort: 9747 },
+    { provider: 'dropbox',    label: 'Dropbox',    color: '#0061ff', scopes: 'account_info.read files.content.read',                                                   redirectPort: 9748 },
+    { provider: 'discord',    label: 'Discord',    color: '#5865f2', scopes: 'identify email',                                                                         redirectPort: 9749 },
+    { provider: 'linkedin',   label: 'LinkedIn',   color: '#0a66c2', scopes: 'openid profile email',                                                                   redirectPort: 9750 },
+    { provider: 'zoom',       label: 'Zoom',       color: '#2d8cff', scopes: 'user:read meeting:write',                                                                redirectPort: 9751 },
+    { provider: 'atlassian',  label: 'Atlassian',  color: '#0052cc', scopes: 'read:me offline_access',                                                                 redirectPort: 9752 },
+    { provider: 'salesforce', label: 'Salesforce', color: '#00a1e0', scopes: 'openid profile email',                                                                   redirectPort: 9753 },
+    { provider: 'hubspot',    label: 'HubSpot',    color: '#ff7a59', scopes: 'crm.objects.contacts.read oauth',                                                        redirectPort: 9754 },
+    { provider: 'facebook',   label: 'Facebook',   color: '#1877f2', scopes: 'email public_profile',                                                                   redirectPort: 9755 },
+    { provider: 'twitter',    label: 'Twitter/X',  color: '#1da1f2', scopes: 'tweet.read users.read offline.access',                                                   redirectPort: 9756 },
+  ];
+
+  const sendConnectionsUpdate = async () => {
+    const keytar = (() => { try { return require('keytar'); } catch(_) { return null; } })();
+    const items = await Promise.all(ALL_PROVIDERS.map(async (p) => {
+      const tokenKey = `oauth:${p.provider}`;
+      let connected = false;
+      let accountHint;
+      if (keytar) {
+        try {
+          const raw = await keytar.getPassword('thinkdrop', tokenKey);
+          if (raw) {
+            connected = true;
+            try {
+              const parsed = JSON.parse(raw);
+              accountHint = parsed.email || parsed.login || undefined;
+            } catch(_) {}
+          }
+        } catch(_) {}
+      }
+      return { provider: p.provider, label: p.label, color: p.color, scopes: p.scopes, tokenKey, connected, accountHint };
+    }));
+    safeSend(resultsWindow, 'connections:update', items);
+  };
+
+  ipcMain.on('connections:list', async () => {
+    await sendConnectionsUpdate();
+  });
+
+  ipcMain.on('connections:connect', async (_event, { provider, tokenKey, scopes }) => {
+    // Delegate to skills:oauth-connect using the global tokenKey (oauth:<provider>)
+    ipcMain.emit('skills:oauth-connect', null, {
+      skillName: provider,
+      provider,
+      tokenKey: tokenKey || `oauth:${provider}`,
+      scopes,
+    });
+    // Watch keytar for the token to land, then push an update
+    const keytar = (() => { try { return require('keytar'); } catch(_) { return null; } })();
+    if (!keytar) return;
+    const tk = tokenKey || `oauth:${provider}`;
+    let attempts = 0;
+    const poll = setInterval(async () => {
+      attempts++;
+      try {
+        const val = await keytar.getPassword('thinkdrop', tk);
+        if (val) {
+          clearInterval(poll);
+          await sendConnectionsUpdate();
+        }
+      } catch(_) {}
+      if (attempts >= 120) clearInterval(poll);
+    }, 1000);
+  });
+
+  ipcMain.on('connections:disconnect', async (_event, { provider, tokenKey }) => {
+    const keytar = (() => { try { return require('keytar'); } catch(_) { return null; } })();
+    if (!keytar) return;
+    const tk = tokenKey || `oauth:${provider}`;
+    try {
+      await keytar.deletePassword('thinkdrop', tk);
+      console.log(`[Connections] Disconnected ${provider} (deleted ${tk})`);
+    } catch(e) {
+      console.warn(`[Connections] Failed to delete ${tk}: ${e.message}`);
+    }
+    await sendConnectionsUpdate();
+    // Also refresh Skills tab so OAuth status updates there too
+    ipcMain.emit('skills:list');
   });
 
   // ─── Skills: update oauth_scopes for a provider in the contract frontmatter ─

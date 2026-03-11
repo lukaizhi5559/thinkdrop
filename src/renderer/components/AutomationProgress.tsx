@@ -63,6 +63,13 @@ interface GatherConfirm {
   confirmId: string;
 }
 
+interface GatherOAuth {
+  provider: string;
+  tokenKey: string;
+  scopes: string;
+  skillName: string;
+}
+
 interface AskUserPrompt {
   question: string;
   options: string[];
@@ -269,6 +276,9 @@ export default function AutomationProgress({ onHeightChange, onActiveChange }: A
   const [gatherConfirm, setGatherConfirm] = useState<GatherConfirm | null>(null);
   const [gatherCredentialValue, setGatherCredentialValue] = useState('');
   const [gatherCredentialStored, setGatherCredentialStored] = useState<string | null>(null);
+  const [gatherOAuth, setGatherOAuth] = useState<GatherOAuth | null>(null);
+  const [gatherOAuthConnecting, setGatherOAuthConnecting] = useState(false);
+  const [gatherOAuthConnected, setGatherOAuthConnected] = useState<string | null>(null);
 
   // Refs for auto-scrolling to the active step
   const stepRefs = useRef<Map<number, HTMLDivElement>>(new Map());
@@ -306,6 +316,9 @@ export default function AutomationProgress({ onHeightChange, onActiveChange }: A
       setGatherConfirm(null);
       setGatherCredentialValue('');
       setGatherCredentialStored(null);
+      setGatherOAuth(null);
+      setGatherOAuthConnecting(false);
+      setGatherOAuthConnected(null);
     };
     ipcRenderer.on('results-window:set-prompt', handleNewPrompt);
 
@@ -408,6 +421,8 @@ export default function AutomationProgress({ onHeightChange, onActiveChange }: A
           setGatherQuestion(null);
           setGatherCredential(null);
           setGatherConfirm(null);
+          setGatherOAuth(null);
+          setGatherOAuthConnecting(false);
           break;
 
         case 'gather_question':
@@ -458,10 +473,34 @@ export default function AutomationProgress({ onHeightChange, onActiveChange }: A
           setGatherConfirm(null);
           break;
 
+        case 'gather_oauth':
+          setPhase('gathering');
+          setGatherQuestion(null);
+          setGatherCredential(null);
+          setGatherConfirm(null);
+          setGatherOAuthConnecting(false);
+          setGatherOAuthConnected(null);
+          setGatherOAuth({
+            provider: data.provider,
+            tokenKey: data.tokenKey,
+            scopes: data.scopes || '',
+            skillName: data.skillName || data.provider,
+          });
+          break;
+
+        case 'gather_oauth_connected':
+          setGatherOAuthConnecting(false);
+          setGatherOAuthConnected(data.provider);
+          setGatherOAuth(null);
+          setTimeout(() => setGatherOAuthConnected(null), 3000);
+          break;
+
         case 'gather_complete':
           setGatherQuestion(null);
           setGatherCredential(null);
           setGatherConfirm(null);
+          setGatherOAuth(null);
+          setGatherOAuthConnecting(false);
           setPhase('planning');
           setPlanMessage('Starting build…');
           break;
@@ -596,6 +635,19 @@ export default function AutomationProgress({ onHeightChange, onActiveChange }: A
   const handleGatherConfirm = (yes: boolean) => {
     setGatherConfirm(null);
     ipcRenderer?.send('gather:answer', { answer: yes ? 'yes' : 'no' });
+  };
+
+  const handleGatherOAuthConnect = () => {
+    if (!gatherOAuth) return;
+    setGatherOAuthConnecting(true);
+    ipcRenderer?.send('gather:oauth_connect', {
+      provider: gatherOAuth.provider,
+      tokenKey: gatherOAuth.tokenKey,
+      scopes: gatherOAuth.scopes,
+      skillName: gatherOAuth.skillName,
+    });
+    // Timeout fallback — if no response in 5min, reset
+    setTimeout(() => setGatherOAuthConnecting(false), 300000);
   };
 
   if (phase === 'idle') return null;
@@ -883,6 +935,64 @@ export default function AutomationProgress({ onHeightChange, onActiveChange }: A
               </div>
             </div>
           </div>
+        </div>
+      )}
+
+      {/* ── Gather: OAuth connect card ─────────────────────────────────── */}
+      {gatherOAuth && (
+        <div style={{ padding: '12px 14px', borderRadius: 10, backgroundColor: 'rgba(66,133,244,0.07)', border: '1px solid rgba(66,133,244,0.3)' }}>
+          <div className="flex items-start gap-2">
+            <div style={{ fontSize: '0.9rem', lineHeight: 1, marginTop: 1, flexShrink: 0 }}>🔗</div>
+            <div style={{ flex: 1 }}>
+              <div style={{ color: '#93bbff', fontSize: '0.76rem', fontWeight: 600, marginBottom: 2 }}>
+                Connect {gatherOAuth.provider.charAt(0).toUpperCase() + gatherOAuth.provider.slice(1)} to continue
+              </div>
+              <div style={{ color: '#6b7280', fontSize: '0.68rem', marginBottom: 10 }}>
+                This skill needs {gatherOAuth.provider} access. Click Connect to authenticate via OAuth — your token is stored securely in keychain.
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <button
+                  onClick={handleGatherOAuthConnect}
+                  disabled={gatherOAuthConnecting}
+                  style={{
+                    padding: '5px 14px', borderRadius: 6, fontSize: '0.69rem', fontWeight: 600,
+                    cursor: gatherOAuthConnecting ? 'wait' : 'pointer',
+                    backgroundColor: gatherOAuthConnecting ? 'rgba(66,133,244,0.05)' : 'rgba(66,133,244,0.15)',
+                    border: '1px solid rgba(66,133,244,0.4)',
+                    color: gatherOAuthConnecting ? '#4b5563' : '#93bbff',
+                  }}
+                >
+                  {gatherOAuthConnecting ? 'Opening browser…' : `Connect ${gatherOAuth.provider}`}
+                </button>
+                <button
+                  onClick={() => { setGatherOAuth(null); ipcRenderer?.send('gather:oauth_skip', { provider: gatherOAuth.provider }); }}
+                  style={{
+                    padding: '5px 10px', borderRadius: 6, fontSize: '0.65rem', cursor: 'pointer',
+                    backgroundColor: 'transparent', border: '1px solid rgba(107,114,128,0.25)',
+                    color: '#4b5563',
+                  }}
+                >
+                  Skip
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Gather: OAuth connected flash ─────────────────────────────────── */}
+      {gatherOAuthConnected && (
+        <div style={{ padding: '8px 14px', borderRadius: 8, backgroundColor: 'rgba(34,197,94,0.08)', border: '1px solid rgba(34,197,94,0.25)', display: 'flex', alignItems: 'center', gap: 8 }}>
+          <div className="flex-shrink-0 w-3.5 h-3.5 rounded-full flex items-center justify-center"
+            style={{ backgroundColor: '#22c55e' }}>
+            <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="3"
+              strokeLinecap="round" strokeLinejoin="round">
+              <polyline points="20 6 9 17 4 12" />
+            </svg>
+          </div>
+          <span style={{ color: '#86efac', fontSize: '0.72rem', fontWeight: 500 }}>
+            <code style={{ fontFamily: 'monospace', color: '#4ade80' }}>{gatherOAuthConnected}</code> connected
+          </span>
         </div>
       )}
 
