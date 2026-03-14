@@ -490,6 +490,7 @@ export default function ResultsWindow() {
     ipcRenderer.on('prompt-queue:update', handlePromptQueueUpdate);
     ipcRenderer.on('prompt-queue:restart-alert', handleRestartAlert);
     ipcRenderer.on('prompt-queue:restart-cancel', handleRestartCancel);
+    ipcRenderer.on('reminder:play-sound', () => { playDropSound(); });
   
     return () => {
       if (ipcRenderer.removeListener) {

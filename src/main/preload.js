@@ -111,6 +111,7 @@ contextBridge.exposeInMainWorld('electron', {
         'prompt-queue:restart-alert',
         'prompt-queue:restart-cancel',
         'skills:secret-revealed',
+        'reminder:play-sound',
       ];
       if (validChannels.includes(channel)) {
         ipcRenderer.on(channel, func);
@@ -158,6 +159,7 @@ contextBridge.exposeInMainWorld('electron', {
         'prompt-queue:restart-alert',
         'prompt-queue:restart-cancel',
         'skills:secret-revealed',
+        'reminder:play-sound',
       ];
       if (validChannels.includes(channel)) {
         ipcRenderer.removeAllListeners(channel);
@@ -205,6 +207,7 @@ contextBridge.exposeInMainWorld('electron', {
         'prompt-queue:restart-alert',
         'prompt-queue:restart-cancel',
         'skills:secret-revealed',
+        'reminder:play-sound',
       ];
       if (validChannels.includes(channel)) {
         ipcRenderer.removeListener(channel, func);

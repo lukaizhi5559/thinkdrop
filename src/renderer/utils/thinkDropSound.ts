@@ -1,10 +1,11 @@
 /**
- * ThinkDrop sounds — all synthesized via Web Audio API (no large assets)
+ * ThinkDrop sounds
  *
  * playThinkSound     — soft ascending two-note chime (Think: mind engaging)
- * playDropSound      — crisp water drop plop synthesized via Web Audio API
+ * playDropSound      — water drip mp3 sound
  * playThinkDropSound — alias for playThinkSound (PTT/VAD trigger point)
  */
+import waterDripUrl from '../assets/water-drip.mp3';
 
 let _audioCtx: AudioContext | null = null;
 
@@ -49,69 +50,17 @@ export function playThinkSound(): void {
   }
 }
 
-// ── Drop sound — water drop synthesized via Web Audio API ────────────────────
-// Three layers: wet click transient + descending pitch sweep + resonant cavity body.
+// ── Drop sound — water drip mp3 ──────────────────────────────────────────────
+let _dropAudio: HTMLAudioElement | null = null;
+
 export function playDropSound(): void {
   try {
-    const ctx = getAudioCtx();
-    const t = ctx.currentTime;
-
-    // ── Layer 1: Wet click transient (filtered noise burst, 8ms) ─────────────
-    const clickSize = Math.floor(ctx.sampleRate * 0.008);
-    const clickBuf = ctx.createBuffer(1, clickSize, ctx.sampleRate);
-    const clickData = clickBuf.getChannelData(0);
-    for (let i = 0; i < clickSize; i++) {
-      clickData[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / clickSize, 2);
+    if (!_dropAudio) {
+      _dropAudio = new Audio(waterDripUrl);
+      _dropAudio.volume = 0.8;
     }
-    const click = ctx.createBufferSource();
-    const clickBpf = ctx.createBiquadFilter();
-    const clickGain = ctx.createGain();
-    click.buffer = clickBuf;
-    clickBpf.type = 'bandpass';
-    clickBpf.frequency.value = 3200;
-    clickBpf.Q.value = 0.8;
-    clickGain.gain.setValueAtTime(0.6, t);
-    clickGain.gain.exponentialRampToValueAtTime(0.001, t + 0.010);
-    click.connect(clickBpf); clickBpf.connect(clickGain); clickGain.connect(ctx.destination);
-    click.start(t);
-
-    // ── Layer 2: Descending pitch sweep (the "plink") ─────────────────────────
-    // Starts sharp and falls fast — characteristic water drop attack
-    const sweep = ctx.createOscillator();
-    const sweepEnv = ctx.createGain();
-    sweep.type = 'sine';
-    sweep.frequency.setValueAtTime(900, t);
-    sweep.frequency.exponentialRampToValueAtTime(520, t + 0.04);
-    sweep.frequency.exponentialRampToValueAtTime(380, t + 0.18);
-    sweepEnv.gain.setValueAtTime(0, t);
-    sweepEnv.gain.linearRampToValueAtTime(0.5, t + 0.004);  // fast attack
-    sweepEnv.gain.exponentialRampToValueAtTime(0.001, t + 0.28);
-    sweep.connect(sweepEnv); sweepEnv.connect(ctx.destination);
-    sweep.start(t); sweep.stop(t + 0.30);
-
-    // ── Layer 3: Resonant cavity body (low pitched sine, 120Hz, long tail) ───
-    // Simulates the hollow acoustic body of liquid — gives the satisfying "depth"
-    const body = ctx.createOscillator();
-    const bodyEnv = ctx.createGain();
-    body.type = 'sine';
-    body.frequency.setValueAtTime(190, t + 0.003);
-    body.frequency.exponentialRampToValueAtTime(140, t + 0.15);
-    bodyEnv.gain.setValueAtTime(0, t);
-    bodyEnv.gain.linearRampToValueAtTime(0.28, t + 0.006);
-    bodyEnv.gain.exponentialRampToValueAtTime(0.001, t + 0.55);
-    body.connect(bodyEnv); bodyEnv.connect(ctx.destination);
-    body.start(t + 0.002); body.stop(t + 0.58);
-
-    // ── Layer 4: Subtle second harmonic shimmer ───────────────────────────────
-    const shimmer = ctx.createOscillator();
-    const shimmerEnv = ctx.createGain();
-    shimmer.type = 'sine';
-    shimmer.frequency.setValueAtTime(1800, t);
-    shimmer.frequency.exponentialRampToValueAtTime(1040, t + 0.04);
-    shimmerEnv.gain.setValueAtTime(0.12, t);
-    shimmerEnv.gain.exponentialRampToValueAtTime(0.001, t + 0.12);
-    shimmer.connect(shimmerEnv); shimmerEnv.connect(ctx.destination);
-    shimmer.start(t); shimmer.stop(t + 0.13);
+    _dropAudio.currentTime = 0;
+    _dropAudio.play().catch(err => console.debug('[DropSound] Could not play:', err));
   } catch (err) {
     console.debug('[DropSound] Could not play:', err);
   }

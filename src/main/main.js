@@ -259,6 +259,94 @@ function startOverlayControlServer() {
       return;
     }
 
+    // ── POST /reminder/fire — command-service scheduler fires a one-shot reminder ──
+    if (req.url === '/reminder/fire') {
+      let body = '';
+      req.on('data', chunk => { body += chunk; });
+      req.on('end', () => {
+        try {
+          const { id, label, triggerIntent, triggerPrompt, firedAt } = JSON.parse(body || '{}');
+          console.log(`🔔 [Reminder] Fired: "${label}" (intent=${triggerIntent}, id=${id})`);
+
+          const reminderText = triggerPrompt || label || 'Reminder';
+
+          if (triggerIntent === 'command_automate' && triggerPrompt) {
+            console.log(`🔔 [Reminder] Re-running stategraph with: "${triggerPrompt.substring(0, 80)}"`);
+            if (promptQueue) {
+              promptQueue.enqueue(triggerPrompt, { responseLanguage: null });
+            }
+          }
+
+          // 1. Show a modal dialog popup with ThinkDrop logo
+          const { dialog, app, nativeImage } = require('electron');
+          const path = require('path');
+          const logoPath = path.join(__dirname, '..', 'renderer', 'assets', 'logo.jpg');
+          let logoIcon;
+          try { logoIcon = nativeImage.createFromPath(logoPath); } catch (_) {}
+          dialog.showMessageBox({
+            type: 'info',
+            title: '⏰ ThinkDrop Reminder',
+            message: reminderText,
+            buttons: ['OK'],
+            defaultId: 0,
+            icon: logoIcon || undefined,
+          }).catch(() => {});
+
+          // 2. Play the ThinkDrop sound (afplay is reliable even when window is hidden)
+          try {
+            const { exec } = require('child_process');
+            const soundPath = path.join(__dirname, '..', 'renderer', 'assets', 'water-drip.mp3');
+            exec(`afplay "${soundPath}"`);
+          } catch (_) {}
+          // Also try via renderer IPC (may fail if AudioContext is suspended)
+          if (resultsWindow && !resultsWindow.isDestroyed()) {
+            safeSend(resultsWindow, 'reminder:play-sound', {});
+          }
+
+          // 3. Bring ResultsWindow to front and show reminder
+          if (resultsWindow && !resultsWindow.isDestroyed()) {
+            if (!resultsWindow.isVisible()) {
+              resultsWindow.showInactive();
+            }
+            resultsWindow.moveTop();
+            safeSend(resultsWindow, 'automation:progress', {
+              type: 'reminder_fired',
+              label,
+              triggerIntent,
+              triggerPrompt: reminderText,
+              firedAt,
+              id,
+            });
+          }
+
+          // 4. Also show macOS notification with logo
+          try {
+            const { Notification } = require('electron');
+            if (Notification.isSupported()) {
+              new Notification({
+                title: '⏰ ThinkDrop Reminder',
+                body: reminderText,
+                silent: false,
+                icon: logoPath,
+              }).show();
+            }
+          } catch (_) {}
+
+          // 5. Bounce dock icon to grab attention
+          try { app.dock?.bounce?.('critical'); } catch (_) {}
+
+          // Refresh Cron tab to remove the fired reminder
+          ipcMain.emit('cron:list');
+
+          res.writeHead(200).end(JSON.stringify({ ok: true }));
+        } catch (err) {
+          console.error('[Reminder] Fire handler error:', err.message);
+          res.writeHead(500).end(JSON.stringify({ error: err.message }));
+        }
+      });
+      return;
+    }
+
     const hide = req.url === '/overlay/hide';
     const show = req.url === '/overlay/show';
 
@@ -4395,13 +4483,41 @@ app.whenReady().then(async () => {
         req.end();
       });
 
-      const items = jobs.map(j => ({
+      // Also fetch pending one-shot reminders
+      const reminders = await new Promise((resolve) => {
+        const req = http.request({
+          hostname: '127.0.0.1', port: cmdPort,
+          path: '/reminder.list', method: 'GET',
+          timeout: 3000,
+        }, (res) => {
+          let raw = '';
+          res.on('data', c => { raw += c; });
+          res.on('end', () => {
+            try { resolve(JSON.parse(raw)?.reminders || []); } catch (_) { resolve([]); }
+          });
+        });
+        req.on('error', () => resolve([]));
+        req.on('timeout', () => { req.destroy(); resolve([]); });
+        req.end();
+      });
+
+      const jobItems = jobs.map(j => ({
         id:       j.skillName,
         label:    j.skillName,
         schedule: j.schedule,
         status:   _pausedCrons.has(j.skillName) ? 'paused' : 'active',
         type:     j.type || 'cron',
       }));
+      const reminderItems = reminders.map(r => ({
+        id:       r.id,
+        label:    `⏰ ${r.label}`,
+        schedule: `fires at ${new Date(r.targetMs).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`,
+        status:   'active',
+        type:     'reminder',
+        remainingMs: r.remainingMs,
+        triggerIntent: r.triggerIntent,
+      }));
+      const items = [...reminderItems, ...jobItems];
       if (resultsWindow && !resultsWindow.isDestroyed()) safeSend(resultsWindow, 'cron:update', items);
     } catch (e) {
       console.error('[Cron] cron:list failed:', e.message);
