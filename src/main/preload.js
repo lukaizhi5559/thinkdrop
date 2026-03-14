@@ -53,6 +53,7 @@ contextBridge.exposeInMainWorld('electron', {
         'skills:oauth-connect',
         'skills:update-oauth-scopes',
         'skills:delete',
+        'skills:reveal-secret',
         'gather:answer',
         'gather:credential',
         'gather:oauth_connect',
@@ -109,6 +110,7 @@ contextBridge.exposeInMainWorld('electron', {
         'prompt-queue:update',
         'prompt-queue:restart-alert',
         'prompt-queue:restart-cancel',
+        'skills:secret-revealed',
       ];
       if (validChannels.includes(channel)) {
         ipcRenderer.on(channel, func);
@@ -155,6 +157,7 @@ contextBridge.exposeInMainWorld('electron', {
         'prompt-queue:update',
         'prompt-queue:restart-alert',
         'prompt-queue:restart-cancel',
+        'skills:secret-revealed',
       ];
       if (validChannels.includes(channel)) {
         ipcRenderer.removeAllListeners(channel);
@@ -201,6 +204,7 @@ contextBridge.exposeInMainWorld('electron', {
         'prompt-queue:update',
         'prompt-queue:restart-alert',
         'prompt-queue:restart-cancel',
+        'skills:secret-revealed',
       ];
       if (validChannels.includes(channel)) {
         ipcRenderer.removeListener(channel, func);

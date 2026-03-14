@@ -2046,9 +2046,12 @@ app.whenReady().then(async () => {
             const wantsGuide = !/no thanks/i.test(chosenOption) && !/enough/i.test(chosenOption);
             if (wantsGuide) {
               const originalMsg = q._guideContext || paused.message || prompt;
-              // Prefix the chosen option so the LLM knows the user's preference
-              const guideMessage = `${chosenOption}: ${originalMsg}`;
-              console.log(`[StateGraph] Guide offer accepted: "${chosenOption}" — re-entering as command_automate for: "${originalMsg}"`);
+              // For "walk me through" use guide prefix so LLM knows to use guide.step.
+              // For "do it / together / automate" send the original task only — no prefix —
+              // so the LLM plans skill.bootstrap autonomously without seeing "guide me".
+              const wantsManualGuide = /walk me through/i.test(chosenOption);
+              const guideMessage = wantsManualGuide ? `Walk me through step by step: ${originalMsg}` : originalMsg;
+              console.log(`[StateGraph] Guide offer accepted: "${chosenOption}" (${wantsManualGuide ? 'manual guide' : 'autonomous'}) — re-entering as command_automate for: "${originalMsg}"`);
               initialState = {
                 message: guideMessage,
                 selectedText,
@@ -2541,53 +2544,48 @@ app.whenReady().then(async () => {
         if (resultsWindow) resultsWindow.hide();
         stopClipboardMonitoring();
       } else {
-        // Get cursor position and screen dimensions nut-tree-fork/nut-js
-        const { mouse, Button } = require('@nut-tree-fork/nut-js');
-
-        const { x, y } = screen.getCursorScreenPoint();
         const primaryDisplay = screen.getPrimaryDisplay();
         const { width: screenWidth, height: screenHeight } = primaryDisplay.workAreaSize;
         
-        // Position prompt capture at cursor
-        promptCaptureWindow.setPosition(x - 250, y - 60);
+        // Position prompt capture at center-bottom of screen
+        const pcBounds = promptCaptureWindow.getBounds();
+        const pcWidth = pcBounds.width || 500;
+        const pcX = Math.round((screenWidth - pcWidth) / 2);
+        const pcY = screenHeight - 140;
+        promptCaptureWindow.setPosition(pcX, pcY);
         promptCaptureWindow.show();
         promptCaptureWindow.focus();
-        safeSend(promptCaptureWindow, 'prompt-capture:show', { position: { x, y } });
-
-        const bounds = promptCaptureWindow.getBounds();
-        const centerX = bounds.x + Math.floor(bounds.width / 2);
-        const centerY = bounds.y + Math.floor(bounds.height / 2);
-
-        mouse.setPosition({ x: centerX, y: centerY });
-        mouse.click(Button.LEFT);
+        safeSend(promptCaptureWindow, 'prompt-capture:show', { position: { x: pcX, y: pcY } });
 
         // Position results window in bottom-right corner
         if (resultsWindow && !resultsWindow.isDestroyed()) {
           const margin = 20;
-
+          let newX;
+          let newY;
+          
           // If we have a tracked content height, reuse it; otherwise default to 300
           if (resultsWindowInitialHeight && resultsWindowInitialHeight > 0) {
             // Preserve existing content-based size, just re-show at correct position
             const currentBounds = resultsWindow.getBounds();
             const windowWidth = currentBounds.width || 400;
             const windowHeight = currentBounds.height || 300;
-            const newX = screenWidth - windowWidth - margin;
-            const newY = screenHeight - windowHeight - margin;
+            newX = screenWidth - windowWidth - margin;
+            newY = screenHeight - windowHeight - margin;
             console.log(`📐 [Results Window] Re-showing with existing size ${windowWidth}x${windowHeight} at (${newX}, ${newY})`);
             resultsWindow.setBounds({ x: newX, y: newY, width: windowWidth, height: windowHeight });
           } else {
             // First time or no content yet — use default size
             const windowWidth = 400;
             const windowHeight = 300;
-            const newX = screenWidth - windowWidth - margin;
-            const newY = screenHeight - windowHeight - margin;
+            newX = screenWidth - windowWidth - margin;
+            newY = screenHeight - windowHeight - margin;
             console.log(`📐 [Results Window] Initial show ${windowWidth}x${windowHeight} at (${newX}, ${newY})`);
             resultsWindow.setBounds({ x: newX, y: newY, width: windowWidth, height: windowHeight });
           }
 
           resultsWindow.showInactive();
           // Notify renderer to re-measure and resize based on current content
-          safeSend(resultsWindow, 'results-window:show', { position: { x, y } });
+          safeSend(resultsWindow, 'results-window:show', { position: { x: newX, y: newY } });
           console.log('[Results Window] Shown alongside Prompt Capture Window.');
         }
 
@@ -2665,13 +2663,17 @@ app.whenReady().then(async () => {
 
     if (promptCaptureWindow && !promptCaptureWindow.isDestroyed()) {
       if (!promptCaptureWindow.isVisible()) {
-        const { x, y } = screen.getCursorScreenPoint();
         const primaryDisplay = screen.getPrimaryDisplay();
         const { width: screenWidth, height: screenHeight } = primaryDisplay.workAreaSize;
-        promptCaptureWindow.setPosition(x - 250, y - 60);
+        // Position prompt capture at center-bottom of screen
+        const pcBounds2 = promptCaptureWindow.getBounds();
+        const pcWidth2 = pcBounds2.width || 500;
+        const pcX2 = Math.round((screenWidth - pcWidth2) / 2);
+        const pcY2 = screenHeight - 140;
+        promptCaptureWindow.setPosition(pcX2, pcY2);
         promptCaptureWindow.show();
         promptCaptureWindow.focus();
-        safeSend(promptCaptureWindow, 'prompt-capture:show', { position: { x, y } });
+        safeSend(promptCaptureWindow, 'prompt-capture:show', { position: { x: pcX2, y: pcY2 } });
 
         if (resultsWindow && !resultsWindow.isDestroyed()) {
           const margin = 20;
@@ -3394,10 +3396,11 @@ app.whenReady().then(async () => {
                   .map(l => l.replace(/^\s*-\s*/, '').trim())
                   .filter(Boolean);
               }
-              // Inline secrets: secrets: KEY1, KEY2
+              // Inline secrets: secrets: KEY1, KEY2  or  secrets: [KEY1, KEY2]
               const secretsInlineMatch = fm.match(/^secrets\s*:\s*([^\n]+)$/m);
               if (secretsInlineMatch && !secretsBlockMatch) {
-                secretKeys = secretsInlineMatch[1].split(/[\s,]+/).map(s => s.trim()).filter(Boolean);
+                const raw = secretsInlineMatch[1].replace(/^\[|\]$/g, ''); // strip YAML brackets
+                secretKeys = raw.split(/[\s,]+/).map(s => s.replace(/^["']|["']$/g, '').trim()).filter(Boolean);
               }
               // Description from first body line after frontmatter
               const body = md.replace(/^---\s*\n[\s\S]*?\n---\s*\n/, '').trim();
@@ -3430,8 +3433,10 @@ app.whenReady().then(async () => {
         const oauthScopesMatch = fm.match(/^oauth_scopes\s*:\s*(.+)$/m);
         const trigger  = triggerMatch  ? triggerMatch[1].trim()  : (row.name || '');
         // Scout skills have pre-parsed schedule/secrets from skill.md
-        const schedule = isScout ? (row.schedule || 'on_demand')
+        const rawSchedule = isScout ? (row.schedule || 'on_demand')
                        : scheduleMatch ? scheduleMatch[1].trim() : 'on_demand';
+        // Normalize: null/false/empty → on_demand (no schedule)
+        const schedule = (!rawSchedule || rawSchedule === 'null' || rawSchedule === 'false' || rawSchedule === 'none') ? 'on_demand' : rawSchedule;
         let secretKeys = isScout ? (row.secretKeys || []) : [];
         if (!isScout) {
           // Block list format:  secrets:\n  - KEY1\n  - KEY2
@@ -3441,10 +3446,11 @@ app.whenReady().then(async () => {
               .map(l => l.replace(/^[ \t]+-[ \t]+/, '').trim())
               .filter(Boolean);
           } else {
-            // Inline format:  secrets: KEY1, KEY2
+            // Inline format:  secrets: KEY1, KEY2  or  secrets: [KEY1, KEY2]
             const secretsInlineMatch = fm.match(/^secrets\s*:\s*([^\n]+)$/m);
             if (secretsInlineMatch) {
-              secretKeys = secretsInlineMatch[1].split(/[\s,]+/).map(s => s.trim()).filter(Boolean);
+              const raw = secretsInlineMatch[1].replace(/^\[|\]$/g, ''); // strip YAML brackets
+              secretKeys = raw.split(/[\s,]+/).map(s => s.replace(/^["']|["']$/g, '').trim()).filter(Boolean);
             }
           }
         }
@@ -3503,9 +3509,17 @@ app.whenReady().then(async () => {
           let preview = undefined;
           if (keytar) {
             try {
-              // Always check skill: namespace first (written by skills:save-secret)
-              const val = (await keytar.getPassword('thinkdrop', `skill:${row.name}:${key}`)) ||
-                          (await keytar.getPassword('thinkdrop', key));
+              const prefixedKey = `skill:${row.name}:${key}`;
+              let val = await keytar.getPassword('thinkdrop', prefixedKey);
+              if (!val) {
+                // Check bare key fallback — auto-migrate to prefixed if found
+                const bareVal = await keytar.getPassword('thinkdrop', key);
+                if (bareVal) {
+                  await keytar.setPassword('thinkdrop', prefixedKey, bareVal);
+                  console.log(`[Skills] Auto-migrated bare key "${key}" → "${prefixedKey}"`);
+                  val = bareVal;
+                }
+              }
               stored = !!val;
               if (val && val.length >= 4) preview = val.slice(0, 8);
             } catch(_) {}
@@ -3596,6 +3610,22 @@ app.whenReady().then(async () => {
       }
     } catch (e) {
       console.error('[Skills] skills:save-secret failed:', e.message);
+    }
+  });
+
+  ipcMain.on('skills:reveal-secret', async (event, { skillName, key }) => {
+    try {
+      const keytar = require('keytar');
+      const val = (await keytar.getPassword('thinkdrop', `skill:${skillName}:${key}`)) ||
+                  (await keytar.getPassword('thinkdrop', key));
+      if (resultsWindow && !resultsWindow.isDestroyed()) {
+        safeSend(resultsWindow, 'skills:secret-revealed', { skillName, key, value: val || '' });
+      }
+    } catch (e) {
+      console.error('[Skills] skills:reveal-secret failed:', e.message);
+      if (resultsWindow && !resultsWindow.isDestroyed()) {
+        safeSend(resultsWindow, 'skills:secret-revealed', { skillName, key, value: '' });
+      }
     }
   });
 

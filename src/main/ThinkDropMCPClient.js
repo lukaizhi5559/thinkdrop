@@ -32,7 +32,7 @@ class ThinkDropMCPClient {
       'web-search':          process.env.MCP_WEB_SEARCH_URL          || 'http://localhost:3002',
       'command':             process.env.MCP_COMMAND_URL             || 'http://localhost:3007',
       'screen-intelligence': process.env.MCP_SCREEN_INTELLIGENCE_URL || 'http://localhost:3008',
-      'phi4':                process.env.MCP_PHI4_URL                || 'http://localhost:3005',
+      'phi4':                process.env.MCP_PHI4_URL                || 'http://localhost:3009',
       'coreference':         process.env.MCP_COREFERENCE_URL         || 'http://localhost:3006',
       ...(options.serviceUrls || {})
     };

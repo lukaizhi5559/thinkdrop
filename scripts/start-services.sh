@@ -173,7 +173,7 @@ sleep 1
 # ── Start services in dependency order ──────────────────────────────────────
 
 # 1. User Memory Service — port 3001
-start_node_service "user-memory" "$PROJECT_ROOT/mcp-services/thinkdrop-user-memory-service" 512
+start_node_direct_service "user-memory" "$PROJECT_ROOT/mcp-services/thinkdrop-user-memory-service" "src/server.js" 512
 sleep 2
 
 # 2. Web Search Service — port 3002

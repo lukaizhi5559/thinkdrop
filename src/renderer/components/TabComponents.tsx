@@ -908,6 +908,8 @@ function SkillItemCard({ item, onSaveSecret, onOpenCode, onOAuthConnect, onScope
   const [secretValues, setSecretValues] = React.useState<Record<string, string>>({});
   const [savedKeys, setSavedKeys] = React.useState<Set<string>>(new Set());
   const [confirmDelete, setConfirmDelete] = React.useState(false);
+  const [visibleSecrets, setVisibleSecrets] = React.useState<Set<string>>(new Set());
+  const [revealedSecrets, setRevealedSecrets] = React.useState<Record<string, string>>({});
   const unconnectedOAuth = (item.oauthConnections || []).filter(c => !c.connected).length;
   const totalMissing = missingCount + unconnectedOAuth;
 
@@ -917,6 +919,33 @@ function SkillItemCard({ item, onSaveSecret, onOpenCode, onOAuthConnect, onScope
     onSaveSecret(item.name, key, val);
     setSavedKeys(prev => new Set(prev).add(key));
     setSecretValues(prev => ({ ...prev, [key]: '' }));
+    // Hide revealed value after saving new one
+    setVisibleSecrets(prev => { const n = new Set(prev); n.delete(key); return n; });
+    setRevealedSecrets(prev => { const n = { ...prev }; delete n[key]; return n; });
+  };
+
+  const handleToggleReveal = (key: string) => {
+    if (visibleSecrets.has(key)) {
+      setVisibleSecrets(prev => { const n = new Set(prev); n.delete(key); return n; });
+    } else {
+      // Request full value from main process if not already fetched
+      if (!revealedSecrets[key]) {
+        const ipc = (window as any).electron?.ipcRenderer;
+        if (ipc) {
+          const handler = (_e: any, data: { skillName: string; key: string; value: string }) => {
+            if (data.skillName === item.name && data.key === key) {
+              setRevealedSecrets(prev => ({ ...prev, [key]: data.value }));
+              setVisibleSecrets(prev => new Set(prev).add(key));
+              ipc.removeListener('skills:secret-revealed', handler);
+            }
+          };
+          ipc.on('skills:secret-revealed', handler);
+          ipc.send('skills:reveal-secret', { skillName: item.name, key });
+        }
+      } else {
+        setVisibleSecrets(prev => new Set(prev).add(key));
+      }
+    }
   };
 
   return (
@@ -1027,9 +1056,9 @@ function SkillItemCard({ item, onSaveSecret, onOpenCode, onOAuthConnect, onScope
               </div>
               {item.secrets.map(secret => {
                 const isSaved = savedKeys.has(secret.key);
-                const maskedCurrent = secret.stored && secret.preview
-                  ? secret.preview + '••••••••'
-                  : secret.stored ? '••••••••' : null;
+                const isVisible = visibleSecrets.has(secret.key);
+                const revealedValue = revealedSecrets[secret.key] || '';
+                const isEditing = (secretValues[secret.key] || '').length > 0;
                 return (
                   <div key={secret.key} style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
@@ -1052,25 +1081,40 @@ function SkillItemCard({ item, onSaveSecret, onOpenCode, onOAuthConnect, onScope
                         </span>
                       )}
                     </div>
-                    {maskedCurrent && !isSaved && (
-                      <div style={{ fontSize: '0.6rem', color: '#6b7280', fontFamily: 'ui-monospace,monospace', letterSpacing: '0.02em' }}>
-                        {maskedCurrent}
-                      </div>
-                    )}
-                    <div style={{ display: 'flex', gap: 6 }}>
+                    <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
                       <input
-                        type="password"
-                        placeholder={secret.stored ? 'Replace value…' : 'Enter value…'}
-                        value={secretValues[secret.key] || ''}
+                        type={isEditing ? 'password' : 'text'}
+                        placeholder={!secret.stored ? 'Enter value…' : undefined}
+                        value={isEditing ? secretValues[secret.key] : (secret.stored && !isSaved) ? (isVisible && revealedValue ? revealedValue : '••••••••••••') : ''}
                         onChange={e => setSecretValues(prev => ({ ...prev, [secret.key]: e.target.value }))}
                         onKeyDown={e => { if (e.key === 'Enter') handleSave(secret.key); }}
                         onClick={e => e.stopPropagation()}
+                        readOnly={secret.stored && !isEditing && !isSaved}
+                        onFocus={e => { if (secret.stored && !isEditing) { e.target.readOnly = false; e.target.value = ''; setSecretValues(prev => ({ ...prev, [secret.key]: '' })); } }}
                         style={{
                           flex: 1, padding: '5px 8px', borderRadius: 5, fontSize: '0.65rem',
                           background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.1)',
-                          color: '#e5e7eb', outline: 'none', fontFamily: 'ui-monospace,monospace',
+                          color: (secret.stored && !isEditing && !isSaved) ? (isVisible ? '#e5e7eb' : '#6b7280') : '#e5e7eb',
+                          outline: 'none', fontFamily: 'ui-monospace,monospace',
                         }}
                       />
+                      {secret.stored && (
+                        <button
+                          onClick={(e) => { e.stopPropagation(); handleToggleReveal(secret.key); }}
+                          title={isVisible ? 'Hide value' : 'Show value'}
+                          style={{ padding: '3px 5px', borderRadius: 4, cursor: 'pointer', background: 'transparent', border: '1px solid rgba(255,255,255,0.1)', color: '#6b7280', display: 'flex', alignItems: 'center', flexShrink: 0 }}
+                        >
+                          {isVisible ? (
+                            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                              <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94"/><path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19"/><line x1="1" y1="1" x2="23" y2="23"/>
+                            </svg>
+                          ) : (
+                            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                              <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/>
+                            </svg>
+                          )}
+                        </button>
+                      )}
                       <button
                         onClick={(e) => { e.stopPropagation(); handleSave(secret.key); }}
                         disabled={!(secretValues[secret.key] || '').trim()}

@@ -37,6 +37,10 @@ export default function ResultsWindow() {
   // Synthesis/streaming response block is collapsed by default; user can expand
   const [isSynthesisCollapsed, setIsSynthesisCollapsed] = useState(true);
 
+  // Web search sources — populated via \x00SOURCES\x00 sentinel from answer.js
+  const [searchSources, setSearchSources] = useState<{ url: string; title: string; hostname: string }[]>([]);
+  const [showSourcesPanel, setShowSourcesPanel] = useState(false);
+
   // ── Tab state ────────────────────────────────────────────────────────────────
   const [activeTab, setActiveTab] = useState<TabId>('results');
   const activeTabRef = useRef<TabId>('results');
@@ -163,7 +167,13 @@ export default function ResultsWindow() {
         }
 
         const msgText = message?.text || message.payload?.text || '';
-        if (msgText.startsWith('\x00REPLACE\x00')) {
+        if (msgText.startsWith('\x00SOURCES\x00')) {
+          try {
+            const sources = JSON.parse(msgText.slice('\x00SOURCES\x00'.length));
+            if (Array.isArray(sources)) setSearchSources(sources);
+          } catch (_) {}
+          return; // don't append to response text
+        } else if (msgText.startsWith('\x00REPLACE\x00')) {
           setStreamingResponse(msgText.slice('\x00REPLACE\x00'.length));
         } else {
           setStreamingResponse(prev => prev + msgText);
@@ -232,6 +242,8 @@ export default function ResultsWindow() {
       setInstallOutput([]);
       setPromptText(text);
       setStreamingResponse('');
+      setSearchSources([]);
+      setShowSourcesPanel(false);
       setIsStreaming(false);
       setIsThinking(true);
       setIsSynthesisCollapsed(true);
@@ -322,8 +334,7 @@ export default function ResultsWindow() {
         setIsStreaming(false);
         setInstallPrompt(null);
         setIsInstalling(false);
-        // Expand synthesis block so user sees the completed result; they can collapse manually
-        setIsSynthesisCollapsed(false);
+        // Keep synthesis block collapsed — user can open it if they choose
         glowOffTimerRef.current = setTimeout(() => setIsGlowActive(false), 400);
       } else if (data?.type === 'skill_build_phase') {
         // Skill build pipeline progress — update SkillBuildProgress state
@@ -821,6 +832,171 @@ export default function ResultsWindow() {
     // In automation mode, only render if there's streaming content (synthesis answer below steps)
     if (isAutomationMode && !streamingResponse && !installPrompt && !isInstalling) return null;
 
+    // Perplexity-style source favicon pill + dropdown panel
+    const renderSourcePill = () => {
+      if (!searchSources.length) return null;
+      const visible = searchSources.slice(0, 4);
+      const OVERLAP = 10;
+      const CIRCLE = 22;
+      return (
+        <div style={{ position: 'relative', marginBottom: 10 }}>
+          {/* Clickable pill row */}
+          <button
+            onClick={() => setShowSourcesPanel(prev => !prev)}
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 8,
+              background: 'none',
+              border: 'none',
+              padding: 0,
+              cursor: 'pointer',
+              userSelect: 'none',
+            }}
+          >
+            {/* Overlapping favicon circles */}
+            <div style={{ position: 'relative', width: CIRCLE + (visible.length - 1) * (CIRCLE - OVERLAP), height: CIRCLE, flexShrink: 0 }}>
+              {visible.map((src, i) => (
+                <div
+                  key={src.url}
+                  style={{
+                    position: 'absolute',
+                    left: i * (CIRCLE - OVERLAP),
+                    top: 0,
+                    width: CIRCLE,
+                    height: CIRCLE,
+                    borderRadius: '50%',
+                    overflow: 'hidden',
+                    border: '1.5px solid rgba(255,255,255,0.12)',
+                    backgroundColor: '#1a1a1a',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    zIndex: visible.length - i,
+                    flexShrink: 0,
+                  }}
+                >
+                  <img
+                    src={`https://www.google.com/s2/favicons?domain=${src.hostname}&sz=32`}
+                    alt={src.hostname}
+                    width={14}
+                    height={14}
+                    style={{ borderRadius: 2 }}
+                    onError={(e) => {
+                      (e.currentTarget as HTMLImageElement).style.display = 'none';
+                      const p = e.currentTarget.parentElement as HTMLElement;
+                      p.style.fontSize = '8px';
+                      p.style.color = '#9ca3af';
+                      p.style.fontWeight = '700';
+                      p.textContent = src.hostname.charAt(0).toUpperCase();
+                    }}
+                  />
+                </div>
+              ))}
+            </div>
+            {/* Count + chevron */}
+            <span style={{ color: '#9ca3af', fontSize: '0.7rem', fontWeight: 500, display: 'flex', alignItems: 'center', gap: 3 }}>
+              {searchSources.length} {searchSources.length === 1 ? 'site' : 'sites'}
+              <svg
+                width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"
+                style={{ color: '#6b7280', transform: showSourcesPanel ? 'rotate(180deg)' : 'rotate(0deg)', transition: 'transform 0.15s' }}
+              >
+                <polyline points="6 9 12 15 18 9" />
+              </svg>
+            </span>
+          </button>
+
+          {/* Dropdown sources panel */}
+          {showSourcesPanel && (
+            <div
+              style={{
+                position: 'absolute',
+                top: 'calc(100% + 6px)',
+                left: 0,
+                zIndex: 50,
+                width: 280,
+                maxHeight: 320,
+                overflowY: 'auto',
+                backgroundColor: '#1c1c1e',
+                border: '1px solid rgba(255,255,255,0.1)',
+                borderRadius: 10,
+                boxShadow: '0 8px 32px rgba(0,0,0,0.5)',
+                padding: '6px 0',
+              }}
+            >
+              <div style={{ padding: '6px 12px 4px', fontSize: '0.65rem', fontWeight: 600, color: '#6b7280', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+                Sources
+              </div>
+              {searchSources.map((src, i) => (
+                <div
+                  key={src.url + i}
+                  onClick={() => ipcRenderer?.send('shell:open-url', src.url)}
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 9,
+                    padding: '7px 12px',
+                    textDecoration: 'none',
+                    borderRadius: 0,
+                    transition: 'background 0.1s',
+                    cursor: 'pointer',
+                  }}
+                  onMouseEnter={e => (e.currentTarget.style.backgroundColor = 'rgba(255,255,255,0.06)')}
+                  onMouseLeave={e => (e.currentTarget.style.backgroundColor = 'transparent')}
+                >
+                  {/* Favicon */}
+                  <div style={{
+                    width: 20, height: 20, borderRadius: '50%',
+                    backgroundColor: '#2a2a2c',
+                    border: '1px solid rgba(255,255,255,0.08)',
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    flexShrink: 0,
+                  }}>
+                    <img
+                      src={`https://www.google.com/s2/favicons?domain=${src.hostname}&sz=32`}
+                      alt=""
+                      width={12}
+                      height={12}
+                      style={{ borderRadius: 2 }}
+                      onError={(e) => {
+                        (e.currentTarget as HTMLImageElement).style.display = 'none';
+                        const p = e.currentTarget.parentElement as HTMLElement;
+                        p.style.fontSize = '8px';
+                        p.style.color = '#9ca3af';
+                        p.style.fontWeight = '700';
+                        p.textContent = src.hostname.charAt(0).toUpperCase();
+                      }}
+                    />
+                  </div>
+                  {/* Text */}
+                  <div style={{ minWidth: 0, flex: 1 }}>
+                    <div style={{
+                      fontSize: '0.72rem', fontWeight: 500, color: '#e5e7eb',
+                      whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+                    }}>
+                      {src.title || src.hostname}
+                    </div>
+                    <div style={{
+                      fontSize: '0.62rem', color: '#6b7280',
+                      whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+                    }}>
+                      {src.hostname}
+                    </div>
+                  </div>
+                  {/* External link icon */}
+                  <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="#4b5563" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
+                    <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>
+                    <polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/>
+                  </svg>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      );
+    };
+
     if (isThinking) {
       return (
         <div className="flex items-center gap-3">
@@ -837,11 +1013,14 @@ export default function ResultsWindow() {
     // In automation mode the streamingResponse is the synthesize output — show it collapsible.
     // Outside automation mode (plain LLM answer) always show it expanded.
     const showCollapsible = isAutomationMode && !!streamingResponse;
-    // Auto-expand while streaming so the user sees content arriving
-    const synthesisExpanded = isStreaming ? true : !isSynthesisCollapsed;
+    // Always respect user's collapsed preference — no auto-expand
+    const synthesisExpanded = !isSynthesisCollapsed;
+    // Approximate token count (1 token ≈ 4 chars) for the header badge
+    const synthTokenCount = streamingResponse ? Math.ceil(streamingResponse.length / 4) : 0;
 
     return (
       <div className={`space-y-4${isDropping ? ' drop-animate' : ''}`}>
+        {renderSourcePill()}
         {streamingResponse && !showCollapsible && (
           <div className="relative">
             <RichContentRenderer 
@@ -867,7 +1046,7 @@ export default function ResultsWindow() {
                 cursor: 'pointer',
                 userSelect: 'none',
               }}
-              onClick={() => !isStreaming && setIsSynthesisCollapsed(prev => !prev)}
+              onClick={() => setIsSynthesisCollapsed(prev => !prev)}
               onMouseEnter={e => (e.currentTarget.style.backgroundColor = 'rgba(59,130,246,0.14)')}
               onMouseLeave={e => (e.currentTarget.style.backgroundColor = 'rgba(59,130,246,0.08)')}
             >
@@ -877,6 +1056,11 @@ export default function ResultsWindow() {
                 </svg>
                 <span>Summary</span>
                 {isStreaming && <span className="inline-block w-1.5 h-1.5 rounded-full bg-blue-400 animate-pulse ml-1" />}
+                {synthTokenCount > 0 && (
+                  <span style={{ fontSize: '0.65rem', color: 'rgba(147,197,253,0.6)', marginLeft: '4px', fontWeight: 400 }}>
+                    {synthTokenCount > 999 ? `${(synthTokenCount / 1000).toFixed(1)}k` : synthTokenCount} tokens
+                  </span>
+                )}
               </div>
               <svg
                 width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor"
