@@ -414,6 +414,7 @@ let llmBackend = null;
 let currentSessionId = null; // Persists across prompts for conversation continuity
 let currentBrowserSessionId = null; // Persists active Playwright session across prompts
 let currentBrowserUrl = null;        // Last known URL in the active Playwright session
+let currentLastOpenedFilePath = null; // Persists last opened file path so "close it" knows the target
 
 // Module-level gather:answer resolver — set per-question, cleared on answer.
 // Registered ONCE (not per stategraph:process run) to avoid listener accumulation.
@@ -2412,6 +2413,7 @@ app.whenReady().then(async () => {
           queueBridge,
           activeBrowserSessionId: currentBrowserSessionId || null,
           activeBrowserUrl: currentBrowserUrl || null,
+          lastOpenedFilePath: currentLastOpenedFilePath || null,
           responseLanguage: responseLanguage || null,
           context: {
             sessionId: sessionId || currentSessionId,
@@ -2494,6 +2496,12 @@ app.whenReady().then(async () => {
         console.log(`[StateGraph] Browser session cleared (was: ${currentBrowserSessionId}) — next prompt will open a new tab`);
         currentBrowserSessionId = null;
         currentBrowserUrl = null;
+      }
+
+      // Persist last opened file path so "close it" / "close the file" always targets the right file.
+      if (finalState.lastOpenedFilePath) {
+        currentLastOpenedFilePath = finalState.lastOpenedFilePath;
+        console.log(`[StateGraph] Persisted lastOpenedFilePath: ${currentLastOpenedFilePath}`);
       }
 
       // For command_automate, AutomationProgress handles the display via automation:progress events.
@@ -3592,6 +3600,27 @@ app.whenReady().then(async () => {
           return true;
         });
 
+        // Pre-pass: auto-populate skill secrets from global OAuth token
+        if (keytar && oauthProviders.length > 0) {
+          for (const prov of oauthProviders) {
+            const gRaw = await keytar.getPassword('thinkdrop', `oauth:${prov}`).catch(() => null);
+            if (!gRaw) continue;
+            let gTok; try { gTok = JSON.parse(gRaw); } catch(_) { continue; }
+            const provUpper = prov.toUpperCase();
+            for (const sec of secretKeys) {
+              const sKey = `skill:${row.name}:${sec}`;
+              if (await keytar.getPassword('thinkdrop', sKey).catch(() => null)) continue;
+              const sl = sec.toLowerCase();
+              let av = null;
+              if (sl === 'refresh_token' && gTok.refresh_token) av = gTok.refresh_token;
+              else if (sl === 'access_token' && gTok.access_token) av = gTok.access_token;
+              else if (sl === 'client_id') av = process.env[`${provUpper}_CLIENT_ID`] || (prov === 'google' ? process.env.GOOGLE_CLOUD_CLIENT_ID : null);
+              else if (sl === 'client_secret') av = process.env[`${provUpper}_CLIENT_SECRET`] || (prov === 'google' ? process.env.GOOGLE_CLOUD_CLIENT_SECRET : null);
+              if (av) { await keytar.setPassword('thinkdrop', sKey, av); console.log(`[Skills] Auto-populated ${sKey} from global oauth:${prov}`); }
+            }
+          }
+        }
+
         const secrets = await Promise.all(USER_SECRET_KEYS.map(async (key) => {
           let stored = false;
           let preview = undefined;
@@ -3637,24 +3666,35 @@ app.whenReady().then(async () => {
           hubspot:    'crm.objects.contacts.read',
         };
         const oauthConnections = await Promise.all(oauthProviders.map(async (provider) => {
-          const tokenKey = `oauth:${provider}:${row.name}`;
+          const perSkillKey = `oauth:${provider}:${row.name}`;
+          const globalKey   = `oauth:${provider}`;
           let connected = false;
           let accountHint;
+          let usedGlobal = false;
+          let tokenData = null;
           if (keytar) {
             try {
-              const raw = await keytar.getPassword('thinkdrop', tokenKey);
+              // Check per-skill token first, then fall back to global Connections token
+              let raw = await keytar.getPassword('thinkdrop', perSkillKey);
+              if (!raw) {
+                raw = await keytar.getPassword('thinkdrop', globalKey);
+                if (raw) usedGlobal = true;
+              }
               if (raw) {
                 connected = true;
                 try {
-                  const tok = JSON.parse(raw);
-                  accountHint = tok.email || tok.account || undefined;
+                  tokenData = JSON.parse(raw);
+                  accountHint = tokenData.email || tokenData.account || undefined;
                 } catch(_) {}
               }
             } catch(_) {}
+
+            // Auto-populate already handled in pre-pass above
           }
+          const tokenKey = usedGlobal ? globalKey : perSkillKey;
           // Use skill-declared scopes if present, otherwise broad identity defaults
           const scopes = skillOauthScopes[provider] || OAUTH_SCOPE_DEFAULTS[provider] || '';
-          return { provider, connected, tokenKey, scopes, accountHint };
+          return { provider, connected, tokenKey, scopes, accountHint, usedGlobal };
         }));
 
         const missingCount = secrets.filter(s => !s.stored).length;

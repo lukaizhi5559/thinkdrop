@@ -1023,7 +1023,7 @@ export default function ResultsWindow() {
       <div className={`space-y-4${isDropping ? ' drop-animate' : ''}`}>
         {renderSourcePill()}
         {streamingResponse && !showCollapsible && (
-          <div className="relative">
+          <div className="relative" style={{ overflowX: 'hidden', wordBreak: 'break-word', overflowWrap: 'break-word' }}>
             <RichContentRenderer 
               content={injectFileLinks(streamingResponse)}
               animated={!isStreaming}
@@ -1037,7 +1037,7 @@ export default function ResultsWindow() {
         )}
 
         {showCollapsible && (
-          <div className="rounded-lg overflow-hidden" style={{ border: '1px solid rgba(255,255,255,0.08)', marginTop: '5px' }}>
+          <div className="rounded-lg overflow-hidden" style={{ border: '1px solid rgba(255,255,255,0.08)', marginTop: '5px', minWidth: 0 }}>
             {/* Collapsible header */}
             <button
               className="w-full flex items-center justify-between px-3 py-2 text-xs font-medium"
@@ -1074,7 +1074,7 @@ export default function ResultsWindow() {
 
             {/* Collapsible body */}
             {synthesisExpanded && (
-              <div className="px-3 py-2.5 relative" style={{ backgroundColor: 'rgba(0,0,0,0.25)' }}>
+              <div className="px-3 py-2.5 relative" style={{ backgroundColor: 'rgba(0,0,0,0.25)', overflowX: 'hidden', wordBreak: 'break-word', overflowWrap: 'break-word' }}>
                 <RichContentRenderer
                   content={injectFileLinks(streamingResponse)}
                   animated={!isStreaming}
