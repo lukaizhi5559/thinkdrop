@@ -424,6 +424,10 @@ let pendingGatherResolve = null;
 // Used to warn the user before closing the app mid-countdown
 let activeScheduleCountdown = null; // { id, targetTime, label }
 
+// App control mode — persistent fast-dispatch state (bypasses StateGraph when active)
+// { active: bool, app: string|null, enteredAt: ISO }
+let appControlMode = { active: false, app: null, enteredAt: null };
+
 function initStateGraph() {
   try {
     mcpClient = new ThinkDropMCPClient({ logger: console, timeoutMs: 60000 });
@@ -1731,6 +1735,15 @@ app.whenReady().then(async () => {
     recentlySubmittedPrompts.add(prompt.trim());
     setTimeout(() => recentlySubmittedPrompts.delete(prompt.trim()), 60000);
 
+    // ── App Control Mode fast-dispatch (pre-StateGraph) ──────────────────────
+    // When control mode is active, route short commands directly to nut-js
+    // without going through the full StateGraph pipeline.
+    if (appControlMode.active) {
+      const handled = await _dispatchControlCommand(prompt.trim(), { responseLanguage, promptQueueId });
+      if (handled) return;
+      // If not a recognized control command, fall through to normal StateGraph
+    }
+
     if (!stateGraph) {
       console.error('❌ [StateGraph] Not initialized');
       if (resultsWindow && !resultsWindow.isDestroyed()) {
@@ -2504,6 +2517,21 @@ app.whenReady().then(async () => {
         console.log(`[StateGraph] Persisted lastOpenedFilePath: ${currentLastOpenedFilePath}`);
       }
 
+      // Sync app control mode — appControl node writes finalState.appControlMode
+      if (finalState.appControlMode !== undefined) {
+        const prev = appControlMode.active;
+        appControlMode = finalState.appControlMode;
+        if (appControlMode.active && !prev) {
+          console.log(`[AppControl] Entered control mode${appControlMode.app ? ` for "${appControlMode.app}"` : ''}`);
+          safeSend(promptCaptureWindow, 'app-control:mode-change', { active: true, app: appControlMode.app });
+          safeSend(resultsWindow, 'app-control:mode-change', { active: true, app: appControlMode.app });
+        } else if (!appControlMode.active && prev) {
+          console.log('[AppControl] Exited control mode');
+          safeSend(promptCaptureWindow, 'app-control:mode-change', { active: false, app: null });
+          safeSend(resultsWindow, 'app-control:mode-change', { active: false, app: null });
+        }
+      }
+
       // For command_automate, AutomationProgress handles the display via automation:progress events.
       // Also forward pendingQuestion for web_search/general_knowledge/screen_intelligence when
       // the answer node appended a guide offer (_isGuideOffer).
@@ -2631,6 +2659,124 @@ app.whenReady().then(async () => {
         promptQueue.markDone(promptQueueId);
       }
     }
+  }
+
+  // ─── App Control Mode: heuristic fast-dispatch ───────────────────────────
+  // Called BEFORE StateGraph when appControlMode.active is true.
+  // Returns true if the command was handled (don't run StateGraph).
+  // Returns false if the command should fall through to normal processing.
+  async function _dispatchControlCommand(text, { responseLanguage, promptQueueId } = {}) {
+    const lower = text.toLowerCase().trim();
+
+    // Exit phrases — deactivate control mode immediately
+    const EXIT_RE = /^(stop|exit|quit|done controlling|end control|leave control|control mode off|deactivate|disable control)\b/i;
+    if (EXIT_RE.test(lower)) {
+      const prevApp = appControlMode.app;
+      appControlMode = { active: false, app: null, enteredAt: null };
+      console.log('[AppControl] Fast-exit control mode');
+      safeSend(promptCaptureWindow, 'app-control:mode-change', { active: false, app: null });
+      safeSend(resultsWindow, 'app-control:mode-change', { active: false, app: null });
+      const msg = `Control mode deactivated${prevApp ? ` (was: ${prevApp})` : ''}.`;
+      safeSend(resultsWindow, 'ws-bridge:message', { type: 'chunk', text: msg });
+      safeSend(resultsWindow, 'ws-bridge:message', { type: 'done' });
+      if (promptQueueId) promptQueue.markDone(promptQueueId);
+      return true;
+    }
+
+    // Scroll commands — also catches bare "scroll" (= down), "up", "down" in control mode context
+    const BARE_SCROLL = /^(scroll|up|down)$/i;
+    const SCROLL_RE = /\b(scroll\s+down|scroll\s+up|page\s+down|page\s+up|scroll\s+to\s+top|scroll\s+to\s+bottom)\b/i;
+    const scrollMatch = BARE_SCROLL.exec(lower) || lower.match(SCROLL_RE);
+    if (scrollMatch) {
+      try {
+        const { keyboard, Key } = require('@nut-tree-fork/nut-js');
+        const cmd = scrollMatch[0].trim().toLowerCase();
+        if (cmd === 'scroll down' || cmd === 'page down' || cmd === 'down' || cmd === 'scroll') {
+          await keyboard.pressKey(Key.PageDown);
+          await keyboard.releaseKey(Key.PageDown);
+        } else if (cmd === 'scroll up' || cmd === 'page up' || cmd === 'up') {
+          await keyboard.pressKey(Key.PageUp);
+          await keyboard.releaseKey(Key.PageUp);
+        } else if (cmd === 'scroll to top') {
+          await keyboard.pressKey(Key.LeftSuper, Key.Up);
+          await keyboard.releaseKey(Key.LeftSuper, Key.Up);
+        } else if (cmd === 'scroll to bottom') {
+          await keyboard.pressKey(Key.LeftSuper, Key.Down);
+          await keyboard.releaseKey(Key.LeftSuper, Key.Down);
+        }
+        console.log(`[AppControl] Dispatched scroll: ${cmd}`);
+        safeSend(resultsWindow, 'app-control:command-ack', { command: cmd });
+        if (promptQueueId) promptQueue.markDone(promptQueueId);
+        return true;
+      } catch (e) {
+        console.error('[AppControl] nut-js scroll error:', e.message);
+        return false;
+      }
+    }
+
+    // Type text commands: "type hello", "type 'hello world'"
+    const TYPE_RE = /^type\s+(?:["'](.+?)["']|(.+))$/i;
+    const typeMatch = lower.match(TYPE_RE);
+    if (typeMatch) {
+      try {
+        const { keyboard } = require('@nut-tree-fork/nut-js');
+        const toType = typeMatch[1] || typeMatch[2];
+        await keyboard.type(toType);
+        console.log(`[AppControl] Dispatched type: "${toType}"`);
+        safeSend(resultsWindow, 'app-control:command-ack', { command: `type: "${toType}"` });
+        if (promptQueueId) promptQueue.markDone(promptQueueId);
+        return true;
+      } catch (e) {
+        console.error('[AppControl] nut-js type error:', e.message);
+        return false;
+      }
+    }
+
+    // Press key commands: "press enter", "press cmd+c", "press escape"
+    const PRESS_RE = /^press\s+(.+)$/i;
+    const pressMatch = text.match(PRESS_RE);
+    if (pressMatch) {
+      try {
+        const { keyboard, Key } = require('@nut-tree-fork/nut-js');
+        const keyStr = pressMatch[1].trim();
+        const KEY_MAP = {
+          enter: Key.Enter, return: Key.Enter, escape: Key.Escape, esc: Key.Escape,
+          tab: Key.Tab, space: Key.Space, backspace: Key.Backspace, delete: Key.Delete,
+          up: Key.Up, down: Key.Down, left: Key.Left, right: Key.Right,
+          'cmd+c': [Key.LeftSuper, Key.C], 'cmd+v': [Key.LeftSuper, Key.V],
+          'cmd+z': [Key.LeftSuper, Key.Z], 'cmd+a': [Key.LeftSuper, Key.A],
+          'cmd+s': [Key.LeftSuper, Key.S], 'cmd+w': [Key.LeftSuper, Key.W],
+          'ctrl+c': [Key.LeftControl, Key.C], 'ctrl+v': [Key.LeftControl, Key.V],
+        };
+        const mapped = KEY_MAP[keyStr.toLowerCase()];
+        if (mapped) {
+          if (Array.isArray(mapped)) {
+            await keyboard.pressKey(...mapped);
+            await keyboard.releaseKey(...mapped);
+          } else {
+            await keyboard.pressKey(mapped);
+            await keyboard.releaseKey(mapped);
+          }
+          console.log(`[AppControl] Dispatched key: ${keyStr}`);
+          safeSend(resultsWindow, 'app-control:command-ack', { command: `press: ${keyStr}` });
+          if (promptQueueId) promptQueue.markDone(promptQueueId);
+          return true;
+        }
+      } catch (e) {
+        console.error('[AppControl] nut-js key error:', e.message);
+        return false;
+      }
+    }
+
+    // ── Catch-all: control mode is active but command is unrecognized ─────────
+    // Do NOT fall through to StateGraph — that causes planSkills/project_build.
+    // Instead: reply with an in-mode help nudge and swallow the prompt.
+    console.log(`[AppControl] Unrecognized control command (swallowed): "${text}"`);
+    const helpMsg = `⚠ Unknown control command: "${text}"\nTry: scroll up/down, type <text>, press <key>, or say **stop** to exit.`;
+    safeSend(resultsWindow, 'ws-bridge:message', { type: 'chunk', text: helpMsg });
+    safeSend(resultsWindow, 'ws-bridge:message', { type: 'done' });
+    if (promptQueueId) promptQueue.markDone(promptQueueId);
+    return true;
   }
 
   globalShortcut.register('CommandOrControl+Shift+Space', () => {

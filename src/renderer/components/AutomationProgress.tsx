@@ -39,7 +39,8 @@ type AutomationPhase =
   | 'guide_step'
   | 'schedule_wait'
   | 'evaluating'
-  | 'retrying_with_fix';
+  | 'retrying_with_fix'
+  | 'project_building';
 
 interface GatherQuestion {
   id: string;
@@ -279,6 +280,9 @@ export default function AutomationProgress({ onHeightChange, onActiveChange }: A
   const [gatherOAuth, setGatherOAuth] = useState<GatherOAuth | null>(null);
   const [gatherOAuthConnecting, setGatherOAuthConnecting] = useState(false);
   const [gatherOAuthConnected, setGatherOAuthConnected] = useState<string | null>(null);
+  const [projectBuild, setProjectBuild] = useState<{ capability: string; iteration: number; message: string; passed: boolean; failed: boolean; errorMsg: string | null } | null>(null);
+  const [projectBuildFiles, setProjectBuildFiles] = useState<string[]>([]);
+  const [controlMode, setControlMode] = useState<{ active: boolean; app: string | null }>({ active: false, app: null });
 
   // Refs for auto-scrolling to the active step
   const stepRefs = useRef<Map<number, HTMLDivElement>>(new Map());
@@ -319,6 +323,8 @@ export default function AutomationProgress({ onHeightChange, onActiveChange }: A
       setGatherOAuth(null);
       setGatherOAuthConnecting(false);
       setGatherOAuthConnected(null);
+      setProjectBuild(null);
+      setProjectBuildFiles([]);
     };
     ipcRenderer.on('results-window:set-prompt', handleNewPrompt);
 
@@ -514,6 +520,35 @@ export default function AutomationProgress({ onHeightChange, onActiveChange }: A
           setPhase('planning');
           break;
 
+        case 'project_build_start':
+          setPhase('project_building');
+          setProjectBuild({ capability: data.capability || '', iteration: 0, message: data.message || 'Building project…', passed: false, failed: false, errorMsg: null });
+          setProjectBuildFiles([]);
+          break;
+
+        case 'project_file_created':
+          setProjectBuildFiles(prev => prev.includes(data.file) ? prev : [...prev, data.file]);
+          break;
+
+        case 'project_build_iteration':
+          setProjectBuild(prev => prev ? { ...prev, iteration: data.attempt || prev.iteration + 1, message: data.message || `Attempt ${data.attempt}…` } : prev);
+          break;
+
+        case 'project_build_test':
+          setProjectBuild(prev => prev ? { ...prev, message: 'Running smoke tests…' } : prev);
+          break;
+
+        case 'project_build_pass':
+          setProjectBuild(prev => prev ? { ...prev, passed: true, failed: false, message: `Project ready — built in ${data.iterations || 1} iteration${data.iterations !== 1 ? 's' : ''}` } : prev);
+          setPhase('executing');
+          break;
+
+        case 'project_build_fail':
+          setProjectBuild(prev => prev ? { ...prev, failed: true, passed: false, errorMsg: data.error || 'Build failed after max retries', message: 'Build failed' } : prev);
+          setPhase('failed');
+          setGlobalError(data.error || 'Could not build project after max retries.');
+          break;
+
         case 'skill_build_confirm':
           setSkillBuildConfirm({
             skillName: data.skillName,
@@ -584,13 +619,19 @@ export default function AutomationProgress({ onHeightChange, onActiveChange }: A
       }
     };
 
+    const handleControlModeChange = (_event: any, data: any) => {
+      setControlMode({ active: !!data.active, app: data.app || null });
+    };
+
     ipcRenderer.on('automation:progress', handleProgress);
     ipcRenderer.on('ws-bridge:message', handleBridgeMessage);
+    ipcRenderer.on('app-control:mode-change', handleControlModeChange);
     return () => {
       if (ipcRenderer.removeListener) {
         ipcRenderer.removeListener('automation:progress', handleProgress);
         ipcRenderer.removeListener('results-window:set-prompt', handleNewPrompt);
         ipcRenderer.removeListener('ws-bridge:message', handleBridgeMessage);
+        ipcRenderer.removeListener('app-control:mode-change', handleControlModeChange);
       }
     };
   }, []);
@@ -650,13 +691,27 @@ export default function AutomationProgress({ onHeightChange, onActiveChange }: A
     setTimeout(() => setGatherOAuthConnecting(false), 300000);
   };
 
-  if (phase === 'idle') return null;
-
   const doneCount = steps.filter(s => s.status === 'done').length;
   const shownTotal = totalCount || steps.length;
 
+  if (phase === 'idle' && !controlMode.active) return null;
+
   return (
     <div className="space-y-3">
+      {/* ── App Control Mode badge ────────────────────────────────────────── */}
+      {controlMode.active && (
+        <div className="flex items-center gap-2 px-3 py-2 rounded-lg"
+          style={{ backgroundColor: 'rgba(34,197,94,0.1)', border: '1px solid rgba(34,197,94,0.3)' }}>
+          <div className="w-2 h-2 rounded-full animate-pulse flex-shrink-0"
+            style={{ backgroundColor: '#22c55e' }} />
+          <span className="text-sm font-semibold" style={{ color: '#22c55e' }}>
+            You're in control mode{controlMode.app ? ` · ${controlMode.app}` : ''}
+          </span>
+          <span className="text-xs ml-auto" style={{ color: 'rgba(34,197,94,0.7)' }}>
+            speak or type · say <strong>stop</strong> to exit
+          </span>
+        </div>
+      )}
       {/* ── Phase header ─────────────────────────────────────────────────── */}
       <div className="flex items-center gap-2">
         {phase === 'gathering' && (
@@ -813,6 +868,63 @@ export default function AutomationProgress({ onHeightChange, onActiveChange }: A
             ipcRenderer?.send('prompt-queue:submit', { prompt: match.provider, selectedText: '' });
           }}
         />
+      )}
+
+      {/* ── Project build card ─────────────────────────────────────── */}
+      {projectBuild && (
+        <div style={{
+          padding: '12px 14px', borderRadius: 10,
+          backgroundColor: projectBuild.failed ? 'rgba(239,68,68,0.07)' : projectBuild.passed ? 'rgba(34,197,94,0.07)' : 'rgba(99,102,241,0.07)',
+          border: `1px solid ${projectBuild.failed ? 'rgba(239,68,68,0.30)' : projectBuild.passed ? 'rgba(34,197,94,0.30)' : 'rgba(99,102,241,0.30)'}`,
+        }}>
+          <div className="flex items-start gap-2">
+            <div style={{ fontSize: '0.95rem', lineHeight: 1, marginTop: 1, flexShrink: 0 }}>
+              {projectBuild.failed ? '❌' : projectBuild.passed ? '✅' : '🏗️'}
+            </div>
+            <div style={{ flex: 1 }}>
+              <div style={{
+                color: projectBuild.failed ? '#f87171' : projectBuild.passed ? '#86efac' : '#a5b4fc',
+                fontSize: '0.76rem', fontWeight: 600, marginBottom: 2,
+              }}>
+                {projectBuild.passed ? 'Project built & registered' : projectBuild.failed ? 'Project build failed' : 'Building project…'}
+              </div>
+              <div style={{ color: '#9ca3af', fontSize: '0.69rem', lineHeight: 1.4 }}>
+                {projectBuild.message}
+              </div>
+              {projectBuild.capability && !projectBuild.passed && !projectBuild.failed && (
+                <div style={{ color: '#6b7280', fontSize: '0.66rem', marginTop: 4, fontStyle: 'italic' }}>
+                  Capability: {projectBuild.capability}
+                </div>
+              )}
+              {!projectBuild.passed && !projectBuild.failed && (
+                <div className="flex items-center gap-1.5" style={{ marginTop: 6 }}>
+                  <div className="w-2.5 h-2.5 rounded-full border-2 animate-spin flex-shrink-0"
+                    style={{ borderColor: '#818cf8', borderTopColor: 'transparent' }} />
+                  <span style={{ color: '#6b7280', fontSize: '0.65rem' }}>
+                    npm install → build → smoke test → retry if needed
+                  </span>
+                </div>
+              )}
+              {projectBuildFiles.length > 0 && (
+                <div style={{ marginTop: 6 }}>
+                  {projectBuildFiles.map(f => (
+                    <div key={f} className="flex items-center gap-1" style={{ color: '#6ee7b7', fontSize: '0.64rem', lineHeight: 1.6 }}>
+                      <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
+                        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/>
+                      </svg>
+                      <span style={{ fontFamily: 'monospace' }}>{f}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+              {projectBuild.failed && projectBuild.errorMsg && (
+                <div style={{ color: '#fca5a5', fontSize: '0.67rem', marginTop: 6, fontFamily: 'monospace', whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>
+                  {projectBuild.errorMsg.slice(0, 300)}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
       )}
 
       {/* ── Gather: question card ──────────────────────────────────── */}
