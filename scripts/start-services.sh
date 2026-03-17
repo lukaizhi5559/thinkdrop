@@ -159,7 +159,7 @@ start_node_direct_service() {
 
 # ── Pre-flight: kill ALL orphaned MCP service nodemon instances ───────────────
 # Multiple restarts leave nodemon orphans; kill them all before starting fresh
-for svc in thinkdrop-user-memory-service thinkdrop-phi4-service thinkdrop-web-search conversation-service command-service screen-intelligence-service voice-service; do
+for svc in thinkdrop-user-memory-service thinkdrop-phi4-service thinkdrop-web-search conversation-service command-service screen-intelligence-service voice-service personality-service; do
     pkill -9 -f "${svc}/node_modules/nodemon" 2>/dev/null || true
     pkill -9 -f "${svc}/src/server" 2>/dev/null || true
 done
@@ -204,6 +204,10 @@ sleep 2
 start_node_service "voice-service" "$PROJECT_ROOT/mcp-services/voice-service" 512
 sleep 2
 
+# 9. Personality Service — port 3012 (emotion engine, heartbeat, synthesis agent)
+start_npm_start_service "personality-service" "$PROJECT_ROOT/mcp-services/personality-service" 256
+sleep 2
+
 # ── Summary ─────────────────────────────────────────────────────────────────
 
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
@@ -218,6 +222,7 @@ echo "   • Coreference:         http://localhost:3005/health"
 echo "   • Command:             http://localhost:3007/health"
 echo "   • Screen Intelligence: http://localhost:3008/service.health"
 echo "   • Voice Service:       http://localhost:3006/health"
+echo "   • Personality Service:  http://localhost:3012/health"
 echo ""
 echo "📝 Logs:"
 echo "   tail -f logs/*.log"

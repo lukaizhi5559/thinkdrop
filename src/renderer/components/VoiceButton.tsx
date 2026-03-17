@@ -98,8 +98,8 @@ export default function VoiceButton({ mode = 'push-to-talk', onTranscript, onRes
         if (audioQueueRef.current.length > 0) {
           drainQueue();
         } else {
-          // Post-TTS cooldown: suppress VAD for 1.2s so speaker output isn't re-captured
-          ttsCooldownUntilRef.current = Date.now() + 1200;
+          // Post-TTS cooldown: suppress VAD for 400ms so speaker output isn't re-captured
+          ttsCooldownUntilRef.current = Date.now() + 400;
           setVoiceState('idle');
           setTranscript('');
         }
@@ -145,7 +145,7 @@ export default function VoiceButton({ mode = 'push-to-talk', onTranscript, onRes
       if (data.audioBase64) {
         // Pre-set cooldown based on known duration so VAD stays closed during playback
         if (data.durationEstimateMs) {
-          ttsCooldownUntilRef.current = Date.now() + data.durationEstimateMs + 800;
+          ttsCooldownUntilRef.current = Date.now() + data.durationEstimateMs + 400;
         }
         audioQueueRef.current.push({ base64: data.audioBase64, format: data.audioFormat || 'mp3', lane });
         drainQueue();
@@ -315,7 +315,7 @@ export default function VoiceButton({ mode = 'push-to-talk', onTranscript, onRes
         if (mediaRecorderRef.current?.state === 'recording') {
           mediaRecorderRef.current.stop();
         }
-      }, 120);
+      }, 50);
     } else if (isRecordingRef.current) {
       // startRecording is still awaiting getUserMedia — flag a pending stop
       console.log('[VoiceButton] stopRecording: recorder not ready yet — setting pendingStop');
@@ -379,7 +379,7 @@ export default function VoiceButton({ mode = 'push-to-talk', onTranscript, onRes
 
     const VAD_SPEECH_THRESHOLD = 28;   // RMS 0-255: absolute floor
     const VAD_DELTA_MULTIPLIER = 1.8;  // must be 1.8x above rolling baseline to trigger
-    const VAD_SILENCE_MS = 1800;       // ms of silence before sending — 1800ms handles multi-clause speech (natural breath pauses ~500-800ms between clauses without fragmenting a single request)
+    const VAD_SILENCE_MS = 900;        // ms of silence before sending — 900ms is natural end-of-sentence pause; 1800ms felt robotic
     const VAD_MIN_SPEECH_MS = 300;     // ignore clips shorter than this
     const VAD_MAX_SPEECH_MS = 12000;   // max utterance before force-send
 
@@ -422,7 +422,7 @@ export default function VoiceButton({ mode = 'push-to-talk', onTranscript, onRes
         // TTS is playing or in post-TTS cooldown.
         // Allow interrupt: if user speaks loudly (2.5x above threshold), stop TTS and start recording.
         const rmsNow = getRMS();
-        const isInterrupt = audioPlayingRef.current && rmsNow > VAD_SPEECH_THRESHOLD * 2.5;
+        const isInterrupt = audioPlayingRef.current && rmsNow > VAD_SPEECH_THRESHOLD * 1.8;
         if (isInterrupt && !isSpeaking && !vadSendingRef.current) {
           console.log('[VoiceButton] VAD: interrupt detected — stopping TTS', { rms: rmsNow.toFixed(1) });
           // Stop TTS immediately

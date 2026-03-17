@@ -34,6 +34,7 @@ class ThinkDropMCPClient {
       'screen-intelligence': process.env.MCP_SCREEN_INTELLIGENCE_URL || 'http://localhost:3008',
       'phi4':                process.env.MCP_PHI4_URL                || 'http://localhost:3009',
       'coreference':         process.env.MCP_COREFERENCE_URL         || 'http://localhost:3006',
+      'personality':           process.env.MCP_PERSONALITY_URL           || 'http://localhost:3012',
       ...(options.serviceUrls || {})
     };
 
@@ -46,6 +47,7 @@ class ThinkDropMCPClient {
       'screen-intelligence': process.env.MCP_SCREEN_INTELLIGENCE_API_KEY || process.env.MCP_API_KEY || '',
       'phi4':                process.env.MCP_PHI4_API_KEY                || process.env.MCP_API_KEY || '',
       'coreference':         process.env.MCP_COREFERENCE_API_KEY         || process.env.MCP_API_KEY || '',
+      'personality':           process.env.MCP_PERSONALITY_API_KEY           || process.env.MCP_API_KEY || '',
       ...(options.apiKeys || {})
     };
   }

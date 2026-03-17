@@ -22,6 +22,7 @@ if [ ! -f "$PIDS_FILE" ]; then
     pkill -f "command-service.*http-server" 2>/dev/null || true
     pkill -f "screen-intelligence-service" 2>/dev/null || true
     pkill -f "voice-service/src/server" 2>/dev/null || true
+    pkill -f "personality-service/src/server" 2>/dev/null || true
 else
     # Stop by PID
     while IFS=: read -r service_name pid; do
@@ -44,7 +45,7 @@ fi
 # Final cleanup by port (catches orphaned child processes)
 echo ""
 echo "🧹 Cleaning up orphaned processes on service ports..."
-for port in 3001 3002 3004 3005 3006 3007 3008 3009; do
+for port in 3001 3002 3004 3005 3006 3007 3008 3009 3012; do
     lsof -ti:$port | xargs kill -9 2>/dev/null || true
 done
 
@@ -55,6 +56,9 @@ pkill -9 -f "thinkdrop-user-memory-service/src/server" 2>/dev/null || true
 # Force-kill voice-service nodemon orphans
 pkill -9 -f "voice-service/node_modules/nodemon" 2>/dev/null || true
 pkill -9 -f "voice-service/src/server" 2>/dev/null || true
+
+# Force-kill personality-service orphans
+pkill -9 -f "personality-service/src/server" 2>/dev/null || true
 
 # Release any remaining DuckDB lock holders
 DB_FILE="$PROJECT_ROOT/mcp-services/thinkdrop-user-memory-service/data/user_memory.duckdb"
