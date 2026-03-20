@@ -8,6 +8,13 @@ require('dotenv').config({
 });
 const { app, BrowserWindow, ipcMain, screen, globalShortcut, clipboard } = require('electron');
 
+// Enable webkitSpeechRecognition network access — must be called before app is ready.
+// Without these flags Electron blocks the connection to Google's speech API,
+// causing a 'network' error immediately on recognition.start().
+app.commandLine.appendSwitch('enable-features', 'WebRtcHideLocalIpsWithMdns');
+app.commandLine.appendSwitch('unsafely-treat-insecure-origin-as-secure', 'http://localhost:5173');
+app.commandLine.appendSwitch('allow-insecure-localhost', 'true');
+
 // Safe IPC send — guards against "Render frame was disposed" crash that occurs when
 // a window reloads between the isDestroyed() check and the actual send call.
 function safeSend(win, channel, ...args) {
@@ -27,8 +34,47 @@ const http = require('http');
 // ---------------------------------------------------------------------------
 const OVERLAY_CONTROL_PORT = parseInt(process.env.OVERLAY_CONTROL_PORT || '3010', 10);
 
+// SSE clients connected to GET /voice/companion/events (Chrome companion windows)
+const companionSseClients = new Set();
+
+function broadcastCompanionEvent(eventName, data = {}) {
+  const payload = `event: ${eventName}\ndata: ${JSON.stringify(data)}\n\n`;
+  for (const res of companionSseClients) {
+    try { res.write(payload); } catch (_) {}
+  }
+}
+
 function startOverlayControlServer() {
   const server = http.createServer((req, res) => {
+    // ── CORS — allow Chrome companion window (localhost:5173) to call us ─────
+    res.setHeader('Access-Control-Allow-Origin', 'http://localhost:5173');
+    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+    if (req.method === 'OPTIONS') { res.writeHead(204).end(); return; }
+
+    // ── GET /voice/companion/events — SSE stream for Chrome companion close signal ──
+    if (req.method === 'GET' && req.url === '/voice/companion/events') {
+      res.writeHead(200, {
+        'Content-Type': 'text/event-stream',
+        'Cache-Control': 'no-cache',
+        'Connection': 'keep-alive',
+        'Access-Control-Allow-Origin': 'http://localhost:5173',
+      });
+      res.write(':ok\n\n'); // initial comment to confirm connection
+      companionSseClients.add(res);
+      req.on('close', () => {
+        companionSseClients.delete(res);
+        // When the last Chrome tab disconnects (user closed it manually),
+        // notify the renderer so VoiceButton can reset its companion state.
+        if (companionSseClients.size === 0) {
+          if (promptCaptureWindow && !promptCaptureWindow.isDestroyed()) {
+            safeSend(promptCaptureWindow, 'voice:companion-closed');
+          }
+        }
+      });
+      return;
+    }
+
     res.setHeader('Content-Type', 'application/json');
 
     // ── GET /voice/status — voice-service reads StateGraph journal status ──────
@@ -599,16 +645,17 @@ function createPromptCaptureWindow() {
   });
 
   // Grant microphone access for webkitSpeechRecognition (PTT Web Speech API)
+  // Note: setPermissionRequestHandler fires repeatedly as webkitSpeechRecognition
+  // restarts its session — intentionally not logging here to avoid log spam.
   promptCaptureWindow.webContents.session.setPermissionRequestHandler((webContents, permission, callback) => {
-    if (permission === 'media' || permission === 'microphone') {
-      console.log(`[PROMPT_CAPTURE] Granting permission: ${permission}`);
+    if (permission === 'media' || permission === 'microphone' || permission === 'audiocapture' || permission === 'speech') {
       callback(true);
     } else {
       callback(false);
     }
   });
   promptCaptureWindow.webContents.session.setPermissionCheckHandler((webContents, permission) => {
-    if (permission === 'media' || permission === 'microphone') return true;
+    if (permission === 'media' || permission === 'microphone' || permission === 'audiocapture' || permission === 'speech') return true;
     return false;
   });
 
@@ -1456,6 +1503,23 @@ app.whenReady().then(async () => {
     }
   });
 
+  // voice:companion-open — open Chrome companion window
+  ipcMain.on('voice:companion-open', () => {
+    console.log('🎙️ [Companion] Opening Chrome companion window');
+    const { shell } = require('electron');
+    const isDev = process.env.NODE_ENV === 'development' || !app.isPackaged;
+    const companionUrl = isDev
+      ? 'http://localhost:5173?mode=voice-companion'
+      : `file://${path.join(__dirname, '../../dist-renderer/index.html')}?mode=voice-companion`;
+    shell.openExternal(companionUrl).catch(err => console.warn('[Companion] openExternal failed:', err));
+  });
+
+  // voice:companion-close — send SSE close event so Chrome tab closes itself
+  ipcMain.on('voice:companion-close', () => {
+    console.log('🎙️ [Companion] Broadcasting close to companion windows');
+    broadcastCompanionEvent('close');
+  });
+
   // voice:stop — deactivate voice
   ipcMain.on('voice:stop', () => {
     console.log('🎙️ [Voice] Deactivated');
@@ -1540,6 +1604,15 @@ app.whenReady().then(async () => {
 
       const result = response.data || response;
       console.log(`🎙️ [Voice] Pipeline result: lane=${result.lane}, hasAudio=${!!result.audioBase64}, skipped=${result.skipped}, reason=${result.reason || ''}, transcript=${result.transcript?.substring(0,40) || ''}`);
+
+      // KWS wake-word detected — open session in renderer, skip full pipeline
+      if (result.wakeActivated) {
+        console.log(`🎙️ [Voice] Wake activated (${result.keyword}) — signalling renderer to open session`);
+        safeSend(promptCaptureWindow, 'voice:wake-activated', { keyword: result.keyword });
+        voiceJournal.setVoiceStatus('idle');
+        _voiceChunkActive = Math.max(0, _voiceChunkActive - 1);
+        return;
+      }
 
       // PTT text-only mode: just return the transcript to the renderer, skip LLM/TTS
       if (pttTextOnly) {
@@ -1631,6 +1704,7 @@ app.whenReady().then(async () => {
         const body = JSON.stringify({
           transcript,
           skipSTT: true,
+          skipTTS: false,   // renderer handles TTS via speechSynthesis — skip Cartesia
           pushToTalk,
           skipWakeWordCheck: pushToTalk,
           sessionId: sessionId || currentSessionId,
@@ -1689,6 +1763,18 @@ app.whenReady().then(async () => {
             language: result.detectedLanguage,
             lane: result.lane,
             durationEstimateMs: result.durationEstimateMs || null,
+            triggered: !!(result.triggered),
+          });
+      } else if ((result.responseFinal || result.responseEnglish) && !result.skipped) {
+        // Text-only (skipTTS) — send without audio so renderer uses speechSynthesis
+        safeSend(promptCaptureWindow, 'voice:response', {
+            text: result.responseFinal || result.responseEnglish || '',
+            fullAnswer: result.fullAnswer || '',
+            audioBase64: '',
+            audioFormat: '',
+            language: result.detectedLanguage,
+            lane: result.lane || 'fast',
+            durationEstimateMs: null,
             triggered: !!(result.triggered),
           });
       }

@@ -1,5 +1,6 @@
 import StandalonePromptCapture from './components/StandalonePromptCapture';
 import ResultsWindow from './components/ResultsWindow';
+import VoiceCompanion from './components/VoiceCompanion';
 
 function App() {
   const params = new URLSearchParams(window.location.search);
@@ -11,6 +12,10 @@ function App() {
 
   if (mode === 'results') {
     return <ResultsWindow />;
+  }
+
+  if (mode === 'voice-companion') {
+    return <VoiceCompanion />;
   }
 
   if (mode === 'testoverlay') {

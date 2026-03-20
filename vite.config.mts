@@ -17,5 +17,15 @@ export default defineConfig({
   },
   server: {
     port: 5173,
+    headers: {
+      // Required for SharedArrayBuffer (ONNX Runtime multi-threaded WASM)
+      'Cross-Origin-Opener-Policy': 'same-origin',
+      'Cross-Origin-Embedder-Policy': 'require-corp',
+    },
+  },
+  // kokoro-js + @huggingface/transformers load WASM workers dynamically;
+  // exclude from Vite pre-bundling so the WASM paths resolve correctly.
+  optimizeDeps: {
+    exclude: ['kokoro-js', '@huggingface/transformers', 'onnxruntime-web'],
   },
 });
