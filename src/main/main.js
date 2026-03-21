@@ -2448,10 +2448,13 @@ app.whenReady().then(async () => {
           } else {
             // User provided a custom answer — inject it as recoveryContext and replan
             // (isFreshPrompt already handled the "new task typed as reply" case above)
+            // Use chosenOption (the user's explicit instruction) as the new message so that
+            // parseIntent classifies the USER'S instruction, not the original failed task.
+            // This prevents "Open Spotify" → browser automation override → same failed plan loop.
             console.log('[StateGraph] ASK_USER resume: user provided answer — replanning with context');
             initialState = {
               ...paused,
-              message: paused.message,
+              message: chosenOption,
               streamCallback,
               progressCallback,
               confirmInstallCallback,
