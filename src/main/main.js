@@ -85,6 +85,19 @@ function startOverlayControlServer() {
       return;
     }
 
+    // ── GET /activity — SkillScheduler checks before firing bridge tasks ───────
+    // Returns whether the user is currently active so bridge-type scheduled skills
+    // can defer execution rather than interrupting mid-session work.
+    if (req.method === 'GET' && req.url === '/activity') {
+      const { powerMonitor } = require('electron');
+      const idleSeconds = powerMonitor.getSystemIdleTime();
+      const stategraphRunning = activeAbortController !== null;
+      const active = stategraphRunning || idleSeconds < 30;
+      res.writeHead(200);
+      res.end(JSON.stringify({ ok: true, active, idleSeconds, stategraphRunning }));
+      return;
+    }
+
     if (req.method !== 'POST') {
       res.writeHead(405).end(JSON.stringify({ error: 'Method Not Allowed' }));
       return;
@@ -285,7 +298,8 @@ function startOverlayControlServer() {
       req.on('end', () => {
         try {
           const { skillName, schedule, trigger } = JSON.parse(body || '{}');
-          if (skillName && schedule && schedule !== 'on_demand') {
+          const _skipSched = ['on_demand', 'null', 'none', 'false', ''];
+          if (skillName && schedule && !_skipSched.includes(schedule)) {
             const cronId = `skill_${skillName.replace(/\./g, '_')}`;
             if (!queueManager.getCron().find(i => i.id === cronId)) {
               queueManager.registerCron({
@@ -311,15 +325,33 @@ function startOverlayControlServer() {
       req.on('data', chunk => { body += chunk; });
       req.on('end', () => {
         try {
-          const { id, label, triggerIntent, triggerPrompt, firedAt } = JSON.parse(body || '{}');
+          const { id, label, triggerIntent, triggerPrompt, pendingSteps, firedAt } = JSON.parse(body || '{}');
           console.log(`🔔 [Reminder] Fired: "${label}" (intent=${triggerIntent}, id=${id})`);
 
           const reminderText = triggerPrompt || label || 'Reminder';
 
-          if (triggerIntent === 'command_automate' && triggerPrompt) {
-            console.log(`🔔 [Reminder] Re-running stategraph with: "${triggerPrompt.substring(0, 80)}"`);
-            if (promptQueue) {
-              promptQueue.enqueue(triggerPrompt, { responseLanguage: null });
+          if (triggerIntent === 'execute_steps' && pendingSteps) {
+            // Execute remaining plan steps directly via command-service — no stategraph re-run.
+            // Re-running the original prompt would cause an infinite loop for time-delay reminders.
+            try {
+              const steps = JSON.parse(pendingSteps);
+              const http = require('http');
+              steps.forEach(step => {
+                const stepPayload = JSON.stringify({ payload: { skill: step.skill, args: step.args || {} } });
+                const stepReq = http.request({
+                  hostname: '127.0.0.1', port: 3007, path: '/command.automate', method: 'POST',
+                  headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(stepPayload) },
+                  timeout: 30000,
+                }, (stepRes) => {
+                  let raw = ''; stepRes.on('data', c => { raw += c; });
+                  stepRes.on('end', () => console.log(`🔔 [Reminder] pendingStep ${step.skill} → ${stepRes.statusCode}`));
+                });
+                stepReq.on('error', (e) => console.warn(`🔔 [Reminder] pendingStep execute failed: ${e.message}`));
+                stepReq.write(stepPayload);
+                stepReq.end();
+              });
+            } catch (e) {
+              console.warn(`🔔 [Reminder] pendingSteps parse/execute error: ${e.message}`);
             }
           }
 
@@ -387,6 +419,63 @@ function startOverlayControlServer() {
           res.writeHead(200).end(JSON.stringify({ ok: true }));
         } catch (err) {
           console.error('[Reminder] Fire handler error:', err.message);
+          res.writeHead(500).end(JSON.stringify({ error: err.message }));
+        }
+      });
+      return;
+    }
+
+    // ── POST /bridge/confirm — ask user whether to run a deferred bridge skill now ──
+    // Called by command-service when a bridge skill fires but user is active.
+    // Shows a native Electron dialog: "Run now" vs "Later".
+    // "Run now" → forces /skill.fire immediately bypassing activity check.
+    // "Later"   → command-service retries again in 10 minutes (up to 3 times).
+    if (req.url === '/bridge/confirm') {
+      let body = '';
+      req.on('data', chunk => { body += chunk; });
+      req.on('end', async () => {
+        try {
+          const { skillName, instruction, retryCount } = JSON.parse(body || '{}');
+          const label = (instruction || skillName || 'scheduled task').split(' ').slice(0, 8).join(' ');
+          const { dialog, nativeImage } = require('electron');
+          const path = require('path');
+          const logoPath = path.join(__dirname, '..', 'renderer', 'assets', 'logo.jpg');
+          let logoIcon;
+          try { logoIcon = nativeImage.createFromPath(logoPath); } catch (_) {}
+          const attemptsLeft = 3 - (retryCount || 0);
+          const deferNote = attemptsLeft > 0 ? `(auto-runs in ~${attemptsLeft * 10} min if you choose Later)` : '(last chance — will run now regardless)';
+          const { response } = await dialog.showMessageBox({
+            type: 'question',
+            title: 'ThinkDrop — Scheduled Task Ready',
+            message: `"${label}" is ready to run.`,
+            detail: `Run it now, or defer until you're free? ${deferNote}`,
+            buttons: ['Run Now', 'Later'],
+            defaultId: 0,
+            cancelId: 1,
+            icon: logoIcon || undefined,
+          });
+          if (response === 0) {
+            // "Run Now" — force-fire via /skill.fire (bypasses activity check)
+            const http = require('http');
+            const cmdPort = parseInt(process.env.SERVICE_PORT || process.env.COMMAND_SERVICE_PORT || '3007', 10);
+            const fireBody = JSON.stringify({ skillName, forced: true });
+            const fireReq = http.request({
+              hostname: '127.0.0.1', port: cmdPort,
+              path: '/skill.fire', method: 'POST',
+              headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(fireBody) },
+              timeout: 60000,
+            }, (r) => { r.resume(); });
+            fireReq.on('error', (e) => console.warn('[BridgeConfirm] force-fire error:', e.message));
+            fireReq.write(fireBody);
+            fireReq.end();
+            console.log(`[BridgeConfirm] User chose Run Now → force-firing ${skillName}`);
+            res.writeHead(200).end(JSON.stringify({ ok: true, action: 'run_now' }));
+          } else {
+            console.log(`[BridgeConfirm] User chose Later → ${skillName} retrying in 10min`);
+            res.writeHead(200).end(JSON.stringify({ ok: true, action: 'defer' }));
+          }
+        } catch (err) {
+          console.error('[BridgeConfirm] handler error:', err.message);
           res.writeHead(500).end(JSON.stringify({ error: err.message }));
         }
       });
@@ -473,6 +562,10 @@ let activeScheduleCountdown = null; // { id, targetTime, label }
 // App control mode — persistent fast-dispatch state (bypasses StateGraph when active)
 // { active: bool, app: string|null, enteredAt: ISO }
 let appControlMode = { active: false, app: null, enteredAt: null };
+
+// AbortController for the currently running stateGraph.execute — null when idle.
+// Hoisted to module scope so GET /activity (startOverlayControlServer) can read it.
+let activeAbortController = null;
 
 function initStateGraph() {
   try {
@@ -1005,8 +1098,11 @@ app.whenReady().then(async () => {
         const fm = fmMatch ? fmMatch[1] : '';
         const scheduleMatch = fm.match(/^schedule\s*:\s*(.+)$/m);
         const triggerMatch  = fm.match(/^trigger\s*:\s*(.+)$/m);
-        const schedule = scheduleMatch ? scheduleMatch[1].trim() : 'on_demand';
-        if (!schedule || schedule === 'on_demand') continue;
+        const rawSched = scheduleMatch ? scheduleMatch[1].trim() : 'on_demand';
+        // Skip any falsy or placeholder schedule — 'null'/'false'/'none'/'on_demand' all mean no cron
+        const SKIP_SCHEDULES = ['on_demand', 'null', 'none', 'false', ''];
+        if (!rawSched || SKIP_SCHEDULES.includes(rawSched)) continue;
+        const schedule = rawSched;
         const cronId = `skill_${skillName.replace(/\./g, '_')}`;
         if (queueManager.getCron().find(i => i.id === cronId)) continue;
         const trigger = triggerMatch ? triggerMatch[1].trim() : skillName;
@@ -1461,7 +1557,8 @@ app.whenReady().then(async () => {
   // Accepts HTTP POST from command-service: { skillName, schedule, trigger }
   // schedule is a cron expression like "0 21 * * *"
   ipcMain.on('skill:schedule-register', (_event, { skillName, schedule, trigger } = {}) => {
-    if (!skillName || !schedule || schedule === 'on_demand') return;
+    const _SKIP = ['on_demand', 'null', 'none', 'false', ''];
+    if (!skillName || !schedule || _SKIP.includes(schedule)) return;
     const cronId = `skill_${skillName.replace(/\./g, '_')}`;
     // Avoid duplicate registration
     if (queueManager.getCron().find(i => i.id === cronId)) return;
@@ -1473,7 +1570,8 @@ app.whenReady().then(async () => {
   // Paused automation state — set when recoverSkill returns ASK_USER, cleared on resume or abort
   let pausedAutomationState = null;
   let pausedSkillBuildState = null; // set when installSkill pauses for ASK_USER (secrets)
-  let activeAbortController = null; // AbortController for the currently running stateGraph.execute
+  // activeAbortController is declared at module scope (above startOverlayControlServer)
+  // so GET /activity can read it to detect an in-progress stategraph run.
 
   // ─── Automation: Cancel active run ───────────────────────────────────────
   ipcMain.on('automation:cancel', () => {
@@ -4055,6 +4153,28 @@ app.whenReady().then(async () => {
           .map(c => kt.deletePassword('thinkdrop', c.account).catch(() => {})));
       } catch (_) {}
 
+      // 5. Remove any pending bridge.md blocks for this skill (prevents re-firing on restart)
+      try {
+        const bridgeFilePath = require('path').join(require('os').homedir(), '.thinkdrop', 'bridge.md');
+        if (require('fs').existsSync(bridgeFilePath)) {
+          let bridgeContent = require('fs').readFileSync(bridgeFilePath, 'utf8');
+          // Block IDs are: sched_<skillName_dots_replaced_with_underscores>_<timestamp>
+          const idPrefix = `sched_${skillName.replace(/\./g, '_')}_`;
+          const safePrefix = idPrefix.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+          const blockRe = new RegExp(
+            `\\n?<!--\\s*[A-Z][A-Z0-9_]*:[\\w]+ id=["']?${safePrefix}[\\d]+["']?[^>]*-->[\\s\\S]*?<!--\\s*[A-Z][A-Z0-9_]*:END\\s*-->\\n?`,
+            'g'
+          );
+          const cleaned = bridgeContent.replace(blockRe, '');
+          if (cleaned !== bridgeContent) {
+            require('fs').writeFileSync(bridgeFilePath, cleaned, 'utf8');
+            console.log(`[Skills] Removed bridge.md blocks for skill: ${skillName}`);
+          }
+        }
+      } catch (bridgeErr) {
+        console.error(`[Skills] Failed to clean bridge.md for ${skillName}:`, bridgeErr.message);
+      }
+
       console.log(`[Skills] Deleted skill: ${skillName}`);
       // Refresh both tabs
       ipcMain.emit('skills:list');
@@ -4821,12 +4941,16 @@ app.whenReady().then(async () => {
     try {
       const http = require('http');
       const cmdPort = parseInt(process.env.SERVICE_PORT || process.env.COMMAND_SERVICE_PORT || '3007', 10);
-      const body = JSON.stringify({ payload: { skill: 'external.skill', args: { name: skillName } } });
+      // Use /skill.fire so the scheduler dispatches via the correct tier
+      // (bridge → WS:INSTRUCTION, notify → osascript, script → external.skill).
+      // The old /command.automate + external.skill path fails for contract-based
+      // skills whose exec_path is a .md file, not an index.cjs.
+      const body = JSON.stringify({ skillName });
       const req = http.request({
         hostname: '127.0.0.1', port: cmdPort,
-        path: '/command.automate', method: 'POST',
+        path: '/skill.fire', method: 'POST',
         headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) },
-        timeout: 30000,
+        timeout: 60000,
       }, (res) => {
         let data = '';
         res.on('data', chunk => { data += chunk; });
@@ -4834,10 +4958,9 @@ app.whenReady().then(async () => {
           console.log(`[Cron] Run now result for ${skillName} (HTTP ${res.statusCode}):`, data.slice(0, 300));
           try {
             const parsed = JSON.parse(data);
-            const result = parsed.data || parsed;
-            if (!result.ok && result.error) {
-              console.warn(`[Cron] ${skillName} run failed: ${result.error}`);
-              broadcastCronError(result.error);
+            if (!parsed.ok && parsed.error) {
+              console.warn(`[Cron] ${skillName} run failed: ${parsed.error}`);
+              broadcastCronError(parsed.error);
               return;
             }
           } catch (_) {}
@@ -4877,7 +5000,8 @@ app.whenReady().then(async () => {
         const attrs = {};
         const attrRe = /(\w+)=([^\s>]+)/g;
         let am;
-        while ((am = attrRe.exec(attrsStr)) !== null) attrs[am[1]] = am[2];
+        // Strip surrounding quotes from attribute values (e.g. status="pending" → pending)
+        while ((am = attrRe.exec(attrsStr)) !== null) attrs[am[1]] = am[2].replace(/^["']|["']$/g, '');
         blocks.push({ id: attrs.id || `${prefix}_${type}_unknown`, prefix, type, status: attrs.status || 'unknown', body: body.trim() });
       }
       return blocks;
@@ -4950,15 +5074,7 @@ app.whenReady().then(async () => {
                   }
                 };
 
-                // Build a prompt that routes to command_automate via skill-name invocation
-                // and instructs planSkills to act on this specific block body + write back
-                const autoPrompt = [
-                  `file.bridge act`,
-                  ``,
-                  `Execute this pending bridge instruction (block id: ${block.id}) and write a TD:RESULT block back to the bridge when done:`,
-                  ``,
-                  block.body,
-                ].join('\n');
+                const autoPrompt = block.body;
 
                 const initialState = {
                   message: autoPrompt,
@@ -5025,13 +5141,7 @@ app.whenReady().then(async () => {
               safeSend(resultsWindow, 'results-window:set-prompt', `[Bridge] ${block.body.split('\n')[0].slice(0, 80)}`);
             }
             if (stateGraph) {
-              const autoPrompt = [
-                `file.bridge act`,
-                ``,
-                `Execute this pending bridge instruction (block id: ${block.id}) and write a TD:RESULT block back to the bridge when done:`,
-                ``,
-                block.body,
-              ].join('\n');
+              const autoPrompt = block.body;
               stateGraph.execute({
                 message: autoPrompt,
                 selectedText: '',
@@ -5058,21 +5168,25 @@ app.whenReady().then(async () => {
       }, 2000); // 2s delay — wait for stateGraph and windows to be fully ready
     }
 
-    function markBridgeBlockDone(blockId, finalStatus = 'done') {
+    function markBridgeBlockDone(blockId) {
       try {
         if (!fs.existsSync(BRIDGE_FILE)) return;
         let content = fs.readFileSync(BRIDGE_FILE, 'utf8');
-        // Replace status=pending with status=<finalStatus> for this specific block ID
-        const updated = content.replace(
-          new RegExp(`(<!--\\s*(?:WS|TD):[A-Z]+ id=${blockId}[^>]*?)status=pending`),
-          `$1status=${finalStatus}`
+        // Remove the entire block from bridge.md — prevents re-firing on restart
+        // Block format uses quoted attrs: id="..." status="pending"
+        const safeId = blockId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        const blockRe = new RegExp(
+          `\\n?<!--\\s*[A-Z][A-Z0-9_]*:[\\w]+ id=["']?${safeId}["']?[^>]*-->[\\s\\S]*?<!--\\s*[A-Z][A-Z0-9_]*:END\\s*-->\\n?`
         );
+        const updated = content.replace(blockRe, '');
         if (updated !== content) {
           fs.writeFileSync(BRIDGE_FILE, updated, 'utf8');
-          console.log(`🌉 [Bridge Listener] Marked block ${blockId} as ${finalStatus} in bridge file`);
+          console.log(`🌉 [Bridge Listener] Removed block ${blockId} from bridge file`);
+        } else {
+          console.warn(`🌉 [Bridge Listener] Block ${blockId} not found in bridge file for removal`);
         }
       } catch (err) {
-        console.error(`[Bridge Listener] Failed to mark block ${blockId} done:`, err.message);
+        console.error(`[Bridge Listener] Failed to remove block ${blockId}:`, err.message);
       }
     }
 
