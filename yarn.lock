@@ -4513,6 +4513,15 @@ __metadata:
   languageName: node
   linkType: hard
 
+"jsonrepair@npm:^3.13.3":
+  version: 3.13.3
+  resolution: "jsonrepair@npm:3.13.3"
+  bin:
+    jsonrepair: bin/cli.js
+  checksum: 673fd96f9fe2a77d7dfa0572b1eeb946f0b18c08363017aaa52db6b5039a6a0b8c48711812b4a49a82f9b27df3d9b365c6dd9543ade4bb3350dce954d2ade19e
+  languageName: node
+  linkType: hard
+
 "keytar@npm:^7.9.0":
   version: 7.9.0
   resolution: "keytar@npm:7.9.0"
@@ -7357,6 +7366,7 @@ __metadata:
     concurrently: ^8.0.0
     electron: ^28.0.0
     electron-builder: ^24.0.0
+    jsonrepair: ^3.13.3
     keytar: ^7.9.0
     kokoro-js: ^1.2.1
     lucide-react: ^0.263.0

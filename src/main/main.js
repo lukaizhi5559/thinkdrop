@@ -2245,8 +2245,10 @@ app.whenReady().then(async () => {
         // ── Part C: Semantic check via voice-service embedding classifier ─────
         // Compare new prompt against the paused question text using cosine similarity.
         // Falls back to regex heuristic if voice-service is unavailable.
+        // Scout select responses (provider names like "openai") must never be reclassified
+        // as fresh tasks — skip the semantic check entirely for _isScoutSelect pauses.
         let isFreshPrompt = isExpired;
-        if (!isFreshPrompt) {
+        if (!isFreshPrompt && !paused.pendingQuestion?._isScoutSelect) {
           try {
             const http = require('http');
             const classifyResult = await new Promise((resolve, reject) => {
@@ -4176,6 +4178,43 @@ app.whenReady().then(async () => {
       }
 
       console.log(`[Skills] Deleted skill: ${skillName}`);
+
+      // 6. Inject a system context message so the LLM knows the skill is gone.
+      //    Without this, conversation history still contains messages about what
+      //    the skill did, causing the LLM to assume it's still active.
+      try {
+        const _activeSession = currentSessionId;
+        if (_activeSession) {
+          const _memPort = parseInt(process.env.MEMORY_SERVICE_PORT || '3001', 10);
+          const _sysMsg = JSON.stringify({
+            version: 'mcp.v1', service: 'conversation', action: 'message.add',
+            payload: {
+              sessionId: _activeSession,
+              text: `[System] Skill "${skillName}" was deleted by the user. Any capabilities it provided, and any enforcement rules it implemented, no longer apply. Do not reference or rely on this skill in future responses.`,
+              sender: 'system',
+              metadata: { event: 'skill_deleted', skillName, timestamp: new Date().toISOString() },
+            },
+            requestId: `skill_del_${Date.now()}`,
+          });
+          await new Promise(resolve => {
+            const _convPort = parseInt(process.env.CONVERSATION_SERVICE_PORT || '3004', 10);
+            const _req = http.request(
+              { hostname: '127.0.0.1', port: _convPort, path: '/message.add', method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(_sysMsg) },
+                timeout: 3000 },
+              res => { res.resume(); resolve(); }
+            );
+            _req.on('error', () => resolve());
+            _req.on('timeout', () => { _req.destroy(); resolve(); });
+            _req.write(_sysMsg);
+            _req.end();
+          });
+          console.log(`[Skills] System context message injected for deleted skill: ${skillName}`);
+        }
+      } catch (_ctxErr) {
+        console.warn(`[Skills] Failed to inject context message for deleted skill: ${_ctxErr.message}`);
+      }
+
       // Refresh both tabs
       ipcMain.emit('skills:list');
       ipcMain.emit('cron:list');

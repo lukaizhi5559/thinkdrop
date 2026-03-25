@@ -865,6 +865,7 @@ export default function AutomationProgress({ onHeightChange, onActiveChange }: A
           scout={scoutMatch}
           onSelect={(match) => {
             setScoutMatch(null);
+            setAskUserPrompt(null); // dismiss the ask_user options card too
             ipcRenderer?.send('prompt-queue:submit', { prompt: match.provider, selectedText: '' });
           }}
         />
