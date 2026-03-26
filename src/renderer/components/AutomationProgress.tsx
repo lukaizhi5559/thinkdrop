@@ -56,6 +56,8 @@ interface GatherCredential {
   question: string;
   hint: string | null;
   helpUrl: string | null;
+  sensitive?: boolean;
+  optional?: boolean;
 }
 
 interface GatherConfirm {
@@ -455,6 +457,8 @@ export default function AutomationProgress({ onHeightChange, onActiveChange }: A
             question: data.question,
             hint: data.hint || null,
             helpUrl: data.helpUrl || null,
+            sensitive: data.sensitive || false,
+            optional: data.optional || false,
           });
           break;
 
@@ -668,9 +672,14 @@ export default function AutomationProgress({ onHeightChange, onActiveChange }: A
   };
 
   const handleGatherCredentialSubmit = () => {
-    if (!gatherCredential || !gatherCredentialValue.trim()) return;
+    if (!gatherCredential) return;
+    // Allow empty submission for optional credentials (e.g. 2FA code — user wants to skip)
+    if (!gatherCredentialValue.trim() && !gatherCredential.optional) return;
     ipcRenderer?.send('gather:credential', { key: gatherCredential.credentialKey, value: gatherCredentialValue });
+    setGatherCredential(null);
     setGatherCredentialValue('');
+    setGuideStep(null);
+    setPhase('running');
   };
 
   const handleGatherConfirm = (yes: boolean) => {
@@ -865,7 +874,6 @@ export default function AutomationProgress({ onHeightChange, onActiveChange }: A
           scout={scoutMatch}
           onSelect={(match) => {
             setScoutMatch(null);
-            setAskUserPrompt(null); // dismiss the ask_user options card too
             ipcRenderer?.send('prompt-queue:submit', { prompt: match.provider, selectedText: '' });
           }}
         />
@@ -1011,36 +1019,38 @@ export default function AutomationProgress({ onHeightChange, onActiveChange }: A
                   ↗ Open credentials page
                 </a>
               )}
-              {/* CLI-style masked input */}
+              {/* CLI-style input — masked for passwords/secrets, visible for emails/usernames */}
+              {/* Key label on its own row so it never pushes the button off-screen */}
+              <div style={{ color: '#10b981', fontSize: '0.68rem', fontFamily: 'monospace', marginBottom: 4, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                {gatherCredential.credentialKey}
+              </div>
               <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                <span style={{ color: '#10b981', fontSize: '0.72rem', fontFamily: 'monospace', flexShrink: 0 }}>
-                  {gatherCredential.credentialKey} =
-                </span>
                 <input
-                  type="password"
+                  type={gatherCredential.sensitive ? 'password' : 'text'}
                   value={gatherCredentialValue}
                   onChange={e => setGatherCredentialValue(e.target.value)}
                   onKeyDown={e => { if (e.key === 'Enter') handleGatherCredentialSubmit(); }}
-                  placeholder="Paste value here…"
+                  placeholder={gatherCredential.optional ? 'Leave empty to skip…' : 'Paste value here…'}
                   autoFocus
                   style={{
-                    flex: 1, background: 'rgba(0,0,0,0.35)', border: '1px solid rgba(16,185,129,0.35)',
+                    flex: 1, minWidth: 0, background: 'rgba(0,0,0,0.35)', border: '1px solid rgba(16,185,129,0.35)',
                     borderRadius: 5, padding: '4px 8px', color: '#d1fae5', fontSize: '0.72rem',
                     fontFamily: 'monospace', outline: 'none',
                   }}
                 />
                 <button
                   onClick={handleGatherCredentialSubmit}
-                  disabled={!gatherCredentialValue.trim()}
+                  disabled={!gatherCredential.optional && !gatherCredentialValue.trim()}
                   style={{
-                    padding: '4px 10px', borderRadius: 5, cursor: gatherCredentialValue.trim() ? 'pointer' : 'not-allowed',
-                    backgroundColor: gatherCredentialValue.trim() ? 'rgba(16,185,129,0.2)' : 'rgba(16,185,129,0.05)',
+                    flexShrink: 0, padding: '4px 10px', borderRadius: 5,
+                    cursor: (gatherCredential.optional || gatherCredentialValue.trim()) ? 'pointer' : 'not-allowed',
+                    backgroundColor: (gatherCredential.optional || gatherCredentialValue.trim()) ? 'rgba(16,185,129,0.2)' : 'rgba(16,185,129,0.05)',
                     border: '1px solid rgba(16,185,129,0.35)',
                     color: '#6ee7b7', fontSize: '0.69rem', fontWeight: 600,
-                    opacity: gatherCredentialValue.trim() ? 1 : 0.4,
+                    opacity: (gatherCredential.optional || gatherCredentialValue.trim()) ? 1 : 0.4,
                   }}
                 >
-                  Store
+                  {gatherCredential.optional && !gatherCredentialValue.trim() ? 'Skip →' : 'Store'}
                 </button>
               </div>
               <div style={{ color: '#374151', fontSize: '0.65rem', marginTop: 4 }}>

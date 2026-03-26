@@ -248,6 +248,7 @@ export default function ResultsWindow() {
       setIsThinking(true);
       setIsSynthesisCollapsed(true);
       setIsAutomationMode(false); // AutomationProgress will self-activate on 'planning' event
+      setSkillBuild(null); // clear any stale build progress card from previous run
       if (glowOffTimerRef.current) clearTimeout(glowOffTimerRef.current);
       setIsGlowActive(true);
       

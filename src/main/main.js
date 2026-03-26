@@ -2128,8 +2128,10 @@ app.whenReady().then(async () => {
     };
 
     // gatherCredentialCallback: prompts the user for a sensitive value, stores it in keytar,
-    // and resolves with { stored: true }. The actual secret never touches state.
-    const gatherCredentialCallback = (credentialKey) => {
+    // and resolves with { stored: true, value }.
+    // value is returned so callers (e.g. ask_user handler) can propagate it to _gatheredVars
+    // for the following profile.store_secret step.  It must NOT be logged or persisted to disk.
+    const gatherCredentialCallback = (credentialKey, _opts = {}) => {
       return new Promise((resolve) => {
         // Emit credential prompt to Queue tab via progressCallback
         // The UI shows a CLI-style masked input — user submits via gather:credential IPC
@@ -2137,15 +2139,15 @@ app.whenReady().then(async () => {
         const handleCredSubmit = async (_event, { key, value }) => {
           if (key !== credentialKey) return; // not our credential
           ipcMain.off('gather:credential', handleCredSubmit);
-          if (!value) { pendingCredResolve({ stored: false }); return; }
+          if (!value) { pendingCredResolve({ stored: false, value: null }); return; }
           try {
             const keytar = require('keytar');
             await keytar.setPassword('thinkdrop', credentialKey, value);
             console.log(`[GatherContext] Stored credential: ${credentialKey}`);
-            pendingCredResolve({ stored: true });
+            pendingCredResolve({ stored: true, value });
           } catch (e) {
             console.error(`[GatherContext] keytar store failed for ${credentialKey}:`, e.message);
-            pendingCredResolve({ stored: false, error: e.message });
+            pendingCredResolve({ stored: false, value: null, error: e.message });
           }
         };
         ipcMain.on('gather:credential', handleCredSubmit);
@@ -2153,7 +2155,7 @@ app.whenReady().then(async () => {
         setTimeout(() => {
           ipcMain.off('gather:credential', handleCredSubmit);
           if (pendingCredResolve) {
-            pendingCredResolve({ stored: false });
+            pendingCredResolve({ stored: false, value: null });
             pendingCredResolve = null;
           }
         }, 10 * 60 * 1000);
@@ -2248,7 +2250,22 @@ app.whenReady().then(async () => {
         // Scout select responses (provider names like "openai") must never be reclassified
         // as fresh tasks — skip the semantic check entirely for _isScoutSelect pauses.
         let isFreshPrompt = isExpired;
-        if (!isFreshPrompt && !paused.pendingQuestion?._isScoutSelect) {
+
+        // ── Part B: Offered-option exact match ──────────────────────────────────
+        // When the paused question presented discrete choices and the user's reply
+        // matches one of them verbatim, it is ALWAYS a resume answer — never a fresh task.
+        // Skips the voice-service semantic check entirely to avoid false-positive fresh classification.
+        // e.g. recoverSkill offered ["Set up access via browser", "Install Google API client"]
+        // and user replies "Install Google API client" — must be treated as a resume, not new command.
+        const _pausedOpts = paused.pendingQuestion?.options;
+        const _isOfferedOptionMatch = !isFreshPrompt &&
+          Array.isArray(_pausedOpts) && _pausedOpts.length > 0 &&
+          _pausedOpts.some(opt => typeof opt === 'string' && opt.trim().toLowerCase() === prompt.trim().toLowerCase());
+        if (_isOfferedOptionMatch) {
+          console.log(`[StateGraph] ASK_USER resume: prompt exactly matches offered option "${prompt.trim()}" — resuming (skipping semantic check)`);
+        }
+
+        if (!isFreshPrompt && !_isOfferedOptionMatch && !paused.pendingQuestion?._isScoutSelect) {
           try {
             const http = require('http');
             const classifyResult = await new Promise((resolve, reject) => {
@@ -2525,6 +2542,35 @@ app.whenReady().then(async () => {
               resumeFromLogin: true,
               context: { ...paused.context, sessionId: sessionId || currentSessionId }
             };
+          } else if (/^Yes,?\s*build\s+the\s+skill\s+for:\s*/i.test(chosenOption.trim())) {
+            // User clicked "Yes, build the skill for: [capability]" from a needs_skill card.
+            // Re-submitting that text as a new message would cause planSkills to return
+            // needs_skill again → infinite loop.  Instead, restore the ORIGINAL task
+            // message and set forceBrowserFallback=true so planSkills converts any
+            // remaining needs_skill step to browser.act (attempt via web browser).
+            const originalTask = paused.message || chosenOption.replace(/^Yes,?\s*build\s+the\s+skill\s+for:\s*/i, '').trim();
+            console.log(`[StateGraph] ASK_USER resume: needs_skill accepted — browser fallback for "${originalTask}"`);
+            initialState = {
+              ...paused,
+              message: originalTask,
+              streamCallback,
+              progressCallback,
+              confirmInstallCallback,
+              confirmGuideCallback,
+              isGuideCancelled,
+              failedStep: null,
+              pendingQuestion: null,
+              recoveryAction: null,
+              recoveryContext: null,
+              answer: undefined,
+              commandExecuted: false,
+              skillPlan: null,
+              skillCursor: 0,
+              stepRetryCount: 0,
+              scoutPending: false,
+              forceBrowserFallback: true,
+              context: { ...paused.context, sessionId: sessionId || currentSessionId }
+            };
           } else if (wantsSkip || wantsDone) {
             // Skip the failed step / user confirmed manual action — advance cursor and resume plan
             console.log('[StateGraph] ASK_USER resume: user chose skip/done — advancing cursor and resuming plan');
@@ -2751,7 +2797,10 @@ app.whenReady().then(async () => {
           // Persist the full state so the next user reply can resume / re-enter
           pausedAutomationState = { ...finalState, _pausedAt: Date.now() };
           console.log(`[StateGraph] ASK_USER (${intentType}): pausing — next prompt will resume`);
-          if (resultsWindow && !resultsWindow.isDestroyed()) {
+          // Skip emitting ask_user for scout provider selections — the ScoutMatchCard in
+          // AutomationProgress (rendered from the scout_match progress event) is the correct
+          // UI for this. Emitting ask_user here would show a duplicate options card.
+          if (resultsWindow && !resultsWindow.isDestroyed() && !q._isScoutSelect) {
             safeSend(resultsWindow, 'automation:progress', {
               type: 'ask_user',
               question: q.question,
