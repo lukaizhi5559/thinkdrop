@@ -718,13 +718,15 @@ const OAUTH_KNOWN_SCOPES: Record<string, { value: string; label: string; desc: s
   ],
 };
 
-function OAuthConnectRow({ conn, skillName, onConnect, onScopesChange }: {
+function OAuthConnectRow({ conn, skillName, onConnect, onScopesChange, onRepairOAuth }: {
   conn: OAuthConnection;
   skillName: string;
   onConnect: (skillName: string, provider: string, tokenKey: string, scopes?: string) => void;
   onScopesChange: (skillName: string, provider: string, scopes: string) => void;
+  onRepairOAuth: (skillName: string) => void;
 }) {
   const [connecting, setConnecting] = React.useState(false);
+  const [repairing, setRepairing]   = React.useState(false);
   const [scopeOpen, setScopeOpen] = React.useState(false);
   const meta = OAUTH_PROVIDER_META[conn.provider] || { label: conn.provider, color: '#9ca3af' };
   const knownScopes = OAUTH_KNOWN_SCOPES[conn.provider] || [];
@@ -770,11 +772,13 @@ function OAuthConnectRow({ conn, skillName, onConnect, onScopesChange }: {
   const catalogValues = new Set(knownScopes.map(s => s.value));
   const unknownActive = [...activeScopes].filter(s => !catalogValues.has(s));
 
+  const scopesMissing = knownScopes.length > 0 && [...activeScopes].length === 0;
+
   return (
     <div style={{
       borderRadius: 7,
-      background: conn.connected ? 'rgba(74,222,128,0.04)' : 'rgba(255,255,255,0.03)',
-      border: conn.connected ? '1px solid rgba(74,222,128,0.2)' : '1px solid rgba(255,255,255,0.08)',
+      background: scopesMissing ? 'rgba(245,158,11,0.05)' : conn.connected ? 'rgba(74,222,128,0.04)' : 'rgba(255,255,255,0.03)',
+      border: scopesMissing ? '1px solid rgba(245,158,11,0.35)' : conn.connected ? '1px solid rgba(74,222,128,0.2)' : '1px solid rgba(255,255,255,0.08)',
       overflow: 'hidden',
     }}>
       {/* ── Main row ── */}
@@ -789,21 +793,42 @@ function OAuthConnectRow({ conn, skillName, onConnect, onScopesChange }: {
             {conn.connected && conn.accountHint && (
               <div style={{ fontSize: '0.58rem', color: '#6b7280', marginTop: 1 }}>{conn.accountHint}</div>
             )}
-            {/* Scope summary — click to edit */}
+            {scopesMissing && (
+              <div style={{ fontSize: '0.58rem', color: '#f59e0b', marginTop: 2 }}>
+                No scopes configured — click <strong>⚠ Repair</strong> to auto-detect, then Reconnect.
+              </div>
+            )}
+            {/* Scope summary — click to edit; Repair button when 0 scopes */}
             {knownScopes.length > 0 && (
-              <button
-                onClick={e => { e.stopPropagation(); setScopeOpen(o => !o); }}
-                style={{
-                  marginTop: 3, padding: '1px 5px', borderRadius: 3, fontSize: '0.54rem', cursor: 'pointer',
-                  background: scopeOpen ? 'rgba(99,102,241,0.15)' : 'rgba(255,255,255,0.04)',
-                  border: scopeOpen ? '1px solid rgba(99,102,241,0.4)' : '1px solid rgba(255,255,255,0.1)',
-                  color: scopeOpen ? '#a5b4fc' : '#6b7280',
-                  fontFamily: 'ui-monospace,monospace', display: 'flex', alignItems: 'center', gap: 4,
-                }}
-              >
-                <span>{[...activeScopes].length} scope{[...activeScopes].length !== 1 ? 's' : ''}</span>
-                <span style={{ opacity: 0.6 }}>{scopeOpen ? '▲' : '▼'} edit</span>
-              </button>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginTop: 3 }}>
+                <button
+                  onClick={e => { e.stopPropagation(); setScopeOpen(o => !o); }}
+                  style={{
+                    padding: '1px 5px', borderRadius: 3, fontSize: '0.54rem', cursor: 'pointer',
+                    background: scopeOpen ? 'rgba(99,102,241,0.15)' : 'rgba(255,255,255,0.04)',
+                    border: scopeOpen ? '1px solid rgba(99,102,241,0.4)' : '1px solid rgba(255,255,255,0.1)',
+                    color: scopeOpen ? '#a5b4fc' : '#6b7280',
+                    fontFamily: 'ui-monospace,monospace', display: 'flex', alignItems: 'center', gap: 4,
+                  }}
+                >
+                  <span>{[...activeScopes].length} scope{[...activeScopes].length !== 1 ? 's' : ''}</span>
+                  <span style={{ opacity: 0.6 }}>{scopeOpen ? '▲' : '▼'} edit</span>
+                </button>
+{scopesMissing && (
+                  <button
+                    onClick={e => { e.stopPropagation(); setRepairing(true); onRepairOAuth(skillName); setTimeout(() => setRepairing(false), 8000); }}
+                    disabled={repairing}
+                    title="Auto-detect required scopes from skill code"
+                    style={{
+                      padding: '1px 6px', borderRadius: 3, fontSize: '0.54rem', cursor: repairing ? 'wait' : 'pointer',
+                      background: 'rgba(245,158,11,0.1)', border: '1px solid rgba(245,158,11,0.35)',
+                      color: repairing ? '#6b7280' : '#fbbf24', fontFamily: 'ui-monospace,monospace',
+                    }}
+                  >
+                    {repairing ? 'Scanning…' : '⚠ Repair'}
+                  </button>
+                )}
+              </div>
             )}
           </div>
         </div>
@@ -818,9 +843,9 @@ function OAuthConnectRow({ conn, skillName, onConnect, onScopesChange }: {
             disabled={connecting}
             style={{
               padding: '4px 10px', borderRadius: 5, fontSize: '0.62rem', cursor: connecting ? 'wait' : 'pointer', fontWeight: 600, flexShrink: 0,
-              background: connecting ? 'rgba(255,255,255,0.04)' : conn.connected ? 'rgba(255,255,255,0.06)' : 'rgba(66,133,244,0.12)',
-              border: connecting ? '1px solid rgba(255,255,255,0.08)' : conn.connected ? '1px solid rgba(255,255,255,0.12)' : '1px solid rgba(66,133,244,0.35)',
-              color: connecting ? '#4b5563' : conn.connected ? '#9ca3af' : '#93bbff',
+              background: connecting ? 'rgba(255,255,255,0.04)' : scopesMissing ? 'rgba(245,158,11,0.1)' : conn.connected ? 'rgba(255,255,255,0.06)' : 'rgba(66,133,244,0.12)',
+              border: connecting ? '1px solid rgba(255,255,255,0.08)' : scopesMissing ? '1px solid rgba(245,158,11,0.4)' : conn.connected ? '1px solid rgba(255,255,255,0.12)' : '1px solid rgba(66,133,244,0.35)',
+              color: connecting ? '#4b5563' : scopesMissing ? '#fbbf24' : conn.connected ? '#9ca3af' : '#93bbff',
             }}
           >
             {connecting ? 'Opening…' : conn.connected ? 'Reconnect' : 'Connect'}
@@ -892,12 +917,13 @@ function OAuthConnectRow({ conn, skillName, onConnect, onScopesChange }: {
   );
 }
 
-function SkillItemCard({ item, onSaveSecret, onOpenCode, onOAuthConnect, onScopesChange, onDelete }: {
+function SkillItemCard({ item, onSaveSecret, onOpenCode, onOAuthConnect, onScopesChange, onRepairOAuth, onDelete }: {
   item: SkillItem;
   onSaveSecret: (skillName: string, key: string, value: string) => void;
   onOpenCode: (filePath: string) => void;
   onOAuthConnect: (skillName: string, provider: string, tokenKey: string, scopes?: string) => void;
   onScopesChange: (skillName: string, provider: string, scopes: string) => void;
+  onRepairOAuth: (skillName: string) => void;
   onDelete: (skillName: string) => void;
 }) {
   const cfg = SKILL_STATUS_CONFIG[item.status];
@@ -1043,6 +1069,7 @@ function SkillItemCard({ item, onSaveSecret, onOpenCode, onOAuthConnect, onScope
                   skillName={item.name}
                   onConnect={onOAuthConnect}
                   onScopesChange={onScopesChange}
+                  onRepairOAuth={onRepairOAuth}
                 />
               ))}
             </div>
@@ -1153,13 +1180,14 @@ function SkillItemCard({ item, onSaveSecret, onOpenCode, onOAuthConnect, onScope
   );
 }
 
-export function SkillsTab({ items, onSaveSecret, onOpenCode, onUploadSkill, onOAuthConnect, onScopesChange, onDelete }: {
+export function SkillsTab({ items, onSaveSecret, onOpenCode, onUploadSkill, onOAuthConnect, onScopesChange, onRepairOAuth, onDelete }: {
   items: SkillItem[];
   onSaveSecret: (skillName: string, key: string, value: string) => void;
   onOpenCode: (filePath: string) => void;
   onUploadSkill?: () => void;
   onOAuthConnect: (skillName: string, provider: string, tokenKey: string, scopes?: string) => void;
   onScopesChange: (skillName: string, provider: string, scopes: string) => void;
+  onRepairOAuth: (skillName: string) => void;
   onDelete: (skillName: string) => void;
 }) {
   return (
@@ -1192,7 +1220,7 @@ export function SkillsTab({ items, onSaveSecret, onOpenCode, onUploadSkill, onOA
         </div>
       ) : (
         items.map(item => (
-          <SkillItemCard key={item.name} item={item} onSaveSecret={onSaveSecret} onOpenCode={onOpenCode} onOAuthConnect={onOAuthConnect} onScopesChange={onScopesChange} onDelete={onDelete} />
+          <SkillItemCard key={item.name} item={item} onSaveSecret={onSaveSecret} onOpenCode={onOpenCode} onOAuthConnect={onOAuthConnect} onScopesChange={onScopesChange} onRepairOAuth={onRepairOAuth} onDelete={onDelete} />
         ))
       )}
     </div>

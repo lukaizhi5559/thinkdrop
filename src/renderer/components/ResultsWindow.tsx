@@ -1327,6 +1327,9 @@ export default function ResultsWindow() {
           onScopesChange={(skillName, provider, scopes) =>
             ipcRenderer?.send('skills:update-oauth-scopes', { skillName, provider, scopes })
           }
+          onRepairOAuth={(skillName) =>
+            ipcRenderer?.send('skills:repair-oauth', { skillName })
+          }
           onDelete={(skillName) =>
             ipcRenderer?.send('skills:delete', { skillName })
           }

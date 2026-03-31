@@ -9,6 +9,7 @@
  */
 
 import { useEffect, useState, useRef } from 'react';
+import { RichContentRenderer } from './rich-content';
 
 const ipcRenderer = (window as any).electron?.ipcRenderer;
 
@@ -26,6 +27,7 @@ interface Step {
   error?: string;
   exitCode?: number;
   savedFilePath?: string;
+  guideInstruction?: string; // original instruction text preserved after guide.step completes
 }
 
 type AutomationPhase =
@@ -172,6 +174,34 @@ function SkillBadge({ skill }: { skill: string }) {
       {skill}
     </span>
   );
+}
+
+// ── renderWithLinks ──────────────────────────────────────────────────────────
+// Splits text on https?:// URLs and renders each URL as a clickable span
+// that opens via shell:open-url IPC (handled in main.js).
+function renderWithLinks(text: string): React.ReactNode {
+  if (!text) return text;
+  const urlRegex = /https?:\/\/[^\s)>,"'<\]]+/g;
+  const parts: React.ReactNode[] = [];
+  let last = 0;
+  let match: RegExpExecArray | null;
+  while ((match = urlRegex.exec(text)) !== null) {
+    if (match.index > last) parts.push(text.slice(last, match.index));
+    const url = match[0];
+    parts.push(
+      <span
+        key={match.index}
+        onClick={(e) => { e.stopPropagation(); ipcRenderer?.send('shell:open-url', url); }}
+        title={`Open ${url}`}
+        style={{ color: '#60a5fa', textDecoration: 'underline', cursor: 'pointer' }}
+      >
+        {url}
+      </span>
+    );
+    last = match.index + url.length;
+  }
+  if (last < text.length) parts.push(text.slice(last));
+  return parts.length > 0 ? <>{parts}</> : text;
 }
 
 // ── ScoutMatchCard ───────────────────────────────────────────────────────────
@@ -358,6 +388,8 @@ export default function AutomationProgress({ onHeightChange, onActiveChange }: A
           break;
 
         case 'step_start':
+          // Clear any active guide step card when the next step begins
+          setGuideStep(null);
           setSteps(prev => prev.map(s =>
             s.index === data.stepIndex
               ? { ...s, status: 'running', description: data.description || s.description }
@@ -373,9 +405,14 @@ export default function AutomationProgress({ onHeightChange, onActiveChange }: A
         case 'step_done':
           setSteps(prev => prev.map(s =>
             s.index === data.stepIndex
-              ? { ...s, status: 'done', description: data.description || s.description, stdout: data.stdout, exitCode: data.exitCode, savedFilePath: data.savedFilePath || undefined }
+              ? { ...s, status: 'done', description: data.description || s.description, stdout: data.stdout, exitCode: data.exitCode, savedFilePath: data.savedFilePath || undefined, guideInstruction: data.instruction || s.guideInstruction }
               : s
           ));
+          // Auto-dismiss the guide step card when a guide.step completes
+          if (data.skill === 'guide.step') {
+            setGuideStep(null);
+            setPhase('executing');
+          }
           // Steps are collapsed by default — user can expand by clicking
           // Also accumulate at bottom-level for all_done fallback
           if (data.savedFilePath && data.savedFilePath.startsWith('/')) {
@@ -578,6 +615,7 @@ export default function AutomationProgress({ onHeightChange, onActiveChange }: A
           break;
 
         case 'all_done': {
+          setGuideStep(null);
           setPhase('done');
           setTotalCount(data.totalCount);
           // Merge any final stdout from skillResults into steps.
@@ -679,7 +717,7 @@ export default function AutomationProgress({ onHeightChange, onActiveChange }: A
     setGatherCredential(null);
     setGatherCredentialValue('');
     setGuideStep(null);
-    setPhase('running');
+    setPhase('executing');
   };
 
   const handleGatherConfirm = (yes: boolean) => {
@@ -1270,10 +1308,12 @@ export default function AutomationProgress({ onHeightChange, onActiveChange }: A
           {steps.map((step) => {
             const isSynthesize = step.skill === 'synthesize';
             const isNeedsSkill = step.skill === 'needs_skill';
+            const isGuideStep = step.skill === 'guide.step';
             const hasOutput = isSynthesize
               ? synthesisAnswer.length > 0
               : !isNeedsSkill && ((step.stdout && step.stdout.trim().length > 0) ||
-                (step.error && step.error.trim().length > 0));
+                (step.error && step.error.trim().length > 0) ||
+                (isGuideStep && !!step.guideInstruction));
             const isExpanded = expandedSteps.has(step.index);
 
             return (
@@ -1364,6 +1404,33 @@ export default function AutomationProgress({ onHeightChange, onActiveChange }: A
                         }}>
                         {synthesisAnswer}
                       </div>
+                    ) : step.skill === 'guide.step' ? (
+                      <>
+                        {step.guideInstruction && (
+                          <div className="text-xs rounded-lg px-3 py-2 mb-1.5"
+                            style={{
+                              backgroundColor: 'rgba(99,102,241,0.07)',
+                              border: '1px solid rgba(99,102,241,0.25)',
+                              color: '#c7d2fe',
+                              lineHeight: '1.6',
+                            }}>
+                            {renderWithLinks(step.guideInstruction)}
+                          </div>
+                        )}
+                        {step.stdout && step.stdout.trim().length > 0 && (
+                          <pre className="text-xs rounded-lg px-3 py-2 overflow-x-auto whitespace-pre-wrap break-all"
+                            style={{
+                              backgroundColor: 'rgba(0,0,0,0.4)',
+                              border: '1px solid rgba(255,255,255,0.08)',
+                              color: '#d1fae5',
+                              fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
+                              maxHeight: '80px',
+                              overflowY: 'auto',
+                            }}>
+                            {step.stdout.trim()}
+                          </pre>
+                        )}
+                      </>
                     ) : (
                       <>
                         {step.stdout && step.stdout.trim().length > 0 && (
@@ -1473,7 +1540,7 @@ export default function AutomationProgress({ onHeightChange, onActiveChange }: A
           {/* Instruction */}
           <div className="px-3 py-2.5">
             <p className="text-sm" style={{ color: '#e5e7eb', lineHeight: 1.6 }}>
-              {guideStep.instruction}
+              {renderWithLinks(guideStep.instruction)}
             </p>
             {guideStep.mode === 'page_event' && (
               <p className="text-xs mt-2" style={{ color: '#6b7280' }}>
@@ -1524,9 +1591,9 @@ export default function AutomationProgress({ onHeightChange, onActiveChange }: A
       {/* ── ASK_USER: clickable option buttons ───────────────────────────── */}
       {askUserPrompt && (
         <div className="mt-2 space-y-2">
-          <p className="text-sm font-medium" style={{ color: '#e5e7eb', lineHeight: 1.5 }}>
-            {askUserPrompt.question}
-          </p>
+          <div className="text-sm font-medium" style={{ color: '#e5e7eb', lineHeight: 1.5 }}>
+            <RichContentRenderer content={askUserPrompt.question} animated={false} className="text-sm" />
+          </div>
           {askUserPrompt.options.length > 0 && (
             <div className="flex flex-col gap-1.5 mt-2">
               {askUserPrompt.options.map((option, i) => (

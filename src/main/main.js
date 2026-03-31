@@ -861,6 +861,9 @@ function createResultsWindow() {
       safeSend(resultsWindow, 'queue:update', queueManager.getQueue());
       safeSend(resultsWindow, 'cron:update', queueManager.getCron());
     }, 300);
+    // Pre-populate skill:*:ACCESS_TOKEN so OAuth skills work even before the user
+    // opens the Skills tab for the first time (avoids silent 401s at automation time).
+    setTimeout(() => ipcMain.emit('skills:list'), 3000);
   });
 
   // Block Vite HMR full-page reloads — they dispose the render frame mid-stream causing
@@ -2752,6 +2755,15 @@ app.whenReady().then(async () => {
         console.log(`[StateGraph] Persisted lastOpenedFilePath: ${currentLastOpenedFilePath}`);
       }
 
+      // Auto-trigger OAuth scope repair when a skill fails due to missing/wrong token.
+      // recoverSkill sets triggerOAuthRepair: { skillName } — fire the IPC handler which
+      // re-scans index.cjs, patches contractMd, and refreshes the Skills tab.
+      if (finalState.triggerOAuthRepair?.skillName) {
+        const _repairSkill = finalState.triggerOAuthRepair.skillName;
+        console.log(`🔧 [OAuth Auto-Repair] Triggering repair for "${_repairSkill}" after OAuth failure`);
+        ipcMain.emit('skills:repair-oauth', null, { skillName: _repairSkill });
+      }
+
       // Sync app control mode — appControl node writes finalState.appControlMode
       if (finalState.appControlMode !== undefined) {
         const prev = appControlMode.active;
@@ -2792,6 +2804,25 @@ app.whenReady().then(async () => {
           safeSend(promptCaptureWindow, 'skill:build-asking', askingPayload);
           if (resultsWindow && !resultsWindow.isDestroyed()) {
             safeSend(resultsWindow, 'skill:build-asking', askingPayload);
+          }
+        } else if (q._isOAuthGuidance) {
+          // OAuth guidance is informational — no resume state needed.
+          // triggerOAuthRepair fires separately; user goes to Skills tab then retries fresh.
+          console.log(`[StateGraph] ASK_USER (${intentType}): OAuth guidance — showing message without pausing`);
+          if (resultsWindow && !resultsWindow.isDestroyed()) {
+            safeSend(resultsWindow, 'automation:progress', {
+              type: 'ask_user',
+              question: q.question,
+              options: [],
+            });
+            safeSend(resultsWindow, 'automation:progress', {
+              type: 'all_done',
+              completedCount: (finalState.skillResults || []).length,
+              totalCount: (finalState.skillPlan || []).length,
+              skillResults: finalState.skillResults || [],
+              savedFilePaths: [],
+              answer: '',
+            });
           }
         } else {
           // Persist the full state so the next user reply can resume / re-enter
@@ -3953,6 +3984,51 @@ app.whenReady().then(async () => {
           }
         }
 
+        // If no oauth: is declared but the skill has naked CLIENT_ID/CLIENT_SECRET secrets,
+        // infer the OAuth provider. Priority: skill name/description hint > single configured env.
+        if (oauthProviders.length === 0 && secretKeys.some(k => /(CLIENT_ID|CLIENT_SECRET)$/i.test(k))) {
+          const PROVIDER_HINTS = {
+            google:     /google|gcal|gmail|gdrive|gsheet|gslide|youtube|gcp|bigquery/i,
+            github:     /github|gh\b|\bgit\b/i,
+            microsoft:  /microsoft|outlook|onedrive|azure|sharepoint|teams|msal/i,
+            slack:      /slack/i,
+            notion:     /notion/i,
+            spotify:    /spotify/i,
+            dropbox:    /dropbox/i,
+            discord:    /discord/i,
+            zoom:       /zoom/i,
+            atlassian:  /atlassian|jira|confluence/i,
+            salesforce: /salesforce/i,
+            hubspot:    /hubspot/i,
+            twitter:    /twitter|tweet/i,
+            linkedin:   /linkedin/i,
+            facebook:   /facebook|instagram|meta\b/i,
+          };
+          const skillLabel = `${row.name || ''} ${full?.description || row.description || ''}`;
+          // First try: name/description hint, but only if that provider has creds in env
+          let inferred = null;
+          for (const [prov, hint] of Object.entries(PROVIDER_HINTS)) {
+            const px = prov.toUpperCase();
+            if (hint.test(skillLabel) && (process.env[`${px}_CLIENT_ID`] || process.env[`${px}_CLIENT_SECRET`])) {
+              inferred = prov;
+              break;
+            }
+          }
+          // Fallback: if hint matched nothing, use env only when exactly one provider configured
+          if (!inferred) {
+            const INFER_CANDIDATES = Object.keys(PROVIDER_HINTS);
+            const envConfigured = INFER_CANDIDATES.filter(p => {
+              const px = p.toUpperCase();
+              return process.env[`${px}_CLIENT_ID`] && process.env[`${px}_CLIENT_SECRET`];
+            });
+            if (envConfigured.length === 1) inferred = envConfigured[0];
+          }
+          if (inferred) {
+            oauthProviders = [inferred];
+            console.log(`[Skills] Inferred oauth provider '${inferred}' for ${row.name} (CLIENT_ID/CLIENT_SECRET secrets, no oauth: declared)`);
+          }
+        }
+
         // Extract description from contractMd body (after frontmatter) or row.description
         let description = full?.description || row.description || '';
         if (!description && cm) {
@@ -3976,7 +4052,9 @@ app.whenReady().then(async () => {
           notion:    /^(NOTION_TOKEN|NOTION_ACCESS_TOKEN)/i,
         };
         const USER_SECRET_KEYS = secretKeys.filter(k => {
-          if (/(CLIENT_ID|CLIENT_SECRET|REDIRECT_URI)$/i.test(k)) return false;
+          // Only suppress CLIENT_ID/CLIENT_SECRET when an oauth: provider is declared.
+          // Skills without oauth: may legitimately need these as user-entered secrets.
+          if (oauthProviders.length > 0 && /(CLIENT_ID|CLIENT_SECRET|REDIRECT_URI)$/i.test(k)) return false;
           // Suppress secrets covered by a declared OAuth provider
           for (const [provider, pattern] of Object.entries(OAUTH_SECRET_PATTERNS)) {
             if (oauthProviders.includes(provider) && pattern.test(k)) return false;
@@ -3993,7 +4071,9 @@ app.whenReady().then(async () => {
             const provUpper = prov.toUpperCase();
             for (const sec of secretKeys) {
               const sKey = `skill:${row.name}:${sec}`;
-              if (await keytar.getPassword('thinkdrop', sKey).catch(() => null)) continue;
+              // Always overwrite token entries — they expire. Only skip stable creds.
+              const isTokenKey = /(ACCESS_TOKEN|REFRESH_TOKEN|ID_TOKEN)$/i.test(sec);
+              if (!isTokenKey && await keytar.getPassword('thinkdrop', sKey).catch(() => null)) continue;
               const sl = sec.toLowerCase();
               let av = null;
               if (sl === 'refresh_token' && gTok.refresh_token) av = gTok.refresh_token;
@@ -4001,6 +4081,14 @@ app.whenReady().then(async () => {
               else if (sl === 'client_id') av = process.env[`${provUpper}_CLIENT_ID`] || (prov === 'google' ? process.env.GOOGLE_CLOUD_CLIENT_ID : null);
               else if (sl === 'client_secret') av = process.env[`${provUpper}_CLIENT_SECRET`] || (prov === 'google' ? process.env.GOOGLE_CLOUD_CLIENT_SECRET : null);
               if (av) { await keytar.setPassword('thinkdrop', sKey, av); console.log(`[Skills] Auto-populated ${sKey} from global oauth:${prov}`); }
+            }
+            // Always write ACCESS_TOKEN + REFRESH_TOKEN under skill:<name>:* so shell scripts
+            // using `security find-generic-password -a "skill:<name>:ACCESS_TOKEN"` work.
+            if (gTok.access_token) {
+              await keytar.setPassword('thinkdrop', `skill:${row.name}:ACCESS_TOKEN`, gTok.access_token).catch(() => {});
+            }
+            if (gTok.refresh_token) {
+              await keytar.setPassword('thinkdrop', `skill:${row.name}:REFRESH_TOKEN`, gTok.refresh_token).catch(() => {});
             }
           }
         }
@@ -4028,27 +4116,9 @@ app.whenReady().then(async () => {
           return { key, stored, preview };
         }));
 
-        // Check OAuth token status per provider
-        // Broad identity-level defaults — NOT scope-restricted to any single product.
-        // Skills that need specific scopes should declare oauth_scopes: in their contract frontmatter.
-        // e.g.  oauth_scopes: google=https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/calendar
-        const OAUTH_SCOPE_DEFAULTS = {
-          google:     'https://www.googleapis.com/auth/userinfo.email https://www.googleapis.com/auth/userinfo.profile',
-          github:     'read:user user:email',
-          microsoft:  'openid profile email offline_access',
-          facebook:   'email public_profile',
-          twitter:    'tweet.read users.read offline.access',
-          linkedin:   'openid profile email',
-          slack:      'openid profile email',
-          notion:     '',
-          spotify:    'user-read-email user-read-private',
-          dropbox:    'account_info.read',
-          discord:    'identify email',
-          zoom:       'user:read',
-          atlassian:  'read:me offline_access',
-          salesforce: 'openid profile email',
-          hubspot:    'crm.objects.contacts.read',
-        };
+        // Check OAuth token status per provider declared in the skill's oauth: frontmatter.
+        // Skills must declare oauth_scopes: in contract_md for scope-aware token matching.
+        // If no oauth_scopes declared, any valid access/refresh token counts as connected.
         const oauthConnections = await Promise.all(oauthProviders.map(async (provider) => {
           const perSkillKey = `oauth:${provider}:${row.name}`;
           const globalKey   = `oauth:${provider}`;
@@ -4065,9 +4135,12 @@ app.whenReady().then(async () => {
                 if (raw) usedGlobal = true;
               }
               if (raw) {
-                connected = true;
                 try {
                   tokenData = JSON.parse(raw);
+                  // Only mark as connected when there's a real access or refresh token.
+                  // A blob with only client_id/client_secret (from startup seeding) is
+                  // not yet connected — the Connect button should still appear.
+                  connected = !!(tokenData.access_token || tokenData.refresh_token);
                   accountHint = tokenData.email || tokenData.account || undefined;
                 } catch(_) {}
               }
@@ -4075,9 +4148,21 @@ app.whenReady().then(async () => {
 
             // Auto-populate already handled in pre-pass above
           }
-          const tokenKey = usedGlobal ? globalKey : perSkillKey;
-          // Use skill-declared scopes if present, otherwise broad identity defaults
-          const scopes = skillOauthScopes[provider] || OAUTH_SCOPE_DEFAULTS[provider] || '';
+          // tokenKey always per-skill — Connect button stores to a skill-specific key.
+          // This prevents the Skills tab from overwriting the global Connections tab token.
+          const tokenKey = perSkillKey;
+          const requiredScopes = skillOauthScopes[provider];
+          // Scope-aware connected check: if the stored token was granted narrower scopes than
+          // the skill actually requires, force re-auth so the user grants the correct scopes.
+          if (connected && tokenData?.grantedScopes && requiredScopes) {
+            const grantedSet = new Set(tokenData.grantedScopes.split(/\s+/).filter(Boolean));
+            const missing    = requiredScopes.split(/\s+/).filter(s => s && !grantedSet.has(s));
+            if (missing.length > 0) {
+              connected = false;
+              console.log(`[Skills] Scope mismatch for ${provider} on ${row.name}: missing ${missing.join(' ')}`);
+            }
+          }
+          const scopes = requiredScopes || '';
           return { provider, connected, tokenKey, scopes, accountHint, usedGlobal };
         }));
 
@@ -4431,8 +4516,18 @@ app.whenReady().then(async () => {
     let clientSecret = process.env[`${providerUpper}_CLIENT_SECRET`]
                     || (provider === 'google' ? process.env.GOOGLE_CLOUD_CLIENT_SECRET : undefined);
 
-    // Fallback: check keytar in case user stored them manually earlier
+    // Fallback priority: global oauth:<provider> keytar blob (seeded at startup via seedOAuthCredentials)
+    // → skill-specific keytar keys (manual entry). Checking the global blob first ensures
+    // we always find client_id/secret even when the user hasn't stored skill-specific creds.
     if ((!clientId || !clientSecret) && keytar) {
+      try {
+        const globalRaw = await keytar.getPassword('thinkdrop', `oauth:${provider}`).catch(() => null);
+        if (globalRaw) {
+          const globalBlob = JSON.parse(globalRaw);
+          clientId     = clientId     || globalBlob.client_id;
+          clientSecret = clientSecret || globalBlob.client_secret;
+        }
+      } catch (_) {}
       clientId     = clientId     || await keytar.getPassword('thinkdrop', cfg.clientIdKey).catch(() => null);
       clientSecret = clientSecret || await keytar.getPassword('thinkdrop', cfg.clientSecretKey).catch(() => null);
     }
@@ -4656,10 +4751,20 @@ app.whenReady().then(async () => {
         } catch(_) {}
       }
 
-      // Store token in keytar
-      const tokenJson = JSON.stringify({ ...tokenData, email, storedAt: new Date().toISOString() });
+      // Store token in keytar — include grantedScopes so skills:list can do scope-aware connected checks
+      const tokenJson = JSON.stringify({ ...tokenData, email, grantedScopes: scopeStr, storedAt: new Date().toISOString(), issued_at: Math.floor(Date.now() / 1000) });
       if (keytar) await keytar.setPassword('thinkdrop', tokenKey, tokenJson);
       console.log(`[OAuth] Stored ${provider} token for skill ${skillName} → ${tokenKey}${email ? ' (' + email + ')' : ''}`);
+
+      // Also write per-skill token entries so shell scripts can look them up via:
+      //   security find-generic-password -s thinkdrop -a "skill:<name>:ACCESS_TOKEN"
+      if (keytar && tokenData.access_token) {
+        await keytar.setPassword('thinkdrop', `skill:${skillName}:ACCESS_TOKEN`, tokenData.access_token).catch(() => {});
+        if (tokenData.refresh_token) {
+          await keytar.setPassword('thinkdrop', `skill:${skillName}:REFRESH_TOKEN`, tokenData.refresh_token).catch(() => {});
+        }
+        console.log(`[OAuth] Wrote skill-scoped tokens for ${skillName}: skill:${skillName}:ACCESS_TOKEN`);
+      }
 
       // Also store in the format external.skill expects for googleapis (token path or env)
       if (provider === 'google') {
@@ -4667,7 +4772,8 @@ app.whenReady().then(async () => {
         const tokDir = pathMod.join(osMod.homedir(), '.thinkdrop', 'tokens');
         if (!fsMod.existsSync(tokDir)) fsMod.mkdirSync(tokDir, { recursive: true });
         const safeName = skillName.replace(/[^a-z0-9.-]/g, '-');
-        fsMod.writeFileSync(pathMod.join(tokDir, `${safeName}.json`), JSON.stringify(tokenData, null, 2), 'utf8');
+        // Include issued_at so loadOAuthEnv can detect expiry without re-reading keytar
+        fsMod.writeFileSync(pathMod.join(tokDir, `${safeName}.json`), JSON.stringify({ ...tokenData, issued_at: Math.floor(Date.now() / 1000) }, null, 2), 'utf8');
         console.log(`[OAuth] Wrote Google token file: ~/.thinkdrop/tokens/${safeName}.json`);
       }
 
@@ -4771,7 +4877,10 @@ app.whenReady().then(async () => {
   // ─── Skills: update oauth_scopes for a provider in the contract frontmatter ─
   ipcMain.on('skills:update-oauth-scopes', async (_event, { skillName, provider, scopes }) => {
     try {
-      const http = require('http');
+      const http    = require('http');
+      const fsMod   = require('fs');
+      const pathMod = require('path');
+      const osMod   = require('os');
       const memApiKey = process.env.MCP_USER_MEMORY_API_KEY || process.env.USER_MEMORY_API_KEY || process.env.MCP_API_KEY || 'default_key';
       const memPort = parseInt(process.env.MEMORY_SERVICE_PORT || '3001', 10);
 
@@ -4785,16 +4894,26 @@ app.whenReady().then(async () => {
         req.on('error', reject); req.write(body); req.end();
       });
 
-      const contractMd = current?.result?.contractMd || current?.contractMd || '';
+      let contractMd = current?.data?.contractMd || '';
+
+      // Fallback 1: read skill.md from disk (skillCreator writes it alongside index.cjs)
       if (!contractMd) {
-        console.warn(`[Skills] skills:update-oauth-scopes — no contractMd found for ${skillName}`);
-        return;
+        const skillMdPath = pathMod.join(osMod.homedir(), '.thinkdrop', 'skills', skillName, 'skill.md');
+        try { contractMd = fsMod.readFileSync(skillMdPath, 'utf8'); } catch(_) {}
+      }
+
+      // Fallback 2: construct a minimal valid contract so we can at least persist oauth_scopes
+      if (!contractMd) {
+        const execPath = pathMod.join(osMod.homedir(), '.thinkdrop', 'skills', skillName, 'index.cjs');
+        contractMd = `---\nname: ${skillName}\ndescription: ${skillName}\nexec_path: ${execPath}\nexec_type: node\nversion: 1.0.0\ntrigger: ${skillName}\nschedule: on_demand\nsecrets: \n---\n\n# ${skillName}\n`;
+        console.warn(`[Skills] skills:update-oauth-scopes — constructed minimal contractMd for ${skillName}`);
       }
 
       // Parse existing oauth_scopes map from frontmatter
       const fmMatch = contractMd.match(/^---\s*\n([\s\S]*?)\n---/);
       const fm = fmMatch ? fmMatch[1] : '';
       const existingScopesMatch = fm.match(/^oauth_scopes\s*:\s*(.+)$/m);
+      const existingOauthMatch  = fm.match(/^oauth\s*:\s*(.+)$/m);
       const scopesMap = {};
       if (existingScopesMatch) {
         for (const part of existingScopesMatch[1].split(',')) {
@@ -4811,45 +4930,203 @@ app.whenReady().then(async () => {
       if (scopes && scopes.trim()) {
         scopesMap[provider] = scopes.trim();
       } else {
-        delete scopesMap[provider]; // empty = revert to defaults
+        delete scopesMap[provider];
       }
 
-      const newScopeLine = Object.keys(scopesMap).length > 0
+      // Ensure oauth: field includes this provider
+      const oauthSet = new Set(existingOauthMatch
+        ? existingOauthMatch[1].split(/[\s,]+/).map(s => s.trim().toLowerCase()).filter(Boolean) : []);
+      if (scopes && scopes.trim()) oauthSet.add(provider.toLowerCase());
+
+      const newOauthLine  = oauthSet.size > 0 ? 'oauth: ' + [...oauthSet].join(', ') : null;
+      const newScopeLine  = Object.keys(scopesMap).length > 0
         ? 'oauth_scopes: ' + Object.entries(scopesMap).map(([p, s]) => `${p}=${s}`).join(', ')
         : null;
 
-      // Rewrite frontmatter
-      let updatedMd;
-      if (existingScopesMatch) {
-        // Replace existing oauth_scopes line
-        updatedMd = newScopeLine
-          ? contractMd.replace(/^oauth_scopes\s*:.*$/m, newScopeLine)
-          : contractMd.replace(/^oauth_scopes\s*:.*\n?/m, '');
-      } else if (newScopeLine) {
-        // Insert after oauth: line if present, otherwise before closing ---
-        if (/^oauth\s*:/m.test(fm)) {
-          updatedMd = contractMd.replace(/^(oauth\s*:.+)$/m, `$1\n${newScopeLine}`);
+      // Rewrite frontmatter — update both oauth: and oauth_scopes:
+      let updatedMd = contractMd;
+      // Update oauth: line
+      if (newOauthLine) {
+        if (existingOauthMatch) {
+          updatedMd = updatedMd.replace(/^oauth\s*:.*$/m, newOauthLine);
         } else {
-          updatedMd = contractMd.replace(/\n---/, `\n${newScopeLine}\n---`);
+          updatedMd = updatedMd.replace(/(\n---\s*$)/m, `\n${newOauthLine}$1`);
         }
-      } else {
-        updatedMd = contractMd; // no change
+      }
+      // Update oauth_scopes: line
+      if (existingScopesMatch) {
+        updatedMd = newScopeLine
+          ? updatedMd.replace(/^oauth_scopes\s*:.*$/m, newScopeLine)
+          : updatedMd.replace(/^oauth_scopes\s*:.*\n?/m, '');
+      } else if (newScopeLine) {
+        if (/^oauth\s*:/m.test(updatedMd)) {
+          updatedMd = updatedMd.replace(/^(oauth\s*:.+)$/m, `$1\n${newScopeLine}`);
+        } else {
+          updatedMd = updatedMd.replace(/(\n---\s*$)/m, `\n${newScopeLine}$1`);
+        }
       }
 
-      // Persist updated contract
-      const upsertBody = JSON.stringify({ version: 'mcp.v1', service: 'user-memory', action: 'skill.upsert', payload: { name: skillName, contractMd: updatedMd }, requestId: 'scope-upsert-' + Date.now() });
+      // Use skill.install (idempotent UPDATE when skill exists; skill.upsert requires execPath)
+      const installBody = JSON.stringify({ version: 'mcp.v1', service: 'user-memory', action: 'skill.install', payload: { contractMd: updatedMd }, requestId: 'scope-install-' + Date.now() });
       await new Promise(resolve => {
         const req = http.request({
-          hostname: '127.0.0.1', port: memPort, path: '/skill.upsert', method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${memApiKey}`, 'Content-Length': Buffer.byteLength(upsertBody) },
+          hostname: '127.0.0.1', port: memPort, path: '/skill.install', method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${memApiKey}`, 'Content-Length': Buffer.byteLength(installBody) },
         }, res => { res.resume(); resolve(); });
-        req.on('error', () => resolve()); req.write(upsertBody); req.end();
+        req.on('error', () => resolve()); req.write(installBody); req.end();
       });
 
       console.log(`[Skills] Updated oauth_scopes for ${provider} on ${skillName}: ${scopes || '(cleared)'}`);
       ipcMain.emit('skills:list');
     } catch (e) {
       console.error('[Skills] skills:update-oauth-scopes failed:', e.message);
+    }
+  });
+
+  // ─── Skills: repair-oauth — re-scan index.cjs and fix contract_md scopes ──
+  // Direct IPC bypass for the skill repair that parseSkill can't reach reliably.
+  ipcMain.on('skills:repair-oauth', async (_event, { skillName }) => {
+    try {
+      const http    = require('http');
+      const fsMod   = require('fs');
+      const pathMod = require('path');
+      const osMod   = require('os');
+      const memApiKey = process.env.MCP_USER_MEMORY_API_KEY || process.env.USER_MEMORY_API_KEY || process.env.MCP_API_KEY || 'default_key';
+      const memPort = parseInt(process.env.MEMORY_SERVICE_PORT || '3001', 10);
+
+      const skillDir = pathMod.join(osMod.homedir(), '.thinkdrop', 'skills', skillName);
+      const codePath = pathMod.join(skillDir, 'index.cjs');
+      const skillMdPath = pathMod.join(skillDir, 'skill.md');
+      let code;
+      try { code = fsMod.readFileSync(codePath, 'utf8'); } catch(e) {
+        // No index.cjs — fall back to scanning skill.md for provider/scope detection
+        try { code = fsMod.readFileSync(skillMdPath, 'utf8'); } catch(e2) {
+          console.error(`[Skills] repair-oauth: cannot read ${codePath} or ${skillMdPath}: ${e2.message}`);
+          if (resultsWindow && !resultsWindow.isDestroyed()) safeSend(resultsWindow, 'skills:repair-oauth-result', { skillName, ok: false, error: `Cannot read skill files for ${skillName}` });
+          return;
+        }
+      }
+
+      // Re-run provider detection
+      const oauthSet = new Set();
+      if (/googleapis|google\.auth|google-auth/i.test(code))         oauthSet.add('google');
+      if (/octokit|github\.com\/login\/oauth|@octokit/i.test(code))  oauthSet.add('github');
+      if (/microsoft\.com|msal|@azure|graph\.microsoft/i.test(code)) oauthSet.add('microsoft');
+      if (/slack\.com|@slack\/web-api|@slack\/bolt/i.test(code))      oauthSet.add('slack');
+      if (/notion\.com|@notionhq\/client/i.test(code))               oauthSet.add('notion');
+      if (/spotify\.com|spotify-web-api/i.test(code))                oauthSet.add('spotify');
+      if (/dropbox\.com|dropbox-sdk|Dropbox\(/i.test(code))          oauthSet.add('dropbox');
+      if (/discord\.com|discord\.js|@discordjs/i.test(code))         oauthSet.add('discord');
+      if (/zoom\.us|zoomus/i.test(code))                             oauthSet.add('zoom');
+      if (/atlassian\.com|jira\.com/i.test(code))                    oauthSet.add('atlassian');
+      if (/salesforce\.com|jsforce|@salesforce/i.test(code))         oauthSet.add('salesforce');
+      if (/hubspot\.com|@hubspot/i.test(code))                       oauthSet.add('hubspot');
+      if (/facebook\.com|graph\.facebook/i.test(code))               oauthSet.add('facebook');
+      if (/twitter\.com|api\.twitter/i.test(code))                   oauthSet.add('twitter');
+      if (/linkedin\.com|linkedin-api/i.test(code))                  oauthSet.add('linkedin');
+
+      // Scope detection (google only for now — covers gcal.event)
+      const scopesMap = {};
+      if (oauthSet.has('google')) {
+        const gs = new Set(['https://www.googleapis.com/auth/userinfo.email']);
+        if (/gmail/i.test(code))    gs.add('https://www.googleapis.com/auth/gmail.modify');
+        if (/calendar/i.test(code)) gs.add('https://www.googleapis.com/auth/calendar');
+        if (/drive/i.test(code))    gs.add('https://www.googleapis.com/auth/drive');
+        if (/sheets/i.test(code))   gs.add('https://www.googleapis.com/auth/spreadsheets');
+        if (/docs/i.test(code))     gs.add('https://www.googleapis.com/auth/documents');
+        if (/youtube/i.test(code))  gs.add('https://www.googleapis.com/auth/youtube.readonly');
+        scopesMap.google = [...gs].join(' ');
+      }
+
+      // Fetch existing contractMd
+      let contractMd = '';
+      await new Promise((resolve) => {
+        const b = JSON.stringify({ version: 'mcp.v1', service: 'user-memory', action: 'skill.get', payload: { name: skillName }, requestId: 'repair-get-' + Date.now() });
+        const req = http.request({
+          hostname: '127.0.0.1', port: memPort, path: '/skill.get', method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${memApiKey}`, 'Content-Length': Buffer.byteLength(b) },
+          timeout: 5000,
+        }, (res) => { let d = ''; res.on('data', c => { d += c; }); res.on('end', () => { try { contractMd = JSON.parse(d)?.data?.contractMd || ''; } catch(_) {} resolve(); }); });
+        req.on('error', resolve); req.on('timeout', () => { req.destroy(); resolve(); }); req.write(b); req.end();
+      });
+
+      // Fallback: read skill.md from disk
+      if (!contractMd) {
+        const skillMdPath = pathMod.join(skillDir, 'skill.md');
+        try { contractMd = fsMod.readFileSync(skillMdPath, 'utf8'); } catch(_) {}
+      }
+
+      // Final fallback: construct minimal valid contract
+      if (!contractMd) {
+        contractMd = `---\nname: ${skillName}\ndescription: ${skillName}\nexec_path: ${codePath}\nexec_type: node\nversion: 1.0.0\ntrigger: ${skillName}\nschedule: on_demand\nsecrets: \n---\n\n# ${skillName}\n`;
+      }
+
+      // Rebuild with corrected oauth: and oauth_scopes: fields
+      const fmMatch = contractMd.match(/^---\s*\n([\s\S]*?)\n---/);
+      const existingLines = fmMatch ? fmMatch[1].split('\n') : [];
+      const filteredLines = existingLines.filter(l => !/^oauth(_scopes)?:\s*/.test(l));
+      if (oauthSet.size > 0)            filteredLines.push('oauth: ' + [...oauthSet].join(', '));
+      if (Object.keys(scopesMap).length) filteredLines.push('oauth_scopes: ' + Object.entries(scopesMap).map(([p, s]) => `${p}=${s}`).join(', '));
+      const bodyAfterFm  = contractMd.replace(/^---\s*\n[\s\S]*?\n---\s*\n?/, '').trim();
+      let finalContractMd = ['---', ...filteredLines, '---', '', bodyAfterFm].join('\n');
+
+      // ── Rewrite ## Auth section so planSkills LLM gets the correct token-file
+      // pattern instead of copying CLIENT_ID/SECRET keytar refs from old skill.md.
+      // This is the key fix: the LLM copies ## Auth verbatim into shell.run scripts.
+      if (oauthSet.has('google')) {
+        const safeSN = skillName.replace(/[^a-z0-9.-]/g, '-');
+        const newAuthBlock = [
+          '## Auth',
+          `ThinkDrop stores the OAuth access token at \`~/.thinkdrop/tokens/${safeSN}.json\` after the user connects via the Skills tab.`,
+          'Always use **double quotes** around all variable expansions — single quotes prevent `$VAR` and `$(...)` from expanding in bash.',
+          '```bash',
+          `TOKEN_FILE="$HOME/.thinkdrop/tokens/${safeSN}.json"`,
+          `ACCESS_TOKEN=$(python3 -c "import json; d=json.load(open('$TOKEN_FILE')); print(d['access_token'])" 2>/dev/null)`,
+          'if [ -z "$ACCESS_TOKEN" ]; then',
+          `  echo "ERROR: ${skillName} is not connected. Open the Skills tab, find ${skillName}, and click Reconnect."`,
+          '  exit 1',
+          'fi',
+          '# Use in curl: -H "Authorization: Bearer ${ACCESS_TOKEN}"',
+          '```',
+        ].join('\n');
+
+        const authMarker = '\n## Auth';
+        const authStart = finalContractMd.indexOf(authMarker);
+        if (authStart >= 0) {
+          const nextSection = finalContractMd.indexOf('\n## ', authStart + authMarker.length);
+          const before = finalContractMd.slice(0, authStart);
+          const after  = nextSection >= 0 ? finalContractMd.slice(nextSection) : '';
+          finalContractMd = before + '\n' + newAuthBlock + '\n' + after;
+        } else {
+          finalContractMd = finalContractMd.trimEnd() + '\n\n' + newAuthBlock + '\n';
+        }
+      }
+
+      // Write updated skill.md to disk so it persists across reinstalls
+      try {
+        fsMod.writeFileSync(skillMdPath, finalContractMd, 'utf8');
+        console.log(`[Skills] repair-oauth: updated skill.md on disk for ${skillName}`);
+      } catch (diskErr) {
+        console.warn(`[Skills] repair-oauth: could not write skill.md: ${diskErr.message}`);
+      }
+
+      // Install (idempotent UPDATE)
+      const installBody = JSON.stringify({ version: 'mcp.v1', service: 'user-memory', action: 'skill.install', payload: { contractMd: finalContractMd }, requestId: 'repair-install-' + Date.now() });
+      await new Promise(resolve => {
+        const req = http.request({
+          hostname: '127.0.0.1', port: memPort, path: '/skill.install', method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${memApiKey}`, 'Content-Length': Buffer.byteLength(installBody) },
+          timeout: 8000,
+        }, res => { res.resume(); resolve(); });
+        req.on('error', resolve); req.on('timeout', () => { req.destroy(); resolve(); }); req.write(installBody); req.end();
+      });
+
+      console.log(`[Skills] repair-oauth: ${skillName} → providers=[${[...oauthSet].join(', ')}] scopes=[${Object.keys(scopesMap).join(', ')}]`);
+      if (resultsWindow && !resultsWindow.isDestroyed()) safeSend(resultsWindow, 'skills:repair-oauth-result', { skillName, ok: true, providers: [...oauthSet], scopes: scopesMap });
+      ipcMain.emit('skills:list');
+    } catch (e) {
+      console.error('[Skills] skills:repair-oauth failed:', e.message);
+      if (resultsWindow && !resultsWindow.isDestroyed()) safeSend(resultsWindow, 'skills:repair-oauth-result', { skillName, ok: false, error: e.message });
     }
   });
 
