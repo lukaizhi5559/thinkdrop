@@ -2000,6 +2000,69 @@ app.whenReady().then(async () => {
           safeSend(resultsWindow, 'skill:store-trigger', { capability: event.capability, suggestion: event.suggestion });
         }
       }
+      // Phase 3: Long-running task completed — fetch planContext from DuckDB and re-inject
+      if (event.type === 'long_task_resume') {
+        const _resumeTaskId = event.taskId;
+        const _resumeResult = event.result || '';
+        const _memPort = parseInt(process.env.MEMORY_SERVICE_PORT || '3001', 10);
+        const _memKey  = process.env.MCP_USER_MEMORY_API_KEY || process.env.USER_MEMORY_API_KEY || '';
+        const _envelope = JSON.stringify({
+          version: 'mcp.v1', service: 'user-memory',
+          action: 'pending_tasks.list', payload: { id: _resumeTaskId },
+          requestId: 'resume_' + Date.now(),
+        });
+        const _req = http.request(
+          { hostname: '127.0.0.1', port: _memPort, path: '/pending_tasks.list', method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(_envelope),
+              ...(  _memKey ? { 'Authorization': 'Bearer ' + _memKey } : {}) } },
+          (res) => {
+            let raw = '';
+            res.on('data', c => { raw += c; });
+            res.on('end', () => {
+              try {
+                const parsed = JSON.parse(raw);
+                const task   = parsed.data && parsed.data.tasks && parsed.data.tasks[0];
+                if (!task) {
+                  console.warn('[LongTaskResume] Task record not found in DuckDB for id:', _resumeTaskId);
+                  return;
+                }
+                const ctx = JSON.parse(task.plan_context || '{}');
+                // Inject completed step result into dataContext
+                ctx.dataContext  = { ...(ctx.dataContext || {}), [task.step_order]: _resumeResult };
+                ctx.intentResults = [
+                  ...(ctx.intentResults || []),
+                  { step: task.step_order, intent: task.intent, subPrompt: task.sub_prompt, result: _resumeResult },
+                ];
+                const resumeMessage = (ctx.intentQueue && ctx.intentQueue[0] && ctx.intentQueue[0].text)
+                  || task.original_prompt;
+                console.log(`[LongTaskResume] Resuming queue after task ${_resumeTaskId} — next: "${resumeMessage.slice(0, 60)}"`);
+                if (promptCaptureWindow && !promptCaptureWindow.isDestroyed()) {
+                  safeSend(promptCaptureWindow, 'voice:inject-prompt', {
+                    message:        resumeMessage,
+                    sessionId:      task.session_id || null,
+                    source:         'task_resume',
+                    _resumeContext: ctx,
+                  });
+                }
+                if (resultsWindow && !resultsWindow.isDestroyed()) {
+                  safeSend(resultsWindow, 'automation:progress', {
+                    type:    'long_task_resumed',
+                    taskId:  _resumeTaskId,
+                    step:    task.step_order,
+                    intent:  task.intent,
+                  });
+                }
+              } catch (parseErr) {
+                console.error('[LongTaskResume] Failed to parse task record:', parseErr.message);
+              }
+            });
+          }
+        );
+        _req.on('error', (err) => { console.error('[LongTaskResume] HTTP error fetching task:', err.message); });
+        _req.write(_envelope);
+        _req.end();
+        return;
+      }
     };
 
     // Install confirmation callback: pauses the plan until the user clicks Install or Skip

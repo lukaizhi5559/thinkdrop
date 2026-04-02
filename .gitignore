@@ -9,3 +9,5 @@ dist-renderer/
 .service-pids
 oc-mimic-skills/
 .playwright-cli
+.vscode
+dump.rdb
