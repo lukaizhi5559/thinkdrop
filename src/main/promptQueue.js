@@ -93,9 +93,15 @@ function _getSnapshot() {
  * @param {object} [opts]
  * @param {string} [opts.selectedText]
  * @param {string|null} [opts.responseLanguage]
+ * @param {string|null} [opts._planFile]  — set by plan:approve to re-run with a plan file
+ * @param {string|null} [opts.sessionId]
+ * @param {string} [opts.userId]
+ * @param {boolean} [opts._forceNewPlan]  — set by plan:new to skip existing-plan reuse
+ * @param {Array|null} [opts._skillPlan]  — set by plan:approve (planSkills gate) to skip replanning
+ * @param {string|null} [opts._skillPlanFile] — path to the .md plan file for status tracking
  * @returns {string} id
  */
-function enqueue(prompt, { selectedText = '', responseLanguage = null } = {}) {
+function enqueue(prompt, { selectedText = '', responseLanguage = null, _planFile = null, sessionId = null, userId = 'default_user', _forceNewPlan = false, _skillPlan = null, _skillPlanFile = null } = {}) {
   const id = _uid();
 
   // If a new prompt comes in while crashed-session items are still pending restart,
@@ -119,6 +125,12 @@ function enqueue(prompt, { selectedText = '', responseLanguage = null } = {}) {
     prompt,
     selectedText,
     responseLanguage,
+    _planFile,
+    _skillPlan,
+    _skillPlanFile,
+    sessionId,
+    userId,
+    _forceNewPlan,
     status: 'pending',
     createdAt: Date.now(),
     startedAt: null,

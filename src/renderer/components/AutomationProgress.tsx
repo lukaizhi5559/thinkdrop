@@ -42,7 +42,8 @@ type AutomationPhase =
   | 'schedule_wait'
   | 'evaluating'
   | 'retrying_with_fix'
-  | 'project_building';
+  | 'project_building'
+  | 'plan_review';
 
 interface GatherQuestion {
   id: string;
@@ -287,6 +288,16 @@ function ScoutMatchCard({ scout, onSelect }: { scout: ScoutMatchState; onSelect:
 
 // ── Component ─────────────────────────────────────────────────────────────────
 
+function parsePlanStepTitles(content: string): string[] {
+  const titles: string[] = [];
+  const stepRegex = /^#{2,3}\s+(?:[⬜🔄✅❌⏭]\s+)?Step\s+\d+[:\s\u2014\u2013-]+(.+)/iu;
+  for (const line of content.split('\n')) {
+    const m = line.match(stepRegex);
+    if (m) titles.push(m[1].trim());
+  }
+  return titles;
+}
+
 export default function AutomationProgress({ onHeightChange, onActiveChange }: AutomationProgressProps) {
   const [phase, setPhase] = useState<AutomationPhase>('idle');
   const [steps, setSteps] = useState<Step[]>([]);
@@ -315,9 +326,20 @@ export default function AutomationProgress({ onHeightChange, onActiveChange }: A
   const [projectBuild, setProjectBuild] = useState<{ capability: string; iteration: number; message: string; passed: boolean; failed: boolean; errorMsg: string | null } | null>(null);
   const [projectBuildFiles, setProjectBuildFiles] = useState<string[]>([]);
   const [controlMode, setControlMode] = useState<{ active: boolean; app: string | null }>({ active: false, app: null });
+  const [planReview, setPlanReview] = useState<{
+    planFile: string;
+    content: string;
+    title: string;
+    isExisting: boolean;
+    similarity?: number;
+  } | null>(null);
 
   // Refs for auto-scrolling to the active step
   const stepRefs = useRef<Map<number, HTMLDivElement>>(new Map());
+  // Tracks global step index offset across multi-intent queue sub-plans.
+  // When plan_ready fires for a second/third sub-intent, new steps are appended
+  // at this offset so the user sees a cumulative list instead of a reset view.
+  const stepOffsetRef = useRef<number>(0);
 
   // Notify parent to re-measure height whenever visible content changes
   useEffect(() => {
@@ -357,6 +379,9 @@ export default function AutomationProgress({ onHeightChange, onActiveChange }: A
       setGatherOAuthConnected(null);
       setProjectBuild(null);
       setProjectBuildFiles([]);
+      setPlanReview(null);
+      // Reset multi-intent step accumulation offset
+      stepOffsetRef.current = 0;
     };
     ipcRenderer.on('results-window:set-prompt', handleNewPrompt);
 
@@ -370,17 +395,41 @@ export default function AutomationProgress({ onHeightChange, onActiveChange }: A
           setTotalCount(0);
           break;
 
-        case 'plan_ready':
-          setPhase('executing');
-          setTotalCount(data.steps.length);
-          if (data.intent) setIntentType(data.intent);
-          setSteps(data.steps.map((s: any) => ({
-            index: s.index,
-            skill: s.skill,
-            description: s.description,
-            status: 'pending' as StepStatus,
-          })));
+        case 'plan_ready': {
+          // If there are already completed steps (mid-queue), append rather than replace.
+          // This gives users a cumulative view of all sub-intent steps instead of resetting.
+          // Exception: recoveryReplan=true means the failed step is being retried with a new plan —
+          // reset the view so the old red X is replaced rather than appended below it.
+          const isRecoveryReplan = data.recoveryReplan === true;
+          const hasDoneSteps = !isRecoveryReplan && steps.some(s => s.status === 'done');
+          if (hasDoneSteps) {
+            const newOffset = steps.length;
+            stepOffsetRef.current = newOffset;
+            setTotalCount(prev => prev + data.steps.length);
+            if (data.intent) setIntentType(data.intent);
+            setSteps(prev => [
+              ...prev,
+              ...data.steps.map((s: any) => ({
+                index: newOffset + s.index,
+                skill: s.skill,
+                description: s.description,
+                status: 'pending' as StepStatus,
+              })),
+            ]);
+          } else {
+            stepOffsetRef.current = 0;
+            setPhase('executing');
+            setTotalCount(data.steps.length);
+            if (data.intent) setIntentType(data.intent);
+            setSteps(data.steps.map((s: any) => ({
+              index: s.index,
+              skill: s.skill,
+              description: s.description,
+              status: 'pending' as StepStatus,
+            })));
+          }
           break;
+        }
 
         case 'plan_error':
           setPhase('failed');
@@ -391,20 +440,20 @@ export default function AutomationProgress({ onHeightChange, onActiveChange }: A
           // Clear any active guide step card when the next step begins
           setGuideStep(null);
           setSteps(prev => prev.map(s =>
-            s.index === data.stepIndex
+            s.index === data.stepIndex + stepOffsetRef.current
               ? { ...s, status: 'running', description: data.description || s.description }
               : s
           ));
           // Scroll the active step into view
           setTimeout(() => {
-            const el = stepRefs.current.get(data.stepIndex);
+            const el = stepRefs.current.get(data.stepIndex + stepOffsetRef.current);
             if (el) el.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
           }, 60);
           break;
 
         case 'step_done':
           setSteps(prev => prev.map(s =>
-            s.index === data.stepIndex
+            s.index === data.stepIndex + stepOffsetRef.current
               ? { ...s, status: 'done', description: data.description || s.description, stdout: data.stdout, exitCode: data.exitCode, savedFilePath: data.savedFilePath || undefined, guideInstruction: data.instruction || s.guideInstruction }
               : s
           ));
@@ -413,8 +462,6 @@ export default function AutomationProgress({ onHeightChange, onActiveChange }: A
             setGuideStep(null);
             setPhase('executing');
           }
-          // Steps are collapsed by default — user can expand by clicking
-          // Also accumulate at bottom-level for all_done fallback
           if (data.savedFilePath && data.savedFilePath.startsWith('/')) {
             setSavedFilePaths(prev => {
               if (prev.includes(data.savedFilePath)) return prev;
@@ -425,7 +472,7 @@ export default function AutomationProgress({ onHeightChange, onActiveChange }: A
 
         case 'step_failed':
           setSteps(prev => prev.map(s =>
-            s.index === data.stepIndex
+            s.index === data.stepIndex + stepOffsetRef.current
               ? { ...s, status: 'failed', error: data.error, stderr: data.stderr }
               : s
           ));
@@ -650,6 +697,79 @@ export default function AutomationProgress({ onHeightChange, onActiveChange }: A
           }
           break;
         }
+
+        case 'plan:generated': {
+          const _planStepTitles = parsePlanStepTitles(data.content || '');
+          setPhase('plan_review');
+          setPlanReview({
+            planFile: data.planFile || '',
+            content: data.content || '',
+            title: data.title || 'Execution Plan',
+            isExisting: false,
+          });
+          setTotalCount(_planStepTitles.length);
+          setIntentType('command_automate');
+          setSteps(_planStepTitles.map((title, i) => ({
+            index: i, skill: '', description: title, status: 'pending' as StepStatus,
+          })));
+          stepOffsetRef.current = 0;
+          break;
+        }
+
+        case 'plan:found_existing': {
+          const _existingStepTitles = parsePlanStepTitles(data.content || '');
+          setPhase('plan_review');
+          setPlanReview({
+            planFile: data.planFile || '',
+            content: data.content || '',
+            title: data.title || 'Existing Plan',
+            isExisting: true,
+            similarity: data.similarity,
+          });
+          setTotalCount(_existingStepTitles.length);
+          setIntentType('command_automate');
+          setSteps(_existingStepTitles.map((title, i) => ({
+            index: i, skill: '', description: title, status: 'pending' as StepStatus,
+          })));
+          stepOffsetRef.current = 0;
+          break;
+        }
+
+        case 'plan:step_start': {
+          // Transition out of plan_review to executing when first step fires
+          if (phase === 'plan_review') {
+            setPhase('executing');
+            setPlanReview(null);
+          }
+          setGuideStep(null);
+          const _psIdx = data.stepIndex ?? 0;
+          setSteps(prev => {
+            if (prev.some(s => s.index === _psIdx)) {
+              return prev.map(s => s.index === _psIdx
+                ? { ...s, status: 'running', skill: data.skill || s.skill, description: data.description || data.title || s.description }
+                : s
+              );
+            }
+            // Dynamically add if not pre-populated
+            const total = data.totalSteps ?? prev.length + 1;
+            const base: Step[] = prev.length < total
+              ? Array.from({ length: total }, (_, i) => prev[i] ?? { index: i, skill: '', description: `Step ${i + 1}`, status: 'pending' as StepStatus })
+              : prev;
+            return base.map(s => s.index === _psIdx
+              ? { ...s, status: 'running', skill: data.skill || s.skill, description: data.description || data.title || s.description }
+              : s
+            );
+          });
+          setTimeout(() => {
+            const el = stepRefs.current.get(_psIdx);
+            if (el) el.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+          }, 60);
+          break;
+        }
+
+        case 'plan:complete':
+          setPhase('done');
+          break;
       }
     };
 
@@ -665,15 +785,22 @@ export default function AutomationProgress({ onHeightChange, onActiveChange }: A
       setControlMode({ active: !!data.active, app: data.app || null });
     };
 
+    const handlePlanApproved = () => {
+      setPlanReview(null);
+      setPhase('executing');
+    };
+
     ipcRenderer.on('automation:progress', handleProgress);
     ipcRenderer.on('ws-bridge:message', handleBridgeMessage);
     ipcRenderer.on('app-control:mode-change', handleControlModeChange);
+    ipcRenderer.on('plan:approved', handlePlanApproved);
     return () => {
       if (ipcRenderer.removeListener) {
         ipcRenderer.removeListener('automation:progress', handleProgress);
         ipcRenderer.removeListener('results-window:set-prompt', handleNewPrompt);
         ipcRenderer.removeListener('ws-bridge:message', handleBridgeMessage);
         ipcRenderer.removeListener('app-control:mode-change', handleControlModeChange);
+        ipcRenderer.removeListener('plan:approved', handlePlanApproved);
       }
     };
   }, []);
@@ -736,6 +863,28 @@ export default function AutomationProgress({ onHeightChange, onActiveChange }: A
     });
     // Timeout fallback — if no response in 5min, reset
     setTimeout(() => setGatherOAuthConnecting(false), 300000);
+  };
+
+  const handlePlanApprove = () => {
+    if (!planReview) return;
+    ipcRenderer?.send('plan:approve', { planFile: planReview.planFile });
+    // phase transitions to 'executing' via plan:approved IPC event
+  };
+
+  const handlePlanCancel = () => {
+    if (!planReview) return;
+    ipcRenderer?.send('plan:cancel', { planFile: planReview.planFile });
+    setPlanReview(null);
+    setPhase('idle');
+    setSteps([]);
+  };
+
+  const handlePlanNew = () => {
+    ipcRenderer?.send('plan:new', {});
+    setPlanReview(null);
+    setPhase('planning');
+    setPlanMessage('Generating new plan…');
+    setSteps([]);
   };
 
   const doneCount = steps.filter(s => s.status === 'done').length;
@@ -827,6 +976,14 @@ export default function AutomationProgress({ onHeightChange, onActiveChange }: A
             </>
           );
         })()}
+        {phase === 'plan_review' && (
+          <>
+            <div className="flex-shrink-0 w-3 h-3 rounded-full" style={{ backgroundColor: '#3b82f6' }} />
+            <span className="text-sm font-medium" style={{ color: '#93c5fd' }}>
+              Review plan
+            </span>
+          </>
+        )}
         {phase === 'failed' && (
           <>
             <div className="flex-shrink-0 w-3.5 h-3.5 rounded-full flex items-center justify-center"
@@ -1466,6 +1623,49 @@ export default function AutomationProgress({ onHeightChange, onActiveChange }: A
               </div>
             );
           })}
+        </div>
+      )}
+
+      {/* ── Plan review: existing-plan banner + Approve/Cancel bar ────────── */}
+      {phase === 'plan_review' && planReview && (
+        <div style={{ borderTop: '1px solid rgba(255,255,255,0.07)', paddingTop: 10, marginTop: 2 }}>
+          {planReview.isExisting && (
+            <div style={{ marginBottom: 8, padding: '7px 10px', borderRadius: 8, backgroundColor: 'rgba(139,92,246,0.08)', border: '1px solid rgba(139,92,246,0.25)', display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="#a78bfa" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
+              </svg>
+              <span style={{ color: '#c4b5fd', fontSize: '0.73rem', fontWeight: 600 }}>
+                Similar plan found ({planReview.similarity != null ? Math.round(planReview.similarity * 100) : 100}% match)
+              </span>
+              <button
+                onClick={handlePlanNew}
+                style={{ padding: '2px 8px', borderRadius: 5, backgroundColor: 'transparent', border: '1px solid rgba(107,114,128,0.3)', color: '#6b7280', fontSize: '0.68rem', fontWeight: 500, cursor: 'pointer' }}
+                onMouseEnter={e => (e.currentTarget.style.backgroundColor = 'rgba(255,255,255,0.07)')}
+                onMouseLeave={e => (e.currentTarget.style.backgroundColor = 'transparent')}
+              >
+                New plan
+              </button>
+            </div>
+          )}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <button
+              onClick={handlePlanApprove}
+              style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '6px 16px', borderRadius: 7, cursor: 'pointer', backgroundColor: 'rgba(59,130,246,0.18)', border: '1px solid rgba(59,130,246,0.45)', color: '#93c5fd', fontSize: '0.75rem', fontWeight: 600 }}
+              onMouseEnter={e => (e.currentTarget.style.backgroundColor = 'rgba(59,130,246,0.30)')}
+              onMouseLeave={e => (e.currentTarget.style.backgroundColor = 'rgba(59,130,246,0.18)')}
+            >
+              <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+              Approve &amp; Run
+            </button>
+            <button
+              onClick={handlePlanCancel}
+              style={{ padding: '6px 14px', borderRadius: 7, cursor: 'pointer', backgroundColor: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.25)', color: '#f87171', fontSize: '0.75rem', fontWeight: 500 }}
+              onMouseEnter={e => (e.currentTarget.style.backgroundColor = 'rgba(239,68,68,0.18)')}
+              onMouseLeave={e => (e.currentTarget.style.backgroundColor = 'rgba(239,68,68,0.08)')}
+            >
+              Cancel
+            </button>
+          </div>
         </div>
       )}
 

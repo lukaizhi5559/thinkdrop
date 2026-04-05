@@ -1,7 +1,6 @@
 import React, { useEffect, useState, useRef } from 'react';
 import { RichContentRenderer } from './rich-content';
 import AutomationProgress from './AutomationProgress';
-import SkillBuildProgress, { SkillBuildState, BuildPhase } from './SkillBuildProgress';
 import { playDropSound } from '../utils/thinkDropSound';
 import { TabBar, QueueTab, CronTab, SkillsTab, StoreTab, ConnectionsTab, PromptQueueSection } from './TabComponents';
 import type { TabId, QueueItem, CronItem, SkillItem, PromptQueueItem, ConnectionItem } from './TabComponents';
@@ -113,8 +112,6 @@ export default function ResultsWindow() {
   // Action chips: quick follow-up prompts shown after a response
   const [actionChips, setActionChips] = useState<string[]>([]);
 
-  // Skill build pipeline state
-  const [skillBuild, setSkillBuild] = useState<SkillBuildState | null>(null);
   const scrollBottomRef = useRef<HTMLDivElement>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
 
@@ -248,7 +245,6 @@ export default function ResultsWindow() {
       setIsThinking(true);
       setIsSynthesisCollapsed(true);
       setIsAutomationMode(false); // AutomationProgress will self-activate on 'planning' event
-      setSkillBuild(null); // clear any stale build progress card from previous run
       if (glowOffTimerRef.current) clearTimeout(glowOffTimerRef.current);
       setIsGlowActive(true);
       
@@ -337,37 +333,6 @@ export default function ResultsWindow() {
         setIsInstalling(false);
         // Keep synthesis block collapsed — user can open it if they choose
         glowOffTimerRef.current = setTimeout(() => setIsGlowActive(false), 400);
-      } else if (data?.type === 'skill_build_phase') {
-        // Skill build pipeline progress — update SkillBuildProgress state
-        setSkillBuild(prev => {
-          const base: SkillBuildState = prev || {
-            phase: 'idle',
-            skillName: data.skillName || '',
-            skillDisplayName: data.skillName || '',
-            category: data.category || '',
-            round: data.round || 1,
-            maxRounds: 4,
-            rounds: [],
-          };
-          return { ...base, phase: data.phase as BuildPhase, round: data.round ?? base.round };
-        });
-        setIsGlowActive(true);
-      } else if (data?.type === 'skill_validate_result') {
-        setSkillBuild(prev => {
-          if (!prev) return prev;
-          return {
-            ...prev,
-            phase: data.verdict === 'PASS' ? 'installing' : 'fixing',
-            rounds: [...prev.rounds, { round: data.round, issues: data.issues || [], fixed: data.verdict === 'PASS' }],
-          };
-        });
-      } else if (data?.type === 'skill_build_done') {
-        setSkillBuild(prev => prev ? { ...prev, phase: data.ok ? 'done' : 'error', error: data.error, installedPath: data.installedPath } : prev);
-        glowOffTimerRef.current = setTimeout(() => setIsGlowActive(false), 1000);
-      } else if (data?.type === 'skill_build_draft') {
-        setSkillBuild(prev => prev ? { ...prev, draft: data.draft } : prev);
-      } else if (data?.type === 'skill_smoke_test') {
-        setSkillBuild(prev => prev ? { ...prev, smokeTest: { ok: data.ok, output: data.output, error: data.error } } : prev);
       }
     };
 
@@ -443,18 +408,6 @@ export default function ResultsWindow() {
       setBridgeStatus({ state: data.state, bridgeFile: data.bridgeFile, summary: data.summary });
     };
 
-    // skill:build-asking — installSkill paused for secret; update SkillBuildProgress to 'asking' phase
-    const handleSkillBuildAsking = (_event: any, { question, keyLabel, serviceContext, options, autoSetupFailed, scannedFields }: { name: string; question: string; keyLabel?: string; serviceContext?: string; options: string[]; autoSetupFailed?: boolean; scannedFields?: any[] }) => {
-      setSkillBuild(prev => prev ? { ...prev, phase: 'asking', question, keyLabel: keyLabel || undefined, serviceContext: serviceContext || undefined, options: options || [], autoSetupFailed: autoSetupFailed || false, scannedFields: scannedFields || null } : prev);
-      setIsGlowActive(true);
-    };
-
-    // skill:build-done — mark SkillBuildProgress done or error
-    const handleSkillBuildDone = (_event: any, { ok, installedPath, error }: { ok: boolean; installedPath?: string; error?: string }) => {
-      setSkillBuild(prev => prev ? { ...prev, phase: ok ? 'done' : 'error', installedPath, error } : prev);
-      if (ok) setTimeout(() => setIsGlowActive(false), 1000);
-    };
-
     // skills:update — sent by main.js in response to skills:list or after a new skill is installed
     const handleSkillsUpdate = (_event: any, items: SkillItem[]) => {
       setSkillItems(items || []);
@@ -480,8 +433,6 @@ export default function ResultsWindow() {
     ipcRenderer.on('automation:progress', handleAutomationProgress);
     ipcRenderer.on('schedule:pending', handleSchedulePending);
     ipcRenderer.on('bridge:status', handleBridgeStatus);
-    ipcRenderer.on('skill:build-asking', handleSkillBuildAsking);
-    ipcRenderer.on('skill:build-done', handleSkillBuildDone);
     ipcRenderer.on('queue:update', handleQueueUpdate);
     ipcRenderer.on('cron:update', handleCronUpdate);
     ipcRenderer.on('queue:enqueued', handleQueueEnqueued);
@@ -501,8 +452,6 @@ export default function ResultsWindow() {
         ipcRenderer.removeListener('automation:progress', handleAutomationProgress);
         ipcRenderer.removeListener('schedule:pending', handleSchedulePending);
         ipcRenderer.removeListener('bridge:status', handleBridgeStatus);
-        ipcRenderer.removeListener('skill:build-asking', handleSkillBuildAsking);
-        ipcRenderer.removeListener('skill:build-done', handleSkillBuildDone);
         ipcRenderer.removeListener('queue:update', handleQueueUpdate);
         ipcRenderer.removeListener('cron:update', handleCronUpdate);
         ipcRenderer.removeListener('queue:enqueued', handleQueueEnqueued);
@@ -1429,22 +1378,6 @@ export default function ResultsWindow() {
                 <span style={{ color: '#6b7280', fontSize: '0.65rem' }}>Bridge watching</span>
               </div>
             )
-          )}
-
-          {/* Skill build pipeline progress — shown when a skill is being built/validated/installed */}
-          {skillBuild && skillBuild.phase !== 'idle' && (
-            <SkillBuildProgress
-              state={skillBuild}
-              onAnswer={(answer) => {
-                ipcRenderer?.send('skill:build-answer', { name: skillBuild.skillName, answer });
-                setSkillBuild(prev => prev ? { ...prev, phase: 'installing' } : prev);
-              }}
-              onCancel={() => {
-                setSkillBuild(null);
-                // Reset AutomationProgress too — it listens for this event
-                ipcRenderer?.emit('results-window:set-prompt');
-              }}
-            />
           )}
 
           {/* AutomationProgress is always mounted so its IPC listener is pre-registered */}

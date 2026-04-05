@@ -1469,6 +1469,13 @@ app.whenReady().then(async () => {
         selectedText: item.selectedText || '',
         responseLanguage: item.responseLanguage || null,
         promptQueueId: item.id,
+        // Plan execution fields (set when plan:approve re-enqueues)
+        _planFile: item._planFile || null,
+        _forceNewPlan: item._forceNewPlan || false,
+        _skillPlan: item._skillPlan || null,
+        _skillPlanFile: item._skillPlanFile || null,
+        sessionId: item.sessionId || null,
+        userId: item.userId || 'default_user',
       });
     },
     alertRestart: (items, countdownMs) => {
@@ -1575,6 +1582,203 @@ app.whenReady().then(async () => {
   let pausedSkillBuildState = null; // set when installSkill pauses for ASK_USER (secrets)
   // activeAbortController is declared at module scope (above startOverlayControlServer)
   // so GET /activity can read it to detect an in-progress stategraph run.
+
+  // ─── Plan IPC bridge ──────────────────────────────────────────────────────
+  // Stores the context from the most recently generated plan so plan:approve
+  // can re-run the stategraph with _planFile set.
+  let pendingPlanContext = null; // { planFile, sessionId, userId, selectedText }
+
+  // plan:generated — emitted by planGenerator via progressCallback
+  // Stored at module scope so plan:approve can pick it up via IPC.
+  // (The progressCallback already forwarded the full event to the renderer;
+  //  here we just capture context for the re-run.)
+
+  // plan:approve — user clicked "Run Plan" in PlanPanel
+  ipcMain.on('plan:approve', async (_event, { planFile, scanBeforeRun = true } = {}) => {
+    const resolvedPlanFile = planFile || pendingPlanContext?.planFile;
+    if (!resolvedPlanFile) {
+      console.warn('[Plan] plan:approve received but no planFile available');
+      if (resultsWindow && !resultsWindow.isDestroyed()) {
+        safeSend(resultsWindow, 'plan:error', { message: 'No plan file to execute. Please generate a plan first.' });
+      }
+      return;
+    }
+
+    console.log(`[Plan:DEBUG] plan:approve received — planFile from IPC: ${planFile} | pendingContext.planFile: ${pendingPlanContext?.planFile}`);
+    console.log(`[Plan:DEBUG] Resolved planFile: ${resolvedPlanFile}`);
+
+    // Optional: re-scan for sensitive data before executing
+    if (scanBeforeRun) {
+      try {
+        const fs = require('fs');
+        const planContent = fs.readFileSync(resolvedPlanFile, 'utf8');
+        const planScanner = require('../../stategraph-module/src/utils/planScanner');
+        const { sanitized, secrets } = planScanner.scan(planContent);
+
+        // If new sensitive data was added during editing, store secrets and rewrite
+        if (secrets.size > 0) {
+          console.log(`[Plan] Detected ${secrets.size} new sensitive value(s) — storing and sanitizing`);
+          try {
+            const keytar = require('keytar');
+            await planScanner.storeSecrets(secrets, {
+              keytarSet: (svc, key, val) => keytar.setPassword(svc, key, val),
+              mcpAdapter,
+              userId: pendingPlanContext?.userId || 'default_user',
+              logger: console,
+            });
+          } catch (ksErr) {
+            console.warn('[Plan] keytar storeSecrets failed:', ksErr.message);
+          }
+          fs.writeFileSync(resolvedPlanFile, sanitized, 'utf8');
+          // Forward re-scan result to renderer
+          if (resultsWindow && !resultsWindow.isDestroyed()) {
+            safeSend(resultsWindow, 'plan:rescanned', { planFile: resolvedPlanFile });
+          }
+        }
+      } catch (scanErr) {
+        console.warn('[Plan] Pre-run scan failed:', scanErr.message);
+      }
+    }
+
+    // Re-run StateGraph — two paths depending on how the plan was generated:
+    // 1. planSkills approval gate (new): re-enqueue original prompt with _skillPlan array
+    // 2. planGenerator (legacy): re-enqueue as [plan_execute:...] with _planFile
+    const ctx = pendingPlanContext || {};
+    if (ctx.skillPlanJson) {
+      let _skillPlan = null;
+      try {
+        _skillPlan = JSON.parse(Buffer.from(ctx.skillPlanJson, 'base64').toString('utf8'));
+      } catch (_decodeErr) {
+        console.warn('[Plan] Failed to decode skillPlanJson:', _decodeErr.message);
+      }
+      if (_skillPlan) {
+        promptQueue.enqueue(
+          ctx.prompt,
+          {
+            _skillPlan,
+            _skillPlanFile: ctx.planFile,
+            selectedText:   ctx.selectedText || '',
+            sessionId:      ctx.sessionId || currentSessionId,
+            userId:         ctx.userId || 'default_user',
+          }
+        );
+        console.log(`[Plan:DEBUG] Enqueued _skillPlan re-run for: "${ctx.prompt?.slice(0, 60)}"`);
+        if (resultsWindow && !resultsWindow.isDestroyed()) {
+          safeSend(resultsWindow, 'plan:approved', { planFile: resolvedPlanFile });
+        }
+        return;
+      }
+    }
+    // Legacy path: _planFile re-run via parseIntent plan_execute flow
+    promptQueue.enqueue(
+      `[plan_execute:${require('path').basename(resolvedPlanFile)}]`,
+      {
+        _planFile: resolvedPlanFile,
+        selectedText: ctx.selectedText || '',
+        sessionId: ctx.sessionId || currentSessionId,
+        userId: ctx.userId || 'default_user',
+        _forceDirectExecute: false,
+      }
+    );
+    console.log(`[Plan:DEBUG] Enqueued plan_execute with _planFile: ${resolvedPlanFile}`);
+
+    if (resultsWindow && !resultsWindow.isDestroyed()) {
+      safeSend(resultsWindow, 'plan:approved', { planFile: resolvedPlanFile });
+    }
+  });
+
+  // plan:new — user rejected existing plan and wants a freshly generated one
+  ipcMain.on('plan:new', (_event) => {
+    const ctx = pendingPlanContext;
+    if (!ctx?.prompt) {
+      console.warn('[Plan] plan:new received but no pending prompt context');
+      return;
+    }
+    console.log(`[Plan] Forcing new plan for: "${ctx.prompt.slice(0, 60)}"`);
+    promptQueue.enqueue(
+      ctx.prompt,
+      {
+        selectedText:    ctx.selectedText || '',
+        sessionId:       ctx.sessionId || currentSessionId,
+        userId:          ctx.userId || 'default_user',
+        _forceNewPlan:   true,
+      }
+    );
+    pendingPlanContext = null;
+  });
+
+  // plan:cancel — user dismissed the plan
+  ipcMain.on('plan:cancel', (_event, { planFile } = {}) => {
+    console.log('[Plan] Plan cancelled by user');
+    pendingPlanContext = null;
+    if (resultsWindow && !resultsWindow.isDestroyed()) {
+      safeSend(resultsWindow, 'plan:cancelled', { planFile });
+    }
+  });
+
+  // plan:open-editor — open plan.md in default system editor
+  ipcMain.on('plan:open-editor', (_event, { planFile } = {}) => {
+    const file = planFile || pendingPlanContext?.planFile;
+    if (!file) return;
+    const { shell } = require('electron');
+    console.log(`[Plan] Opening plan in editor: ${file}`);
+    shell.openPath(file)
+      .then((err) => { if (err) console.warn('[Plan] shell.openPath error:', err); })
+      .catch((e) => console.warn('[Plan] shell.openPath threw:', e.message));
+  });
+
+  // plan:rescan — re-validate a plan after the user edited it
+  ipcMain.on('plan:rescan', async (_event, { planFile, content } = {}) => {
+    const planScanner = require('../../stategraph-module/src/utils/planScanner');
+    const fs = require('fs');
+    const fileToScan = planFile || pendingPlanContext?.planFile;
+
+    let planContent = content;
+    if (!planContent && fileToScan) {
+      try { planContent = fs.readFileSync(fileToScan, 'utf8'); } catch (_) {}
+    }
+    if (!planContent) {
+      if (resultsWindow && !resultsWindow.isDestroyed()) {
+        safeSend(resultsWindow, 'plan:rescan-result', { errors: ['Could not read plan file'], warnings: [] });
+      }
+      return;
+    }
+
+    // Save updated content if provided inline
+    if (content && fileToScan) {
+      try { fs.writeFileSync(fileToScan, content, 'utf8'); } catch (e) {
+        console.warn('[Plan] plan:rescan could not save file:', e.message);
+      }
+    }
+
+    const validation = planScanner.validate(planContent);
+    const { sanitized, secrets } = planScanner.scan(planContent);
+
+    // Store any newly typed sensitive values
+    if (secrets.size > 0) {
+      try {
+        const keytar = require('keytar');
+        await planScanner.storeSecrets(secrets, {
+          keytarSet: (svc, key, val) => keytar.setPassword(svc, key, val),
+          mcpAdapter,
+          userId: pendingPlanContext?.userId || 'default_user',
+          logger: console,
+        });
+        if (fileToScan) fs.writeFileSync(fileToScan, sanitized, 'utf8');
+      } catch (e) {
+        console.warn('[Plan] plan:rescan storeSecrets failed:', e.message);
+      }
+    }
+
+    if (resultsWindow && !resultsWindow.isDestroyed()) {
+      safeSend(resultsWindow, 'plan:rescan-result', {
+        errors: validation.errors,
+        warnings: validation.warnings,
+        secretsFound: secrets.size,
+        sanitized: secrets.size > 0 ? sanitized : null,
+      });
+    }
+  });
 
   // ─── Automation: Cancel active run ───────────────────────────────────────
   ipcMain.on('automation:cancel', () => {
@@ -1915,8 +2119,9 @@ app.whenReady().then(async () => {
   });
 
   // ─── StateGraph: Core execution — called by promptQueue serially ─────────
-  async function runPromptThroughStateGraph(prompt, { selectedText = '', sessionId = null, userId = 'default_user', responseLanguage = null, promptQueueId = null } = {}) {
-    console.log('🧠 [StateGraph] Processing prompt:', prompt.substring(0, 80), responseLanguage ? `(responseLanguage: ${responseLanguage})` : '');
+  async function runPromptThroughStateGraph(prompt, { selectedText = '', sessionId = null, userId = 'default_user', responseLanguage = null, promptQueueId = null, _planFile = null, _forceNewPlan = false, _skillPlan = null, _skillPlanFile = null } = {}) {
+    const isPlanExecute = !!_planFile;
+    console.log('🧠 [StateGraph] Processing prompt:', prompt.substring(0, 80), responseLanguage ? `(responseLanguage: ${responseLanguage})` : '', isPlanExecute ? `[plan:${require('path').basename(_planFile)}]` : '');
 
     // Track this prompt so clipboard monitor won't re-capture it as a highlight
     recentlySubmittedPrompts.add(prompt.trim());
@@ -1941,8 +2146,10 @@ app.whenReady().then(async () => {
     }
 
     // Show ResultsWindow and set prompt display (without stealing focus from active app)
+    // Skip for skill-plan re-runs — PlanPanel already shows the plan in executing state
+    // and firing set-prompt would reset PlanPanel to idle before step events arrive.
     if (resultsWindow && !resultsWindow.isDestroyed()) {
-      safeSend(resultsWindow, 'results-window:set-prompt', prompt);
+      if (!_skillPlan) safeSend(resultsWindow, 'results-window:set-prompt', prompt);
       resultsWindow.showInactive();
       resultsWindow.moveTop();
     }
@@ -1968,6 +2175,10 @@ app.whenReady().then(async () => {
         ? JSON.stringify({ type: event.type, completedCount: event.completedCount, totalCount: event.totalCount, savedFilePaths: event.savedFilePaths })
         : JSON.stringify(event).substring(0, 120);
       console.log(`[ProgressCallback] Event: ${event.type}`, logStr);
+      // Plan step debug: log detail for plan step events
+      if (event.type === 'plan:step_start') {
+        console.log(`[Plan:DEBUG] plan:step_start — stepNum: ${event.stepNum}, totalSteps: ${event.totalSteps}, intent: ${event.intent}, title: ${event.title}`);
+      }
       // Track active schedule countdown for close warning
       if (event.type === 'schedule_start') {
         activeScheduleCountdown = { id: event.scheduleId || 'unknown', targetTime: event.targetTime, label: event.label };
@@ -1993,6 +2204,35 @@ app.whenReady().then(async () => {
       if (event.type === 'all_done' && promptCaptureWindow && !promptCaptureWindow.isDestroyed()) {
         safeSend(promptCaptureWindow, 'automation:progress', event);
       }
+      // Plan generated — store pending context for plan:approve re-run
+      if (event.type === 'plan:generated') {
+        pendingPlanContext = {
+          planFile:      event.planFile,
+          prompt:        prompt,
+          sessionId:     currentSessionId,
+          userId:        'default_user',
+          selectedText:  selectedText || '',
+          skillPlanJson: event.skillPlanJson || null,
+        };
+        console.log(`[Plan] plan:generated context stored: ${event.planFile}`);
+        // Store pending secrets from planGenerator if any (passed via event via _pendingPlanSecrets)
+        // These are already sanitized in the .md file; we just need to persist the values
+        // Note: secrets with values are passed only if planGenerator couldn't call keytar directly
+      }
+
+      // Existing plan found — store pending context so plan:new can re-run with _forceNewPlan
+      if (event.type === 'plan:found_existing') {
+        pendingPlanContext = {
+          planFile:      event.planFile,
+          prompt:        prompt,
+          sessionId:     currentSessionId,
+          userId:        'default_user',
+          selectedText:  selectedText || '',
+          skillPlanJson: event.skillPlanJson || null,
+        };
+        console.log(`[Plan] plan:found_existing context stored: ${event.planFile}`);
+      }
+
       // needs_skill gap — notify resultsWindow so AutomationProgress shows the capability gap card
       // Do NOT auto-open Skill Store in promptCaptureWindow; user clicks the card button to open it
       if (event.type === 'skill_store_trigger') {
@@ -2729,6 +2969,11 @@ app.whenReady().then(async () => {
           activeBrowserUrl: currentBrowserUrl || null,
           lastOpenedFilePath: currentLastOpenedFilePath || null,
           responseLanguage: responseLanguage || null,
+          // Plan execution: set when plan:approve re-enqueues with _planFile or _skillPlan
+          _planFile: _planFile || null,
+          _forceNewPlan: _forceNewPlan || false,
+          _skillPlan: _skillPlan || null,
+          _skillPlanFile: _skillPlanFile || null,
           context: {
             sessionId: sessionId || currentSessionId,
             userId,
