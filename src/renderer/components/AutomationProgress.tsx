@@ -334,6 +334,10 @@ export default function AutomationProgress({ onHeightChange, onActiveChange }: A
     similarity?: number;
   } | null>(null);
 
+  // Ref to track current phase — avoids stale closure issues in the IPC listener useEffect
+  const phaseRef = useRef<AutomationPhase>('idle');
+  useEffect(() => { phaseRef.current = phase; }, [phase]);
+
   // Refs for auto-scrolling to the active step
   const stepRefs = useRef<Map<number, HTMLDivElement>>(new Map());
   // Tracks global step index offset across multi-intent queue sub-plans.
@@ -396,6 +400,8 @@ export default function AutomationProgress({ onHeightChange, onActiveChange }: A
           break;
 
         case 'plan_ready': {
+          // Don't override an active plan review — user must approve before execution starts
+          if (phaseRef.current === 'plan_review') break;
           // If there are already completed steps (mid-queue), append rather than replace.
           // This gives users a cumulative view of all sub-intent steps instead of resetting.
           // Exception: recoveryReplan=true means the failed step is being retried with a new plan —
@@ -662,6 +668,8 @@ export default function AutomationProgress({ onHeightChange, onActiveChange }: A
           break;
 
         case 'all_done': {
+          // Don't let all_done collapse an active plan review (awaitingPlanApproval path)
+          if (phaseRef.current === 'plan_review') break;
           setGuideStep(null);
           setPhase('done');
           setTotalCount(data.totalCount);
@@ -737,7 +745,7 @@ export default function AutomationProgress({ onHeightChange, onActiveChange }: A
 
         case 'plan:step_start': {
           // Transition out of plan_review to executing when first step fires
-          if (phase === 'plan_review') {
+          if (phaseRef.current === 'plan_review') {
             setPhase('executing');
             setPlanReview(null);
           }
@@ -1132,7 +1140,11 @@ export default function AutomationProgress({ onHeightChange, onActiveChange }: A
       )}
 
       {/* ── Gather: question card ──────────────────────────────────── */}
-      {gatherQuestion && (
+      {/* Removed: service-choice gather_question UI — service selection is handled
+          via the Plan Review markdown editor instead of an inline prompt card.
+          The enrichIntent node no longer emits gather_question for multi-provider
+          ambiguity; this UI block is kept here (commented) for reference only. */}
+      {/* {gatherQuestion && (
         <div style={{ padding: '12px 14px', borderRadius: 10, backgroundColor: 'rgba(167,139,250,0.07)', border: '1px solid rgba(167,139,250,0.3)' }}>
           <div className="flex items-start gap-2" style={{ marginBottom: 8 }}>
             <div style={{ fontSize: '0.9rem', lineHeight: 1, marginTop: 1, flexShrink: 0 }}>🔍</div>
@@ -1145,7 +1157,6 @@ export default function AutomationProgress({ onHeightChange, onActiveChange }: A
                   {gatherQuestion.hint}
                 </div>
               )}
-              {/* Choice options */}
               {gatherQuestion.options && gatherQuestion.options.length > 0 && (
                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 6 }}>
                   {gatherQuestion.options.map((opt) => (
@@ -1165,7 +1176,6 @@ export default function AutomationProgress({ onHeightChange, onActiveChange }: A
                   ))}
                 </div>
               )}
-              {/* Helpful links */}
               {gatherQuestion.links && gatherQuestion.links.length > 0 && (
                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
                   {gatherQuestion.links.map((link) => (
@@ -1180,7 +1190,6 @@ export default function AutomationProgress({ onHeightChange, onActiveChange }: A
                   ))}
                 </div>
               )}
-              {/* For text-type questions: hint to answer in the prompt bar */}
               {(!gatherQuestion.options || gatherQuestion.options.length === 0) && (
                 <div style={{ color: '#4b5563', fontSize: '0.67rem', marginTop: 4 }}>
                   Type your answer in the prompt bar below ↓
@@ -1189,7 +1198,7 @@ export default function AutomationProgress({ onHeightChange, onActiveChange }: A
             </div>
           </div>
         </div>
-      )}
+      )} */}
 
       {/* ── Gather: credential input card ────────────────────────────────── */}
       {gatherCredential && (

@@ -3168,7 +3168,8 @@ app.whenReady().then(async () => {
         }
         // Send all_done for normal completion so AutomationProgress clears evaluating/retrying phases.
         // Skip if paused for ASK_USER — that case sends ask_user above and waits for user reply.
-        if (!finalState.pendingQuestion && !finalState.planError && resultsWindow && !resultsWindow.isDestroyed()) {
+        // Skip if awaiting plan approval — plan:generated is showing the review UI; all_done would override it.
+        if (!finalState.pendingQuestion && !finalState.planError && !finalState.awaitingPlanApproval && resultsWindow && !resultsWindow.isDestroyed()) {
           safeSend(resultsWindow, 'automation:progress', {
             type: 'all_done',
             completedCount: (finalState.skillResults || []).length,

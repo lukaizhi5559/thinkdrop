@@ -276,6 +276,14 @@ export default function ResultsWindow() {
         setActionChips([]);
         if (glowOffTimerRef.current) clearTimeout(glowOffTimerRef.current);
         setIsGlowActive(true);
+      } else if (data?.type === 'plan:generated' || data?.type === 'plan:found_existing') {
+        // Plan ready for approval — clear thinking state, activate automation mode
+        setIsThinking(false);
+        setIsAutomationMode(true);
+        setInstallPrompt(null);
+        setActionChips([]);
+        if (glowOffTimerRef.current) clearTimeout(glowOffTimerRef.current);
+        setIsGlowActive(true);
       } else if (data?.type === 'needs_install') {
         // Pause plan — show install confirmation card
         setInstallPrompt({
