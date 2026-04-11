@@ -2897,6 +2897,47 @@ app.whenReady().then(async () => {
               stepRetryCount: 0,
               context: { ...paused.context, sessionId: sessionId || currentSessionId }
             };
+          } else if (paused.pendingQuestion?._isAgentAskUser && /^yes[,.]?\s+run:\s+/i.test(chosenOption.trim())) {
+            // cli.agent embedded an exact command in the option text (e.g. "Yes, run: gh api --method PUT /user/starred/microsoft/vscode").
+            // Bypass planSkills entirely via _skillPlan injection — planSkills LLM would
+            // semantically re-interpret the literal command back into the original task
+            // (e.g. "gh api --method PUT ..." → "star the repo") causing a loop restart.
+            const agentCmd = chosenOption.replace(/^yes[,.]?\s+run:\s+/i, '').trim();
+            const agentId = paused.pendingQuestion?.agentId
+              || paused.skillPlan?.[paused.skillCursor || 0]?.args?.agentId
+              || null;
+            console.log(`[StateGraph] ASK_USER resume: _isAgentAskUser command confirmed — injecting plan: ${agentId} task="${agentCmd}"`);
+            // Reset AutomationProgress for the second run — planSkills _skillPlan fast-path
+            // will emit plan_ready to re-init steps, but set-prompt must fire first so
+            // handleNewPrompt clears the stale first-run step list and stepOffsetRef.
+            if (resultsWindow && !resultsWindow.isDestroyed()) {
+              safeSend(resultsWindow, 'results-window:set-prompt', agentCmd);
+            }
+            initialState = {
+              ...paused,
+              message: agentCmd,
+              streamCallback,
+              progressCallback,
+              confirmInstallCallback,
+              confirmGuideCallback,
+              isGuideCancelled,
+              failedStep: null,
+              pendingQuestion: null,
+              recoveryAction: null,
+              answer: undefined,
+              commandExecuted: false,
+              // _skillPlan bypasses planSkills LLM (see planSkills.js L255) — used as-is
+              _skillPlan: [{
+                skill: 'cli.agent',
+                args: { action: 'run', agentId, task: agentCmd },
+                description: agentCmd,
+              }],
+              skillPlan: null,
+              skillCursor: 0,
+              skillResults: [],  // reset — don't carry stale failed steps into reviewExecution
+              stepRetryCount: 0,
+              context: { ...paused.context, sessionId: sessionId || currentSessionId }
+            };
           } else {
             // User provided a custom answer — inject it as recoveryContext and replan
             // (isFreshPrompt already handled the "new task typed as reply" case above)

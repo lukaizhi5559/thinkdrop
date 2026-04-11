@@ -45,15 +45,6 @@ type AutomationPhase =
   | 'project_building'
   | 'plan_review';
 
-interface GatherQuestion {
-  id: string;
-  question: string;
-  hint: string | null;
-  type: 'choice' | 'text' | 'credential';
-  options: string[] | null;
-  links: { label: string; url: string }[];
-}
-
 interface GatherCredential {
   credentialKey: string;
   question: string;
@@ -79,6 +70,24 @@ interface GatherOAuth {
 interface AskUserPrompt {
   question: string;
   options: string[];
+}
+
+interface AgentTurnEntry {
+  turn: number;
+  maxTurns: number;
+  action?: { action?: string; [key: string]: any };
+  outcome?: { ok: boolean; error?: string; result?: string };
+  thoughts?: string;
+}
+
+interface AgentComplete {
+  agentId: string;
+  task: string;
+  totalTurns: number;
+  done: boolean;
+  result: string;
+  reasoning?: string;
+  ok: boolean;
 }
 
 // ScoutMatchState is defined above the component
@@ -315,7 +324,6 @@ export default function AutomationProgress({ onHeightChange, onActiveChange }: A
   const [retryMessage, setRetryMessage] = useState<string>('');
   const [skillBuildConfirm, setSkillBuildConfirm] = useState<{ skillName: string; summary: string } | null>(null);
   const [scoutMatch, setScoutMatch] = useState<ScoutMatchState | null>(null);
-  const [gatherQuestion, setGatherQuestion] = useState<GatherQuestion | null>(null);
   const [gatherCredential, setGatherCredential] = useState<GatherCredential | null>(null);
   const [gatherConfirm, setGatherConfirm] = useState<GatherConfirm | null>(null);
   const [gatherCredentialValue, setGatherCredentialValue] = useState('');
@@ -323,6 +331,12 @@ export default function AutomationProgress({ onHeightChange, onActiveChange }: A
   const [gatherOAuth, setGatherOAuth] = useState<GatherOAuth | null>(null);
   const [gatherOAuthConnecting, setGatherOAuthConnecting] = useState(false);
   const [gatherOAuthConnected, setGatherOAuthConnected] = useState<string | null>(null);
+  // Maps stepIndex → array of agent turn entries (populated post-hoc from cli.agent / browser.agent runs)
+  const [agentTurns, setAgentTurns] = useState<Map<number, AgentTurnEntry[]>>(new Map());
+  const [agentCompletes, setAgentCompletes] = useState<Map<number, AgentComplete>>(new Map());
+  const [expandedAgentSteps, setExpandedAgentSteps] = useState<Set<number>>(new Set());
+  // Maps stepIndex → array of learned rule strings saved to memory during that step
+  const [learnedRules, setLearnedRules] = useState<Map<number, string[]>>(new Map());
   const [projectBuild, setProjectBuild] = useState<{ capability: string; iteration: number; message: string; passed: boolean; failed: boolean; errorMsg: string | null } | null>(null);
   const [projectBuildFiles, setProjectBuildFiles] = useState<string[]>([]);
   const [controlMode, setControlMode] = useState<{ active: boolean; app: string | null }>({ active: false, app: null });
@@ -358,6 +372,7 @@ export default function AutomationProgress({ onHeightChange, onActiveChange }: A
 
   useEffect(() => {
     if (!ipcRenderer) return;
+    let active = true;
 
     // Reset when a new prompt starts
     const handleNewPrompt = () => {
@@ -373,7 +388,6 @@ export default function AutomationProgress({ onHeightChange, onActiveChange }: A
       setIntentType(null);
       setScheduleCountdown(null);
       setSkillBuildConfirm(null);
-      setGatherQuestion(null);
       setGatherCredential(null);
       setGatherConfirm(null);
       setGatherCredentialValue('');
@@ -381,6 +395,10 @@ export default function AutomationProgress({ onHeightChange, onActiveChange }: A
       setGatherOAuth(null);
       setGatherOAuthConnecting(false);
       setGatherOAuthConnected(null);
+      setAgentTurns(new Map());
+      setAgentCompletes(new Map());
+      setExpandedAgentSteps(new Set());
+      setLearnedRules(new Map());
       setProjectBuild(null);
       setProjectBuildFiles([]);
       setPlanReview(null);
@@ -390,6 +408,7 @@ export default function AutomationProgress({ onHeightChange, onActiveChange }: A
     ipcRenderer.on('results-window:set-prompt', handleNewPrompt);
 
     const handleProgress = (_event: any, data: any) => {
+      if (!active) return;
       switch (data.type) {
         case 'planning':
           setPhase('planning');
@@ -484,6 +503,61 @@ export default function AutomationProgress({ onHeightChange, onActiveChange }: A
           ));
           break;
 
+        case 'agent:turns_reset': {
+          const stepIdx = (data.stepIndex ?? 0) + stepOffsetRef.current;
+          setAgentTurns(prev => {
+            const next = new Map(prev);
+            next.delete(stepIdx);
+            return next;
+          });
+          break;
+        }
+
+        case 'agent:turn': {
+          const stepIdx = (data.stepIndex ?? 0) + stepOffsetRef.current;
+          setAgentTurns(prev => {
+            const next = new Map(prev);
+            const existing = next.get(stepIdx) || [];
+            next.set(stepIdx, [...existing, {
+              turn:     data.turn,
+              maxTurns: data.maxTurns,
+              action:   data.action,
+              outcome:  data.outcome,
+              thoughts: data.thoughts,
+            }]);
+            return next;
+          });
+          break;
+        }
+
+        case 'agent:complete': {
+          const stepIdx = (data.stepIndex ?? 0) + stepOffsetRef.current;
+          setAgentCompletes(prev => {
+            const next = new Map(prev);
+            next.set(stepIdx, {
+              agentId:    data.agentId,
+              task:       data.task,
+              totalTurns: data.totalTurns || 0,
+              done:       data.done ?? data.ok,
+              result:     data.result || '',
+              reasoning:  data.reasoning,
+              ok:         data.ok,
+            });
+            return next;
+          });
+          break;
+        }
+
+        case 'agent:rule_learned': {
+          const stepIdx = (data.stepIndex ?? 0) + stepOffsetRef.current;
+          setLearnedRules(prev => {
+            const next = new Map(prev);
+            next.set(stepIdx, [...(next.get(stepIdx) || []), String(data.rule || '')]);
+            return next;
+          });
+          break;
+        }
+
         case 'synthesis_start':
           // Keep phase as 'executing' — synthesize node emits step_done with answer as stdout
           break;
@@ -516,30 +590,14 @@ export default function AutomationProgress({ onHeightChange, onActiveChange }: A
 
         case 'gather_start':
           setPhase('gathering');
-          setGatherQuestion(null);
           setGatherCredential(null);
           setGatherConfirm(null);
           setGatherOAuth(null);
           setGatherOAuthConnecting(false);
           break;
 
-        case 'gather_question':
-          setPhase('gathering');
-          setGatherCredential(null);
-          setGatherConfirm(null);
-          setGatherQuestion({
-            id: data.id,
-            question: data.question,
-            hint: data.hint || null,
-            type: data.inputType || data.type || 'text',
-            options: data.options || null,
-            links: data.links || [],
-          });
-          break;
-
         case 'gather_credential':
           setPhase('gathering');
-          setGatherQuestion(null);
           setGatherConfirm(null);
           setGatherCredentialValue('');
           setGatherCredential({
@@ -560,7 +618,6 @@ export default function AutomationProgress({ onHeightChange, onActiveChange }: A
 
         case 'gather_confirm':
           setPhase('gathering');
-          setGatherQuestion(null);
           setGatherCredential(null);
           setGatherConfirm({
             question: data.question,
@@ -575,7 +632,6 @@ export default function AutomationProgress({ onHeightChange, onActiveChange }: A
 
         case 'gather_oauth':
           setPhase('gathering');
-          setGatherQuestion(null);
           setGatherCredential(null);
           setGatherConfirm(null);
           setGatherOAuthConnecting(false);
@@ -596,7 +652,6 @@ export default function AutomationProgress({ onHeightChange, onActiveChange }: A
           break;
 
         case 'gather_complete':
-          setGatherQuestion(null);
           setGatherCredential(null);
           setGatherConfirm(null);
           setGatherOAuth(null);
@@ -606,7 +661,6 @@ export default function AutomationProgress({ onHeightChange, onActiveChange }: A
           break;
 
         case 'gather_answer_received':
-          setGatherQuestion(null);
           break;
 
         case 'scout_match':
@@ -803,6 +857,7 @@ export default function AutomationProgress({ onHeightChange, onActiveChange }: A
     ipcRenderer.on('app-control:mode-change', handleControlModeChange);
     ipcRenderer.on('plan:approved', handlePlanApproved);
     return () => {
+      active = false;
       if (ipcRenderer.removeListener) {
         ipcRenderer.removeListener('automation:progress', handleProgress);
         ipcRenderer.removeListener('results-window:set-prompt', handleNewPrompt);
@@ -837,11 +892,6 @@ export default function AutomationProgress({ onHeightChange, onActiveChange }: A
     setGuideStep(null);
     setPhase('idle');
     ipcRenderer?.send('guide:cancel');
-  };
-
-  const handleGatherOptionClick = (option: string) => {
-    setGatherQuestion(null);
-    ipcRenderer?.send('gather:answer', { answer: option });
   };
 
   const handleGatherCredentialSubmit = () => {
@@ -895,7 +945,10 @@ export default function AutomationProgress({ onHeightChange, onActiveChange }: A
     setSteps([]);
   };
 
-  const doneCount = steps.filter(s => s.status === 'done').length;
+  const doneCount = steps.filter(s =>
+    s.status === 'done' ||
+    (s.status !== 'failed' && agentCompletes.get(s.index)?.ok === true)
+  ).length;
   const shownTotal = totalCount || steps.length;
 
   if (phase === 'idle' && !controlMode.active) return null;
@@ -1138,67 +1191,6 @@ export default function AutomationProgress({ onHeightChange, onActiveChange }: A
           </div>
         </div>
       )}
-
-      {/* ── Gather: question card ──────────────────────────────────── */}
-      {/* Removed: service-choice gather_question UI — service selection is handled
-          via the Plan Review markdown editor instead of an inline prompt card.
-          The enrichIntent node no longer emits gather_question for multi-provider
-          ambiguity; this UI block is kept here (commented) for reference only. */}
-      {/* {gatherQuestion && (
-        <div style={{ padding: '12px 14px', borderRadius: 10, backgroundColor: 'rgba(167,139,250,0.07)', border: '1px solid rgba(167,139,250,0.3)' }}>
-          <div className="flex items-start gap-2" style={{ marginBottom: 8 }}>
-            <div style={{ fontSize: '0.9rem', lineHeight: 1, marginTop: 1, flexShrink: 0 }}>🔍</div>
-            <div style={{ flex: 1 }}>
-              <div style={{ color: '#c4b5fd', fontSize: '0.76rem', fontWeight: 600, marginBottom: 4 }}>
-                {gatherQuestion.question}
-              </div>
-              {gatherQuestion.hint && (
-                <div style={{ color: '#6b7280', fontSize: '0.68rem', marginBottom: 6 }}>
-                  {gatherQuestion.hint}
-                </div>
-              )}
-              {gatherQuestion.options && gatherQuestion.options.length > 0 && (
-                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 6 }}>
-                  {gatherQuestion.options.map((opt) => (
-                    <button
-                      key={opt}
-                      onClick={() => handleGatherOptionClick(opt)}
-                      style={{
-                        padding: '4px 10px', borderRadius: 6, cursor: 'pointer',
-                        backgroundColor: 'rgba(167,139,250,0.12)', border: '1px solid rgba(167,139,250,0.35)',
-                        color: '#c4b5fd', fontSize: '0.69rem', fontWeight: 500,
-                      }}
-                      onMouseEnter={e => (e.currentTarget.style.backgroundColor = 'rgba(167,139,250,0.22)')}
-                      onMouseLeave={e => (e.currentTarget.style.backgroundColor = 'rgba(167,139,250,0.12)')}
-                    >
-                      {opt}
-                    </button>
-                  ))}
-                </div>
-              )}
-              {gatherQuestion.links && gatherQuestion.links.length > 0 && (
-                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-                  {gatherQuestion.links.map((link) => (
-                    <a
-                      key={link.url}
-                      href="#"
-                      onClick={e => { e.preventDefault(); ipcRenderer?.send('shell:open-url', link.url); }}
-                      style={{ color: '#818cf8', fontSize: '0.67rem', textDecoration: 'underline', textDecorationStyle: 'dotted' }}
-                    >
-                      ↗ {link.label}
-                    </a>
-                  ))}
-                </div>
-              )}
-              {(!gatherQuestion.options || gatherQuestion.options.length === 0) && (
-                <div style={{ color: '#4b5563', fontSize: '0.67rem', marginTop: 4 }}>
-                  Type your answer in the prompt bar below ↓
-                </div>
-              )}
-            </div>
-          </div>
-        </div>
-      )} */}
 
       {/* ── Gather: credential input card ────────────────────────────────── */}
       {gatherCredential && (
@@ -1626,6 +1618,97 @@ export default function AutomationProgress({ onHeightChange, onActiveChange }: A
                           </pre>
                         )}
                       </>
+                    )}
+                  </div>
+                )}
+                {/* ── Sub-agent turn card ─────────────────────────────── */}
+                {agentCompletes.has(step.index) && (
+                  <div style={{ marginTop: 6, marginLeft: 28 }}>
+                    <button
+                      onClick={() => setExpandedAgentSteps(prev => {
+                        const n = new Set(prev);
+                        n.has(step.index) ? n.delete(step.index) : n.add(step.index);
+                        return n;
+                      })}
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: 6,
+                        background: 'none',
+                        border: 'none',
+                        cursor: 'pointer',
+                        padding: '2px 0',
+                        color: '#94a3b8',
+                        fontSize: '11px',
+                      }}
+                    >
+                      <span style={{ fontWeight: 600, color: '#818cf8' }}>
+                        {agentCompletes.get(step.index)!.agentId}
+                      </span>
+                      <span>·</span>
+                      <span>{agentCompletes.get(step.index)!.totalTurns} turn{agentCompletes.get(step.index)!.totalTurns !== 1 ? 's' : ''}</span>
+                      <span>·</span>
+                      <span style={{ color: agentCompletes.get(step.index)!.ok ? '#34d399' : '#f87171' }}>
+                        {agentCompletes.get(step.index)!.ok ? '✓ done' : '✗ failed'}
+                      </span>
+                      <span style={{ fontSize: '9px', marginLeft: 2 }}>
+                        {expandedAgentSteps.has(step.index) ? '▲' : '▼'}
+                      </span>
+                    </button>
+                    {/* ── Learned rule rows — always visible, one per saved rule ── */}
+                    {(learnedRules.get(step.index) || []).map((rule, ri) => (
+                      <div key={ri} style={{
+                        display: 'flex', alignItems: 'flex-start', gap: 5,
+                        marginTop: 4,
+                        padding: '3px 7px',
+                        borderRadius: 4,
+                        borderLeft: '2px solid rgba(245,158,11,0.5)',
+                        backgroundColor: 'rgba(245,158,11,0.05)',
+                      }}>
+                        {/* Memory icon */}
+                        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="#f59e0b" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0, marginTop: 1 }}>
+                          <path d="M9.5 2A2.5 2.5 0 0 1 12 4.5v15a2.5 2.5 0 0 1-4.96-.44 2.5 2.5 0 0 1-2.96-3.08 3 3 0 0 1-.34-5.58 2.5 2.5 0 0 1 1.32-4.24 2.5 2.5 0 0 1 1.44-3.16Z"/>
+                          <path d="M14.5 2A2.5 2.5 0 0 0 12 4.5v15a2.5 2.5 0 0 0 4.96-.44 2.5 2.5 0 0 0 2.96-3.08 3 3 0 0 0 .34-5.58 2.5 2.5 0 0 0-1.32-4.24 2.5 2.5 0 0 0-1.44-3.16Z"/>
+                        </svg>
+                        <span style={{ color: '#fbbf24', fontSize: '10px', fontWeight: 600, flexShrink: 0 }}>Saved to memory</span>
+                        <span title={rule} style={{
+                          color: '#92400e', fontSize: '10px', fontFamily: 'ui-monospace,monospace',
+                          overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 180,
+                        }}>
+                          {rule.length > 110 ? rule.slice(0, 110) + '…' : rule}
+                        </span>
+                      </div>
+                    ))}
+                    {expandedAgentSteps.has(step.index) && (
+                      <div style={{ marginTop: 4 }}>
+                        {(agentTurns.get(step.index) || []).map((t, i) => (
+                          <div key={i} style={{
+                            fontSize: '11px',
+                            color: '#94a3b8',
+                            padding: '2px 0 2px 8px',
+                            borderLeft: '2px solid rgba(99,102,241,0.3)',
+                            marginBottom: 2,
+                          }}>
+                            <span style={{ color: '#64748b', marginRight: 6 }}>Turn {t.turn}/{t.maxTurns}</span>
+                            {t.action?.action && <span style={{ color: '#c7d2fe', marginRight: 4 }}>{t.action.action}</span>}
+                            {t.outcome && (
+                              <span style={{ color: t.outcome.ok ? '#6ee7b7' : '#fca5a5' }}>
+                                {t.outcome.ok ? '✓' : `✗ ${t.outcome.error || ''}`}
+                              </span>
+                            )}
+                          </div>
+                        ))}
+                        {(agentTurns.get(step.index) || []).length === 0 && agentCompletes.get(step.index)?.reasoning && (
+                          <div style={{
+                            fontSize: '11px',
+                            color: '#94a3b8',
+                            padding: '2px 0 2px 8px',
+                            borderLeft: '2px solid rgba(99,102,241,0.3)',
+                          }}>
+                            {agentCompletes.get(step.index)!.reasoning}
+                          </div>
+                        )}
+                      </div>
                     )}
                   </div>
                 )}
