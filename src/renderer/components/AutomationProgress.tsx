@@ -177,6 +177,14 @@ function humanizeError(error: string): string {
   return msg.length > 100 ? msg.slice(0, 100) + '…' : msg;
 }
 
+function getAgentStatusLabel(elapsedMs: number): string {
+  if (elapsedMs < 8000) return 'working…';
+  if (elapsedMs < 20000) return 'running command…';
+  if (elapsedMs < 40000) return 'still working…';
+  if (elapsedMs < 60000) return 'taking a moment…';
+  return 'taking longer than expected…';
+}
+
 function SkillBadge({ skill }: { skill: string }) {
   return (
     <span className="text-xs font-mono px-1.5 py-0.5 rounded"
@@ -330,6 +338,8 @@ export default function AutomationProgress({ onHeightChange, onActiveChange }: A
   const [gatherCredentialStored, setGatherCredentialStored] = useState<string | null>(null);
   const [gatherOAuth, setGatherOAuth] = useState<GatherOAuth | null>(null);
   const [gatherOAuthConnecting, setGatherOAuthConnecting] = useState(false);
+  // Login guidance — shown inline while waitForAuth polls (step stays running)
+  const [loginGuidance, setLoginGuidance] = useState<{ stepIndex: number; serviceDisplay: string; loginUrl: string; message: string } | null>(null);
   const [gatherOAuthConnected, setGatherOAuthConnected] = useState<string | null>(null);
   // Maps stepIndex → array of agent turn entries (populated post-hoc from cli.agent / browser.agent runs)
   const [agentTurns, setAgentTurns] = useState<Map<number, AgentTurnEntry[]>>(new Map());
@@ -358,6 +368,11 @@ export default function AutomationProgress({ onHeightChange, onActiveChange }: A
   // When plan_ready fires for a second/third sub-intent, new steps are appended
   // at this offset so the user sees a cumulative list instead of a reset view.
   const stepOffsetRef = useRef<number>(0);
+  // Tracks when each running step started (for flickering heartbeat status)
+  const agentStepStartTimes = useRef<Map<number, number>>(new Map());
+  // Tracks live turn progress (agent:turn_live) from the command-service callback
+  const agentLiveTurns = useRef<Map<number, { turn: number; maxTurns: number }>>(new Map());
+  const [_heartbeatTick, setHeartbeatTick] = useState(0);
 
   // Notify parent to re-measure height whenever visible content changes
   useEffect(() => {
@@ -368,6 +383,13 @@ export default function AutomationProgress({ onHeightChange, onActiveChange }: A
   // Only active during planning/executing — done/failed/idle should NOT keep the glow on
   useEffect(() => {
     onActiveChange?.(phase !== 'idle');
+  }, [phase]);
+
+  // Heartbeat ticker — drives flickering status labels on running steps
+  useEffect(() => {
+    if (phase !== 'executing') return;
+    const id = setInterval(() => setHeartbeatTick(t => t + 1), 200);
+    return () => clearInterval(id);
   }, [phase]);
 
   useEffect(() => {
@@ -398,6 +420,10 @@ export default function AutomationProgress({ onHeightChange, onActiveChange }: A
       setAgentTurns(new Map());
       setAgentCompletes(new Map());
       setExpandedAgentSteps(new Set());
+      agentStepStartTimes.current.clear();
+      agentLiveTurns.current.clear();
+      setHeartbeatTick(0);
+      setLoginGuidance(null);
       setLearnedRules(new Map());
       setProjectBuild(null);
       setProjectBuildFiles([]);
@@ -464,6 +490,7 @@ export default function AutomationProgress({ onHeightChange, onActiveChange }: A
         case 'step_start':
           // Clear any active guide step card when the next step begins
           setGuideStep(null);
+          agentStepStartTimes.current.set(data.stepIndex + stepOffsetRef.current, Date.now());
           setSteps(prev => prev.map(s =>
             s.index === data.stepIndex + stepOffsetRef.current
               ? { ...s, status: 'running', description: data.description || s.description }
@@ -477,6 +504,7 @@ export default function AutomationProgress({ onHeightChange, onActiveChange }: A
           break;
 
         case 'step_done':
+          agentStepStartTimes.current.delete(data.stepIndex + stepOffsetRef.current);
           setSteps(prev => prev.map(s =>
             s.index === data.stepIndex + stepOffsetRef.current
               ? { ...s, status: 'done', description: data.description || s.description, stdout: data.stdout, exitCode: data.exitCode, savedFilePath: data.savedFilePath || undefined, guideInstruction: data.instruction || s.guideInstruction }
@@ -496,6 +524,7 @@ export default function AutomationProgress({ onHeightChange, onActiveChange }: A
           break;
 
         case 'step_failed':
+          agentStepStartTimes.current.delete(data.stepIndex + stepOffsetRef.current);
           setSteps(prev => prev.map(s =>
             s.index === data.stepIndex + stepOffsetRef.current
               ? { ...s, status: 'failed', error: data.error, stderr: data.stderr }
@@ -510,6 +539,29 @@ export default function AutomationProgress({ onHeightChange, onActiveChange }: A
             next.delete(stepIdx);
             return next;
           });
+          agentLiveTurns.current.delete(stepIdx);
+          break;
+        }
+
+        case 'needs_login': {
+          // browser.agent: Chrome opened at sign-in page, waitForAuth keeps polling
+          // Show inline banner while step stays running — no second request needed
+          const stepIdx = steps.findIndex(s => s.status === 'running');
+          const displayIdx = stepIdx >= 0 ? stepIdx : (data.stepIndex ?? 0) + stepOffsetRef.current;
+          setLoginGuidance({
+            stepIndex: displayIdx,
+            serviceDisplay: data.serviceDisplay || '',
+            loginUrl: data.loginUrl || '',
+            message: data.message || '',
+          });
+          break;
+        }
+
+        case 'agent:turn_live': {
+          // Real-time turn update from cli.agent during execution (before agent:complete fires)
+          const stepIdx = (data.stepIndex ?? 0) + stepOffsetRef.current;
+          agentLiveTurns.current.set(stepIdx, { turn: data.turn, maxTurns: data.maxTurns });
+          setHeartbeatTick(t => t + 1); // force re-render to show updated label
           break;
         }
 
@@ -527,6 +579,8 @@ export default function AutomationProgress({ onHeightChange, onActiveChange }: A
             }]);
             return next;
           });
+          // Auto-expand the card as soon as the first turn arrives
+          setExpandedAgentSteps(prev => prev.has(stepIdx) ? prev : new Set([...prev, stepIdx]));
           break;
         }
 
@@ -545,6 +599,8 @@ export default function AutomationProgress({ onHeightChange, onActiveChange }: A
             });
             return next;
           });
+          // Auto-expand on completion so turns are immediately visible
+          setExpandedAgentSteps(prev => new Set([...prev, stepIdx]));
           break;
         }
 
@@ -955,6 +1011,12 @@ export default function AutomationProgress({ onHeightChange, onActiveChange }: A
 
   return (
     <div className="space-y-3">
+      <style>{`
+        @keyframes agentGloss {
+          0% { background-position: -200% center; }
+          100% { background-position: 200% center; }
+        }
+      `}</style>
       {/* ── App Control Mode badge ────────────────────────────────────────── */}
       {controlMode.active && (
         <div className="flex items-center gap-2 px-3 py-2 rounded-lg"
@@ -1621,6 +1683,51 @@ export default function AutomationProgress({ onHeightChange, onActiveChange }: A
                     )}
                   </div>
                 )}
+                {/* ── Login guidance banner — shown while waitForAuth polls after auth wall detected ── */}
+                {step.status === 'running' && loginGuidance?.stepIndex === step.index && (
+                  <div style={{ marginTop: 8, marginLeft: 28, padding: '8px 10px', borderRadius: 6, background: 'rgba(251,191,36,0.08)', border: '1px solid rgba(251,191,36,0.25)' }}>
+                    <div style={{ fontSize: '11px', color: '#fbbf24', fontWeight: 600, marginBottom: 3 }}>
+                      ⏳ Sign in to continue
+                    </div>
+                    <div style={{ fontSize: '11px', color: '#d1d5db', lineHeight: 1.5 }}>
+                      Please sign in to <strong style={{ color: '#f9fafb' }}>{loginGuidance.serviceDisplay}</strong> in the Chrome window.
+                    </div>
+                    {loginGuidance.loginUrl && (
+                      <div style={{ fontSize: '10px', color: '#6b7280', marginTop: 3 }}>
+                        {loginGuidance.loginUrl}
+                      </div>
+                    )}
+                    <div style={{ fontSize: '10px', color: '#6b7280', marginTop: 4, fontStyle: 'italic' }}>
+                      Your request will continue automatically after sign-in.
+                    </div>
+                  </div>
+                )}
+                {/* ── Flickering heartbeat — shown while step is running, before agent card appears ── */}
+                {step.status === 'running' && !agentCompletes.has(step.index) && loginGuidance?.stepIndex !== step.index && (() => {
+                  const startTime = agentStepStartTimes.current.get(step.index);
+                  const elapsedMs = startTime ? (Date.now() - startTime) : 0;
+                  const liveTurn = agentLiveTurns.current.get(step.index);
+                  const label = liveTurn
+                    ? `Turn ${liveTurn.turn}/${liveTurn.maxTurns} — ${getAgentStatusLabel(elapsedMs)}`
+                    : getAgentStatusLabel(elapsedMs);
+                  return (
+                    <div style={{ marginTop: 6, marginLeft: 28 }}>
+                      <span style={{
+                        fontSize: '11px',
+                        fontStyle: 'italic',
+                        display: 'inline-block',
+                        background: 'linear-gradient(90deg, #818cf8 30%, #c4b5fd 50%, #818cf8 70%)',
+                        backgroundSize: '200% auto',
+                        WebkitBackgroundClip: 'text',
+                        WebkitTextFillColor: 'transparent',
+                        backgroundClip: 'text',
+                        animation: 'agentGloss 2s linear infinite',
+                      }}>
+                        {label}
+                      </span>
+                    </div>
+                  );
+                })()}
                 {/* ── Sub-agent turn card ─────────────────────────────── */}
                 {agentCompletes.has(step.index) && (
                   <div style={{ marginTop: 6, marginLeft: 28 }}>
@@ -1655,6 +1762,14 @@ export default function AutomationProgress({ onHeightChange, onActiveChange }: A
                         {expandedAgentSteps.has(step.index) ? '▲' : '▼'}
                       </span>
                     </button>
+                    {/* ── Agent result summary — shown when collapsed ── */}
+                    {!expandedAgentSteps.has(step.index) && agentCompletes.get(step.index)!.ok && agentCompletes.get(step.index)!.result && (
+                      <div style={{ marginTop: 3, paddingLeft: 2, fontSize: '11px', color: '#94a3b8', lineHeight: '1.45' }}>
+                        {agentCompletes.get(step.index)!.result.length > 160
+                          ? agentCompletes.get(step.index)!.result.slice(0, 160) + '…'
+                          : agentCompletes.get(step.index)!.result}
+                      </div>
+                    )}
                     {/* ── Learned rule rows — always visible, one per saved rule ── */}
                     {(learnedRules.get(step.index) || []).map((rule, ri) => (
                       <div key={ri} style={{
@@ -1681,23 +1796,43 @@ export default function AutomationProgress({ onHeightChange, onActiveChange }: A
                     ))}
                     {expandedAgentSteps.has(step.index) && (
                       <div style={{ marginTop: 4 }}>
-                        {(agentTurns.get(step.index) || []).map((t, i) => (
-                          <div key={i} style={{
-                            fontSize: '11px',
-                            color: '#94a3b8',
-                            padding: '2px 0 2px 8px',
-                            borderLeft: '2px solid rgba(99,102,241,0.3)',
-                            marginBottom: 2,
-                          }}>
-                            <span style={{ color: '#64748b', marginRight: 6 }}>Turn {t.turn}/{t.maxTurns}</span>
-                            {t.action?.action && <span style={{ color: '#c7d2fe', marginRight: 4 }}>{t.action.action}</span>}
-                            {t.outcome && (
-                              <span style={{ color: t.outcome.ok ? '#6ee7b7' : '#fca5a5' }}>
-                                {t.outcome.ok ? '✓' : `✗ ${t.outcome.error || ''}`}
-                              </span>
-                            )}
-                          </div>
-                        ))}
+                        {(agentTurns.get(step.index) || []).map((t, i) => {
+                          // Only run_cmd and done are real execution steps that can truly fail.
+                          // Exploration/thinking actions (web_search, run_help, web_fetch, etc.)
+                          // are just the agent reasoning — show them dimmed, never red.
+                          const isExecAction = t.action?.action === 'run_cmd' || t.action?.action === 'done';
+                          const isFailed = isExecAction && t.outcome && !t.outcome.ok;
+                          const outcomeText = t.outcome?.result || t.outcome?.error || '';
+                          return (
+                            <div key={i} style={{
+                              fontSize: '11px',
+                              padding: '2px 0 2px 8px',
+                              borderLeft: `2px solid ${isFailed ? 'rgba(248,113,113,0.4)' : 'rgba(99,102,241,0.35)'}`,
+                              marginBottom: 2,
+                            }}>
+                              <span style={{ color: '#6b7280', marginRight: 6 }}>Step {t.turn}/{t.maxTurns}</span>
+                              {t.action?.action && (
+                                <span style={{
+                                  color: isFailed ? '#f87171' : '#a5b4fc',
+                                  marginRight: 4,
+                                  fontFamily: 'ui-monospace,monospace',
+                                  fontSize: '10px',
+                                }}>
+                                  {t.action.action}
+                                </span>
+                              )}
+                              {t.outcome && (
+                                <span style={{ color: t.outcome.ok ? '#6ee7b7' : '#fca5a5' }}>
+                                  {t.outcome.ok
+                                    ? (t.outcome.result && t.action?.action !== 'snapshot'
+                                        ? `✓ ${t.outcome.result.length > 120 ? t.outcome.result.slice(0, 120) + '…' : t.outcome.result}`
+                                        : '✓')
+                                    : `✗ ${t.outcome.error || ''}`}
+                                </span>
+                              )}
+                            </div>
+                          );
+                        })}
                         {(agentTurns.get(step.index) || []).length === 0 && agentCompletes.get(step.index)?.reasoning && (
                           <div style={{
                             fontSize: '11px',

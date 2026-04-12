@@ -34,6 +34,12 @@ const http = require('http');
 // ---------------------------------------------------------------------------
 const OVERLAY_CONTROL_PORT = parseInt(process.env.OVERLAY_CONTROL_PORT || '3010', 10);
 
+// Active progressCallback for the currently running stategraph execution.
+// Set whenever an execution starts, cleared when it ends. Used by the overlay
+// server /agent-turn endpoint to forward real-time agent turn events from the
+// command-service (separate process) back to the renderer via IPC.
+let activeProgressCallback = null;
+
 // SSE clients connected to GET /voice/companion/events (Chrome companion windows)
 const companionSseClients = new Set();
 
@@ -477,6 +483,26 @@ function startOverlayControlServer() {
         } catch (err) {
           console.error('[BridgeConfirm] handler error:', err.message);
           res.writeHead(500).end(JSON.stringify({ error: err.message }));
+        }
+      });
+      return;
+    }
+
+    // ── POST /agent-turn — command-service streams per-turn progress back to the renderer ──
+    // cli.agent.cjs POSTs here after each agentic turn so the UI shows the live turn count
+    // before the full response arrives. Forwarded via the active progressCallback.
+    if (req.url === '/agent-turn') {
+      let body = '';
+      req.on('data', chunk => { body += chunk; });
+      req.on('end', () => {
+        try {
+          const evt = JSON.parse(body || '{}');
+          if (activeProgressCallback && ['agent:turn_live', 'agent:turn', 'agent:complete', 'needs_login'].includes(evt.type)) {
+            activeProgressCallback(evt);
+          }
+          res.writeHead(200).end(JSON.stringify({ ok: true }));
+        } catch (err) {
+          res.writeHead(400).end(JSON.stringify({ error: err.message }));
         }
       });
       return;
@@ -2304,6 +2330,8 @@ app.whenReady().then(async () => {
         return;
       }
     };
+    // Expose for /agent-turn overlay endpoint (real-time sub-agent turn updates)
+    activeProgressCallback = progressCallback;
 
     // Install confirmation callback: pauses the plan until the user clicks Install or Skip
     // in ResultsWindow. Returns a Promise<boolean> resolved by the IPC reply.
@@ -2938,6 +2966,51 @@ app.whenReady().then(async () => {
               stepRetryCount: 0,
               context: { ...paused.context, sessionId: sessionId || currentSessionId }
             };
+          } else if (paused.pendingQuestion?._isAgentAskUser) {
+            // cli.agent (or browser.agent) paused with ask_user and is waiting for the user's
+            // decision. Re-run the SAME agent step with the user's answer injected as context.
+            //
+            // IMPORTANT: Do NOT fall through to the generic replan handler below.
+            // That handler sends `message: chosenOption` as a NEW task through service detection —
+            // so "Yes, enable the API and retry" → planSkills → detects no known agent for "enable/retry"
+            // → builds a wrong agent (e.g. aws.agent) and passes the answer text as its task.
+            const _agentId = paused.pendingQuestion?.agentId
+              || paused.skillPlan?.[paused.skillCursor || 0]?.args?.agentId
+              || null;
+            const _stepIdx = paused.skillCursor || 0;
+            const _originalTask = paused.skillPlan?.[_stepIdx]?.args?.task || paused.message;
+            const _priorQuestion = paused.pendingQuestion?.question || '';
+            // Inject the Q&A context into the task string so the agent loop resumes with
+            // full awareness of what was asked and what the user decided.
+            const _taskWithAnswer = `${_originalTask}\n\n[Resume context: You previously asked "${_priorQuestion}". The user answered: "${chosenOption}". Continue from this point based on the user's answer.]`;
+            console.log(`[StateGraph] ASK_USER resume: _isAgentAskUser answer "${chosenOption}" — re-running agent ${_agentId} with injected context`);
+            if (resultsWindow && !resultsWindow.isDestroyed()) {
+              safeSend(resultsWindow, 'results-window:set-prompt', chosenOption);
+            }
+            initialState = {
+              ...paused,
+              message: paused.message,
+              streamCallback,
+              progressCallback,
+              confirmInstallCallback,
+              confirmGuideCallback,
+              isGuideCancelled,
+              failedStep: null,
+              pendingQuestion: null,
+              recoveryAction: null,
+              answer: undefined,
+              commandExecuted: false,
+              _skillPlan: [{
+                skill: 'cli.agent',
+                args: { action: 'run', agentId: _agentId, task: _taskWithAnswer },
+                description: paused.skillPlan?.[_stepIdx]?.description || _originalTask,
+              }],
+              skillPlan: null,
+              skillCursor: 0,
+              skillResults: [],
+              stepRetryCount: 0,
+              context: { ...paused.context, sessionId: sessionId || currentSessionId }
+            };
           } else {
             // User provided a custom answer — inject it as recoveryContext and replan
             // (isFreshPrompt already handled the "new task typed as reply" case above)
@@ -3074,6 +3147,7 @@ app.whenReady().then(async () => {
 
       const finalState = await stateGraph.execute(initialState, _journalOnProgress, activeAbortController.signal);
       activeAbortController = null;
+      activeProgressCallback = null;
 
       // Voice Journal: report completion
       voiceJournal.graphDone({
