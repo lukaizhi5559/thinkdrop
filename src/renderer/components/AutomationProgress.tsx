@@ -1711,9 +1711,9 @@ export default function AutomationProgress({ onHeightChange, onActiveChange }: A
                     ? `Turn ${liveTurn.turn}/${liveTurn.maxTurns} — ${getAgentStatusLabel(elapsedMs)}`
                     : getAgentStatusLabel(elapsedMs);
                   return (
-                    <div style={{ marginTop: 6, marginLeft: 28 }}>
+                    <div style={{ marginTop: 2, marginLeft: 28 }}>
                       <span style={{
-                        fontSize: '11px',
+                        fontSize: '14px',
                         fontStyle: 'italic',
                         display: 'inline-block',
                         background: 'linear-gradient(90deg, #818cf8 30%, #c4b5fd 50%, #818cf8 70%)',
