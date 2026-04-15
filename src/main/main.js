@@ -1531,6 +1531,13 @@ app.whenReady().then(async () => {
     }
   });
 
+  ipcMain.on('prompt-queue:resume-pending', () => {
+    promptQueue.resumePendingPrompts();
+    if (resultsWindow && !resultsWindow.isDestroyed()) {
+      safeSend(resultsWindow, 'prompt-queue:restart-cancel', {});
+    }
+  });
+
   // ─── Queue IPC handlers ───────────────────────────────────────────────────
 
   ipcMain.on('queue:submit', (_event, { prompt, name } = {}) => {

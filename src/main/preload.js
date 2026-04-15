@@ -66,6 +66,7 @@ contextBridge.exposeInMainWorld('electron', {
         'prompt-queue:submit',
         'prompt-queue:cancel',
         'prompt-queue:dismiss-alert',
+        'prompt-queue:resume-pending',
         'plan:approve',
         'plan:cancel',
         'plan:new',

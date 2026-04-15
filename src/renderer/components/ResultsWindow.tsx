@@ -363,25 +363,12 @@ export default function ResultsWindow() {
       if (items.length > 0) markUnread('queue');
     };
 
-    const handleRestartAlert = (_event: any, { items, countdownMs }: { items: PromptQueueItem[]; countdownMs: number }) => {
-      const totalSec = Math.ceil(countdownMs / 1000);
-      setRestartAlert({ items, countdownSec: totalSec });
+    const handleRestartAlert = (_event: any, { items }: { items: PromptQueueItem[]; countdownMs: number }) => {
+      setRestartAlert({ items, countdownSec: 0 });
       // Auto-switch to Queue tab so user sees the alert
       activeTabRef.current = 'queue';
       setActiveTab('queue');
-      // Tick down every second
-      if (restartCountdownRef.current) clearInterval(restartCountdownRef.current);
-      restartCountdownRef.current = setInterval(() => {
-        setRestartAlert(prev => {
-          if (!prev) { clearInterval(restartCountdownRef.current!); return null; }
-          const next = prev.countdownSec - 1;
-          if (next <= 0) {
-            clearInterval(restartCountdownRef.current!);
-            return null;
-          }
-          return { ...prev, countdownSec: next };
-        });
-      }, 1000);
+      // No countdown timer — user must explicitly choose Resume or Discard
     };
 
     const handleRestartCancel = () => {
@@ -1218,23 +1205,21 @@ export default function ResultsWindow() {
               <span style={{ color: '#fbbf24', fontSize: '0.72rem', fontWeight: 600 }}>
                 {restartAlert.items.length} unfinished prompt{restartAlert.items.length > 1 ? 's' : ''} from last session
               </span>
-              <span style={{
-                marginLeft: 'auto', fontSize: '0.68rem', fontWeight: 700,
-                color: '#f59e0b', fontFamily: 'ui-monospace,monospace',
-                background: 'rgba(245,158,11,0.15)', padding: '1px 6px', borderRadius: 4,
-              }}>
-                {restartAlert.countdownSec}s
-              </span>
             </div>
             <p style={{ color: '#9ca3af', fontSize: '0.68rem', margin: 0, lineHeight: 1.4 }}>
-              Will auto-trigger in {restartAlert.countdownSec} second{restartAlert.countdownSec !== 1 ? 's' : ''}. Cancel to discard.
+              Resume to continue where you left off, or discard to cancel.
             </p>
             <div style={{ display: 'flex', gap: 6 }}>
+              <button
+                onClick={() => { ipcRenderer?.send('prompt-queue:resume-pending'); setRestartAlert(null); }}
+                style={{ padding: '3px 12px', borderRadius: 5, fontSize: '0.68rem', cursor: 'pointer',
+                  background: 'rgba(34,197,94,0.1)', border: '1px solid rgba(34,197,94,0.25)', color: '#4ade80', fontWeight: 500 }}
+              >Resume</button>
               <button
                 onClick={() => ipcRenderer?.send('prompt-queue:dismiss-alert')}
                 style={{ padding: '3px 12px', borderRadius: 5, fontSize: '0.68rem', cursor: 'pointer',
                   background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.25)', color: '#f87171', fontWeight: 500 }}
-              >Cancel — discard</button>
+              >Discard</button>
             </div>
           </div>
         )}

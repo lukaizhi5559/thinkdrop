@@ -248,15 +248,9 @@ function init({ broadcast, runPrompt, alertRestart }) {
 
   if (crashedItems.length > 0) {
     console.log(`[PromptQueue] Found ${crashedItems.length} unfinished prompt(s) from last session`);
-    // Alert the user with a 60-second countdown — long enough to dismiss gather-interrupted prompts
-    const COUNTDOWN_MS = 60000;
-    alertRestart(crashedItems, COUNTDOWN_MS);
-
-    _restartCountdownTimer = setTimeout(() => {
-      _restartCountdownTimer = null;
-      console.log('[PromptQueue] Restart countdown elapsed — auto-triggering pending prompts');
-      _tryAdvance();
-    }, COUNTDOWN_MS);
+    // Show alert — user must explicitly click Resume to continue.
+    // Auto-triggering was removed: pending prompts should never fire silently on launch.
+    alertRestart(crashedItems, 0);
   }
   // Don't auto-start fresh items at init — wait for explicit enqueue or restart countdown
 }
@@ -279,6 +273,15 @@ function dismissRestartAlert() {
   _save();
   _broadcast();
   console.log('[PromptQueue] Restart alert dismissed — pending items cancelled');
+}
+
+/**
+ * Resume pending prompts — called explicitly when user clicks "Resume" in the restart alert.
+ * Only triggers execution; does not cancel any items.
+ */
+function resumePendingPrompts() {
+  console.log('[PromptQueue] User clicked Resume — triggering pending prompts');
+  _tryAdvance();
 }
 
 /**
@@ -338,6 +341,7 @@ module.exports = {
   markDone,
   trackExternal,
   dismissRestartAlert,
+  resumePendingPrompts,
   getRunningId,
   getVisible,
   _getSnapshot,
