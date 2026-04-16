@@ -6,7 +6,7 @@ require('dotenv').config({
   path: require('path').join(__dirname, '..', '..', 'mcp-services', 'command-service', '.env'),
   override: false,
 });
-const { app, BrowserWindow, ipcMain, screen, globalShortcut, clipboard } = require('electron');
+const { app, BrowserWindow, ipcMain, screen, globalShortcut, clipboard, safeStorage } = require('electron');
 
 // Enable webkitSpeechRecognition network access — must be called before app is ready.
 // Without these flags Electron blocks the connection to Google's speech API,
@@ -14,6 +14,8 @@ const { app, BrowserWindow, ipcMain, screen, globalShortcut, clipboard } = requi
 app.commandLine.appendSwitch('enable-features', 'WebRtcHideLocalIpsWithMdns');
 app.commandLine.appendSwitch('unsafely-treat-insecure-origin-as-secure', 'http://localhost:5173');
 app.commandLine.appendSwitch('allow-insecure-localhost', 'true');
+
+const { startCryptoBridge, stopCryptoBridge } = require('./cryptoBridge');
 
 // Safe IPC send — guards against "Render frame was disposed" crash that occurs when
 // a window reloads between the isDestroyed() check and the actual send call.
@@ -1025,6 +1027,12 @@ app.whenReady().then(async () => {
   // Start overlay control HTTP server so command-service skills can hide/show windows before screenshotting
   startOverlayControlServer();
 
+  // Start crypto bridge — Electron safeStorage-based credential encryption
+  // for the user-memory service. One OS approval, no repeated prompts.
+  startCryptoBridge(safeStorage).catch((err) => {
+    console.warn('[App] Crypto bridge failed to start (credential encryption unavailable):', err.message);
+  });
+
   // Initialize StateGraph pipeline
   initStateGraph();
 
@@ -1652,15 +1660,29 @@ app.whenReady().then(async () => {
         if (secrets.size > 0) {
           console.log(`[Plan] Detected ${secrets.size} new sensitive value(s) — storing and sanitizing`);
           try {
-            const keytar = require('keytar');
             await planScanner.storeSecrets(secrets, {
-              keytarSet: (svc, key, val) => keytar.setPassword(svc, key, val),
+              keytarSet: async (svc, key, val) => {
+                // Prefer safeStorage through the crypto bridge; fall back to keytar if unavailable
+                if (safeStorage.isEncryptionAvailable()) {
+                  const encrypted = safeStorage.encryptString(String(val));
+                  // Store encrypted blob in profile via mcpAdapter
+                  await mcpAdapter.callService('user-memory', 'profile.set', {
+                    key: `credential:${key.toLowerCase()}`,
+                    value: `SAFE:${encrypted.toString('base64')}`,
+                    userId: pendingPlanContext?.userId || 'default_user',
+                  }, { timeoutMs: 4000 }).catch(() => {});
+                } else {
+                  // Fallback: macOS keychain
+                  const { spawnSync } = require('child_process');
+                  spawnSync('security', ['add-generic-password', '-s', svc, '-a', key, '-w', String(val), '-U'], { encoding: 'utf8' });
+                }
+              },
               mcpAdapter,
               userId: pendingPlanContext?.userId || 'default_user',
               logger: console,
             });
           } catch (ksErr) {
-            console.warn('[Plan] keytar storeSecrets failed:', ksErr.message);
+            console.warn('[Plan] storeSecrets failed:', ksErr.message);
           }
           fs.writeFileSync(resolvedPlanFile, sanitized, 'utf8');
           // Forward re-scan result to renderer
@@ -1790,9 +1812,20 @@ app.whenReady().then(async () => {
     // Store any newly typed sensitive values
     if (secrets.size > 0) {
       try {
-        const keytar = require('keytar');
         await planScanner.storeSecrets(secrets, {
-          keytarSet: (svc, key, val) => keytar.setPassword(svc, key, val),
+          keytarSet: async (svc, key, val) => {
+            if (safeStorage.isEncryptionAvailable()) {
+              const encrypted = safeStorage.encryptString(String(val));
+              await mcpAdapter.callService('user-memory', 'profile.set', {
+                key: `credential:${key.toLowerCase()}`,
+                value: `SAFE:${encrypted.toString('base64')}`,
+                userId: pendingPlanContext?.userId || 'default_user',
+              }, { timeoutMs: 4000 }).catch(() => {});
+            } else {
+              const { spawnSync } = require('child_process');
+              spawnSync('security', ['add-generic-password', '-s', svc, '-a', key, '-w', String(val), '-U'], { encoding: 'utf8' });
+            }
+          },
           mcpAdapter,
           userId: pendingPlanContext?.userId || 'default_user',
           logger: console,
@@ -2482,12 +2515,21 @@ app.whenReady().then(async () => {
           ipcMain.off('gather:credential', handleCredSubmit);
           if (!value) { pendingCredResolve({ stored: false, value: null }); return; }
           try {
-            const keytar = require('keytar');
-            await keytar.setPassword('thinkdrop', credentialKey, value);
+            if (safeStorage.isEncryptionAvailable()) {
+              const encrypted = safeStorage.encryptString(String(value));
+              await mcpAdapter.callService('user-memory', 'profile.set', {
+                key: `credential:${credentialKey.toLowerCase()}`,
+                value: `SAFE:${encrypted.toString('base64')}`,
+                userId: 'default_user',
+              }, { timeoutMs: 4000 }).catch(() => {});
+            } else {
+              const { spawnSync } = require('child_process');
+              spawnSync('security', ['add-generic-password', '-s', 'thinkdrop', '-a', credentialKey, '-w', String(value), '-U'], { encoding: 'utf8' });
+            }
             console.log(`[GatherContext] Stored credential: ${credentialKey}`);
             pendingCredResolve({ stored: true, value });
           } catch (e) {
-            console.error(`[GatherContext] keytar store failed for ${credentialKey}:`, e.message);
+            console.error(`[GatherContext] credential store failed for ${credentialKey}:`, e.message);
             pendingCredResolve({ stored: false, value: null, error: e.message });
           }
         };
@@ -2503,12 +2545,18 @@ app.whenReady().then(async () => {
       });
     };
 
-    // keytarCheckCallback: checks if a credential already exists in keytar
+    // keytarCheckCallback: checks if a credential already exists in the store
     const keytarCheckCallback = async (credentialKey) => {
       try {
-        const keytar = require('keytar');
-        const value = await keytar.getPassword('thinkdrop', credentialKey);
-        return { found: !!value };
+        // Check user_profile table first (new SAFE: entries)
+        const profileResult = await mcpAdapter.callService('user-memory', 'profile.get', {
+          key: `credential:${credentialKey.toLowerCase()}`,
+        }, { timeoutMs: 3000 }).catch(() => null);
+        if (profileResult?.data?.valueRef) return { found: true };
+        // Fallback: legacy keychain check
+        const { spawnSync } = require('child_process');
+        const proc = spawnSync('security', ['find-generic-password', '-s', 'thinkdrop', '-a', credentialKey, '-w'], { encoding: 'utf8' });
+        return { found: proc.status === 0 && !!proc.stdout?.trim() };
       } catch (_) {
         return { found: false };
       }
@@ -6027,6 +6075,7 @@ app.on('window-all-closed', () => {
 
 app.on('will-quit', () => {
   globalShortcut.unregisterAll();
+  stopCryptoBridge();
 });
 
 // ── Schedule: warn before close if countdown is active ───────────────────────

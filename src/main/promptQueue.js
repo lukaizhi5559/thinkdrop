@@ -48,6 +48,13 @@ let _runNextFn = null;
 /** @type {NodeJS.Timeout | null} */
 let _restartCountdownTimer = null;
 
+/**
+ * IDs of items that were loaded from persistence on startup (crashed/unfinished).
+ * Used to evict them when a fresh user prompt arrives so they don't race.
+ * @type {Set<string>}
+ */
+let _crashedItemIds = new Set();
+
 // ── Persistence ───────────────────────────────────────────────────────────────
 function _save() {
   try {
@@ -115,6 +122,22 @@ function enqueue(prompt, { selectedText = '', responseLanguage = null, _planFile
         console.log(`[PromptQueue] Cancelled stale restart item: ${itemId}`);
       }
     }
+    _save();
+    _broadcast();
+  }
+
+  // If this is a fresh user prompt (not a plan:approve re-enqueue), evict any
+  // pending crashed items from the last session so they don't run ahead of it.
+  const _isFreshUserPrompt = !_planFile && !_skillPlan;
+  if (_isFreshUserPrompt && _crashedItemIds.size > 0) {
+    for (const crashedId of _crashedItemIds) {
+      const crashedItem = _items.get(crashedId);
+      if (crashedItem && crashedItem.status === 'pending') {
+        _items.set(crashedId, { ...crashedItem, status: 'cancelled', doneAt: Date.now() });
+        console.log(`[PromptQueue] Evicted stale crash-session item: ${crashedId}`);
+      }
+    }
+    _crashedItemIds.clear();
     _save();
     _broadcast();
   }
@@ -248,6 +271,7 @@ function init({ broadcast, runPrompt, alertRestart }) {
 
   if (crashedItems.length > 0) {
     console.log(`[PromptQueue] Found ${crashedItems.length} unfinished prompt(s) from last session`);
+    _crashedItemIds = new Set(crashedItems.map(i => i.id));
     // Show alert — user must explicitly click Resume to continue.
     // Auto-triggering was removed: pending prompts should never fire silently on launch.
     alertRestart(crashedItems, 0);
@@ -270,6 +294,7 @@ function dismissRestartAlert() {
       _items.set(id, { ...item, status: 'cancelled', doneAt: Date.now() });
     }
   }
+  _crashedItemIds.clear();
   _save();
   _broadcast();
   console.log('[PromptQueue] Restart alert dismissed — pending items cancelled');
