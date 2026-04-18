@@ -31,6 +31,7 @@ export default function StandalonePromptCapture() {
 
   // gatherContext intercept — when true, submit routes to gather:answer instead of stategraph:process
   const [gatherPending, setGatherPending] = useState(false);
+  const [gatherQuestion, setGatherQuestion] = useState<string | null>(null);
 
   // Skills Manager state
   const [showSkillsPanel, setShowSkillsPanel] = useState(false);
@@ -111,8 +112,9 @@ export default function StandalonePromptCapture() {
     const handleSkillStoreTrigger = (_event: any, _data: any) => {};
 
     // gatherContext active: route submit to gather:answer instead of stategraph:process
-    const handleGatherPending = (_event: any, { active }: { active: boolean }) => {
+    const handleGatherPending = (_event: any, { active, question }: { active: boolean; question?: string | null }) => {
       setGatherPending(active);
+      setGatherQuestion(active && question ? question : null);
     };
 
     // command_automate queued: task is now running in background — return to normal
@@ -648,6 +650,22 @@ export default function StandalonePromptCapture() {
             <div style={{ width: '3px', height: '3px', borderRadius: '50%', backgroundColor: 'rgba(255, 255, 255, 0.3)' }} />
           </div>
         </div>
+        {gatherPending && gatherQuestion && (
+          <div style={{
+            padding: '8px 12px',
+            backgroundColor: 'rgba(245,158,11,0.06)',
+            borderBottom: '1px solid rgba(245,158,11,0.18)',
+            fontSize: '0.72rem',
+            color: '#fbbf24',
+            display: 'flex',
+            alignItems: 'flex-start',
+            gap: 6,
+            lineHeight: 1.5,
+          }}>
+            <span style={{ flexShrink: 0, opacity: 0.8 }}>❓</span>
+            <span style={{ whiteSpace: 'pre-line' }}>{gatherQuestion}</span>
+          </div>
+        )}
         <div style={{ flex: '1 1 auto', overflowY: 'auto', overflowX: 'hidden' }}>
           <div className="p-4">
             {highlights.length > 0 && (

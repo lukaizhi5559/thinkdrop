@@ -171,6 +171,38 @@ function registerCron({ id, label, schedule, nextRun, plistLabel } = {}) {
 }
 
 /**
+ * Merge external cron items (from command-service /skill.schedule/list) into the
+ * in-memory _cron Map without blowing away existing run history.
+ *
+ * For each incoming item:
+ *  - If the id already exists in _cron: update label/schedule/status/type but KEEP runs[].
+ *  - If the id is new: insert as-is (no run history yet).
+ *
+ * Does NOT broadcast — caller decides when to send cron:update.
+ *
+ * @param {Array<{id: string, label: string, schedule: string, status: string, type?: string}>} items
+ */
+function mergeCronItems(items) {
+  if (!Array.isArray(items)) return;
+  for (const item of items) {
+    if (!item || !item.id) continue;
+    const existing = _cron.get(item.id);
+    if (existing) {
+      // Preserve run history — only refresh schedulable metadata
+      _cron.set(item.id, {
+        ...existing,
+        label:    item.label    != null ? item.label    : existing.label,
+        schedule: item.schedule != null ? item.schedule : existing.schedule,
+        status:   item.status   != null ? item.status   : existing.status,
+        type:     item.type     != null ? item.type     : existing.type,
+      });
+    } else {
+      _cron.set(item.id, { runs: [], ...item });
+    }
+  }
+}
+
+/**
  * Mark a cron task's last run time and update status.
  */
 function recordCronRun(id) {
@@ -402,6 +434,7 @@ module.exports = {
   cancelCreator,
   // cron
   registerCron,
+  mergeCronItems,
   recordCronRun,
   recordCronRunStart,
   recordCronStep,

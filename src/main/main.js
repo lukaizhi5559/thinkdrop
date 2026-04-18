@@ -308,7 +308,7 @@ function startOverlayControlServer() {
           const { skillName, schedule, trigger } = JSON.parse(body || '{}');
           const _skipSched = ['on_demand', 'null', 'none', 'false', ''];
           if (skillName && schedule && !_skipSched.includes(schedule)) {
-            const cronId = `skill_${skillName.replace(/\./g, '_')}`;
+            const cronId = skillName;
             if (!queueManager.getCron().find(i => i.id === cronId)) {
               queueManager.registerCron({
                 id: cronId,
@@ -1151,7 +1151,7 @@ app.whenReady().then(async () => {
         const SKIP_SCHEDULES = ['on_demand', 'null', 'none', 'false', ''];
         if (!rawSched || SKIP_SCHEDULES.includes(rawSched)) continue;
         const schedule = rawSched;
-        const cronId = `skill_${skillName.replace(/\./g, '_')}`;
+        const cronId = skillName;
         if (queueManager.getCron().find(i => i.id === cronId)) continue;
         const trigger = triggerMatch ? triggerMatch[1].trim() : skillName;
         queueManager.registerCron({ id: cronId, label: trigger, schedule, plistLabel: `com.thinkdrop.skill.${skillName}` });
@@ -1621,7 +1621,7 @@ app.whenReady().then(async () => {
   ipcMain.on('skill:schedule-register', (_event, { skillName, schedule, trigger } = {}) => {
     const _SKIP = ['on_demand', 'null', 'none', 'false', ''];
     if (!skillName || !schedule || _SKIP.includes(schedule)) return;
-    const cronId = `skill_${skillName.replace(/\./g, '_')}`;
+    const cronId = skillName;
     // Avoid duplicate registration
     if (queueManager.getCron().find(i => i.id === cronId)) return;
     const label = `${trigger || skillName} (daily)`;
@@ -2175,7 +2175,7 @@ app.whenReady().then(async () => {
       const resolve = pendingGatherResolve;
       pendingGatherResolve = null;
       if (promptCaptureWindow && !promptCaptureWindow.isDestroyed()) {
-        safeSend(promptCaptureWindow, 'gather:pending', { active: false });
+        safeSend(promptCaptureWindow, 'gather:pending', { active: false, question: null });
       }
       resolve(answer || '');
     } else {
@@ -2488,13 +2488,13 @@ app.whenReady().then(async () => {
     // gatherAnswerCallback: waits for user to type/speak an answer in StandalonePromptCapture.
     // NOTE: the actual ipcMain.on('gather:answer') listener is registered ONCE at module level
     // (see below) — NOT here per-run, to avoid MaxListenersExceeded accumulation.
-    const gatherAnswerCallback = () => {
+    const gatherAnswerCallback = (question) => {
       return new Promise((resolve) => {
         pendingGatherResolve = resolve;
         console.log('[GatherContext] Waiting for user answer…');
         // Tell prompt bar to intercept next submit as gather:answer
         if (promptCaptureWindow && !promptCaptureWindow.isDestroyed()) {
-          safeSend(promptCaptureWindow, 'gather:pending', { active: true });
+          safeSend(promptCaptureWindow, 'gather:pending', { active: true, question: question || null });
         }
         // 10-minute timeout
         setTimeout(() => {
@@ -4843,7 +4843,7 @@ app.whenReady().then(async () => {
       console.log(`[Skills] Removed skill from user-memory: ${skillName}`);
 
       // 3. Remove from cron — both queueManager (UI) and command-service scheduler
-      const cronId = `skill_${skillName.replace(/\./g, '_')}`;
+      const cronId = skillName;
       queueManager.removeCron(cronId);
       // Tell command-service's skill-scheduler to stop the node-cron job immediately (awaited)
       const cmdPort = parseInt(process.env.SERVICE_PORT || process.env.COMMAND_SERVICE_PORT || '3007', 10);
@@ -5859,7 +5859,10 @@ app.whenReady().then(async () => {
         remainingMs: r.remainingMs,
         triggerIntent: r.triggerIntent,
       }));
-      const items = [...reminderItems, ...jobItems];
+      // Merge job items into queueManager, preserving any existing run history.
+      // Then read back the full state (with runs[]) for the renderer.
+      queueManager.mergeCronItems(jobItems);
+      const items = [...reminderItems, ...queueManager.getCron()];
       if (resultsWindow && !resultsWindow.isDestroyed()) safeSend(resultsWindow, 'cron:update', items);
     } catch (e) {
       console.error('[Cron] cron:list failed:', e.message);
@@ -5971,11 +5974,30 @@ app.whenReady().then(async () => {
     }
 
     /**
-     * Load the pre-built execution plan for a bridge skill, or infer + cache one.
-     * Returns an array of stategraph step objects.
+     * Read YAML frontmatter from a skill.md file into a plain object.
+     * Returns {} on any error or missing file.
      */
-    function _loadOrInferBridgePlan(skillName, instruction) {
-      const plansDir = path.join(os.homedir(), '.thinkdrop', 'plans');
+    function _readSkillFrontmatter(skillName) {
+      const skillPath = path.join(require('os').homedir(), '.thinkdrop', 'skills', skillName, 'skill.md');
+      try {
+        const content = fs.readFileSync(skillPath, 'utf8');
+        const m = content.match(/^---\n([\s\S]+?)\n---/);
+        if (!m) return {};
+        const result = {};
+        for (const line of m[1].split('\n')) {
+          const kv = line.match(/^([\w_]+):\s*(.+)$/);
+          if (kv) result[kv[1]] = kv[2].trim().replace(/^["']|["']$/g, '');
+        }
+        return result;
+      } catch (_) { return {}; }
+    }
+
+    /**
+     * Load the pre-built execution plan for a bridge skill from disk cache.
+     * Returns the cached plan array, or null on cache miss (full pipeline will run).
+     */
+    function _loadOrInferBridgePlan(skillName) {
+      const plansDir = path.join(require('os').homedir(), '.thinkdrop', 'plans');
       const planPath = path.join(plansDir, `bridge.${skillName}.json`);
       try {
         if (fs.existsSync(planPath)) {
@@ -5986,19 +6008,10 @@ app.whenReady().then(async () => {
           }
         }
       } catch (_) {}
-      // Infer from instruction text — look for known agent IDs
-      const agentMatch = instruction.match(/\b(gmail\.agent|calendar\.agent|drive\.agent|github\.agent)\b/i);
-      const agentId = agentMatch ? agentMatch[1].toLowerCase() : null;
-      const plan = agentId
-        ? [{ skill: 'browser.agent', args: { action: 'run', agentId, task: instruction }, description: `${agentId}: ${instruction.slice(0, 80)}` }]
-        : [{ skill: 'browser.act', args: { task: instruction }, description: instruction.slice(0, 80) }];
-      // Cache for next time
-      try {
-        fs.mkdirSync(plansDir, { recursive: true });
-        fs.writeFileSync(planPath, JSON.stringify(plan, null, 2), 'utf8');
-        console.log(`[Bridge Listener] Inferred + cached plan for ${skillName} → ${agentId || 'browser.act'}`);
-      } catch (_) {}
-      return plan;
+      // No cached plan — return null so the full stategraph pipeline runs,
+      // which calls list_agents and picks the correct registered agent dynamically.
+      console.log(`[Bridge Listener] No cached plan for ${skillName} — full pipeline will plan`);
+      return null;
     }
 
     let bridgeListenerActive = false;
@@ -6039,14 +6052,34 @@ app.whenReady().then(async () => {
             for (const block of newPendingWS) {
               bridgeSeenIds.add(block.id);
               console.log(`🌉 [Bridge Listener] New ${block.prefix}:${block.type} [${block.id}] — auto-executing`);
+              // Wrap in async IIFE so pre-flight await (OAuth token check) works correctly
+              (async () => {
 
               // Resolve skill name + pre-built execution plan (bypasses LLM re-planning)
               const skillName = _parseBridgeSkillName(block.id);
-              const _skillPlan = skillName ? _loadOrInferBridgePlan(skillName, block.body) : null;
+              const _skillPlan = skillName ? _loadOrInferBridgePlan(skillName) : null;
+
+              // Re-hydrate delivery context from skill.md frontmatter so resolveUserContext
+              // doesn't need to look up user-memory under 'bridge_auto' userId.
+              // sms_gateway_email / sms_gateway_name are written there at plan-write time.
+              const _skillFm = skillName ? _readSkillFrontmatter(skillName) : {};
+              const _bridgeSmsGateway = (_skillFm.sms_gateway_email && _skillFm.sms_gateway_name)
+                ? { email: _skillFm.sms_gateway_email, name: _skillFm.sms_gateway_name }
+                : undefined;
               const runId = `run_${Date.now()}`;
 
-              // Register run in queueManager so Cron tab shows live progress
-              if (skillName && queueManager.getCron().find(i => i.id === skillName)) {
+              // Register run in queueManager so Cron tab shows live progress.
+              // Auto-seed the item from skill.md if not yet in Map (e.g. cron tab never opened).
+              if (skillName) {
+                if (!queueManager.getCron().find(i => i.id === skillName)) {
+                  queueManager.mergeCronItems([{
+                    id:       skillName,
+                    label:    _skillFm.title || skillName,
+                    schedule: _skillFm.schedule || '',
+                    type:     _skillFm.type || 'bridge',
+                    status:   'active',
+                  }]);
+                }
                 queueManager.recordCronRunStart(skillName, runId);
               }
 
@@ -6098,10 +6131,69 @@ app.whenReady().then(async () => {
                   }
                 };
 
+                // ── Pre-flight OAuth token check ────────────────────────────────────────
+                // If the skill.md frontmatter declares oauth: <provider>, check keytar
+                // before executing. If the token is missing, surface the "Connect to
+                // {Service}" card in the Results window (via the existing gather_oauth flow)
+                // and pause until the user connects or skips.
+                const _bridgeOauthProvider = _skillFm.oauth || null;
+                const _bridgeOauthTokenKey = _bridgeOauthProvider ? `oauth:${_bridgeOauthProvider}` : null;
+                if (_bridgeOauthProvider && _bridgeOauthTokenKey) {
+                  const _kt = (() => { try { return require('keytar'); } catch(_) { return null; } })();
+                  const _existingToken = _kt ? await _kt.getPassword('thinkdrop', _bridgeOauthTokenKey).catch(() => null) : null;
+                  if (!_existingToken) {
+                    console.log(`[Bridge Listener] OAuth token missing for ${_bridgeOauthProvider} — surfacing connect card`);
+                    if (resultsWindow && !resultsWindow.isDestroyed()) {
+                      safeSend(resultsWindow, 'automation:progress', {
+                        type: 'gather_oauth',
+                        provider: _bridgeOauthProvider,
+                        tokenKey: _bridgeOauthTokenKey,
+                        scopes: _skillFm.oauth_scopes || '',
+                        skillName: skillName || _bridgeOauthProvider,
+                      });
+                    }
+                    // Wait for user to connect or skip — reuse existing gather IPC events
+                    await new Promise((resolveOAuth) => {
+                      let settled = false;
+                      const settle = () => { if (!settled) { settled = true; ipcMain.off('gather:oauth_connect', onConnect); ipcMain.off('gather:oauth_skip', onSkip); resolveOAuth(); } };
+                      const onConnect = async (_ev, { provider: p, tokenKey: tk, scopes, skillName: sn }) => {
+                        if (p !== _bridgeOauthProvider) return;
+                        ipcMain.emit('skills:oauth-connect', null, { skillName: sn || p, provider: p, tokenKey: tk, scopes });
+                        // Poll until token lands then notify the UI
+                        const _pollKt = (() => { try { return require('keytar'); } catch(_) { return null; } })();
+                        let _attempts = 0;
+                        const _poll = setInterval(async () => {
+                          _attempts++;
+                          try {
+                            const _val = _pollKt && await _pollKt.getPassword('thinkdrop', tk);
+                            if (_val) {
+                              clearInterval(_poll);
+                              if (resultsWindow && !resultsWindow.isDestroyed()) {
+                                safeSend(resultsWindow, 'automation:progress', { type: 'gather_oauth_connected', provider: p, tokenKey: tk });
+                              }
+                              settle();
+                            }
+                          } catch (_) {}
+                          if (_attempts >= 120) { clearInterval(_poll); settle(); }
+                        }, 1000);
+                      };
+                      const onSkip = (_ev, { provider: p }) => { if (p === _bridgeOauthProvider) settle(); };
+                      ipcMain.on('gather:oauth_connect', onConnect);
+                      ipcMain.on('gather:oauth_skip', onSkip);
+                      setTimeout(settle, 10 * 60 * 1000); // 10-min hard timeout
+                    });
+                  }
+                }
+
                 const initialState = {
                   message: block.body,
                   selectedText: '',
-                  _skillPlan: _skillPlan || undefined,
+                  // Only pre-wire the plan if cache hit — on miss, full pipeline runs
+                  // so planSkills calls list_agents and picks the correct agent dynamically.
+                  ...(_skillPlan && _skillPlan.length ? { _skillPlan } : {}),
+                  // Delivery context from skill.md frontmatter — avoids user-memory lookup
+                  // under 'bridge_auto' userId which would miss real user's stored gateway.
+                  ...((_bridgeSmsGateway) ? { smsGatewayTarget: _bridgeSmsGateway } : {}),
                   streamCallback: () => {}, // bridge cron output not streamed to UI
                   progressCallback: bridgeProgressCallback,
                   confirmInstallCallback: () => Promise.resolve(false),
@@ -6112,10 +6204,24 @@ app.whenReady().then(async () => {
                   context: { sessionId: null, userId: 'bridge_auto', source: 'bridge_listener', blockId: block.id },
                 };
 
-                cronStateGraph.execute(initialState).then(() => {
+                cronStateGraph.execute(initialState).then((finalState) => {
                   console.log(`✅ [Bridge Listener] Done executing block ${block.id}`);
                   markBridgeBlockDone(block.id);
                   if (skillName) queueManager.recordCronRunDone(skillName, runId, 'done');
+                  // Cache the executed plan so subsequent cron fires skip re-planning.
+                  // Only write when the pipeline produced a plan (not a cached hit that was
+                  // already on disk — avoids a pointless write with identical content).
+                  if (skillName && !_skillPlan && finalState?.skillPlan?.length > 0) {
+                    try {
+                      const _plansDir = path.join(require('os').homedir(), '.thinkdrop', 'plans');
+                      fs.mkdirSync(_plansDir, { recursive: true });
+                      fs.writeFileSync(
+                        path.join(_plansDir, `bridge.${skillName}.json`),
+                        JSON.stringify(finalState.skillPlan, null, 2), 'utf8'
+                      );
+                      console.log(`[Bridge Listener] Cached plan for ${skillName} (${finalState.skillPlan.length} step(s))`);
+                    } catch (_) {}
+                  }
                   if (resultsWindow && !resultsWindow.isDestroyed()) {
                     safeSend(resultsWindow, 'bridge:status', {
                       state: 'watching',
@@ -6138,6 +6244,7 @@ app.whenReady().then(async () => {
                   }
                 });
               }
+              })().catch(err => console.error(`[Bridge Listener] Async block error [${block.id}]:`, err.message));
             }
           } catch (err) {
             console.error('[Bridge Listener] Watch error:', err.message);
@@ -6175,7 +6282,17 @@ app.whenReady().then(async () => {
             const _skillPlan = skillName ? _loadOrInferBridgePlan(skillName, block.body) : null;
             const runId = `run_${Date.now()}`;
 
-            if (skillName && queueManager.getCron().find(i => i.id === skillName)) {
+            if (skillName) {
+              if (!queueManager.getCron().find(i => i.id === skillName)) {
+                const _startupFm = _readSkillFrontmatter(skillName);
+                queueManager.mergeCronItems([{
+                  id:       skillName,
+                  label:    _startupFm.title || skillName,
+                  schedule: _startupFm.schedule || '',
+                  type:     _startupFm.type || 'bridge',
+                  status:   'active',
+                }]);
+              }
               queueManager.recordCronRunStart(skillName, runId);
             }
             if (resultsWindow && !resultsWindow.isDestroyed()) {
@@ -6275,8 +6392,16 @@ app.whenReady().then(async () => {
     try {
       if (fs.existsSync(BRIDGE_FILE)) {
         parseBridgeBlocks(fs.readFileSync(BRIDGE_FILE, 'utf8')).forEach(b => {
-          // Skip pending non-TD blocks — they need to be executed
-          if (b.prefix !== 'TD' && b.status === 'pending') return;
+          // Skip pending non-TD blocks — they need to be executed.
+          // Exception: stale sched_ blocks older than 10 min are skipped to avoid
+          // replaying a backlog of accumulated cron fires from prior sessions.
+          if (b.prefix !== 'TD' && b.status === 'pending') {
+            const schedMatch = b.id.match(/_(\d{10,15})$/);
+            if (schedMatch && Date.now() - parseInt(schedMatch[1], 10) > 10 * 60 * 1000) {
+              bridgeSeenIds.add(b.id); // stale — skip silently
+            }
+            return;
+          }
           bridgeSeenIds.add(b.id);
         });
       }
