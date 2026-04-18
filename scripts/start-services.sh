@@ -173,6 +173,8 @@ sleep 1
 # ── Start services in dependency order ──────────────────────────────────────
 
 # 1. User Memory Service — port 3001
+# DB_PATH must be absolute so it resolves correctly regardless of cwd
+export DB_PATH="$PROJECT_ROOT/mcp-services/thinkdrop-user-memory-service/data/user_memory.duckdb"
 start_node_direct_service "user-memory" "$PROJECT_ROOT/mcp-services/thinkdrop-user-memory-service" "src/server.js" 512
 sleep 2
 

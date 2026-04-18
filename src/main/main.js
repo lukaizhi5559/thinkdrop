@@ -571,6 +571,8 @@ const voiceJournal = (() => {
 
 // Singleton StateGraph instance (created once on app ready)
 let stateGraph = null;
+// Second StateGraph instance dedicated to bridge/cron execution — never shares the user's queue
+let cronStateGraph = null;
 let mcpClient = null;
 let mcpAdapter = null;
 let llmBackend = null;
@@ -615,10 +617,19 @@ function initStateGraph() {
       logger: console,
     });
 
+    cronStateGraph = StateGraphBuilder.full({
+      mcpAdapter,
+      llmBackend,
+      debug: process.env.NODE_ENV === 'development',
+      logger: console,
+    });
+
     console.log('✅ [StateGraph] Initialized with full graph (all nodes)');
+    console.log('✅ [CronStateGraph] Initialized (dedicated bridge/cron instance)');
   } catch (err) {
     console.error('❌ [StateGraph] Failed to initialize:', err.message);
     stateGraph = null;
+    cronStateGraph = null;
   }
 }
 
@@ -1668,8 +1679,7 @@ app.whenReady().then(async () => {
                   // Store encrypted blob in profile via mcpAdapter
                   await mcpAdapter.callService('user-memory', 'profile.set', {
                     key: `credential:${key.toLowerCase()}`,
-                    value: `SAFE:${encrypted.toString('base64')}`,
-                    userId: pendingPlanContext?.userId || 'default_user',
+                    valueRef: `SAFE:${encrypted.toString('base64')}`,
                   }, { timeoutMs: 4000 }).catch(() => {});
                 } else {
                   // Fallback: macOS keychain
@@ -1818,8 +1828,7 @@ app.whenReady().then(async () => {
               const encrypted = safeStorage.encryptString(String(val));
               await mcpAdapter.callService('user-memory', 'profile.set', {
                 key: `credential:${key.toLowerCase()}`,
-                value: `SAFE:${encrypted.toString('base64')}`,
-                userId: pendingPlanContext?.userId || 'default_user',
+                valueRef: `SAFE:${encrypted.toString('base64')}`,
               }, { timeoutMs: 4000 }).catch(() => {});
             } else {
               const { spawnSync } = require('child_process');
@@ -2519,8 +2528,7 @@ app.whenReady().then(async () => {
               const encrypted = safeStorage.encryptString(String(value));
               await mcpAdapter.callService('user-memory', 'profile.set', {
                 key: `credential:${credentialKey.toLowerCase()}`,
-                value: `SAFE:${encrypted.toString('base64')}`,
-                userId: 'default_user',
+                valueRef: `SAFE:${encrypted.toString('base64')}`,
               }, { timeoutMs: 4000 }).catch(() => {});
             } else {
               const { spawnSync } = require('child_process');
@@ -2819,55 +2827,147 @@ app.whenReady().then(async () => {
             };
           } else if (paused.pendingQuestion?._isScoutSelect) {
             // ── Scout provider select: user picked a CLI/API provider from the Scout card ──
-            // Re-enter at gatherContext with forceSkillBuild=true and gatheredContext pre-set
-            // so creatorPlanning fast-path picks it up immediately (no Q&A loop needed).
             const scoutMatches = paused.pendingQuestion?.context?.scoutMatches || paused.scoutMatches || [];
             const scoutCapability = paused.pendingQuestion?.context?.capability || paused.scoutCapability || '';
 
-            // Map user reply to the chosen match (either "provider (type)" format or index)
-            let chosenMatch = scoutMatches[0]; // default: first match
-            const replyLower = chosenOption.toLowerCase().replace(/\s*\([^)]+\)/, '').trim();
-            const byName = scoutMatches.find(m => m.provider.toLowerCase() === replyLower);
-            const byIdx = parseInt(userReply, 10) - 1;
-            if (byName) chosenMatch = byName;
-            else if (!isNaN(byIdx) && byIdx >= 0 && byIdx < scoutMatches.length) chosenMatch = scoutMatches[byIdx];
+            // ── Bare-digits normalization ──────────────────────────────────────
+            // If the user typed a raw phone number (e.g. "2676996631") instead of
+            // clicking the formatted __sms_gateway__:PHONE button, auto-wrap it so
+            // the gateway path activates correctly. Applies when the option contains
+            // 10+ digits and has no non-phone characters beyond spaces/dashes/parens.
+            if (!chosenOption.startsWith('__sms_gateway__')) {
+              const _rawDigits = chosenOption.replace(/[\s\-().+]/g, '').replace(/\D/g, '');
+              if (_rawDigits.length >= 10) {
+                chosenOption = `__sms_gateway__:${_rawDigits}`;
+              }
+            }
 
-            console.log(`[StateGraph] Scout select: "${chosenOption}" → provider "${chosenMatch?.provider}" (${chosenMatch?.type}) for "${scoutCapability}"`);
+            if (chosenOption.startsWith('__sms_gateway__:')) {
+              // ── Free email-to-SMS gateway path ─────────────────────────────────
+              // Format: __sms_gateway__:PHONE or __sms_gateway__:PHONE:CARRIER (manual fallback)
+              const parts = chosenOption.split(':');
+              const phone = parts[1] || '';
+              const carrierHint = parts.slice(2).join(':') || null; // rejoin in case of colons in carrier
+              let smsGatewayTarget = null;
+              try {
+                const { lookupCarrier, getGatewayEmail } = require(
+                  require('path').join(__dirname, '../../stategraph-module/src/utils/carrierGateways')
+                );
+                // Use manual carrier if provided (fallback path), otherwise auto-detect via Numverify
+                let carrier = carrierHint || null;
+                if (!carrier) {
+                  carrier = await lookupCarrier(phone);
+                  if (!carrier) console.warn(`[StateGraph] SMS gateway: Numverify returned null for phone=${phone}`);
+                }
+                if (carrier) {
+                  const gatewayEmail = getGatewayEmail(phone, carrier);
+                  smsGatewayTarget = { name: 'self', phone, carrier, email: gatewayEmail };
+                  console.log(`[StateGraph] SMS gateway selected: phone=${phone} carrier=${carrier} email=${gatewayEmail}`);
 
-            const isCli = chosenMatch?.type === 'cli';
-            const gatheredContext = {
-              services: [chosenMatch?.provider || scoutCapability],
-              timezone: null,
-              schedule: null,
-              knownSecrets: [],
-              links: chosenMatch?.config?.links || [],
-              resolvedAnswers: {},
-              cliMatch: isCli ? { capability: chosenMatch.capability, provider: chosenMatch.provider, config: chosenMatch.config } : null,
-              apiMatch: !isCli ? { capability: chosenMatch.capability, provider: chosenMatch.provider, config: chosenMatch.config } : null,
-            };
+                  // ── Persist phone + carrier to user profile so future runs auto-resolve ──
+                  // Without this, resolveUserContext never finds the phone on subsequent SMS
+                  // tasks and the scout card keeps re-appearing every time.
+                  const _UMURL = process.env.USER_MEMORY_URL || 'http://127.0.0.1:3001';
+                  const _UMKEY = process.env.USER_MEMORY_API_KEY || '';
+                  const _profileSave = (key, value) => fetch(`${_UMURL}/profile.set`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', ...(_UMKEY && { Authorization: `Bearer ${_UMKEY}` }) },
+                    body: JSON.stringify({ payload: { key, valueRef: value, service: 'sms_gateway', label: key === 'self:phone' ? 'My phone number' : 'My carrier' }, requestId: `profile-${Date.now()}` }),
+                  }).catch(e => console.warn(`[StateGraph] profile.set(${key}) failed:`, e.message));
+                  await Promise.all([
+                    _profileSave('self:phone', phone),
+                    _profileSave('self:phone_carrier', carrier),
+                  ]);
+                }
+              } catch (err) {
+                console.error(`[StateGraph] SMS gateway: carrier lookup failed for phone=${phone}:`, err.message);
+              }
 
-            initialState = {
-              ...paused,
-              message: paused.message,
-              streamCallback,
-              progressCallback,
-              confirmInstallCallback,
-              confirmGuideCallback,
-              isGuideCancelled,
-              failedStep: null,
-              pendingQuestion: null,
-              recoveryAction: null,
-              scoutPending: false,
-              // Inject gathered context so creatorPlanning uses the chosen provider
-              gatheredContext,
-              forceSkillBuild: true,
-              gatherContextSkipped: false,
-              skillPlan: null,
-              skillCursor: 0,
-              stepRetryCount: 0,
-              commandExecuted: false,
-              context: { ...paused.context, sessionId: sessionId || currentSessionId }
-            };
+              if (!smsGatewayTarget) {
+                // Re-emit scout_match with error hint + carrier dropdown so user can retry manually
+                progressCallback({
+                  type: 'scout_match',
+                  capability: scoutCapability,
+                  suggestion: '',
+                  matches: scoutMatches,
+                  errorHint: `Could not auto-detect carrier for ${phone}. Please select your carrier manually.`,
+                  showCarrierDropdown: true,
+                  prefillPhone: phone,
+                });
+                return { success: true };
+              }
+
+              initialState = {
+                ...paused,
+                message: paused.message,
+                streamCallback,
+                progressCallback,
+                confirmInstallCallback,
+                confirmGuideCallback,
+                isGuideCancelled,
+                failedStep: null,
+                pendingQuestion: null,
+                recoveryAction: null,
+                scoutPending: false,
+                smsGatewayTarget,
+                forceSkillBuild: false,
+                gatherContextSkipped: true,
+                skillPlan: null,
+                skillCursor: 0,
+                stepRetryCount: 0,
+                commandExecuted: false,
+                context: { ...paused.context, sessionId: sessionId || currentSessionId }
+              };
+            } else {
+              // ── Paid provider select: user picked Twilio, ClickSend, etc. ──────
+              // Re-enter at gatherContext with forceSkillBuild=true and gatheredContext pre-set
+              // so creatorPlanning fast-path picks it up immediately (no Q&A loop needed).
+
+              // Map user reply to the chosen match (either "provider (type)" format or index)
+              let chosenMatch = scoutMatches[0]; // default: first match
+              const replyLower = chosenOption.toLowerCase().replace(/\s*\([^)]+\)/, '').trim();
+              const byName = scoutMatches.find(m => m.provider.toLowerCase() === replyLower);
+              const byIdx = parseInt(userReply, 10) - 1;
+              if (byName) chosenMatch = byName;
+              else if (!isNaN(byIdx) && byIdx >= 0 && byIdx < scoutMatches.length) chosenMatch = scoutMatches[byIdx];
+
+              console.log(`[StateGraph] Scout select: "${chosenOption}" → provider "${chosenMatch?.provider}" (${chosenMatch?.type}) for "${scoutCapability}"`);
+
+              const isCli = chosenMatch?.type === 'cli';
+              const gatheredContext = {
+                services: [chosenMatch?.provider || scoutCapability],
+                timezone: null,
+                schedule: null,
+                knownSecrets: [],
+                links: chosenMatch?.config?.links || [],
+                resolvedAnswers: {},
+                cliMatch: isCli ? { capability: chosenMatch.capability, provider: chosenMatch.provider, config: chosenMatch.config } : null,
+                apiMatch: !isCli ? { capability: chosenMatch.capability, provider: chosenMatch.provider, config: chosenMatch.config } : null,
+              };
+
+              initialState = {
+                ...paused,
+                message: paused.message,
+                streamCallback,
+                progressCallback,
+                confirmInstallCallback,
+                confirmGuideCallback,
+                isGuideCancelled,
+                failedStep: null,
+                pendingQuestion: null,
+                recoveryAction: null,
+                scoutPending: false,
+                // Inject gathered context so creatorPlanning uses the chosen provider
+                gatheredContext,
+                forceSkillBuild: true,
+                gatherContextSkipped: false,
+                skillPlan: null,
+                skillCursor: 0,
+                stepRetryCount: 0,
+                commandExecuted: false,
+                context: { ...paused.context, sessionId: sessionId || currentSessionId }
+              };
+            }
           } else if (wantsInstallSkill) {
             // User chose to install a missing skill — inject a targeted skill.install plan
             // WITHOUT replanning the full original task. After install, resume from the
@@ -3033,12 +3133,15 @@ app.whenReady().then(async () => {
               || paused.skillPlan?.[paused.skillCursor || 0]?.args?.agentId
               || null;
             const _stepIdx = paused.skillCursor || 0;
+            // Use the original skill that was running (browser.agent stays browser.agent,
+            // cli.agent stays cli.agent) — not hardcoded to 'cli.agent'.
+            const _resumeSkill = paused.skillPlan?.[_stepIdx]?.skill || 'browser.agent';
             const _originalTask = paused.skillPlan?.[_stepIdx]?.args?.task || paused.message;
             const _priorQuestion = paused.pendingQuestion?.question || '';
             // Inject the Q&A context into the task string so the agent loop resumes with
             // full awareness of what was asked and what the user decided.
             const _taskWithAnswer = `${_originalTask}\n\n[Resume context: You previously asked "${_priorQuestion}". The user answered: "${chosenOption}". Continue from this point based on the user's answer.]`;
-            console.log(`[StateGraph] ASK_USER resume: _isAgentAskUser answer "${chosenOption}" — re-running agent ${_agentId} with injected context`);
+            console.log(`[StateGraph] ASK_USER resume: _isAgentAskUser answer "${chosenOption}" — re-running ${_resumeSkill}/${_agentId} with injected context`);
             if (resultsWindow && !resultsWindow.isDestroyed()) {
               safeSend(resultsWindow, 'results-window:set-prompt', chosenOption);
             }
@@ -3056,7 +3159,7 @@ app.whenReady().then(async () => {
               answer: undefined,
               commandExecuted: false,
               _skillPlan: [{
-                skill: 'cli.agent',
+                skill: _resumeSkill,
                 args: { action: 'run', agentId: _agentId, task: _taskWithAnswer },
                 description: paused.skillPlan?.[_stepIdx]?.description || _originalTask,
               }],
@@ -5855,6 +5958,49 @@ app.whenReady().then(async () => {
       return crypto.createHash('md5').update(blocks.map(b => b.id).join(',')).digest('hex');
     }
 
+    // ── Bridge skill plan helpers ─────────────────────────────────────────────
+
+    /**
+     * Extract the skill name from a scheduled block ID.
+     * e.g. sched_gmail_daily_sms_summary_1776518541617 → gmail.daily.sms.summary
+     */
+    function _parseBridgeSkillName(blockId) {
+      const m = blockId.match(/^sched_(.+?)_(\d{10,15})$/);
+      if (!m) return null;
+      return m[1].replace(/_/g, '.');
+    }
+
+    /**
+     * Load the pre-built execution plan for a bridge skill, or infer + cache one.
+     * Returns an array of stategraph step objects.
+     */
+    function _loadOrInferBridgePlan(skillName, instruction) {
+      const plansDir = path.join(os.homedir(), '.thinkdrop', 'plans');
+      const planPath = path.join(plansDir, `bridge.${skillName}.json`);
+      try {
+        if (fs.existsSync(planPath)) {
+          const plan = JSON.parse(fs.readFileSync(planPath, 'utf8'));
+          if (Array.isArray(plan) && plan.length > 0) {
+            console.log(`[Bridge Listener] Loaded pre-built plan for ${skillName} (${plan.length} step(s))`);
+            return plan;
+          }
+        }
+      } catch (_) {}
+      // Infer from instruction text — look for known agent IDs
+      const agentMatch = instruction.match(/\b(gmail\.agent|calendar\.agent|drive\.agent|github\.agent)\b/i);
+      const agentId = agentMatch ? agentMatch[1].toLowerCase() : null;
+      const plan = agentId
+        ? [{ skill: 'browser.agent', args: { action: 'run', agentId, task: instruction }, description: `${agentId}: ${instruction.slice(0, 80)}` }]
+        : [{ skill: 'browser.act', args: { task: instruction }, description: instruction.slice(0, 80) }];
+      // Cache for next time
+      try {
+        fs.mkdirSync(plansDir, { recursive: true });
+        fs.writeFileSync(planPath, JSON.stringify(plan, null, 2), 'utf8');
+        console.log(`[Bridge Listener] Inferred + cached plan for ${skillName} → ${agentId || 'browser.act'}`);
+      } catch (_) {}
+      return plan;
+    }
+
     let bridgeListenerActive = false;
     let bridgeWatcher = null;
     let bridgeDebounce = null;
@@ -5894,36 +6040,69 @@ app.whenReady().then(async () => {
               bridgeSeenIds.add(block.id);
               console.log(`🌉 [Bridge Listener] New ${block.prefix}:${block.type} [${block.id}] — auto-executing`);
 
-              // Show results window + emit executing status
-              if (resultsWindow && !resultsWindow.isDestroyed()) {
-                resultsWindow.show();
-                safeSend(resultsWindow, 'bridge:status', { state: 'executing', blockId: block.id, summary: block.body.split('\n')[0].slice(0, 80), bridgeFile: BRIDGE_FILE });
+              // Resolve skill name + pre-built execution plan (bypasses LLM re-planning)
+              const skillName = _parseBridgeSkillName(block.id);
+              const _skillPlan = skillName ? _loadOrInferBridgePlan(skillName, block.body) : null;
+              const runId = `run_${Date.now()}`;
+
+              // Register run in queueManager so Cron tab shows live progress
+              if (skillName && queueManager.getCron().find(i => i.id === skillName)) {
+                queueManager.recordCronRunStart(skillName, runId);
               }
 
-              // Fire stategraph exactly like a user submission via the IPC handler
-              if (stateGraph) {
-                // Show prompt in results window
-                if (resultsWindow && !resultsWindow.isDestroyed()) {
-                  safeSend(resultsWindow, 'results-window:set-prompt', `[Bridge] ${block.body.split('\n')[0].slice(0, 80)}`);
-                }
+              // Notify bridge pill — show skill name + running status (no Results window pop)
+              if (resultsWindow && !resultsWindow.isDestroyed()) {
+                safeSend(resultsWindow, 'bridge:status', {
+                  state: 'watching',
+                  bridgeFile: BRIDGE_FILE,
+                  cronSkillName: skillName,
+                  cronStatus: 'running',
+                });
+              }
+
+              // Use dedicated cron stategraph so user prompts are never blocked
+              if (cronStateGraph) {
+                const stepIndexMap = new Map();
 
                 const bridgeProgressCallback = (evt) => {
-                  if (resultsWindow && !resultsWindow.isDestroyed()) {
-                    safeSend(resultsWindow, 'automation:progress', evt);
+                  // Route step events to queueManager (Cron tab) instead of Results window
+                  if (skillName && evt) {
+                    if (evt.type === 'step_start' || evt.type === 'step_running') {
+                      const idx = stepIndexMap.get(evt.skill) ?? stepIndexMap.size;
+                      stepIndexMap.set(evt.skill, idx);
+                      queueManager.recordCronStep(skillName, runId, {
+                        index: idx,
+                        skill: evt.skill || '',
+                        description: evt.description || evt.skill || '',
+                        status: 'running',
+                      });
+                    } else if (evt.type === 'step_done') {
+                      const idx = stepIndexMap.get(evt.skill) ?? 0;
+                      queueManager.recordCronStep(skillName, runId, {
+                        index: idx,
+                        skill: evt.skill || '',
+                        description: evt.description || evt.skill || '',
+                        status: 'done',
+                        stdout: evt.output ? String(evt.output).slice(0, 500) : undefined,
+                      });
+                    } else if (evt.type === 'step_failed') {
+                      const idx = stepIndexMap.get(evt.skill) ?? 0;
+                      queueManager.recordCronStep(skillName, runId, {
+                        index: idx,
+                        skill: evt.skill || '',
+                        description: evt.description || evt.skill || '',
+                        status: 'failed',
+                        error: evt.error ? String(evt.error).slice(0, 200) : undefined,
+                      });
+                    }
                   }
                 };
-                const bridgeStreamCallback = (token) => {
-                  if (resultsWindow && !resultsWindow.isDestroyed()) {
-                    safeSend(resultsWindow, 'ws-bridge:message', { type: 'chunk', text: token });
-                  }
-                };
-
-                const autoPrompt = block.body;
 
                 const initialState = {
-                  message: autoPrompt,
+                  message: block.body,
                   selectedText: '',
-                  streamCallback: bridgeStreamCallback,
+                  _skillPlan: _skillPlan || undefined,
+                  streamCallback: () => {}, // bridge cron output not streamed to UI
                   progressCallback: bridgeProgressCallback,
                   confirmInstallCallback: () => Promise.resolve(false),
                   confirmGuideCallback: () => Promise.resolve(false),
@@ -5933,17 +6112,29 @@ app.whenReady().then(async () => {
                   context: { sessionId: null, userId: 'bridge_auto', source: 'bridge_listener', blockId: block.id },
                 };
 
-                stateGraph.execute(initialState).then(() => {
+                cronStateGraph.execute(initialState).then(() => {
                   console.log(`✅ [Bridge Listener] Done executing block ${block.id}`);
                   markBridgeBlockDone(block.id);
+                  if (skillName) queueManager.recordCronRunDone(skillName, runId, 'done');
                   if (resultsWindow && !resultsWindow.isDestroyed()) {
-                    safeSend(resultsWindow, 'bridge:status', { state: 'watching', bridgeFile: BRIDGE_FILE });
+                    safeSend(resultsWindow, 'bridge:status', {
+                      state: 'watching',
+                      bridgeFile: BRIDGE_FILE,
+                      cronSkillName: skillName,
+                      cronStatus: 'done',
+                    });
                   }
                 }).catch(err => {
                   console.error(`❌ [Bridge Listener] Error executing block ${block.id}:`, err.message);
                   markBridgeBlockDone(block.id, 'error');
+                  if (skillName) queueManager.recordCronRunDone(skillName, runId, 'failed');
                   if (resultsWindow && !resultsWindow.isDestroyed()) {
-                    safeSend(resultsWindow, 'bridge:status', { state: 'watching', bridgeFile: BRIDGE_FILE });
+                    safeSend(resultsWindow, 'bridge:status', {
+                      state: 'watching',
+                      bridgeFile: BRIDGE_FILE,
+                      cronSkillName: skillName,
+                      cronStatus: 'failed',
+                    });
                   }
                 });
               }
@@ -5979,18 +6170,44 @@ app.whenReady().then(async () => {
           for (const block of startupPending) {
             bridgeSeenIds.add(block.id);
             console.log(`🌉 [Bridge Listener] Startup: executing ${block.prefix}:${block.type} [${block.id}]`);
-            if (resultsWindow && !resultsWindow.isDestroyed()) {
-              resultsWindow.show();
-              safeSend(resultsWindow, 'bridge:status', { state: 'executing', blockId: block.id, summary: block.body.split('\n')[0].slice(0, 80), bridgeFile: BRIDGE_FILE });
-              safeSend(resultsWindow, 'results-window:set-prompt', `[Bridge] ${block.body.split('\n')[0].slice(0, 80)}`);
+
+            const skillName = _parseBridgeSkillName(block.id);
+            const _skillPlan = skillName ? _loadOrInferBridgePlan(skillName, block.body) : null;
+            const runId = `run_${Date.now()}`;
+
+            if (skillName && queueManager.getCron().find(i => i.id === skillName)) {
+              queueManager.recordCronRunStart(skillName, runId);
             }
-            if (stateGraph) {
-              const autoPrompt = block.body;
-              stateGraph.execute({
-                message: autoPrompt,
+            if (resultsWindow && !resultsWindow.isDestroyed()) {
+              safeSend(resultsWindow, 'bridge:status', {
+                state: 'watching',
+                bridgeFile: BRIDGE_FILE,
+                cronSkillName: skillName,
+                cronStatus: 'running',
+              });
+            }
+            if (cronStateGraph) {
+              const stepIndexMap = new Map();
+              cronStateGraph.execute({
+                message: block.body,
                 selectedText: '',
-                streamCallback: (token) => { if (resultsWindow && !resultsWindow.isDestroyed()) safeSend(resultsWindow, 'ws-bridge:message', { type: 'chunk', text: token }); },
-                progressCallback: (evt) => { if (resultsWindow && !resultsWindow.isDestroyed()) safeSend(resultsWindow, 'automation:progress', evt); },
+                _skillPlan: _skillPlan || undefined,
+                streamCallback: () => {},
+                progressCallback: (evt) => {
+                  if (skillName && evt) {
+                    if (evt.type === 'step_start' || evt.type === 'step_running') {
+                      const idx = stepIndexMap.get(evt.skill) ?? stepIndexMap.size;
+                      stepIndexMap.set(evt.skill, idx);
+                      queueManager.recordCronStep(skillName, runId, { index: idx, skill: evt.skill || '', description: evt.description || evt.skill || '', status: 'running' });
+                    } else if (evt.type === 'step_done') {
+                      const idx = stepIndexMap.get(evt.skill) ?? 0;
+                      queueManager.recordCronStep(skillName, runId, { index: idx, skill: evt.skill || '', description: evt.description || evt.skill || '', status: 'done', stdout: evt.output ? String(evt.output).slice(0, 500) : undefined });
+                    } else if (evt.type === 'step_failed') {
+                      const idx = stepIndexMap.get(evt.skill) ?? 0;
+                      queueManager.recordCronStep(skillName, runId, { index: idx, skill: evt.skill || '', description: evt.description || evt.skill || '', status: 'failed', error: evt.error ? String(evt.error).slice(0, 200) : undefined });
+                    }
+                  }
+                },
                 confirmInstallCallback: () => Promise.resolve(false),
                 confirmGuideCallback: () => Promise.resolve(false),
                 isGuideCancelled: () => false,
@@ -6000,9 +6217,17 @@ app.whenReady().then(async () => {
               }).then(() => {
                 console.log(`✅ [Bridge Listener] Startup: done with block ${block.id}`);
                 markBridgeBlockDone(block.id);
+                if (skillName) queueManager.recordCronRunDone(skillName, runId, 'done');
+                if (resultsWindow && !resultsWindow.isDestroyed()) {
+                  safeSend(resultsWindow, 'bridge:status', { state: 'watching', bridgeFile: BRIDGE_FILE, cronSkillName: skillName, cronStatus: 'done' });
+                }
               }).catch(err => {
                 console.error(`❌ [Bridge Listener] Startup: error on block ${block.id}:`, err.message);
                 markBridgeBlockDone(block.id, 'error');
+                if (skillName) queueManager.recordCronRunDone(skillName, runId, 'failed');
+                if (resultsWindow && !resultsWindow.isDestroyed()) {
+                  safeSend(resultsWindow, 'bridge:status', { state: 'watching', bridgeFile: BRIDGE_FILE, cronSkillName: skillName, cronStatus: 'failed' });
+                }
               });
             }
           }

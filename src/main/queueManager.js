@@ -181,6 +181,78 @@ function recordCronRun(id) {
 }
 
 /**
+ * Start tracking a new cron run (called at bridge fire time).
+ */
+function recordCronRunStart(skillName, runId) {
+  const item = _cron.get(skillName);
+  const run = {
+    id: runId,
+    startedAt: new Date().toLocaleTimeString(),
+    status: 'running',
+    steps: [],
+    _startMs: Date.now(),
+  };
+  if (item) {
+    const prev = item.runs || [];
+    const trimmed = [run, ...prev].slice(0, 5); // keep last 5 runs
+    _cron.set(skillName, {
+      ...item,
+      status: 'active',
+      activeRunId: runId,
+      runCount: (item.runCount || 0) + 1,
+      runs: trimmed,
+    });
+  }
+  _broadcastCronNow();
+}
+
+/**
+ * Upsert a step within an active cron run.
+ */
+function recordCronStep(skillName, runId, stepData) {
+  const item = _cron.get(skillName);
+  if (!item) return;
+  const runs = item.runs || [];
+  const runIdx = runs.findIndex(r => r.id === runId);
+  if (runIdx === -1) return;
+  const run = runs[runIdx];
+  const steps = [...(run.steps || [])];
+  const existing = steps.findIndex(s => s.index === stepData.index);
+  if (existing >= 0) {
+    steps[existing] = { ...steps[existing], ...stepData };
+  } else {
+    steps.push(stepData);
+  }
+  const updatedRuns = [...runs];
+  updatedRuns[runIdx] = { ...run, steps };
+  _cron.set(skillName, { ...item, runs: updatedRuns });
+  _broadcastCronNow();
+}
+
+/**
+ * Finalize a cron run as done or failed.
+ */
+function recordCronRunDone(skillName, runId, status) {
+  const item = _cron.get(skillName);
+  if (!item) return;
+  const runs = (item.runs || []).map(r => {
+    if (r.id !== runId) return r;
+    const durationMs = r._startMs ? Date.now() - r._startMs : undefined;
+    const { _startMs: _removed, ...rest } = r;
+    return { ...rest, status, durationMs };
+  });
+  _cron.set(skillName, {
+    ...item,
+    status: status === 'failed' ? 'error' : 'active',
+    lastRun: new Date().toLocaleTimeString(),
+    activeRunId: null,
+    runs,
+    lastError: status === 'failed' ? 'Last run failed' : item.lastError,
+  });
+  _broadcastCronNow();
+}
+
+/**
  * Toggle a cron task between active/paused.
  */
 function toggleCron(id) {
@@ -331,6 +403,9 @@ module.exports = {
   // cron
   registerCron,
   recordCronRun,
+  recordCronRunStart,
+  recordCronStep,
+  recordCronRunDone,
   toggleCron,
   removeCron,
   getCron,

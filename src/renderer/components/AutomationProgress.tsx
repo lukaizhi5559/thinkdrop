@@ -236,15 +236,22 @@ interface ScoutMatchState {
   capability: string;
   suggestion: string;
   matches: ScoutProvider[];
+  errorHint?: string | null;
+  showCarrierDropdown?: boolean;
+  prefillPhone?: string;
 }
 
 function ScoutMatchCard({ scout, onSelect }: { scout: ScoutMatchState; onSelect: (provider: ScoutProvider) => void }) {
   const [selected, setSelected] = useState<string | null>(null);
+  const [gatewayPhone, setGatewayPhone] = useState(scout.prefillPhone || '');
+  const [gatewayCarrier, setGatewayCarrier] = useState('');
 
   const handlePick = (match: ScoutProvider) => {
     setSelected(match.provider);
     onSelect(match);
   };
+
+  const isSmsCap = /sms|text message|text me|texting|send.*text|messaging/i.test(scout.capability);
 
   const TYPE_COLOR: Record<string, string> = { cli: '#84cc16', api: '#38bdf8' };
   const TYPE_BG: Record<string, string> = { cli: 'rgba(132,204,22,0.10)', api: 'rgba(56,189,248,0.10)' };
@@ -298,6 +305,112 @@ function ScoutMatchCard({ scout, onSelect }: { scout: ScoutMatchState; onSelect:
             )}
           </button>
         ))}
+
+        {isSmsCap && (
+          <div style={{
+            marginTop: 4, padding: '8px 10px', borderRadius: 8,
+            backgroundColor: 'rgba(34,197,94,0.06)', border: '1px solid rgba(34,197,94,0.22)',
+            opacity: selected !== null && !selected.startsWith('__sms_gateway__') ? 0.45 : 1,
+          }}>
+            <div className="flex items-center gap-1.5" style={{ marginBottom: 6 }}>
+              <span style={{
+                fontSize: '0.62rem', fontWeight: 700, padding: '2px 6px', borderRadius: 4, flexShrink: 0,
+                color: '#4ade80', backgroundColor: 'rgba(34,197,94,0.12)', border: '1px solid rgba(34,197,94,0.30)',
+                textTransform: 'uppercase',
+              }}>free</span>
+              <span style={{ color: '#86efac', fontSize: '0.76rem', fontWeight: 600 }}>
+                Send via carrier email gateway
+              </span>
+            </div>
+            {scout.errorHint && (
+              <div style={{
+                color: '#fca5a5', fontSize: '0.67rem', marginBottom: 8, lineHeight: 1.4,
+                padding: '4px 8px', borderRadius: 5,
+                backgroundColor: 'rgba(239,68,68,0.10)', border: '1px solid rgba(239,68,68,0.25)',
+              }}>
+                ⚠ {scout.errorHint}
+              </div>
+            )}
+            <div style={{ color: '#6b7280', fontSize: '0.67rem', marginBottom: 8, lineHeight: 1.4 }}>
+              {scout.showCarrierDropdown
+                ? 'Select your carrier manually to continue.'
+                : 'Enter your number — carrier is auto-detected. No API key needed.'}
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+              <input
+                type="tel"
+                placeholder="Your phone number"
+                value={gatewayPhone}
+                onChange={e => setGatewayPhone(e.target.value.replace(/[^\d]/g, ''))}
+                disabled={selected !== null}
+                maxLength={11}
+                style={{
+                  padding: '5px 8px', borderRadius: 6, fontSize: '0.76rem',
+                  backgroundColor: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.12)',
+                  color: '#e5e7eb', outline: 'none', fontFamily: 'monospace',
+                }}
+              />
+              {scout.showCarrierDropdown && (
+                <select
+                  value={gatewayCarrier}
+                  onChange={e => setGatewayCarrier(e.target.value)}
+                  disabled={selected !== null}
+                  style={{
+                    padding: '5px 8px', borderRadius: 6, fontSize: '0.73rem',
+                    backgroundColor: 'rgba(255,255,255,0.07)', border: '1px solid rgba(255,255,255,0.14)',
+                    color: gatewayCarrier ? '#e5e7eb' : '#6b7280', outline: 'none',
+                  }}
+                >
+                  <option value="">Select your carrier…</option>
+                  <option value="verizon">Verizon</option>
+                  <option value="at&t">AT&amp;T</option>
+                  <option value="t-mobile">T-Mobile</option>
+                  <option value="sprint">Sprint</option>
+                  <option value="boost mobile">Boost Mobile</option>
+                  <option value="cricket wireless">Cricket Wireless</option>
+                  <option value="metro by t-mobile">Metro by T-Mobile</option>
+                  <option value="us cellular">US Cellular</option>
+                  <option value="consumer cellular">Consumer Cellular</option>
+                  <option value="google fi">Google Fi</option>
+                  <option value="mint mobile">Mint Mobile</option>
+                  <option value="visible">Visible</option>
+                  <option value="xfinity mobile">Xfinity Mobile</option>
+                  <option value="straight talk">Straight Talk</option>
+                  <option value="tracfone">Tracfone</option>
+                  <option value="republic wireless">Republic Wireless</option>
+                  <option value="simple mobile">Simple Mobile</option>
+                </select>
+              )}
+              <button
+                onClick={() => {
+                  const needsCarrier = scout.showCarrierDropdown && !gatewayCarrier;
+                  if (gatewayPhone.length >= 10 && selected === null && !needsCarrier) {
+                    const carrierSuffix = gatewayCarrier ? `:${gatewayCarrier}` : '';
+                    handlePick({
+                      capability: scout.capability,
+                      provider: `__sms_gateway__:${gatewayPhone}${carrierSuffix}`,
+                      type: 'api',
+                      config: {},
+                    });
+                  }
+                }}
+                disabled={gatewayPhone.length < 10 || selected !== null || !!(scout.showCarrierDropdown && !gatewayCarrier)}
+                style={{
+                  padding: '5px 12px', borderRadius: 6, fontSize: '0.73rem', fontWeight: 600,
+                  backgroundColor: gatewayPhone.length >= 10 && selected === null && !(scout.showCarrierDropdown && !gatewayCarrier)
+                    ? 'rgba(34,197,94,0.20)' : 'rgba(255,255,255,0.04)',
+                  border: `1px solid ${gatewayPhone.length >= 10 && selected === null && !(scout.showCarrierDropdown && !gatewayCarrier)
+                    ? 'rgba(34,197,94,0.40)' : 'rgba(255,255,255,0.08)'}`,
+                  color: gatewayPhone.length >= 10 && selected === null && !(scout.showCarrierDropdown && !gatewayCarrier) ? '#4ade80' : '#4b5563',
+                  cursor: gatewayPhone.length >= 10 && selected === null && !(scout.showCarrierDropdown && !gatewayCarrier) ? 'pointer' : 'default',
+                  alignSelf: 'flex-end',
+                }}
+              >
+                {selected?.startsWith('__sms_gateway__') ? 'Detecting…' : 'Use this →'}
+              </button>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );
@@ -720,8 +833,20 @@ export default function AutomationProgress({ onHeightChange, onActiveChange }: A
           break;
 
         case 'scout_match':
-          setScoutMatch({ capability: data.capability || '', suggestion: data.suggestion || '', matches: data.matches || [] });
+          setScoutMatch({
+            capability: data.capability || '',
+            suggestion: data.suggestion || '',
+            matches: data.matches || [],
+            errorHint: data.errorHint || null,
+            showCarrierDropdown: !!data.showCarrierDropdown,
+            prefillPhone: data.prefillPhone || '',
+          });
           setPhase('planning');
+          break;
+
+        case 'error':
+          setGlobalError(data.message || 'An error occurred.');
+          setPhase('failed');
           break;
 
         case 'project_build_start':

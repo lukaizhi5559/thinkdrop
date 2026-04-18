@@ -82,12 +82,15 @@ export default function ResultsWindow() {
     }
   };
 
-  // Bridge listener status — shown as a persistent footer when watching, swaps to executing during auto-tasks
+  // Bridge listener status — shown as a persistent footer when watching, shows inline cron job status
   const [bridgeStatus, setBridgeStatus] = useState<{
     state: 'watching' | 'executing' | 'stopped';
     bridgeFile?: string;
     summary?: string;
+    cronSkillName?: string;
+    cronStatus?: 'running' | 'done' | 'failed';
   } | null>(null);
+  const cronStatusTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Pending schedule notification (app was opened and a launchd schedule is registered)
   const [schedulePending, setSchedulePending] = useState<{
@@ -400,7 +403,16 @@ export default function ResultsWindow() {
     };
 
     const handleBridgeStatus = (_event: any, data: any) => {
-      setBridgeStatus({ state: data.state, bridgeFile: data.bridgeFile, summary: data.summary });
+      if (cronStatusTimerRef.current) clearTimeout(cronStatusTimerRef.current);
+      setBridgeStatus({ state: data.state, bridgeFile: data.bridgeFile, summary: data.summary, cronSkillName: data.cronSkillName, cronStatus: data.cronStatus });
+      // Mark cron tab unread when a job starts running
+      if (data.cronStatus === 'running') markUnread('cron');
+      // Auto-clear done status after 4 seconds
+      if (data.cronStatus === 'done') {
+        cronStatusTimerRef.current = setTimeout(() => {
+          setBridgeStatus(prev => prev ? { ...prev, cronSkillName: undefined, cronStatus: undefined } : prev);
+        }, 4000);
+      }
     };
 
     // skills:update — sent by main.js in response to skills:list or after a new skill is installed
@@ -1341,36 +1353,57 @@ export default function ResultsWindow() {
             </div>
           )}
 
-          {/* Bridge listener status banner — collapsed pill when watching, full banner when executing */}
+          {/* Bridge listener status pill — watching indicator with optional inline cron job status */}
           {bridgeStatus && bridgeStatus.state !== 'stopped' && (
-            bridgeStatus.state === 'executing' ? (
+            <div style={{
+              marginBottom: 8,
+              display: 'flex',
+              alignItems: 'center',
+              gap: 5,
+              opacity: bridgeStatus.cronStatus === 'running' ? 1 : (bridgeStatus.cronStatus ? 0.85 : 0.45),
+              padding: bridgeStatus.cronStatus ? '3px 7px 3px 5px' : undefined,
+              borderRadius: bridgeStatus.cronStatus ? 5 : undefined,
+              backgroundColor: bridgeStatus.cronStatus === 'running'
+                ? 'rgba(59,130,246,0.08)'
+                : bridgeStatus.cronStatus === 'failed'
+                  ? 'rgba(239,68,68,0.08)'
+                  : 'transparent',
+              border: bridgeStatus.cronStatus === 'running'
+                ? '1px solid rgba(59,130,246,0.2)'
+                : bridgeStatus.cronStatus === 'failed'
+                  ? '1px solid rgba(239,68,68,0.2)'
+                  : 'none',
+              transition: 'all 0.3s',
+            }}>
               <div style={{
-                marginBottom: 10,
-                padding: '7px 10px',
-                borderRadius: 8,
-                backgroundColor: 'rgba(59,130,246,0.08)',
-                border: '1px solid rgba(59,130,246,0.25)',
-                display: 'flex',
-                alignItems: 'center',
-                gap: 8,
-              }}>
-                <div style={{ width: 7, height: 7, borderRadius: '50%', backgroundColor: '#3b82f6', flexShrink: 0, animation: 'pulse 1.5s ease-in-out infinite' }} />
-                <span style={{ color: '#93c5fd', fontSize: '0.7rem', fontWeight: 500 }}>
-                  Bridge executing: <span style={{ color: '#e5e7eb', fontWeight: 400 }}>{bridgeStatus.summary || 'running task...'}</span>
-                </span>
-              </div>
-            ) : (
-              <div style={{
-                marginBottom: 8,
-                display: 'flex',
-                alignItems: 'center',
-                gap: 5,
-                opacity: 0.45,
-              }}>
-                <div style={{ width: 5, height: 5, borderRadius: '50%', backgroundColor: '#10b981', flexShrink: 0 }} />
-                <span style={{ color: '#6b7280', fontSize: '0.65rem' }}>Bridge watching</span>
-              </div>
-            )
+                width: 5, height: 5, borderRadius: '50%', flexShrink: 0,
+                backgroundColor: bridgeStatus.cronStatus === 'running'
+                  ? '#3b82f6'
+                  : bridgeStatus.cronStatus === 'failed'
+                    ? '#ef4444'
+                    : bridgeStatus.cronStatus === 'done'
+                      ? '#22c55e'
+                      : '#10b981',
+                animation: bridgeStatus.cronStatus === 'running' ? 'pulse 1.5s ease-in-out infinite' : 'none',
+              }} />
+              <span style={{ color: '#6b7280', fontSize: '0.65rem' }}>Bridge watching</span>
+              {bridgeStatus.cronSkillName && bridgeStatus.cronStatus && (
+                <>
+                  <span style={{ color: '#374151', fontSize: '0.6rem' }}>·</span>
+                  <span style={{ color: '#9ca3af', fontSize: '0.62rem', fontFamily: 'ui-monospace,monospace',
+                    overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: 160, whiteSpace: 'nowrap' }}>
+                    {bridgeStatus.cronSkillName}
+                  </span>
+                  <span style={{
+                    fontSize: '0.6rem', fontWeight: 600, padding: '0 4px', borderRadius: 3,
+                    color: bridgeStatus.cronStatus === 'running' ? '#93c5fd' : bridgeStatus.cronStatus === 'done' ? '#4ade80' : '#f87171',
+                    backgroundColor: bridgeStatus.cronStatus === 'running' ? 'rgba(59,130,246,0.15)' : bridgeStatus.cronStatus === 'done' ? 'rgba(74,222,128,0.15)' : 'rgba(239,68,68,0.15)',
+                  }}>
+                    {bridgeStatus.cronStatus}
+                  </span>
+                </>
+              )}
+            </div>
           )}
 
           {/* AutomationProgress is always mounted so its IPC listener is pre-registered */}

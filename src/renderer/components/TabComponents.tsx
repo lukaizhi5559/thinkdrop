@@ -76,6 +76,22 @@ export interface SkillItem {
 }
 
 export type CronStatus = 'active' | 'idle' | 'paused' | 'error';
+export type CronStepStatus = 'pending' | 'running' | 'done' | 'failed';
+export interface CronStep {
+  index: number;
+  skill: string;
+  description: string;
+  status: CronStepStatus;
+  stdout?: string;
+  error?: string;
+}
+export interface CronRun {
+  id: string;
+  startedAt: string;
+  status: 'running' | 'done' | 'failed';
+  steps: CronStep[];
+  durationMs?: number;
+}
 export interface CronItem {
   id: string;
   label: string;
@@ -85,6 +101,9 @@ export interface CronItem {
   status: CronStatus;
   plistLabel?: string;
   lastError?: string;
+  runs?: CronRun[];
+  runCount?: number;
+  activeRunId?: string;
 }
 
 // ── Tab bar icons ─────────────────────────────────────────────────────────────
@@ -457,6 +476,13 @@ const CRON_STATUS_CONFIG: Record<CronStatus, { label: string; color: string; dot
   error:   { label: 'Error',  color: '#f87171', dotColor: '#ef4444' },
 };
 
+const CRON_STEP_ICON: Record<CronStepStatus, React.ReactNode> = {
+  pending: <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="#4b5563" strokeWidth="2"><circle cx="12" cy="12" r="9"/></svg>,
+  running: <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="#3b82f6" strokeWidth="2.5"><circle cx="12" cy="12" r="9"/><line x1="12" y1="8" x2="12" y2="13"/><line x1="12" y1="15" x2="12" y2="16"/></svg>,
+  done:    <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="#22c55e" strokeWidth="2.5" strokeLinecap="round"><polyline points="20 6 9 17 4 12"/></svg>,
+  failed:  <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="#ef4444" strokeWidth="2.5" strokeLinecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>,
+};
+
 function CronItemCard({ item, onToggle, onDelete, onRerun }: {
   item: CronItem;
   onToggle: (item: CronItem) => void;
@@ -464,6 +490,10 @@ function CronItemCard({ item, onToggle, onDelete, onRerun }: {
   onRerun: (item: CronItem) => void;
 }) {
   const cfg = CRON_STATUS_CONFIG[item.status];
+  const [expanded, setExpanded] = React.useState(false);
+  const latestRun = item.runs && item.runs.length > 0 ? item.runs[0] : null;
+  const hasRuns = !!latestRun;
+
   return (
     <div style={{ borderRadius: 9, padding: '10px 12px',
       backgroundColor: 'rgba(255,255,255,0.025)', border: '1px solid rgba(255,255,255,0.07)' }}>
@@ -482,6 +512,11 @@ function CronItemCard({ item, onToggle, onDelete, onRerun }: {
               padding: '1px 5px', borderRadius: 3, border: '1px solid rgba(255,255,255,0.08)', flexShrink: 0 }}>
               {cfg.label}
             </span>
+            {typeof item.runCount === 'number' && item.runCount > 0 && (
+              <span style={{ fontSize: '0.58rem', color: '#4b5563', flexShrink: 0 }}>
+                ×{item.runCount}
+              </span>
+            )}
           </div>
           <div style={{ fontSize: '0.65rem', color: '#6b7280', display: 'flex', flexWrap: 'wrap', gap: 8 }}>
             <span style={{ display: 'flex', alignItems: 'center', gap: 3 }}>
@@ -501,10 +536,19 @@ function CronItemCard({ item, onToggle, onDelete, onRerun }: {
           </div>
         </div>
         <div style={{ display: 'flex', gap: 4, flexShrink: 0 }}>
+          {hasRuns && (
+            <button onClick={() => setExpanded(e => !e)} title={expanded ? 'Collapse' : 'Show run history'}
+              style={{ padding: '4px 7px', borderRadius: 5, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center',
+                background: expanded ? 'rgba(99,102,241,0.15)' : 'rgba(99,102,241,0.07)',
+                border: '1px solid rgba(99,102,241,0.25)', color: '#818cf8' }}>
+              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round">
+                {expanded ? <polyline points="18,15 12,9 6,15"/> : <polyline points="6,9 12,15 18,9"/>}
+              </svg>
+            </button>
+          )}
           <button onClick={() => onRerun(item)} title="Run now"
             style={{ padding: '4px 7px', borderRadius: 5, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center',
               background: 'rgba(96,165,250,0.1)', border: '1px solid rgba(96,165,250,0.25)', color: '#93c5fd' }}>
-            {/* Replay / re-run icon — circular arrow */}
             <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
               <path d="M1 4v6h6"/><path d="M3.51 15a9 9 0 1 0 .49-4.57"/>
             </svg>
@@ -515,12 +559,10 @@ function CronItemCard({ item, onToggle, onDelete, onRerun }: {
               border: item.status === 'paused' ? '1px solid rgba(74,222,128,0.25)' : '1px solid rgba(245,158,11,0.25)',
               color: item.status === 'paused' ? '#4ade80' : '#fbbf24' }}>
             {item.status === 'paused' ? (
-              /* Play triangle for resume */
               <svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor" stroke="none">
                 <polygon points="5,3 19,12 5,21"/>
               </svg>
             ) : (
-              /* Two bars for pause */
               <svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor" stroke="none">
                 <rect x="6" y="4" width="4" height="16" rx="1"/><rect x="14" y="4" width="4" height="16" rx="1"/>
               </svg>
@@ -528,6 +570,49 @@ function CronItemCard({ item, onToggle, onDelete, onRerun }: {
           </button>
         </div>
       </div>
+
+      {/* Expandable run history */}
+      {expanded && latestRun && (
+        <div style={{ marginTop: 8, paddingTop: 8, borderTop: '1px solid rgba(255,255,255,0.06)' }}>
+          <div style={{ fontSize: '0.6rem', color: '#4b5563', marginBottom: 5, display: 'flex', alignItems: 'center', gap: 6 }}>
+            <span>Latest run · {latestRun.startedAt}</span>
+            {latestRun.durationMs !== undefined && (
+              <span style={{ color: '#374151' }}>{(latestRun.durationMs / 1000).toFixed(1)}s</span>
+            )}
+            <span style={{
+              color: latestRun.status === 'done' ? '#4ade80' : latestRun.status === 'failed' ? '#f87171' : '#93c5fd',
+              fontWeight: 600,
+            }}>
+              {latestRun.status}
+            </span>
+          </div>
+          {latestRun.steps.length === 0 ? (
+            <div style={{ fontSize: '0.62rem', color: '#374151', fontStyle: 'italic' }}>No steps recorded yet…</div>
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+              {latestRun.steps.map((step, i) => (
+                <div key={i} style={{ display: 'flex', alignItems: 'flex-start', gap: 6 }}>
+                  <div style={{ flexShrink: 0, paddingTop: 1 }}>{CRON_STEP_ICON[step.status]}</div>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontSize: '0.65rem', color: step.status === 'failed' ? '#f87171' : step.status === 'done' ? '#9ca3af' : '#e5e7eb',
+                      overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      {step.description || step.skill}
+                    </div>
+                    {step.error && (
+                      <div style={{ fontSize: '0.6rem', color: '#f87171', marginTop: 1 }}>{step.error.slice(0, 120)}</div>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+          {(item.runs?.length ?? 0) > 1 && (
+            <div style={{ marginTop: 6, fontSize: '0.6rem', color: '#374151' }}>
+              + {(item.runs!.length - 1)} earlier run(s) stored
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }
