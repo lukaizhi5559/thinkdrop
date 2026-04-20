@@ -132,17 +132,24 @@ start_python_service() {
 
 # Start a Node.js service directly via node (no npm/yarn wrapper)
 # Use this for stdio MCP servers where npm start exits immediately after spawning node
+# Optional 5th arg: extra_env — a KEY=VALUE pair injected only into this process
+# e.g. start_node_direct_service "user-memory" "$PATH" "src/server.js" 512 "DB_PATH=/abs/path"
 start_node_direct_service() {
     local service_name=$1
     local service_path=$2
     local entry_file=$3
     local memory_limit=$4
+    local extra_env=${5:-""}
 
     echo "📦 Starting $service_name..."
 
     cd "$service_path"
     export NODE_OPTIONS="--max-old-space-size=$memory_limit"
-    node "$entry_file" > "$PROJECT_ROOT/logs/$service_name.log" 2>&1 &
+    if [ -n "$extra_env" ]; then
+        env "$extra_env" node "$entry_file" > "$PROJECT_ROOT/logs/$service_name.log" 2>&1 &
+    else
+        node "$entry_file" > "$PROJECT_ROOT/logs/$service_name.log" 2>&1 &
+    fi
     local pid=$!
     echo "$service_name:$pid" >> "$PIDS_FILE"
     sleep 1
@@ -173,9 +180,12 @@ sleep 1
 # ── Start services in dependency order ──────────────────────────────────────
 
 # 1. User Memory Service — port 3001
-# DB_PATH must be absolute so it resolves correctly regardless of cwd
-export DB_PATH="$PROJECT_ROOT/mcp-services/thinkdrop-user-memory-service/data/user_memory.duckdb"
-start_node_direct_service "user-memory" "$PROJECT_ROOT/mcp-services/thinkdrop-user-memory-service" "src/server.js" 512
+# Pass DB_PATH only to user-memory via the extra_env arg (5th param).
+# Do NOT use `export DB_PATH` — other services (web-search, conversation)
+# also read DB_PATH from env and must NOT inherit user_memory.duckdb's path
+# since DuckDB is single-writer and sharing would cause a lock conflict.
+start_node_direct_service "user-memory" "$PROJECT_ROOT/mcp-services/thinkdrop-user-memory-service" "src/server.js" 512 \
+    "DB_PATH=$PROJECT_ROOT/mcp-services/thinkdrop-user-memory-service/data/user_memory.duckdb"
 sleep 2
 
 # 2. Web Search Service — port 3002

@@ -84,6 +84,8 @@ export interface CronStep {
   status: CronStepStatus;
   stdout?: string;
   error?: string;
+  thoughts?: string;
+  phase?: string;
 }
 export interface CronRun {
   id: string;
@@ -491,6 +493,7 @@ function CronItemCard({ item, onToggle, onDelete, onRerun }: {
 }) {
   const cfg = CRON_STATUS_CONFIG[item.status];
   const [expanded, setExpanded] = React.useState(false);
+  const [confirmDelete, setConfirmDelete] = React.useState(false);
   const latestRun = item.runs && item.runs.length > 0 ? item.runs[0] : null;
   const hasRuns = !!latestRun;
 
@@ -568,6 +571,30 @@ function CronItemCard({ item, onToggle, onDelete, onRerun }: {
               </svg>
             )}
           </button>
+          {/* Delete — two-step confirm; calls skills:delete (full cleanup: disk + DB + scheduler) */}
+          {!confirmDelete ? (
+            <button onClick={(e) => { e.stopPropagation(); setConfirmDelete(true); }} title="Delete skill"
+              style={{ padding: '4px 7px', borderRadius: 5, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center',
+                background: 'rgba(248,113,113,0.07)', border: '1px solid rgba(248,113,113,0.2)', color: '#f87171' }}>
+              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                <polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4h6v2"/>
+              </svg>
+            </button>
+          ) : (
+            <div style={{ display: 'flex', gap: 3, alignItems: 'center' }}>
+              <span style={{ fontSize: '0.58rem', color: '#f87171', whiteSpace: 'nowrap' }}>Delete?</span>
+              <button onClick={(e) => { e.stopPropagation(); onDelete(item); }} title="Confirm delete"
+                style={{ padding: '3px 6px', borderRadius: 4, cursor: 'pointer', fontSize: '0.6rem', fontWeight: 600,
+                  background: 'rgba(248,113,113,0.18)', border: '1px solid rgba(248,113,113,0.4)', color: '#f87171' }}>
+                Yes
+              </button>
+              <button onClick={(e) => { e.stopPropagation(); setConfirmDelete(false); }} title="Cancel"
+                style={{ padding: '3px 6px', borderRadius: 4, cursor: 'pointer', fontSize: '0.6rem',
+                  background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)', color: '#6b7280' }}>
+                No
+              </button>
+            </div>
+          )}
         </div>
       </div>
 
@@ -600,6 +627,12 @@ function CronItemCard({ item, onToggle, onDelete, onRerun }: {
                     </div>
                     {step.error && (
                       <div style={{ fontSize: '0.6rem', color: '#f87171', marginTop: 1 }}>{step.error.slice(0, 120)}</div>
+                    )}
+                    {step.thoughts && (
+                      <div style={{ fontSize: '0.6rem', color: '#6b7280', marginTop: 1, fontStyle: 'italic',
+                        overflowWrap: 'break-word', wordBreak: 'break-word' }}>
+                        → {step.thoughts.slice(0, 500)}
+                      </div>
                     )}
                   </div>
                 </div>

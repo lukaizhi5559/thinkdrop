@@ -41,6 +41,9 @@ const OVERLAY_CONTROL_PORT = parseInt(process.env.OVERLAY_CONTROL_PORT || '3010'
 // server /agent-turn endpoint to forward real-time agent turn events from the
 // command-service (separate process) back to the renderer via IPC.
 let activeProgressCallback = null;
+// Dedicated callback for cron/bridge jobs running on cronStateGraph so agent
+// thoughts and turn events reach the Cron tab independently of user prompts.
+let activeCronProgressCallback = null;
 
 // SSE clients connected to GET /voice/companion/events (Chrome companion windows)
 const companionSseClients = new Set();
@@ -443,7 +446,7 @@ function startOverlayControlServer() {
       req.on('data', chunk => { body += chunk; });
       req.on('end', async () => {
         try {
-          const { skillName, instruction, retryCount } = JSON.parse(body || '{}');
+          const { skillName, instruction, retryCount, schedule } = JSON.parse(body || '{}');
           const label = (instruction || skillName || 'scheduled task').split(' ').slice(0, 8).join(' ');
           const { dialog, nativeImage } = require('electron');
           const path = require('path');
@@ -451,7 +454,22 @@ function startOverlayControlServer() {
           let logoIcon;
           try { logoIcon = nativeImage.createFromPath(logoPath); } catch (_) {}
           const attemptsLeft = 3 - (retryCount || 0);
-          const deferNote = attemptsLeft > 0 ? `(auto-runs in ~${attemptsLeft * 10} min if you choose Later)` : '(last chance — will run now regardless)';
+          // Convert cron expression to a human-readable label for the dialog
+          const _cronToHuman = (expr) => {
+            if (!expr) return null;
+            const m = expr.match(/^(\*|\d+) \*\/(\d+) \* \* \*$/);
+            if (m) return `every ${m[2]}h`;
+            const m2 = expr.match(/^\*\/(\d+) \* \* \* \*$/);
+            if (m2) return `every ${m2[1]}min`;
+            const m3 = expr.match(/^0 (\d+) \* \* \*$/);
+            if (m3) return `daily at ${m3[1]}:00`;
+            const m4 = expr.match(/^0 0 \* \* (\d+)$/);
+            if (m4) { const d=['Sun','Mon','Tue','Wed','Thu','Fri','Sat']; return `weekly on ${d[m4[1]]||m4[1]}`; }
+            return expr;
+          };
+          const scheduleLabel = _cronToHuman(schedule);
+          const scheduleNote = scheduleLabel ? ` — scheduled ${scheduleLabel}` : '';
+          const deferNote = attemptsLeft > 0 ? `(force-runs after ~${attemptsLeft * 10} min of deferral${scheduleNote})` : '(last chance — will run now regardless)';
           const { response } = await dialog.showMessageBox({
             type: 'question',
             title: 'ThinkDrop — Scheduled Task Ready',
@@ -499,8 +517,11 @@ function startOverlayControlServer() {
       req.on('end', () => {
         try {
           const evt = JSON.parse(body || '{}');
-          if (activeProgressCallback && ['agent:turn_live', 'agent:turn', 'agent:complete', 'needs_login'].includes(evt.type)) {
+          if (activeProgressCallback && ['agent:turn_live', 'agent:turn', 'agent:complete', 'agent:thought', 'needs_login'].includes(evt.type)) {
             activeProgressCallback(evt);
+          }
+          if (activeCronProgressCallback && ['agent:turn_live', 'agent:turn', 'agent:complete', 'agent:thought', 'needs_login'].includes(evt.type)) {
+            activeCronProgressCallback(evt);
           }
           res.writeHead(200).end(JSON.stringify({ ok: true }));
         } catch (err) {
@@ -1590,6 +1611,7 @@ app.whenReady().then(async () => {
     if (wasPaused) { _pausedCrons.delete(id); } else { _pausedCrons.add(id); }
     const newStatus = wasPaused ? 'active' : 'paused';
     const action    = wasPaused ? 'resume' : 'pause';
+    _savePausedCrons(); // persist so pause state survives restarts
     // Push updated status to renderer immediately — no need to re-fetch full list
     if (resultsWindow && !resultsWindow.isDestroyed()) {
       ipcMain.emit('cron:list');
@@ -2792,7 +2814,65 @@ app.whenReady().then(async () => {
           const wantsInstallSkill = !!installSkillMatch
             || /^install\s+(skill|texting|sms|text)/i.test(chosenOption.trim())
             || /^create\s+and\s+install/i.test(chosenOption.trim());
-          if (wantsAbort) {
+          const allowCommandMatch = /^allow\s+"?([a-z0-9._-]+)"?\s+and\s+retry$/i.exec(chosenOption.trim());
+          const allowCommandName = (allowCommandMatch?.[1]
+            || paused.pendingQuestion?.context?.commandName
+            || paused.failedStep?.commandName
+            || '').trim();
+          const wantsAllowCommand = (!!allowCommandMatch || /^allow\b/i.test(chosenOption.trim()))
+            && !!allowCommandName
+            && !!(paused.pendingQuestion?.context?.userAllowlistHint || paused.failedStep?.userAllowlistHint);
+          if (wantsAllowCommand) {
+            try {
+              const _fs = require('fs');
+              const _path = require('path');
+              const allowPath = _path.join(require('os').homedir(), '.thinkdrop', 'allowed-commands.json');
+              const allowDir = _path.dirname(allowPath);
+              if (!_fs.existsSync(allowDir)) _fs.mkdirSync(allowDir, { recursive: true });
+
+              let existing = [];
+              if (_fs.existsSync(allowPath)) {
+                const rawAllow = JSON.parse(_fs.readFileSync(allowPath, 'utf8'));
+                existing = Array.isArray(rawAllow)
+                  ? rawAllow
+                  : (Array.isArray(rawAllow?.commands) ? rawAllow.commands : []);
+              }
+
+              const normalized = [...new Set(
+                [...existing, allowCommandName]
+                  .filter((v) => typeof v === 'string')
+                  .map((v) => require('path').basename(v.trim()))
+                  .filter(Boolean)
+              )].sort();
+              _fs.writeFileSync(allowPath, JSON.stringify({ commands: normalized }, null, 2), 'utf8');
+
+              console.log(`[StateGraph] ASK_USER resume: allowlisted command "${allowCommandName}" in ${allowPath} — retrying step`);
+              initialState = {
+                ...paused,
+                message: paused.message,
+                streamCallback,
+                progressCallback,
+                confirmInstallCallback,
+                confirmGuideCallback,
+                isGuideCancelled,
+                failedStep: null,
+                pendingQuestion: null,
+                recoveryAction: null,
+                answer: undefined,
+                commandExecuted: false,
+                resumeFromLogin: true,
+                skillCursor: paused.skillCursor || 0,
+                stepRetryCount: 0,
+                context: { ...paused.context, sessionId: sessionId || currentSessionId }
+              };
+            } catch (allowErr) {
+              console.error(`[StateGraph] ASK_USER resume: failed to update command allowlist: ${allowErr.message}`);
+              if (typeof streamCallback === 'function') {
+                streamCallback(`I could not update your command allowlist: ${allowErr.message}`);
+              }
+              return { success: true, aborted: true };
+            }
+          } else if (wantsAbort) {
             // User wants to abort — notify and return immediately, do NOT re-run the graph
             console.log('[StateGraph] ASK_USER resume: user chose abort — stopping, not replanning');
             if (typeof streamCallback === 'function') {
@@ -3167,6 +3247,26 @@ app.whenReady().then(async () => {
               skillCursor: 0,
               skillResults: [],
               stepRetryCount: 0,
+              context: { ...paused.context, sessionId: sessionId || currentSessionId }
+            };
+          } else if (q?._isGatherPlanQuestion) {
+            // ── gatherPlanContext clarification: user answered a pre-planning question ──
+            // Merge the answer into planGatheringAnswers and re-enter the graph.
+            // The full paused state is preserved so gatherPlanContext resumes in context.
+            const _priorAnswers = Array.isArray(paused.planGatheringAnswers) ? paused.planGatheringAnswers : [];
+            console.log(`[StateGraph] ASK_USER resume: gatherPlanContext answer "${chosenOption.slice(0, 80)}" — re-entering (round ${paused.planGatheringRound || 1})`);
+            initialState = {
+              ...paused,
+              message: paused.message,
+              streamCallback,
+              progressCallback,
+              confirmInstallCallback,
+              confirmGuideCallback,
+              isGuideCancelled,
+              pendingQuestion: null,
+              answer: undefined,
+              planGatheringAnswers: [..._priorAnswers, { question: q.question, answer: chosenOption }],
+              planGatheringComplete: false,
               context: { ...paused.context, sessionId: sessionId || currentSessionId }
             };
           } else {
@@ -4893,9 +4993,43 @@ app.whenReady().then(async () => {
         console.error(`[Skills] Failed to clean bridge.md for ${skillName}:`, bridgeErr.message);
       }
 
+      // 6. Remove from bridge-pending.json — clears any deferred retry that would
+      //    re-fire the skill on next restart via reloadBridgePendingRetries().
+      try {
+        const _bpPath = require('path').join(require('os').homedir(), '.thinkdrop', 'bridge-pending.json');
+        if (require('fs').existsSync(_bpPath)) {
+          const _bpEntries = JSON.parse(require('fs').readFileSync(_bpPath, 'utf8'));
+          const _bpFiltered = Array.isArray(_bpEntries)
+            ? _bpEntries.filter(e => e.skillName !== skillName)
+            : [];
+          require('fs').writeFileSync(_bpPath, JSON.stringify(_bpFiltered, null, 2), 'utf8');
+          console.log(`[Skills] Cleared bridge-pending entry for: ${skillName}`);
+        }
+      } catch (_bpErr) {
+        console.warn(`[Skills] Failed to clean bridge-pending.json for ${skillName}:`, _bpErr.message);
+      }
+
+      // 7. Remove from in-memory paused set and persisted paused-crons.json.
+      //    Without this, the deleted skill lingers in _pausedCrons and would
+      //    falsely show as 'paused' if re-created with the same name.
+      _pausedCrons.delete(skillName);
+      _savePausedCrons();
+
+      // 7b. Remove pre-cached bridge execution plan (written by planSkills at skill-create time).
+      //     Without this, a re-created skill of the same name would load the stale plan.
+      try {
+        const _bridgePlanPath = pathMod.join(osMod.homedir(), '.thinkdrop', 'plans', `bridge.${skillName}.json`);
+        if (fsMod.existsSync(_bridgePlanPath)) {
+          fsMod.unlinkSync(_bridgePlanPath);
+          console.log(`[Skills] Deleted bridge plan: ${_bridgePlanPath}`);
+        }
+      } catch (_planErr) {
+        console.warn(`[Skills] Failed to clean bridge plan for ${skillName}:`, _planErr.message);
+      }
+
       console.log(`[Skills] Deleted skill: ${skillName}`);
 
-      // 6. Inject a system context message so the LLM knows the skill is gone.
+      // 8. Inject a system context message so the LLM knows the skill is gone.
       //    Without this, conversation history still contains messages about what
       //    the skill did, causing the LLM to assume it's still active.
       try {
@@ -5784,7 +5918,25 @@ app.whenReady().then(async () => {
   });
 
   // ─── Cron: local pause state (keyed by skillName from scheduler) ───────────
+  // Persisted to ~/.thinkdrop/paused-crons.json so pause survives app restarts.
+  // Without persistence, every restart clears _pausedCrons → paused crons come
+  // back active and fire immediately on the next scheduled tick.
+  const _PAUSED_CRONS_FILE = require('path').join(require('os').homedir(), '.thinkdrop', 'paused-crons.json');
+  function _loadPausedCrons() {
+    try {
+      const raw = require('fs').readFileSync(_PAUSED_CRONS_FILE, 'utf8');
+      const names = JSON.parse(raw);
+      if (Array.isArray(names)) names.forEach(n => _pausedCrons.add(n));
+    } catch (_) { /* file doesn't exist yet — first run */ }
+  }
+  function _savePausedCrons() {
+    try {
+      require('fs').mkdirSync(require('path').dirname(_PAUSED_CRONS_FILE), { recursive: true });
+      require('fs').writeFileSync(_PAUSED_CRONS_FILE, JSON.stringify([..._pausedCrons], null, 2), 'utf8');
+    } catch (_) { /* non-fatal */ }
+  }
   const _pausedCrons = new Set();
+  _loadPausedCrons(); // restore persisted pause state immediately
 
   // ─── Cron: list scheduled skills from skill-scheduler ─────────────────────
   ipcMain.on('cron:list', async () => {
@@ -6061,11 +6213,31 @@ app.whenReady().then(async () => {
 
               // Re-hydrate delivery context from skill.md frontmatter so resolveUserContext
               // doesn't need to look up user-memory under 'bridge_auto' userId.
-              // sms_gateway_email / sms_gateway_name are written there at plan-write time.
+              // sms_gateway_email is written there at plan-write time; sms_gateway_name defaults to 'me'.
+              // delivery_email is written for non-SMS email delivery (e.g. send-to-self digest tasks).
               const _skillFm = skillName ? _readSkillFrontmatter(skillName) : {};
-              const _bridgeSmsGateway = (_skillFm.sms_gateway_email && _skillFm.sms_gateway_name)
-                ? { email: _skillFm.sms_gateway_email, name: _skillFm.sms_gateway_name }
+              const _bridgeSmsGateway = _skillFm.sms_gateway_email
+                ? { email: _skillFm.sms_gateway_email, name: _skillFm.sms_gateway_name || 'me' }
                 : undefined;
+              // Resolve delivery email: SMS gateway takes priority, then explicit delivery_email frontmatter
+              const _bridgeDelivery = _bridgeSmsGateway?.email || _skillFm.delivery_email || null;
+              // Patch stale pre-cached plans: if the task is missing the delivery email, append the
+              // compose instruction now so the cron fires correctly even before skill re-creation.
+              const _patchedSkillPlan = (_bridgeDelivery && Array.isArray(_skillPlan))
+                ? _skillPlan.map(step => {
+                    if (step.skill === 'browser.agent' && step.args?.task &&
+                        !step.args.task.includes(_bridgeDelivery)) {
+                      return {
+                        ...step,
+                        args: {
+                          ...step.args,
+                          task: `${step.args.task}. Then compose a new email with To: ${_bridgeDelivery}, Subject: Inbox Summary, and the gathered information in the body. Send it.`,
+                        },
+                      };
+                    }
+                    return step;
+                  })
+                : _skillPlan;
               const runId = `run_${Date.now()}`;
 
               // Register run in queueManager so Cron tab shows live progress.
@@ -6126,6 +6298,14 @@ app.whenReady().then(async () => {
                         description: evt.description || evt.skill || '',
                         status: 'failed',
                         error: evt.error ? String(evt.error).slice(0, 200) : undefined,
+                      });
+                    } else if (evt.type === 'agent:thought' && evt.thoughts) {
+                      // Record live agent thoughts so the Cron tab can show reasoning
+                      const idx = evt.stepIndex ?? stepIndexMap.size;
+                      queueManager.recordCronStep(skillName, runId, {
+                        index: idx,
+                        thoughts: String(evt.thoughts).slice(0, 600),
+                        phase: evt.phase || 'plan',
                       });
                     }
                   }
@@ -6190,10 +6370,16 @@ app.whenReady().then(async () => {
                   selectedText: '',
                   // Only pre-wire the plan if cache hit — on miss, full pipeline runs
                   // so planSkills calls list_agents and picks the correct agent dynamically.
-                  ...(_skillPlan && _skillPlan.length ? { _skillPlan } : {}),
+                  // _patchedSkillPlan heals any stale task (missing delivery email) without skill re-creation.
+                  ...(_patchedSkillPlan && _patchedSkillPlan.length ? { _skillPlan: _patchedSkillPlan } : {}),
                   // Delivery context from skill.md frontmatter — avoids user-memory lookup
                   // under 'bridge_auto' userId which would miss real user's stored gateway.
                   ...((_bridgeSmsGateway) ? { smsGatewayTarget: _bridgeSmsGateway } : {}),
+                  // Inject delivery_email as resolvedSelfContext.email so planSkills _buildBridgeReminderPlan
+                  // can resolve _selfEmail when re-planning (full pipeline path, no cached plan).
+                  ...(_skillFm.delivery_email && !_bridgeSmsGateway
+                    ? { resolvedSelfContext: { email: _skillFm.delivery_email } }
+                    : {}),
                   streamCallback: () => {}, // bridge cron output not streamed to UI
                   progressCallback: bridgeProgressCallback,
                   confirmInstallCallback: () => Promise.resolve(false),
@@ -6204,14 +6390,16 @@ app.whenReady().then(async () => {
                   context: { sessionId: null, userId: 'bridge_auto', source: 'bridge_listener', blockId: block.id },
                 };
 
+                activeCronProgressCallback = bridgeProgressCallback;
                 cronStateGraph.execute(initialState).then((finalState) => {
+                  activeCronProgressCallback = null;
                   console.log(`✅ [Bridge Listener] Done executing block ${block.id}`);
                   markBridgeBlockDone(block.id);
                   if (skillName) queueManager.recordCronRunDone(skillName, runId, 'done');
                   // Cache the executed plan so subsequent cron fires skip re-planning.
                   // Only write when the pipeline produced a plan (not a cached hit that was
                   // already on disk — avoids a pointless write with identical content).
-                  if (skillName && !_skillPlan && finalState?.skillPlan?.length > 0) {
+                  if (skillName && !_patchedSkillPlan && finalState?.skillPlan?.length > 0) {
                     try {
                       const _plansDir = path.join(require('os').homedir(), '.thinkdrop', 'plans');
                       fs.mkdirSync(_plansDir, { recursive: true });
@@ -6231,6 +6419,7 @@ app.whenReady().then(async () => {
                     });
                   }
                 }).catch(err => {
+                  activeCronProgressCallback = null;
                   console.error(`❌ [Bridge Listener] Error executing block ${block.id}:`, err.message);
                   markBridgeBlockDone(block.id, 'error');
                   if (skillName) queueManager.recordCronRunDone(skillName, runId, 'failed');

@@ -185,6 +185,33 @@ function getAgentStatusLabel(elapsedMs: number): string {
   return 'taking longer than expected…';
 }
 
+function formatActionLabel(action: { action?: string; url?: string; selector?: string; key?: string; [key: string]: any } | undefined | null): string {
+  if (!action || typeof action !== 'object') return String(action || '');
+  switch (action.action) {
+    case 'goto':
+    case 'navigate': {
+      try { return `Go to ${new URL(action.url || '').hostname}`; } catch { return `Go to ${action.url || ''}`; }
+    }
+    case 'click':     return `Click "${action.selector || ''}"`;
+    case 'dblclick':  return `Double-click "${action.selector || ''}"`;
+    case 'fill':      return `Type into "${action.selector || ''}"`;
+    case 'type':      return 'Type text';
+    case 'press':     return `Press ${action.key || ''}`;
+    case 'snapshot':  return 'Read page';
+    case 'run-code':
+    case 'evaluate':
+    case 'eval':      return 'Read page data';
+    case 'scroll':    return 'Scroll page';
+    case 'select':    return `Select option in "${action.selector || ''}"`;
+    case 'check':     return `Check "${action.selector || ''}"`;
+    case 'uncheck':   return `Uncheck "${action.selector || ''}"`;
+    case 'return':    return 'Return result';
+    case 'run_cmd':   return `Run command`;
+    case 'done':      return 'Done';
+    default:          return action.action || JSON.stringify(action).slice(0, 60);
+  }
+}
+
 function SkillBadge({ skill }: { skill: string }) {
   return (
     <span className="text-xs font-mono px-1.5 py-0.5 rounded"
@@ -460,6 +487,8 @@ export default function AutomationProgress({ onHeightChange, onActiveChange }: A
   const [expandedAgentSteps, setExpandedAgentSteps] = useState<Set<number>>(new Set());
   // Maps stepIndex → array of learned rule strings saved to memory during that step
   const [learnedRules, setLearnedRules] = useState<Map<number, string[]>>(new Map());
+  // Maps stepIndex → LLM thought strings from browser.agent (plan / replan / repair phases)
+  const [agentThoughts, setAgentThoughts] = useState<Map<number, string[]>>(new Map());
   const [projectBuild, setProjectBuild] = useState<{ capability: string; iteration: number; message: string; passed: boolean; failed: boolean; errorMsg: string | null } | null>(null);
   const [projectBuildFiles, setProjectBuildFiles] = useState<string[]>([]);
   const [controlMode, setControlMode] = useState<{ active: boolean; app: string | null }>({ active: false, app: null });
@@ -538,6 +567,7 @@ export default function AutomationProgress({ onHeightChange, onActiveChange }: A
       setHeartbeatTick(0);
       setLoginGuidance(null);
       setLearnedRules(new Map());
+      setAgentThoughts(new Map());
       setProjectBuild(null);
       setProjectBuildFiles([]);
       setPlanReview(null);
@@ -717,8 +747,18 @@ export default function AutomationProgress({ onHeightChange, onActiveChange }: A
           break;
         }
 
-        case 'agent:rule_learned': {
+        case 'agent:thought': {
           const stepIdx = (data.stepIndex ?? 0) + stepOffsetRef.current;
+          setAgentThoughts(prev => {
+            const next = new Map(prev);
+            const existing = next.get(stepIdx) || [];
+            next.set(stepIdx, [...existing, String(data.thoughts || '')]);
+            return next;
+          });
+          break;
+        }
+
+        case 'agent:rule_learned': {          const stepIdx = (data.stepIndex ?? 0) + stepOffsetRef.current;
           setLearnedRules(prev => {
             const next = new Map(prev);
             next.set(stepIdx, [...(next.get(stepIdx) || []), String(data.rule || '')]);
@@ -1943,7 +1983,7 @@ export default function AutomationProgress({ onHeightChange, onActiveChange }: A
                                   fontFamily: 'ui-monospace,monospace',
                                   fontSize: '10px',
                                 }}>
-                                  {t.action.action}
+                                  {formatActionLabel(t.action)}
                                 </span>
                               )}
                               {t.outcome && (
@@ -1968,6 +2008,18 @@ export default function AutomationProgress({ onHeightChange, onActiveChange }: A
                             {agentCompletes.get(step.index)!.reasoning}
                           </div>
                         )}
+                        {(agentThoughts.get(step.index) || []).map((thought, ti) => (
+                          <div key={`thought-${ti}`} style={{
+                            fontSize: '11px',
+                            color: '#a78bfa',
+                            fontStyle: 'italic',
+                            padding: '2px 0 2px 8px',
+                            borderLeft: '2px solid rgba(167,139,250,0.3)',
+                            marginBottom: 2,
+                          }}>
+                            💭 {thought.length > 200 ? thought.slice(0, 200) + '…' : thought}
+                          </div>
+                        ))}
                       </div>
                     )}
                   </div>

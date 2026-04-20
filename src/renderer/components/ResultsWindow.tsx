@@ -1254,7 +1254,7 @@ export default function ResultsWindow() {
         <CronTab
           items={cronItems}
           onToggle={(item) => ipcRenderer?.send('cron:toggle', { id: item.id })}
-          onDelete={(item) => ipcRenderer?.send('cron:delete', { id: item.id })}
+          onDelete={(item) => ipcRenderer?.send('skills:delete', { skillName: item.id })}
           onRerun={(item) => ipcRenderer?.send('cron:run-now', { id: item.id })}
         />
       </div>
