@@ -1265,12 +1265,24 @@ export default function AutomationProgress({ onHeightChange, onActiveChange }: A
           );
         })()}
         {phase === 'plan_review' && (
-          <>
-            <div className="flex-shrink-0 w-3 h-3 rounded-full" style={{ backgroundColor: '#3b82f6' }} />
-            <span className="text-sm font-medium" style={{ color: '#93c5fd' }}>
-              Review plan
-            </span>
-          </>
+          <div>
+            <div style={{ marginBottom: 10, padding: '7px 10px', borderRadius: 8, backgroundColor: 'rgba(251,191,36,0.08)', border: '1px solid rgba(251,191,36,0.28)', display: 'flex', alignItems: 'center', gap: 8 }}>
+              <svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="#fbbf24" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M12 9v4"/>
+                <path d="M12 17h.01"/>
+                <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
+              </svg>
+              <span style={{ color: '#fcd34d', fontSize: '0.73rem', fontWeight: 600 }}>
+                Plan Mode active: your messages will update/correct this plan. Cancel to return to normal ThinkDrop mode.
+              </span>
+            </div>
+            <div className="flex items-center gap-2">
+              <div className="flex-shrink-0 w-3 h-3 rounded-full" style={{ backgroundColor: '#3b82f6' }} />
+              <span className="text-sm font-medium" style={{ color: '#93c5fd' }}>
+                Review plan
+              </span>
+            </div>
+          </div>
         )}
         {phase === 'failed' && (
           <>
@@ -2032,8 +2044,7 @@ export default function AutomationProgress({ onHeightChange, onActiveChange }: A
 
       {/* ── Plan review: existing-plan banner + Approve/Cancel bar ────────── */}
       {phase === 'plan_review' && planReview && (
-        <div style={{ borderTop: '1px solid rgba(255,255,255,0.07)', paddingTop: 10, marginTop: 2 }}>
-          {planReview.isExisting && (
+        <div style={{ borderTop: '1px solid rgba(255,255,255,0.07)', paddingTop: 10, marginTop: 10}}>          {planReview.isExisting && (
             <div style={{ marginBottom: 8, padding: '7px 10px', borderRadius: 8, backgroundColor: 'rgba(139,92,246,0.08)', border: '1px solid rgba(139,92,246,0.25)', display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
               <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="#a78bfa" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                 <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>

@@ -252,6 +252,29 @@ export default function PlanPanel({ onComplete }: PlanPanelProps) {
     setPhase('review');
   };
 
+  const renderPlanModeBanner = () => (
+    <div style={planModeBannerStyle}>
+      <div className="flex items-center gap-2 flex-wrap">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#fbbf24" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M12 9v4"/>
+          <path d="M12 17h.01"/>
+          <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
+        </svg>
+        <span style={{ color: '#fcd34d', fontSize: '0.72rem', fontWeight: 600 }}>
+          You are in Plan Mode - type in chat to update or correct this plan.
+        </span>
+        <button
+          onClick={handleCancel}
+          style={planModeExitBtnStyle}
+          onMouseEnter={e => (e.currentTarget.style.backgroundColor = 'rgba(251,191,36,0.2)')}
+          onMouseLeave={e => (e.currentTarget.style.backgroundColor = 'rgba(251,191,36,0.1)')}
+        >
+          Exit Plan Mode
+        </button>
+      </div>
+    </div>
+  );
+
   // ── Streaming view ────────────────────────────────────────────────────────────
 
   if (phase === 'streaming') {
@@ -262,6 +285,9 @@ export default function PlanPanel({ onComplete }: PlanPanelProps) {
             <div style={dotStyle('#3b82f6', true)} />
             <span style={labelStyle}>Generating plan...</span>
           </div>
+        </div>
+        <div style={{ padding: '0 14px', marginTop: 10 }}>
+          {renderPlanModeBanner()}
         </div>
         <div style={{ padding: '10px 14px', maxHeight: 280, overflowY: 'auto', fontFamily: 'ui-monospace,monospace', fontSize: '0.72rem', color: '#d1d5db', lineHeight: 1.6, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
           {streamBuffer}
@@ -344,6 +370,11 @@ export default function PlanPanel({ onComplete }: PlanPanelProps) {
               {showRawEdit ? 'Preview' : 'Edit'}
             </button>
           </div>
+        </div>
+
+        {/* Plan mode banner */}
+        <div style={{ padding: '0 14px', marginTop: 10 }}>
+          {renderPlanModeBanner()}
         </div>
 
         {/* Existing suggestion banner */}
@@ -556,6 +587,27 @@ const cancelBtnStyle: React.CSSProperties = {
   color: '#f87171',
   fontSize: '0.75rem',
   fontWeight: 500,
+  cursor: 'pointer',
+  transition: 'all 0.15s',
+};
+
+const planModeBannerStyle: React.CSSProperties = {
+  margin: '0 0 10px',
+  padding: '8px 12px',
+  borderRadius: 8,
+  backgroundColor: 'rgba(251,191,36,0.08)',
+  border: '1px solid rgba(251,191,36,0.28)',
+};
+
+const planModeExitBtnStyle: React.CSSProperties = {
+  marginLeft: 'auto',
+  padding: '2px 8px',
+  borderRadius: 5,
+  backgroundColor: 'rgba(251,191,36,0.1)',
+  border: '1px solid rgba(251,191,36,0.35)',
+  color: '#fcd34d',
+  fontSize: '0.68rem',
+  fontWeight: 600,
   cursor: 'pointer',
   transition: 'all 0.15s',
 };

@@ -1540,6 +1540,11 @@ app.whenReady().then(async () => {
         _forceNewPlan: item._forceNewPlan || false,
         _skillPlan: item._skillPlan || null,
         _skillPlanFile: item._skillPlanFile || null,
+        _planCorrectionMode: item._planCorrectionMode || false,
+        _planCorrectionText: item._planCorrectionText || null,
+        _basePlanFile: item._basePlanFile || null,
+        _skillPlanJson: item._skillPlanJson || null,
+        _planCorrectionSourcePrompt: item._planCorrectionSourcePrompt || null,
         sessionId: item.sessionId || null,
         userId: item.userId || 'default_user',
       });
@@ -1553,9 +1558,44 @@ app.whenReady().then(async () => {
 
   // ─── Prompt Queue IPC handlers ────────────────────────────────────────────
 
+  const PLAN_MODE_CANCEL_RE = /^(?:\/)?(?:cancel|cancel\s+plan|exit\s+plan\s+mode|leave\s+plan\s+mode)\b/i;
+
   ipcMain.on('prompt-queue:submit', (_event, { prompt, selectedText = '', responseLanguage = null } = {}) => {
-    if (!prompt?.trim()) return;
-    const id = promptQueue.enqueue(prompt.trim(), { selectedText, responseLanguage });
+    const trimmedPrompt = prompt?.trim();
+    if (!trimmedPrompt) return;
+
+    if (pendingPlanContext && PLAN_MODE_CANCEL_RE.test(trimmedPrompt)) {
+      console.log('[Plan] Plan mode cancelled by prompt text');
+      pendingPlanContext = null;
+      if (resultsWindow && !resultsWindow.isDestroyed()) {
+        safeSend(resultsWindow, 'automation:progress', { type: 'plan:mode:cleared', source: 'prompt' });
+        safeSend(resultsWindow, 'plan:cancelled', { planFile: null });
+      }
+      if (promptCaptureWindow && !promptCaptureWindow.isDestroyed()) {
+        safeSend(promptCaptureWindow, 'automation:progress', { type: 'plan:mode:cleared', source: 'prompt' });
+      }
+      return;
+    }
+
+    const enqueueOpts = { selectedText, responseLanguage };
+    if (pendingPlanContext) {
+      enqueueOpts._planCorrectionMode = true;
+      enqueueOpts._planCorrectionText = trimmedPrompt;
+      enqueueOpts._basePlanFile = pendingPlanContext.planFile || null;
+      enqueueOpts._skillPlanJson = pendingPlanContext.skillPlanJson || null;
+      enqueueOpts._planCorrectionSourcePrompt = pendingPlanContext.prompt || null;
+      console.log(`[Plan] Plan correction mode enqueue: basePlan=${pendingPlanContext.planFile || 'none'}`);
+      // Prevent stacking corrections onto stale context while this replan runs.
+      pendingPlanContext = null;
+      if (resultsWindow && !resultsWindow.isDestroyed()) {
+        safeSend(resultsWindow, 'automation:progress', { type: 'plan:mode:cleared', source: 'replan-start' });
+      }
+      if (promptCaptureWindow && !promptCaptureWindow.isDestroyed()) {
+        safeSend(promptCaptureWindow, 'automation:progress', { type: 'plan:mode:cleared', source: 'replan-start' });
+      }
+    }
+
+    const id = promptQueue.enqueue(trimmedPrompt, enqueueOpts);
     console.log(`[PromptQueue] IPC prompt-queue:submit → enqueued id=${id}`);
   });
 
@@ -1799,7 +1839,11 @@ app.whenReady().then(async () => {
     console.log('[Plan] Plan cancelled by user');
     pendingPlanContext = null;
     if (resultsWindow && !resultsWindow.isDestroyed()) {
+      safeSend(resultsWindow, 'automation:progress', { type: 'plan:mode:cleared', source: 'cancel' });
       safeSend(resultsWindow, 'plan:cancelled', { planFile });
+    }
+    if (promptCaptureWindow && !promptCaptureWindow.isDestroyed()) {
+      safeSend(promptCaptureWindow, 'automation:progress', { type: 'plan:mode:cleared', source: 'cancel' });
     }
   });
 
@@ -2216,7 +2260,7 @@ app.whenReady().then(async () => {
   });
 
   // ─── StateGraph: Core execution — called by promptQueue serially ─────────
-  async function runPromptThroughStateGraph(prompt, { selectedText = '', sessionId = null, userId = 'default_user', responseLanguage = null, promptQueueId = null, _planFile = null, _forceNewPlan = false, _skillPlan = null, _skillPlanFile = null } = {}) {
+  async function runPromptThroughStateGraph(prompt, { selectedText = '', sessionId = null, userId = 'default_user', responseLanguage = null, promptQueueId = null, _planFile = null, _forceNewPlan = false, _skillPlan = null, _skillPlanFile = null, _planCorrectionMode = false, _planCorrectionText = null, _basePlanFile = null, _skillPlanJson = null, _planCorrectionSourcePrompt = null } = {}) {
     const isPlanExecute = !!_planFile;
     console.log('🧠 [StateGraph] Processing prompt:', prompt.substring(0, 80), responseLanguage ? `(responseLanguage: ${responseLanguage})` : '', isPlanExecute ? `[plan:${require('path').basename(_planFile)}]` : '');
 
@@ -2312,6 +2356,12 @@ app.whenReady().then(async () => {
           skillPlanJson: event.skillPlanJson || null,
         };
         console.log(`[Plan] plan:generated context stored: ${event.planFile}`);
+        if (resultsWindow && !resultsWindow.isDestroyed()) {
+          safeSend(resultsWindow, 'automation:progress', { type: 'plan:mode:active', planFile: event.planFile });
+        }
+        if (promptCaptureWindow && !promptCaptureWindow.isDestroyed()) {
+          safeSend(promptCaptureWindow, 'automation:progress', { type: 'plan:mode:active', planFile: event.planFile });
+        }
         // Store pending secrets from planGenerator if any (passed via event via _pendingPlanSecrets)
         // These are already sanitized in the .md file; we just need to persist the values
         // Note: secrets with values are passed only if planGenerator couldn't call keytar directly
@@ -2328,6 +2378,22 @@ app.whenReady().then(async () => {
           skillPlanJson: event.skillPlanJson || null,
         };
         console.log(`[Plan] plan:found_existing context stored: ${event.planFile}`);
+        if (resultsWindow && !resultsWindow.isDestroyed()) {
+          safeSend(resultsWindow, 'automation:progress', { type: 'plan:mode:active', planFile: event.planFile });
+        }
+        if (promptCaptureWindow && !promptCaptureWindow.isDestroyed()) {
+          safeSend(promptCaptureWindow, 'automation:progress', { type: 'plan:mode:active', planFile: event.planFile });
+        }
+      }
+
+      if (event.type === 'plan:complete') {
+        pendingPlanContext = null;
+        if (resultsWindow && !resultsWindow.isDestroyed()) {
+          safeSend(resultsWindow, 'automation:progress', { type: 'plan:mode:cleared', source: 'complete' });
+        }
+        if (promptCaptureWindow && !promptCaptureWindow.isDestroyed()) {
+          safeSend(promptCaptureWindow, 'automation:progress', { type: 'plan:mode:cleared', source: 'complete' });
+        }
       }
 
       // needs_skill gap — notify resultsWindow so AutomationProgress shows the capability gap card
@@ -3346,6 +3412,11 @@ app.whenReady().then(async () => {
           _forceNewPlan: _forceNewPlan || false,
           _skillPlan: _skillPlan || null,
           _skillPlanFile: _skillPlanFile || null,
+          _planCorrectionMode: _planCorrectionMode || false,
+          _planCorrectionText: _planCorrectionText || null,
+          _basePlanFile: _basePlanFile || null,
+          _skillPlanJson: _skillPlanJson || null,
+          _planCorrectionSourcePrompt: _planCorrectionSourcePrompt || null,
           context: {
             sessionId: sessionId || currentSessionId,
             userId,

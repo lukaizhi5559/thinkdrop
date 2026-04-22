@@ -106,9 +106,14 @@ function _getSnapshot() {
  * @param {boolean} [opts._forceNewPlan]  — set by plan:new to skip existing-plan reuse
  * @param {Array|null} [opts._skillPlan]  — set by plan:approve (planSkills gate) to skip replanning
  * @param {string|null} [opts._skillPlanFile] — path to the .md plan file for status tracking
+ * @param {boolean} [opts._planCorrectionMode] — set when user is correcting a pending plan
+ * @param {string|null} [opts._planCorrectionText] — raw correction prompt text
+ * @param {string|null} [opts._basePlanFile] — original pending plan file being corrected
+ * @param {string|null} [opts._skillPlanJson] — base64 skill plan JSON from plan:generated event
+ * @param {string|null} [opts._planCorrectionSourcePrompt] — original prompt that generated the pending plan
  * @returns {string} id
  */
-function enqueue(prompt, { selectedText = '', responseLanguage = null, _planFile = null, sessionId = null, userId = 'default_user', _forceNewPlan = false, _skillPlan = null, _skillPlanFile = null } = {}) {
+function enqueue(prompt, { selectedText = '', responseLanguage = null, _planFile = null, sessionId = null, userId = 'default_user', _forceNewPlan = false, _skillPlan = null, _skillPlanFile = null, _planCorrectionMode = false, _planCorrectionText = null, _basePlanFile = null, _skillPlanJson = null, _planCorrectionSourcePrompt = null } = {}) {
   const id = _uid();
 
   // If a new prompt comes in while crashed-session items are still pending restart,
@@ -128,7 +133,7 @@ function enqueue(prompt, { selectedText = '', responseLanguage = null, _planFile
 
   // If this is a fresh user prompt (not a plan:approve re-enqueue), evict any
   // pending crashed items from the last session so they don't run ahead of it.
-  const _isFreshUserPrompt = !_planFile && !_skillPlan;
+  const _isFreshUserPrompt = !_planFile && !_skillPlan && !_planCorrectionMode;
   if (_isFreshUserPrompt && _crashedItemIds.size > 0) {
     for (const crashedId of _crashedItemIds) {
       const crashedItem = _items.get(crashedId);
@@ -151,6 +156,11 @@ function enqueue(prompt, { selectedText = '', responseLanguage = null, _planFile
     _planFile,
     _skillPlan,
     _skillPlanFile,
+    _planCorrectionMode,
+    _planCorrectionText,
+    _basePlanFile,
+    _skillPlanJson,
+    _planCorrectionSourcePrompt,
     sessionId,
     userId,
     _forceNewPlan,
