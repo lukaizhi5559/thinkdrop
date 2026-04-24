@@ -500,6 +500,18 @@ export default function AutomationProgress({ onHeightChange, onActiveChange }: A
     similarity?: number;
   } | null>(null);
 
+  // Maintenance scan state
+  const [maintenanceScan, setMaintenanceScan] = useState<{
+    active: boolean;
+    trigger: string;
+    total: number;
+    completed: number;
+    agents: string[];
+    doneAgents: string[];
+    currentAgent: string | null;
+  } | null>(null);
+  const [scanDiscovery, setScanDiscovery] = useState<{ hostname: string; visits: number }[] | null>(null);
+
   // Ref to track current phase — avoids stale closure issues in the IPC listener useEffect
   const phaseRef = useRef<AutomationPhase>('idle');
   useEffect(() => { phaseRef.current = phase; }, [phase]);
@@ -575,6 +587,46 @@ export default function AutomationProgress({ onHeightChange, onActiveChange }: A
       stepOffsetRef.current = 0;
     };
     ipcRenderer.on('results-window:set-prompt', handleNewPrompt);
+
+    const handleScanProgress = (_event: any, data: any) => {
+      if (!active) return;
+      switch (data.type) {
+        case 'maintenance_scan_start':
+          setMaintenanceScan({
+            active: true,
+            trigger: data.trigger || 'user',
+            total: data.total || 0,
+            completed: 0,
+            agents: data.agents || [],
+            doneAgents: [],
+            currentAgent: data.agents?.[0] || null,
+          });
+          break;
+        case 'maintenance_scan_agent_done':
+          setMaintenanceScan(prev => prev ? {
+            ...prev,
+            completed: data.index,
+            doneAgents: [...prev.doneAgents, data.agentId],
+            currentAgent: prev.agents[data.index] || null,
+          } : prev);
+          break;
+        case 'maintenance_scan_complete':
+          setMaintenanceScan(prev => prev ? { ...prev, active: false, completed: data.total } : null);
+          setTimeout(() => setMaintenanceScan(null), 6000);
+          break;
+        case 'maintenance_scan_cancelled':
+        case 'maintenance_scan_error':
+          setMaintenanceScan(null);
+          break;
+      }
+    };
+    ipcRenderer.on('scan:progress', handleScanProgress);
+
+    const handleScanDiscovery = (_event: any, data: any) => {
+      if (!active || !Array.isArray(data?.suggestions) || data.suggestions.length === 0) return;
+      setScanDiscovery(data.suggestions);
+    };
+    ipcRenderer.on('scan:discovery', handleScanDiscovery);
 
     const handleProgress = (_event: any, data: any) => {
       if (!active) return;
@@ -1085,6 +1137,8 @@ export default function AutomationProgress({ onHeightChange, onActiveChange }: A
         ipcRenderer.removeListener('ws-bridge:message', handleBridgeMessage);
         ipcRenderer.removeListener('app-control:mode-change', handleControlModeChange);
         ipcRenderer.removeListener('plan:approved', handlePlanApproved);
+        ipcRenderer.removeListener('scan:progress', handleScanProgress);
+        ipcRenderer.removeListener('scan:discovery', handleScanDiscovery);
       }
     };
   }, []);
@@ -1172,7 +1226,7 @@ export default function AutomationProgress({ onHeightChange, onActiveChange }: A
   ).length;
   const shownTotal = totalCount || steps.length;
 
-  if (phase === 'idle' && !controlMode.active) return null;
+  if (phase === 'idle' && !controlMode.active && !maintenanceScan && !scanDiscovery) return null;
 
   return (
     <div className="space-y-3">
@@ -1181,7 +1235,118 @@ export default function AutomationProgress({ onHeightChange, onActiveChange }: A
           0% { background-position: -200% center; }
           100% { background-position: 200% center; }
         }
+        @keyframes scanPulse {
+          0%, 100% { opacity: 1; }
+          50% { opacity: 0.5; }
+        }
       `}</style>
+
+      {/* ── Maintenance Scan Progress Card ───────────────────────────────── */}
+      {maintenanceScan && (
+        <div style={{ padding: '12px 14px', borderRadius: 10, backgroundColor: 'rgba(251,191,36,0.06)', border: '1px solid rgba(251,191,36,0.25)' }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
+              <span style={{ fontSize: 14 }}>🔧</span>
+              <span style={{ fontSize: 12, fontWeight: 600, color: '#fbbf24' }}>
+                {maintenanceScan.active ? 'Maintenance Scan' : 'Scan Complete'}
+              </span>
+              {maintenanceScan.active && (
+                <span style={{ fontSize: 10, color: 'rgba(251,191,36,0.7)', animation: 'scanPulse 1.5s ease-in-out infinite' }}>
+                  {maintenanceScan.trigger === 'idle' ? 'idle-triggered' : maintenanceScan.trigger === 'scheduled' ? 'scheduled' : 'running'}
+                </span>
+              )}
+            </div>
+            {maintenanceScan.active && (
+              <button
+                onClick={() => ipcRenderer?.send('scan:cancel')}
+                style={{ fontSize: 10, color: 'rgba(251,191,36,0.6)', background: 'none', cursor: 'pointer', padding: '2px 6px', borderRadius: 4, border: '1px solid rgba(251,191,36,0.2)' }}
+              >
+                Cancel
+              </button>
+            )}
+          </div>
+          <div style={{ marginBottom: 8 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
+              <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.5)' }}>
+                {maintenanceScan.active
+                  ? `Updating agent knowledge maps… ${maintenanceScan.currentAgent ? `(${maintenanceScan.currentAgent})` : ''}`
+                  : `${maintenanceScan.completed} agent${maintenanceScan.completed !== 1 ? 's' : ''} updated`}
+              </span>
+              <span style={{ fontSize: 11, color: 'rgba(251,191,36,0.7)' }}>
+                {maintenanceScan.completed} / {maintenanceScan.total}
+              </span>
+            </div>
+            <div style={{ height: 3, borderRadius: 2, backgroundColor: 'rgba(251,191,36,0.15)', overflow: 'hidden' }}>
+              <div style={{
+                height: '100%',
+                borderRadius: 2,
+                backgroundColor: '#fbbf24',
+                width: maintenanceScan.total > 0 ? `${Math.round((maintenanceScan.completed / maintenanceScan.total) * 100)}%` : '0%',
+                transition: 'width 0.4s ease',
+              }} />
+            </div>
+          </div>
+          {maintenanceScan.agents.length > 0 && (
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+              {maintenanceScan.agents.map((agentId) => {
+                const done = maintenanceScan.doneAgents.includes(agentId);
+                const isCurrent = maintenanceScan.currentAgent === agentId && maintenanceScan.active;
+                return (
+                  <span key={agentId} style={{
+                    fontSize: 10, padding: '2px 6px', borderRadius: 10,
+                    backgroundColor: done ? 'rgba(34,197,94,0.12)' : isCurrent ? 'rgba(251,191,36,0.12)' : 'rgba(255,255,255,0.05)',
+                    color: done ? '#4ade80' : isCurrent ? '#fbbf24' : 'rgba(255,255,255,0.35)',
+                    border: `1px solid ${done ? 'rgba(34,197,94,0.25)' : isCurrent ? 'rgba(251,191,36,0.3)' : 'rgba(255,255,255,0.1)'}`,
+                  }}>
+                    {done ? '✓ ' : isCurrent ? '⟳ ' : ''}{agentId}
+                  </span>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ── Discovery Suggestions Card ────────────────────────────────────── */}
+      {scanDiscovery && scanDiscovery.length > 0 && (
+        <div style={{ padding: '12px 14px', borderRadius: 10, backgroundColor: 'rgba(139,92,246,0.06)', border: '1px solid rgba(139,92,246,0.25)' }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
+              <span style={{ fontSize: 14 }}>💡</span>
+              <span style={{ fontSize: 12, fontWeight: 600, color: '#a78bfa' }}>Suggested Agents</span>
+            </div>
+            <button
+              onClick={() => setScanDiscovery(null)}
+              style={{ fontSize: 10, color: 'rgba(167,139,250,0.6)', background: 'none', cursor: 'pointer', padding: '2px 6px', borderRadius: 4, border: '1px solid rgba(139,92,246,0.2)' }}
+            >
+              Dismiss
+            </button>
+          </div>
+          <p style={{ fontSize: 11, color: 'rgba(255,255,255,0.45)', marginBottom: 10, marginTop: 0 }}>
+            Based on your browsing history:
+          </p>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+            {scanDiscovery.slice(0, 5).map((s) => (
+              <div key={s.hostname} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <span style={{ fontSize: 12, color: 'rgba(255,255,255,0.75)' }}>{s.hostname}</span>
+                  <span style={{ fontSize: 10, color: 'rgba(255,255,255,0.3)' }}>({s.visits} visits)</span>
+                </div>
+                <button
+                  onClick={() => {
+                    ipcRenderer?.send('prompt-queue:submit', { prompt: `Add an agent for ${s.hostname}` });
+                    setScanDiscovery(prev => prev ? prev.filter(x => x.hostname !== s.hostname) : null);
+                  }}
+                  style={{ fontSize: 10, color: '#a78bfa', background: 'rgba(139,92,246,0.1)', border: '1px solid rgba(139,92,246,0.3)', cursor: 'pointer', padding: '3px 8px', borderRadius: 6 }}
+                >
+                  Add Agent
+                </button>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       {/* ── App Control Mode badge ────────────────────────────────────────── */}
       {controlMode.active && (
         <div className="flex items-center gap-2 px-3 py-2 rounded-lg"

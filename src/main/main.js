@@ -531,6 +531,43 @@ function startOverlayControlServer() {
       return;
     }
 
+    // ── POST /scan.progress — maintenance scan events from explore.agent ────
+    if (req.url === '/scan.progress') {
+      let body = '';
+      req.on('data', chunk => { body += chunk; });
+      req.on('end', () => {
+        try {
+          const data = JSON.parse(body || '{}');
+          res.writeHead(200).end(JSON.stringify({ ok: true }));
+
+          // Forward to renderer windows
+          const wins = [resultsWindow, promptCaptureWindow].filter(w => w && !w.isDestroyed());
+          for (const win of wins) safeSend(win, 'scan:progress', data);
+
+          // macOS notification on idle/scheduled completion only
+          if (data.type === 'maintenance_scan_complete' && (data.trigger === 'idle' || data.trigger === 'scheduled')) {
+            try {
+              const { Notification } = require('electron');
+              const n = new Notification({
+                title: 'ThinkDrop Maintenance Complete',
+                body: `${data.total || 0} agent${data.total !== 1 ? 's' : ''} updated${data.trigger === 'idle' ? ' while you were away' : ''}`,
+                silent: true,
+              });
+              n.show();
+            } catch (_) {}
+          }
+
+          // Forward discovery suggestions separately so renderer can show the suggestions card
+          if (data.type === 'maintenance_scan_discovery' && Array.isArray(data.suggestions) && data.suggestions.length > 0) {
+            for (const win of wins) safeSend(win, 'scan:discovery', { suggestions: data.suggestions });
+          }
+        } catch (err) {
+          res.writeHead(400).end(JSON.stringify({ error: err.message }));
+        }
+      });
+      return;
+    }
+
     const hide = req.url === '/overlay/hide';
     const show = req.url === '/overlay/show';
 
@@ -1936,6 +1973,86 @@ app.whenReady().then(async () => {
     }
   });
 
+  // ─── Maintenance Scan: IPC handlers ──────────────────────────────────────
+  const COMMAND_SERVICE_URL = process.env.COMMAND_SERVICE_URL || 'http://127.0.0.1:3007';
+
+  function _scanHttpPost(urlPath, body = {}) {
+    return new Promise((resolve, reject) => {
+      const http = require('http');
+      const payload = JSON.stringify(body);
+      const parsed = new URL(COMMAND_SERVICE_URL);
+      const req = http.request({
+        hostname: parsed.hostname,
+        port: Number(parsed.port) || 3007,
+        path: urlPath,
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(payload) },
+      }, (res) => {
+        let data = '';
+        res.on('data', c => { data += c; });
+        res.on('end', () => { try { resolve(JSON.parse(data)); } catch (_) { resolve({}); } });
+      });
+      req.on('error', reject);
+      req.write(payload);
+      req.end();
+    });
+  }
+
+  function _scanHttpGet(urlPath) {
+    return new Promise((resolve, reject) => {
+      const http = require('http');
+      const parsed = new URL(COMMAND_SERVICE_URL);
+      const req = http.request({
+        hostname: parsed.hostname,
+        port: Number(parsed.port) || 3007,
+        path: urlPath,
+        method: 'GET',
+      }, (res) => {
+        let data = '';
+        res.on('data', c => { data += c; });
+        res.on('end', () => { try { resolve(JSON.parse(data)); } catch (_) { resolve({}); } });
+      });
+      req.on('error', reject);
+      req.end();
+    });
+  }
+
+  ipcMain.on('scan:run', async () => {
+    console.log('[MaintenanceScan] User triggered scan');
+    try {
+      await _scanHttpPost('/scan.run', { trigger: 'user' });
+    } catch (err) {
+      console.warn('[MaintenanceScan] scan:run failed', err.message);
+    }
+  });
+
+  ipcMain.on('scan:cancel', async () => {
+    console.log('[MaintenanceScan] Cancel requested');
+    try {
+      await _scanHttpPost('/scan.cancel', {});
+    } catch (err) {
+      console.warn('[MaintenanceScan] scan:cancel failed', err.message);
+    }
+  });
+
+  ipcMain.on('scan:schedule', async (_event, { cron, enabled } = {}) => {
+    console.log(`[MaintenanceScan] Schedule update: cron=${cron} enabled=${enabled}`);
+    try {
+      await _scanHttpPost('/scan.schedule', { cron, enabled });
+    } catch (err) {
+      console.warn('[MaintenanceScan] scan:schedule failed', err.message);
+    }
+  });
+
+  ipcMain.handle('scan:status', async () => {
+    try {
+      return await _scanHttpGet('/scan.status');
+    } catch (err) {
+      console.warn('[MaintenanceScan] scan:status failed', err.message);
+      return { ok: false, error: err.message };
+    }
+  });
+
   // ─── Voice: IPC handlers for voice service integration ───────────────────
   const VOICE_SERVICE_URL = process.env.VOICE_SERVICE_URL || 'http://127.0.0.1:3006';
 
@@ -3333,6 +3450,9 @@ app.whenReady().then(async () => {
               answer: undefined,
               planGatheringAnswers: [..._priorAnswers, { question: q.question, answer: chosenOption }],
               planGatheringComplete: false,
+              // Preserve gather resume flags for parseIntent to detect
+              _gatherQuestionPending: paused._gatherQuestionPending,
+              _pendingIntent: paused._pendingIntent,
               context: { ...paused.context, sessionId: sessionId || currentSessionId }
             };
           } else {
