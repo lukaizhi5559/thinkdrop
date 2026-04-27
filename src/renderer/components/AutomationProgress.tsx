@@ -606,10 +606,7 @@ export default function AutomationProgress({ onHeightChange, onActiveChange }: A
       // Reset multi-intent step accumulation offset
       stepOffsetRef.current = 0;
     };
-    ipcRenderer.on('results-window:set-prompt', handleNewPrompt);
-    ipcRenderer.on('queue:enqueued', handleNewPrompt);
-
-    const handleScanProgress = (_event: any, data: any) => {
+    const handleScanProgress = (data: any) => {
       if (!active) return;
       switch (data.type) {
         case 'maintenance_scan_start':
@@ -641,15 +638,11 @@ export default function AutomationProgress({ onHeightChange, onActiveChange }: A
           break;
       }
     };
-    ipcRenderer.on('scan:progress', handleScanProgress);
-
-    const handleScanDiscovery = (_event: any, data: any) => {
+    const handleScanDiscovery = (data: any) => {
       if (!active || !Array.isArray(data?.suggestions) || data.suggestions.length === 0) return;
       setScanDiscovery(data.suggestions);
     };
-    ipcRenderer.on('scan:discovery', handleScanDiscovery);
-
-    const handleProgress = (_event: any, data: any) => {
+    const handleProgress = (data: any) => {
       if (!active) return;
       switch (data.type) {
         case 'planning':
@@ -1130,7 +1123,7 @@ export default function AutomationProgress({ onHeightChange, onActiveChange }: A
     };
 
     // Capture streaming synthesis answer chunks
-    const handleBridgeMessage = (_event: any, message: any) => {
+    const handleBridgeMessage = (message: any) => {
       if (!message) return;
       if (message.type === 'chunk' || message.type === 'llm_stream_chunk') {
         const text = message?.text || message.payload?.text || '';
@@ -1138,7 +1131,7 @@ export default function AutomationProgress({ onHeightChange, onActiveChange }: A
       }
     };
 
-    const handleControlModeChange = (_event: any, data: any) => {
+    const handleControlModeChange = (data: any) => {
       setControlMode({ active: !!data.active, app: data.app || null });
     };
 
@@ -1148,7 +1141,7 @@ export default function AutomationProgress({ onHeightChange, onActiveChange }: A
     };
 
     const AP_TOKEN = 'automation-progress';
-    ipcRenderer.on('results-window:set-prompt', handleNewPrompt, AP_TOKEN);
+    ipcRenderer.on('unified:set-prompt', handleNewPrompt, AP_TOKEN);
     ipcRenderer.on('queue:enqueued', handleNewPrompt, AP_TOKEN);
     ipcRenderer.on('scan:progress', handleScanProgress, AP_TOKEN);
     ipcRenderer.on('scan:discovery', handleScanDiscovery, AP_TOKEN);
@@ -1159,7 +1152,7 @@ export default function AutomationProgress({ onHeightChange, onActiveChange }: A
     return () => {
       active = false;
       ipcRenderer.removeListenerByToken('automation:progress', AP_TOKEN);
-      ipcRenderer.removeListenerByToken('results-window:set-prompt', AP_TOKEN);
+      ipcRenderer.removeListenerByToken('unified:set-prompt', AP_TOKEN);
       ipcRenderer.removeListenerByToken('queue:enqueued', AP_TOKEN);
       ipcRenderer.removeListenerByToken('ws-bridge:message', AP_TOKEN);
       ipcRenderer.removeListenerByToken('app-control:mode-change', AP_TOKEN);

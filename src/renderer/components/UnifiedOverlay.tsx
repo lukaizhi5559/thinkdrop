@@ -138,9 +138,6 @@ export function UnifiedOverlay() {
   // old content from being prepended to the new answer (the race-condition double).
   const streamCompletedRef = useRef(false);
 
-  // --- IPC listener registration guard (prevents double-registration under React StrictMode) ---
-  const ipcListenersRegistered = useRef(false);
-
   // --- Stable token for token-based IPC deduplication ---
   // Stable across renders; preload uses it to ensure exactly one listener per channel.
   const listenerToken = useRef('unified-overlay');
@@ -231,9 +228,41 @@ export function UnifiedOverlay() {
     textarea.style.height = `${Math.min(textarea.scrollHeight, 200)}px`;
   };
 
+  // Captured values ref — set synchronously by clearInputAndShowThinking so handleSubmit
+  // can read them after the state has already been cleared.
+  const _pendingSubmitRef = useRef<{ text: string; highlights: string[]; gatherPending: boolean } | null>(null);
+
+  // Non-async synchronous UI reset — called directly from the keydown / click event handler
+  // so flushSync runs in a regular (non-async) call stack and React 18 honours it immediately.
+  // This guarantees the text clears and "Thinking..." appears on the SAME frame as Enter.
+  const clearInputAndShowThinking = () => {
+    _pendingSubmitRef.current = {
+      text: promptText,
+      highlights: [...highlights],
+      gatherPending,
+    };
+    flushSync(() => {
+      setPromptText('');
+      setHighlights([]);
+      setStreamingResponse('');
+      setSearchSources([]);
+      setIsStreaming(false);
+      setIsThinking(true);
+      setIsAutomationMode(false);
+      setInstallPrompt(null);
+      setActionChips([]);
+      setInstallOutput([]);
+      setGatherPending(false);
+      setGatherQuestion(null);
+      setStreamingStartedRef(false);
+    });
+    hasDroppedRef.current = false;
+  };
+
   const handleTextareaKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
+      clearInputAndShowThinking();
       handleSubmit();
     }
   };
@@ -241,28 +270,34 @@ export function UnifiedOverlay() {
   const handleSubmit = async () => {
     console.log('🚀 [UNIFIED] handleSubmit called');
     
-    // IMMEDIATE FEEDBACK: Clear input right away so user sees prompt disappear
-    const finalPromptText = promptText; // Save before clearing
-    const finalHighlights = [...highlights]; // Save before clearing
-    const wasGatherPending = gatherPending; // Capture BEFORE we reset state
-    
-    // Use flushSync to force immediate UI updates (prevents 500ms delay)
-    // ALL state resets must be inside flushSync to ensure synchronous DOM updates
-    flushSync(() => {
-      setPromptText('');
-      setHighlights([]);
-      setStreamingResponse('');
-      setSearchSources([]);
-      setIsStreaming(false);
-      setIsThinking(true); // Start thinking immediately
-      setIsAutomationMode(false); // CRITICAL: Must be inside flushSync to clear old automation UI
-      setInstallPrompt(null);
-      setActionChips([]);
-      setInstallOutput([]);
-      setGatherPending(false); // Reset gather state too
-      setGatherQuestion(null);
-      setStreamingStartedRef(false); // Reset streaming started flag
-    });
+    // Read values saved synchronously by clearInputAndShowThinking (keydown path)
+    // or capture fresh values if called directly (button click path).
+    const _pending = _pendingSubmitRef.current;
+    _pendingSubmitRef.current = null;
+
+    const finalPromptText = _pending ? _pending.text : promptText;
+    const finalHighlights = _pending ? _pending.highlights : [...highlights];
+    const wasGatherPending = _pending ? _pending.gatherPending : gatherPending;
+
+    // If called directly (button click), we still need to flush sync UI update.
+    if (!_pending) {
+      flushSync(() => {
+        setPromptText('');
+        setHighlights([]);
+        setStreamingResponse('');
+        setSearchSources([]);
+        setIsStreaming(false);
+        setIsThinking(true);
+        setIsAutomationMode(false);
+        setInstallPrompt(null);
+        setActionChips([]);
+        setInstallOutput([]);
+        setGatherPending(false);
+        setGatherQuestion(null);
+        setStreamingStartedRef(false);
+      });
+      hasDroppedRef.current = false;
+    }
     
     // Refs must be reset outside flushSync but immediately after
     hasDroppedRef.current = false;
@@ -491,14 +526,11 @@ export function UnifiedOverlay() {
   useEffect(() => {
     if (!ipcRenderer) return;
 
-    // Guard against React StrictMode double-invoke: register listeners only once.
-    // NOTE: Do NOT use removeAllListeners here — it strips listeners from sibling
-    // components (e.g. AutomationProgress) that share the same ipcRenderer instance.
-    if (ipcListenersRegistered.current) return;
-    ipcListenersRegistered.current = true;
+    // NOTE: Token-based deduplication in preload ensures exactly one listener per channel.
+    // The 'unified-overlay' token automatically evicts any stale listener on re-registration.
 
     // --- Results / Streaming ---
-    const handleWsMessage = (_e: any, message: { type: string; text?: string; lane?: string; payload?: any }) => {
+    const handleWsMessage = (message: { type: string; text?: string; lane?: string; payload?: any }) => {
       if (!message) return;
       const preview = message.text ? `"${message.text.substring(0, 50)}${message.text.length > 50 ? '...' : ''}"` : '(no text)';
       console.log(`[UNIFIED:DIAG] msg.type=${message.type} lane=${message.lane} preview=${preview} curRespLen=${streamingResponse.length}`);
@@ -591,9 +623,9 @@ export function UnifiedOverlay() {
       forceUpdate(); // Force immediate re-render
     };
 
-    const handleSetPrompt = (_e: any, text: string) => {
-      // Reset all state for new prompt (mirroring ResultsWindow.tsx behavior)
-      setPromptText(text);
+    const handleSetPrompt = (_text: string) => {
+      // Reset all state for new prompt — do NOT setPromptText here,
+      // handleSubmit already cleared it synchronously via flushSync.
       setStreamingResponse('');
       setSearchSources([]);
       setShowSourcesPanel(false);
@@ -634,7 +666,7 @@ export function UnifiedOverlay() {
       });
     };
 
-    const handleAutomationProgress = (_event: any, data: any) => {
+    const handleAutomationProgress = (data: any) => {
       if (data?.type === 'planning') {
         setIsThinking(false);
         setIsAutomationMode(true);
@@ -713,14 +745,14 @@ export function UnifiedOverlay() {
     (window as any).__unifiedInstallConfirm = sendInstallConfirm;
 
     // --- Queue ---
-    const handleQueueUpdate = (_e: any, items: QueueItem[]) => {
+    const handleQueueUpdate = (items: QueueItem[]) => {
       setQueueItems(items);
       if (items.some(i => i.status === 'building' || i.status === 'planning')) {
         setUnreadTabs(prev => new Set(prev).add('queue'));
       }
     };
 
-    const handleQueueItemDone = (_e: any, data: { id: string; result?: string; error?: string }) => {
+    const handleQueueItemDone = (data: { id: string; result?: string; error?: string }) => {
       setQueueItems(prev => prev.map(item =>
         item.id === data.id
           ? { ...item, status: data.error ? 'error' : 'done', result: data.result, error: data.error }
@@ -729,11 +761,11 @@ export function UnifiedOverlay() {
     };
 
     // --- Cron ---
-    const handleCronList = (_e: any, items: CronItem[]) => {
+    const handleCronList = (items: CronItem[]) => {
       setCronItems(items);
     };
 
-    const handleCronUpdate = (_e: any, item: CronItem) => {
+    const handleCronUpdate = (item: CronItem) => {
       setCronItems(prev => {
         const exists = prev.find(i => i.id === item.id);
         if (exists) {
@@ -744,26 +776,26 @@ export function UnifiedOverlay() {
     };
 
     // --- Skills ---
-    const handleSkillsList = (_e: any, items: SkillItem[]) => {
+    const handleSkillsList = (items: SkillItem[]) => {
       setSkillItems(items);
     };
 
     // --- Connections ---
-    const handleConnectionsList = (_e: any, items: ConnectionItem[]) => {
+    const handleConnectionsList = (items: ConnectionItem[]) => {
       setConnectionItems(items);
     };
 
     // --- Prompt Queue ---
-    const handlePromptQueueUpdate = (_e: any, items: PromptQueueItem[]) => {
+    const handlePromptQueueUpdate = (items: PromptQueueItem[]) => {
       setPromptQueueItems(items);
     };
 
-    const handleRestartAlert = (_e: any, data: { items: PromptQueueItem[] }) => {
+    const handleRestartAlert = (data: { items: PromptQueueItem[] }) => {
       setRestartAlert(data);
     };
 
     // --- Highlights ---
-    const handleHighlightsUpdate = (_e: any, newHighlights: string[]) => {
+    const handleHighlightsUpdate = (newHighlights: string[]) => {
       setHighlights(prev => {
         const combined = [...prev, ...newHighlights];
         // Remove duplicates
@@ -771,13 +803,13 @@ export function UnifiedOverlay() {
       });
     };
 
-    const handleHighlightsAvailable = (_e: any, available: boolean) => {
+    const handleHighlightsAvailable = (available: boolean) => {
       if (available) {
         ipcRenderer?.send('highlights:confirm');
       }
     };
 
-    const handleHighlightsConfirmed = (_e: any, data: { highlights: string[]; sourceApp?: string }) => {
+    const handleHighlightsConfirmed = (data: { highlights: string[]; sourceApp?: string }) => {
       setHighlights(prev => {
         const combined = [...prev, ...data.highlights];
         return combined.filter((h, i) => combined.indexOf(h) === i);
@@ -785,7 +817,7 @@ export function UnifiedOverlay() {
     };
 
     // --- Voice ---
-    const handleVoiceInject = (_e: any, data: { message: string }) => {
+    const handleVoiceInject = (data: { message: string }) => {
       setPromptText(data.message);
     };
 
@@ -802,7 +834,7 @@ export function UnifiedOverlay() {
     };
 
     // --- File Drop Response ---
-    const handleFileDropResult = (_e: any, data: { highlights: string[] }) => {
+    const handleFileDropResult = (data: { highlights: string[] }) => {
       console.log('[File Drop] Received result:', data);
       if (data.highlights) {
         setHighlights(prev => {
@@ -813,11 +845,11 @@ export function UnifiedOverlay() {
     };
 
     // --- Skill Build ---
-    const handleSkillBuildProgress = (_e: any, newState: SkillBuildState) => {
+    const handleSkillBuildProgress = (newState: SkillBuildState) => {
       setSkillBuild(newState);
     };
 
-    const handleInstallConfirm = (_e: any, result: { confirmed: boolean }) => {
+    const handleInstallConfirm = (result: { confirmed: boolean }) => {
       if (pendingInstallRef.current) {
         pendingInstallRef.current(result.confirmed);
         pendingInstallRef.current = null;
@@ -825,12 +857,12 @@ export function UnifiedOverlay() {
     };
 
     // --- Schedule ---
-    const handleSchedulePending = (_e: any, pending: { id: string; label: string; targetTime: string }) => {
+    const handleSchedulePending = (pending: { id: string; label: string; targetTime: string }) => {
       setSchedulePending(pending);
     };
 
     // --- Bridge Status ---
-    const handleBridgeStatus = (_e: any, status: BridgeStatus) => {
+    const handleBridgeStatus = (status: BridgeStatus) => {
       setBridgeStatus(status);
     };
 
@@ -838,13 +870,13 @@ export function UnifiedOverlay() {
     const handleScanProgress = () => {};
 
     // --- Action Chips ---
-    const handleActionChips = (_e: any, chips: ActionChip[]) => {
+    const handleActionChips = (chips: ActionChip[]) => {
       console.log(' [UNIFIED] Received action chips:', chips);
       setActionChips(chips);
     };
 
     // --- Gather Context Handler (like StandalonePromptCapture) ---
-    const handleGatherPending = (_event: any, { active, question }: { active: boolean; question?: string | null }) => {
+    const handleGatherPending = ({ active, question }: { active: boolean; question?: string | null }) => {
       console.log('[UNIFIED] Gather pending:', active, question);
       setGatherPending(active);
       setGatherQuestion(active && question ? question : null);
@@ -866,49 +898,50 @@ export function UnifiedOverlay() {
     };
 
     // --- Search Sources ---
-    const handleSearchSources = (_e: any, sources: SearchSource[]) => {
+    const handleSearchSources = (sources: SearchSource[]) => {
       setSearchSources(sources);
     };
 
-    // Register listeners
+    // Register all listeners with the stable 'unified-overlay' token.
+    // Preload deduplicates per channel so StrictMode remounts are safe.
     const token = listenerToken.current;
     ipcRenderer.on('ws-bridge:message', handleWsMessage, token);
-    ipcRenderer.on('results-window:set-prompt', handleSetPrompt, token);
-    ipcRenderer.on('results-window:clear', handleClear, token);
+    ipcRenderer.on('unified:set-prompt', handleSetPrompt, token);
+    ipcRenderer.on('unified:clear', handleClear, token);
     ipcRenderer.on('automation:progress', handleAutomationProgress, token);
-    ipcRenderer.on('is-streaming', (_e: any, data: { isStreaming: boolean }) => {
+    ipcRenderer.on('is-streaming', (data: { isStreaming: boolean }) => {
       setIsStreaming(data.isStreaming);
       if (data.isStreaming) {
         setActiveTab('results');
         setUnreadTabs(prev => ({ ...prev, results: false }));
       }
-    });
-    ipcRenderer.on('queue:update', handleQueueUpdate);
-    ipcRenderer.on('queue:item-done', handleQueueItemDone);
-    ipcRenderer.on('cron:list', handleCronList);
-    ipcRenderer.on('cron:update', handleCronUpdate);
-    ipcRenderer.on('skills:list', handleSkillsList);
-    ipcRenderer.on('connections:list', handleConnectionsList);
-    ipcRenderer.on('prompt-queue:update', handlePromptQueueUpdate);
-    ipcRenderer.on('prompt-queue:restart-alert', handleRestartAlert);
-    ipcRenderer.on('highlights:update', handleHighlightsUpdate);
-    ipcRenderer.on('highlights:available', handleHighlightsAvailable);
-    ipcRenderer.on('highlights:confirmed', handleHighlightsConfirmed);
-    ipcRenderer.on('voice:inject-prompt', handleVoiceInject);
-    ipcRenderer.on('voice:response', handleVoiceResponse);
-    ipcRenderer.on('voice:recording-started', handleVoiceRecordingStarted);
-    ipcRenderer.on('voice:recording-stopped', handleVoiceRecordingStopped);
-    ipcRenderer.on('file-drop:result', handleFileDropResult);
-    ipcRenderer.on('skill-build:progress', handleSkillBuildProgress);
-    ipcRenderer.on('install:confirm', handleInstallConfirm);
-    ipcRenderer.on('schedule:pending', handleSchedulePending);
-    ipcRenderer.on('bridge:status', handleBridgeStatus);
-    ipcRenderer.on('scan:progress', handleScanProgress);
-    ipcRenderer.on('action-chips', handleActionChips);
-    ipcRenderer.on('search:sources', handleSearchSources);
-    ipcRenderer.on('window:show', handleWindowShow);
-    ipcRenderer.on('gather:pending', handleGatherPending);
-    ipcRenderer.on('queue:enqueued', handleQueueEnqueued);
+    }, token);
+    ipcRenderer.on('queue:update', handleQueueUpdate, token);
+    ipcRenderer.on('queue:item-done', handleQueueItemDone, token);
+    ipcRenderer.on('cron:list', handleCronList, token);
+    ipcRenderer.on('cron:update', handleCronUpdate, token);
+    ipcRenderer.on('skills:list', handleSkillsList, token);
+    ipcRenderer.on('connections:list', handleConnectionsList, token);
+    ipcRenderer.on('prompt-queue:update', handlePromptQueueUpdate, token);
+    ipcRenderer.on('prompt-queue:restart-alert', handleRestartAlert, token);
+    ipcRenderer.on('highlights:update', handleHighlightsUpdate, token);
+    ipcRenderer.on('highlights:available', handleHighlightsAvailable, token);
+    ipcRenderer.on('highlights:confirmed', handleHighlightsConfirmed, token);
+    ipcRenderer.on('voice:inject-prompt', handleVoiceInject, token);
+    ipcRenderer.on('voice:response', handleVoiceResponse, token);
+    ipcRenderer.on('voice:recording-started', handleVoiceRecordingStarted, token);
+    ipcRenderer.on('voice:recording-stopped', handleVoiceRecordingStopped, token);
+    ipcRenderer.on('file-drop:result', handleFileDropResult, token);
+    ipcRenderer.on('skill-build:progress', handleSkillBuildProgress, token);
+    ipcRenderer.on('install:confirm', handleInstallConfirm, token);
+    ipcRenderer.on('schedule:pending', handleSchedulePending, token);
+    ipcRenderer.on('bridge:status', handleBridgeStatus, token);
+    ipcRenderer.on('scan:progress', handleScanProgress, token);
+    ipcRenderer.on('action-chips', handleActionChips, token);
+    ipcRenderer.on('search:sources', handleSearchSources, token);
+    ipcRenderer.on('window:show', handleWindowShow, token);
+    ipcRenderer.on('gather:pending', handleGatherPending, token);
+    ipcRenderer.on('queue:enqueued', handleQueueEnqueued, token);
 
     // Request initial data
     ipcRenderer.send('queue:list');
@@ -917,39 +950,38 @@ export function UnifiedOverlay() {
     ipcRenderer.send('connections:list');
 
     return () => {
-      ipcListenersRegistered.current = false;
       const token = listenerToken.current;
       ipcRenderer.removeListenerByToken('ws-bridge:message', token);
-      ipcRenderer.removeListenerByToken('results-window:set-prompt', token);
-      ipcRenderer.removeListenerByToken('results-window:clear', token);
+      ipcRenderer.removeListenerByToken('unified:set-prompt', token);
+      ipcRenderer.removeListenerByToken('unified:clear', token);
       ipcRenderer.removeListenerByToken('automation:progress', token);
-      ipcRenderer.removeListener('is-streaming');
-      ipcRenderer.removeListener('queue:update', handleQueueUpdate);
-      ipcRenderer.removeListener('queue:item-done', handleQueueItemDone);
-      ipcRenderer.removeListener('cron:list', handleCronList);
-      ipcRenderer.removeListener('cron:update', handleCronUpdate);
-      ipcRenderer.removeListener('skills:list', handleSkillsList);
-      ipcRenderer.removeListener('connections:list', handleConnectionsList);
-      ipcRenderer.removeListener('prompt-queue:update', handlePromptQueueUpdate);
-      ipcRenderer.removeListener('prompt-queue:restart-alert', handleRestartAlert);
-      ipcRenderer.removeListener('highlights:update', handleHighlightsUpdate);
-      ipcRenderer.removeListener('highlights:available', handleHighlightsAvailable);
-      ipcRenderer.removeListener('highlights:confirmed', handleHighlightsConfirmed);
-      ipcRenderer.removeListener('voice:inject-prompt', handleVoiceInject);
-      ipcRenderer.removeListener('voice:response', handleVoiceResponse);
-      ipcRenderer.removeListener('voice:recording-started', handleVoiceRecordingStarted);
-      ipcRenderer.removeListener('voice:recording-stopped', handleVoiceRecordingStopped);
-      ipcRenderer.removeListener('file-drop:result', handleFileDropResult);
-      ipcRenderer.removeListener('skill-build:progress', handleSkillBuildProgress);
-      ipcRenderer.removeListener('install:confirm', handleInstallConfirm);
-      ipcRenderer.removeListener('schedule:pending', handleSchedulePending);
-      ipcRenderer.removeListener('bridge:status', handleBridgeStatus);
-      ipcRenderer.removeListener('scan:progress', handleScanProgress);
-      ipcRenderer.removeListener('action-chips', handleActionChips);
-      ipcRenderer.removeListener('search:sources', handleSearchSources);
-      ipcRenderer.removeListener('window:show', handleWindowShow);
-      ipcRenderer.removeListener('gather:pending', handleGatherPending);
-      ipcRenderer.removeListener('queue:enqueued', handleQueueEnqueued);
+      ipcRenderer.removeListenerByToken('is-streaming', token);
+      ipcRenderer.removeListenerByToken('queue:update', token);
+      ipcRenderer.removeListenerByToken('queue:item-done', token);
+      ipcRenderer.removeListenerByToken('cron:list', token);
+      ipcRenderer.removeListenerByToken('cron:update', token);
+      ipcRenderer.removeListenerByToken('skills:list', token);
+      ipcRenderer.removeListenerByToken('connections:list', token);
+      ipcRenderer.removeListenerByToken('prompt-queue:update', token);
+      ipcRenderer.removeListenerByToken('prompt-queue:restart-alert', token);
+      ipcRenderer.removeListenerByToken('highlights:update', token);
+      ipcRenderer.removeListenerByToken('highlights:available', token);
+      ipcRenderer.removeListenerByToken('highlights:confirmed', token);
+      ipcRenderer.removeListenerByToken('voice:inject-prompt', token);
+      ipcRenderer.removeListenerByToken('voice:response', token);
+      ipcRenderer.removeListenerByToken('voice:recording-started', token);
+      ipcRenderer.removeListenerByToken('voice:recording-stopped', token);
+      ipcRenderer.removeListenerByToken('file-drop:result', token);
+      ipcRenderer.removeListenerByToken('skill-build:progress', token);
+      ipcRenderer.removeListenerByToken('install:confirm', token);
+      ipcRenderer.removeListenerByToken('schedule:pending', token);
+      ipcRenderer.removeListenerByToken('bridge:status', token);
+      ipcRenderer.removeListenerByToken('scan:progress', token);
+      ipcRenderer.removeListenerByToken('action-chips', token);
+      ipcRenderer.removeListenerByToken('search:sources', token);
+      ipcRenderer.removeListenerByToken('window:show', token);
+      ipcRenderer.removeListenerByToken('gather:pending', token);
+      ipcRenderer.removeListenerByToken('queue:enqueued', token);
     };
   }, []);
 
@@ -1814,7 +1846,7 @@ export function UnifiedOverlay() {
                 justifyContent: 'center',
               }}
               title={isSubmitting ? 'Cancel' : 'Send'}
-              onClick={isSubmitting ? () => ipcRenderer?.send('automation:cancel') : (promptText.trim() || highlights.length > 0) ? handleSubmit : undefined}
+              onClick={isSubmitting ? () => ipcRenderer?.send('automation:cancel') : (promptText.trim() || highlights.length > 0) ? () => { clearInputAndShowThinking(); handleSubmit(); } : undefined}
             >
               {isSubmitting ? (
                 /* Stop square — like ChatGPT/Windsurf cancel */

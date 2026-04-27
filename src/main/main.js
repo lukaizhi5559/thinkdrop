@@ -27,7 +27,7 @@ function safeSend(win, channel, ...args) {
 // Unified window IPC send — sends to unifiedWindow if available, otherwise falls back to old windows
 function safeSendUnified(channel, ...args) {
   // Trace the exact ordering of stream-related messages so doubling can be diagnosed.
-  if (channel === 'ws-bridge:message' || channel === 'results-window:set-prompt') {
+  if (channel === 'ws-bridge:message' || channel === 'unified:set-prompt') {
     const msg = args[0];
     const textPreview = msg?.text ? `"${String(msg.text).substring(0, 30).replace(/\n/g, '\\n')}${msg.text.length > 30 ? '...' : ''}"` : '';
     console.log(`[SEND→UNIFIED] ch=${channel} type=${msg?.type || 'n/a'} textLen=${msg?.text?.length ?? 0} lane=${msg?.lane || ''} ${textPreview}`);
@@ -157,12 +157,7 @@ function startOverlayControlServer() {
           // Do NOT touch the ResultsWindow — it may be showing something else.
           // Only notify promptCaptureWindow for IPC plumbing (session routing etc).
           if (!voiceOnly) {
-            if (promptCaptureWindow && !promptCaptureWindow.isDestroyed()) {
-              safeSend(promptCaptureWindow, 'voice:inject-prompt', { message, sessionId, source: source || 'voice' });
-            }
-            if (resultsWindow && !resultsWindow.isDestroyed()) {
-              safeSend(resultsWindow, 'results-window:set-prompt', message);
-            }
+            safeSendUnified('unified:set-prompt', message);
           }
 
           // Flush stale cancel/pause signals before starting so previous-session
@@ -1582,11 +1577,8 @@ app.whenReady().then(async () => {
       // Wait for windows + stategraph to be ready, then fire the plan directly
       setTimeout(() => {
         if (!stateGraph) { console.warn('[Scheduler] StateGraph not ready for scheduled task'); return; }
-        if (resultsWindow && !resultsWindow.isDestroyed()) {
-          safeSend(resultsWindow, 'results-window:set-prompt', pending.prompt || pending.label);
-          resultsWindow.showInactive();
-          resultsWindow.moveTop();
-        }
+        safeSendUnified('unified:set-prompt', pending.prompt || pending.label);
+        if (unifiedWindow && !unifiedWindow.isDestroyed()) { unifiedWindow.showInactive(); unifiedWindow.moveTop(); }
         const progressCallback = (event) => {
           safeSendUnified('automation:progress', event);
           if (resultsWindow && !resultsWindow.isDestroyed()) {
@@ -2333,12 +2325,7 @@ app.whenReady().then(async () => {
           unifiedWindow.showInactive();
           unifiedWindow.moveTop();
         }
-        // Legacy resultsWindow support
-        if (resultsWindow && !resultsWindow.isDestroyed()) {
-          if (result.transcript) safeSend(resultsWindow, 'results-window:set-prompt', result.transcript);
-          resultsWindow.showInactive();
-          resultsWindow.moveTop();
-        }
+        if (result.transcript) safeSendUnified('unified:set-prompt', result.transcript);
       } else if (result.lane === 'fast' && result.responseEnglish && !result.skipped) {
         // Send ws-bridge messages to unifiedWindow (outside resultsWindow guard)
         safeSendUnified('ws-bridge:message', { type: 'chunk', text: result.responseEnglish, lane: 'fast' });
@@ -2348,12 +2335,7 @@ app.whenReady().then(async () => {
           unifiedWindow.showInactive();
           unifiedWindow.moveTop();
         }
-        // Legacy resultsWindow support
-        if (resultsWindow && !resultsWindow.isDestroyed()) {
-          if (result.transcript) safeSend(resultsWindow, 'results-window:set-prompt', result.transcript);
-          resultsWindow.showInactive();
-          resultsWindow.moveTop();
-        }
+        if (result.transcript) safeSendUnified('unified:set-prompt', result.transcript);
       }
 
       if (result.audioBase64) {
@@ -2443,12 +2425,7 @@ app.whenReady().then(async () => {
           unifiedWindow.showInactive();
           unifiedWindow.moveTop();
         }
-        // Legacy resultsWindow support
-        if (resultsWindow && !resultsWindow.isDestroyed()) {
-          if (result.transcript) safeSend(resultsWindow, 'results-window:set-prompt', result.transcript);
-          resultsWindow.showInactive();
-          resultsWindow.moveTop();
-        }
+        if (result.transcript) safeSendUnified('unified:set-prompt', result.transcript);
       } else if (result.lane === 'fast' && result.responseEnglish && !result.skipped) {
         // Send ws-bridge messages to unifiedWindow (outside resultsWindow guard)
         safeSendUnified('ws-bridge:message', { type: 'chunk', text: result.responseEnglish, lane: 'fast' });
@@ -2458,12 +2435,7 @@ app.whenReady().then(async () => {
           unifiedWindow.showInactive();
           unifiedWindow.moveTop();
         }
-        // Legacy resultsWindow support
-        if (resultsWindow && !resultsWindow.isDestroyed()) {
-          if (result.transcript) safeSend(resultsWindow, 'results-window:set-prompt', result.transcript);
-          resultsWindow.showInactive();
-          resultsWindow.moveTop();
-        }
+        if (result.transcript) safeSendUnified('unified:set-prompt', result.transcript);
       }
       if (result.audioBase64) {
         // Send ONLY to promptCaptureWindow to avoid duplicate TTS
@@ -2552,16 +2524,9 @@ app.whenReady().then(async () => {
       return;
     }
 
-    // Show ResultsWindow and set prompt display (without stealing focus from active app)
-    // Skip for skill-plan re-runs — PlanPanel already shows the plan in executing state
-    // and firing set-prompt would reset PlanPanel to idle before step events arrive.
-    // Send set-prompt directly via safeSendUnified (bypasses resultsWindow relay) so the
-    // streamingResponse reset arrives at unifiedWindow BEFORE the first streaming token.
-    if (resultsWindow && !resultsWindow.isDestroyed()) {
-      if (!_skillPlan) safeSendUnified('results-window:set-prompt', prompt);
-      resultsWindow.showInactive();
-      resultsWindow.moveTop();
-    }
+    // Send unified:set-prompt so streamingResponse reset arrives at unifiedWindow BEFORE the first token.
+    // Skip for skill-plan re-runs — PlanPanel already shows the plan in executing state.
+    if (!_skillPlan) safeSendUnified('unified:set-prompt', prompt);
 
     // Snapshot webContents at handler start — if the window reloads mid-stream the
     // reference becomes stale and safeSend would spam "Render frame was disposed" errors.
@@ -3514,9 +3479,7 @@ app.whenReady().then(async () => {
             // Reset AutomationProgress for the second run — planSkills _skillPlan fast-path
             // will emit plan_ready to re-init steps, but set-prompt must fire first so
             // handleNewPrompt clears the stale first-run step list and stepOffsetRef.
-            if (resultsWindow && !resultsWindow.isDestroyed()) {
-              safeSend(resultsWindow, 'results-window:set-prompt', agentCmd);
-            }
+            safeSendUnified('unified:set-prompt', agentCmd);
             initialState = {
               ...paused,
               message: agentCmd,
@@ -3563,9 +3526,7 @@ app.whenReady().then(async () => {
             // full awareness of what was asked and what the user decided.
             const _taskWithAnswer = `${_originalTask}\n\n[Resume context: You previously asked "${_priorQuestion}". The user answered: "${chosenOption}". Continue from this point based on the user's answer.]`;
             console.log(`[StateGraph] ASK_USER resume: _isAgentAskUser answer "${chosenOption}" — re-running ${_resumeSkill}/${_agentId} with injected context`);
-            if (resultsWindow && !resultsWindow.isDestroyed()) {
-              safeSend(resultsWindow, 'results-window:set-prompt', chosenOption);
-            }
+            safeSendUnified('unified:set-prompt', chosenOption);
             initialState = {
               ...paused,
               message: paused.message,
@@ -4338,12 +4299,8 @@ app.whenReady().then(async () => {
       return;
     }
 
-    // Show results window for build progress
-    if (resultsWindow && !resultsWindow.isDestroyed()) {
-      safeSend(resultsWindow, 'results-window:set-prompt', `Building skill: ${displayName || name}`);
-      resultsWindow.showInactive();
-      resultsWindow.moveTop();
-    }
+    safeSendUnified('unified:set-prompt', `Building skill: ${displayName || name}`);
+    if (unifiedWindow && !unifiedWindow.isDestroyed()) { unifiedWindow.showInactive(); unifiedWindow.moveTop(); }
 
     const progressCallback = (evt) => {
       if (resultsWindow && !resultsWindow.isDestroyed()) {
@@ -4764,35 +4721,21 @@ app.whenReady().then(async () => {
     }
   });
 
-  ipcMain.on('results-window:set-prompt', (event, text) => {
-    console.log('[Results Window] Received set-prompt request.');
-    console.log(`[Results Window] Prompt text length: ${text.length} characters.`);
-
+  ipcMain.on('unified:set-prompt', (event, text) => {
+    console.log('[Unified] Received set-prompt request.');
     if (unifiedWindow && !unifiedWindow.isDestroyed()) {
-      console.log(`[Results Window] Setting prompt text and showing window. ${text.substring(0, 100)}...`);
-      safeSend(unifiedWindow, 'results-window:set-prompt', text);
-      
-      // Don't change unified window position/size - keep it where user placed it
-      
+      safeSend(unifiedWindow, 'unified:set-prompt', text);
       if (unifiedWindow.webContents.isLoading()) {
-        console.log('[Results Window] Still loading content, waiting to show.');
         unifiedWindow.webContents.once('did-finish-load', () => {
-          console.log('[Results Window] Finished loading, now showing window.');
-          safeSend(unifiedWindow, 'results-window:set-prompt', text);
-          unifiedWindow.showInactive(); // show without stealing focus
+          safeSend(unifiedWindow, 'unified:set-prompt', text);
+          unifiedWindow.showInactive();
         });
       } else {
-        console.log('[Results Window] Content already loaded, showing window immediately.');
-        unifiedWindow.showInactive(); // show without stealing focus from active app
+        unifiedWindow.showInactive();
         unifiedWindow.moveTop();
-        console.log('[Results Window] Prompt text set and window shown.');
-      }   
-    } else {
-      console.error('[Results Window] Cannot set prompt, unified window is not available.');
-      if (!unifiedWindow) {
-        console.log('[Results Window] Recreating unified window.');
-        createUnifiedWindow();
       }
+    } else if (!unifiedWindow) {
+      createUnifiedWindow();
     }
   });
 

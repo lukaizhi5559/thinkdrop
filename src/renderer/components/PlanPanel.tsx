@@ -201,8 +201,8 @@ export default function PlanPanel({ onComplete }: PlanPanelProps) {
       setExistingSuggestion(null);
       setShowRawEdit(false);
     };
-    ipcRenderer.on('results-window:set-prompt', handleNewPrompt);
-    return () => ipcRenderer.removeListener('results-window:set-prompt', handleNewPrompt);
+    ipcRenderer.on('unified:set-prompt', handleNewPrompt, 'plan-panel');
+    return () => ipcRenderer.removeListenerByToken('unified:set-prompt', 'plan-panel');
   }, []);
 
   if (phase === 'idle') return null;
