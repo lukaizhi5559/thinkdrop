@@ -1,6 +1,12 @@
 const { contextBridge, ipcRenderer } = require('electron');
 console.log('[Preload] Loaded — queue:started + queue:enqueued channels active');
 
+// Token-based listener tracking: prevents duplicate listeners across React StrictMode
+// remounts. contextBridge wraps functions on every boundary crossing so function
+// reference equality never works — we use a string token instead.
+// channel → Map<token, wrapped>
+const _wiredListeners = new Map();
+
 contextBridge.exposeInMainWorld('electron', {
   ipcRenderer: {
     send: (channel, data) => {
@@ -9,12 +15,19 @@ contextBridge.exposeInMainWorld('electron', {
         'prompt-capture:resize',
         'prompt-capture:move',
         'prompt-capture:pick-file',
+        'window:hide',
+        'window:resize',
+        'window:smart-resize',
+        'window:move',
+        'file-drop',
+        'dialog:open-file',
         'results-window:show',
         'results-window:close',
         'results-window:resize',
         'results-window:move',
         'results-window:set-prompt',
         'results-window:show-error',
+        'unified:resize-window',
         'ws-bridge:send-message',
         'ws-bridge:connect',
         'stategraph:process',
@@ -77,7 +90,7 @@ contextBridge.exposeInMainWorld('electron', {
         ipcRenderer.send(channel, data);
       }
     },
-    on: (channel, func) => {
+    on: (channel, func, token) => {
       const validChannels = [
         'prompt-capture:show',
         'prompt-capture:capture-screenshot',
@@ -124,9 +137,20 @@ contextBridge.exposeInMainWorld('electron', {
         'plan:approved',
         'plan:rescanned',
         'plan:error',
+        'scan:discovery',
+        'app-control:mode-change',
       ];
       if (validChannels.includes(channel)) {
-        ipcRenderer.on(channel, func);
+        const wrapped = (_event, ...args) => func(...args);
+        if (token) {
+          // Token path: deduplicate by token — remove any stale listener first.
+          if (!_wiredListeners.has(channel)) _wiredListeners.set(channel, new Map());
+          const chMap = _wiredListeners.get(channel);
+          const existing = chMap.get(token);
+          if (existing) ipcRenderer.removeListener(channel, existing);
+          chMap.set(token, wrapped);
+        }
+        ipcRenderer.on(channel, wrapped);
       }
     },
     removeAllListeners: (channel) => {
@@ -179,6 +203,60 @@ contextBridge.exposeInMainWorld('electron', {
       ];
       if (validChannels.includes(channel)) {
         ipcRenderer.removeAllListeners(channel);
+        _wiredListeners.delete(channel);
+      }
+    },
+    removeListenerByToken: (channel, token) => {
+      const validChannels = [
+        'ws-bridge:message',
+        'results-window:set-prompt',
+        'results-window:clear',
+        'automation:progress',
+        'is-streaming',
+        'queue:update',
+        'queue:item-done',
+        'cron:list',
+        'cron:update',
+        'skills:list',
+        'connections:list',
+        'prompt-queue:update',
+        'prompt-queue:restart-alert',
+        'highlights:update',
+        'highlights:available',
+        'highlights:confirmed',
+        'voice:inject-prompt',
+        'voice:response',
+        'voice:recording-started',
+        'voice:recording-stopped',
+        'file-drop:result',
+        'skill-build:progress',
+        'install:confirm',
+        'schedule:pending',
+        'bridge:status',
+        'scan:progress',
+        'scan:discovery',
+        'app-control:mode-change',
+        'plan:approved',
+        'action-chips',
+        'search:sources',
+        'window:show',
+        'gather:pending',
+        'queue:enqueued',
+        'prompt-capture:show',
+        'ws-bridge:connected',
+        'ws-bridge:disconnected',
+        'ws-bridge:error',
+        'queue:started',
+      ];
+      if (validChannels.includes(channel)) {
+        const chMap = _wiredListeners.get(channel);
+        if (chMap && token) {
+          const wrapped = chMap.get(token);
+          if (wrapped) {
+            ipcRenderer.removeListener(channel, wrapped);
+            chMap.delete(token);
+          }
+        }
       }
     },
     removeListener: (channel, func) => {
@@ -230,7 +308,8 @@ contextBridge.exposeInMainWorld('electron', {
         'plan:error',
       ];
       if (validChannels.includes(channel)) {
-        ipcRenderer.removeListener(channel, func);
+        // Legacy path: func-reference removal won't work across contextBridge.
+        // Use removeListenerByToken instead when possible.
       }
     },
     invoke: (channel, data) => {

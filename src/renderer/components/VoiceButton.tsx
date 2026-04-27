@@ -80,7 +80,7 @@ export default function VoiceButton({ compact = false }: VoiceButtonProps) {
         style={{
           display: 'flex', alignItems: 'center', justifyContent: 'center',
           gap: '4px',
-          padding: compact ? '4px 6px' : '4px 8px',
+          padding: '9px',
           borderRadius: '6px',
           backgroundColor: stateColors[voiceState],
           border: `1px solid ${stateBorders[voiceState]}`,

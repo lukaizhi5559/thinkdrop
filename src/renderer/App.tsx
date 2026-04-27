@@ -1,17 +1,12 @@
-import StandalonePromptCapture from './components/StandalonePromptCapture';
-import ResultsWindow from './components/ResultsWindow';
 import VoiceCompanion from './components/VoiceCompanion';
+import { UnifiedOverlay } from './components/UnifiedOverlay';
 
 function App() {
   const params = new URLSearchParams(window.location.search);
   const mode = params.get('mode');
 
-  if (mode === 'promptcapture') {
-    return <StandalonePromptCapture />;
-  }
-
-  if (mode === 'results') {
-    return <ResultsWindow />;
+  if (mode === 'unified') {
+    return <UnifiedOverlay />;
   }
 
   if (mode === 'voice-companion') {

@@ -3,7 +3,7 @@ import SkillStore from './SkillStore';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
-export type TabId = 'results' | 'queue' | 'cron' | 'skills' | 'store' | 'connections';
+export type TabId = 'results' | 'queue' | 'cron' | 'agents' | 'skills' | 'store' | 'connections';
 
 export interface ConnectionItem {
   provider: string;       // 'github' | 'google' | 'microsoft' etc.
@@ -184,15 +184,13 @@ export function TabBar({ active, onSelect, queueCount, cronCount, unreadTabs }: 
     { id: 'results',     label: 'Results',  icon: <ResultsIcon     active={active === 'results'}     />, activeColor: '#60a5fa' },
     { id: 'queue',       label: 'Queue',    icon: <QueueIcon       active={active === 'queue'}       />, badge: queueCount, activeColor: '#a78bfa' },
     { id: 'cron',        label: 'Cron',     icon: <CronIcon        active={active === 'cron'}        />, badge: cronCount,  activeColor: '#34d399' },
-    { id: 'skills',      label: 'Skills',   icon: <SkillsIcon      active={active === 'skills'}      />, activeColor: '#f97316' },
-    { id: 'connections', label: 'Connect',  icon: <ConnectionsIcon active={active === 'connections'} />, activeColor: '#38bdf8' },
-    { id: 'store',       label: 'Store',    icon: <StoreIcon       active={active === 'store'}       />, activeColor: '#a78bfa' },
+    { id: 'agents',      label: 'Agents',   icon: <span style={{ fontSize: '0.7rem' }}>🤖</span>, activeColor: '#f59e0b' },
   ];
 
   return (
     <div style={{
-      display: 'flex', alignItems: 'center', gap: 0,
-      padding: '0 4px',
+      display: 'flex', alignItems: 'center', gap: 4,
+      padding: '0 8px',
       borderBottom: '1px solid rgba(255,255,255,0.08)',
       backgroundColor: 'rgba(0,0,0,0.15)',
       flexShrink: 0,
@@ -205,8 +203,8 @@ export function TabBar({ active, onSelect, queueCount, cronCount, unreadTabs }: 
             key={tab.id}
             onClick={() => onSelect(tab.id)}
             style={{
-              display: 'flex', alignItems: 'center', gap: 4,
-              padding: '6px 7px',
+              display: 'flex', alignItems: 'center', gap: 6,
+              padding: '6px 12px',
               border: 'none', background: 'none', cursor: 'pointer',
               borderBottom: isActive ? `2px solid ${tab.activeColor}` : '2px solid transparent',
               marginBottom: -1,
@@ -219,7 +217,7 @@ export function TabBar({ active, onSelect, queueCount, cronCount, unreadTabs }: 
             title={tab.label}
           >
             {tab.icon}
-            <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', minWidth: 0 }}>{tab.label}</span>
+            <span style={{ whiteSpace: 'nowrap' }}>{tab.label}</span>
             {tab.badge != null && tab.badge > 0 && (
               <span style={{
                 fontSize: '0.58rem', fontWeight: 700, minWidth: 14, height: 14,

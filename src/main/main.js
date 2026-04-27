@@ -23,6 +23,19 @@ function safeSend(win, channel, ...args) {
   if (!win || win.isDestroyed()) return;
   try { win.webContents.send(channel, ...args); } catch (_) {}
 }
+
+// Unified window IPC send — sends to unifiedWindow if available, otherwise falls back to old windows
+function safeSendUnified(channel, ...args) {
+  // Trace the exact ordering of stream-related messages so doubling can be diagnosed.
+  if (channel === 'ws-bridge:message' || channel === 'results-window:set-prompt') {
+    const msg = args[0];
+    const textPreview = msg?.text ? `"${String(msg.text).substring(0, 30).replace(/\n/g, '\\n')}${msg.text.length > 30 ? '...' : ''}"` : '';
+    console.log(`[SEND→UNIFIED] ch=${channel} type=${msg?.type || 'n/a'} textLen=${msg?.text?.length ?? 0} lane=${msg?.lane || ''} ${textPreview}`);
+  }
+  if (unifiedWindow && !unifiedWindow.isDestroyed()) {
+    try { unifiedWindow.webContents.send(channel, ...args); } catch (_) {}
+  }
+}
 const screenshot = require('screenshot-desktop');
 const path = require('path');
 const WebSocket = require('ws');
@@ -167,19 +180,14 @@ function startOverlayControlServer() {
           const tokens = [];
           const streamCallback = (token) => {
             tokens.push(token);
-            if (!voiceOnly && resultsWindow && !resultsWindow.isDestroyed()) {
-              safeSend(resultsWindow, 'ws-bridge:message', { type: 'chunk', text: token });
+            if (!voiceOnly) {
+              safeSendUnified('ws-bridge:message', { type: 'chunk', text: token });
             }
           };
 
-          // Forward automation progress events to Results window (AutomationProgress component)
+          // Forward automation progress events to Unified window (AutomationProgress component)
           const progressCallback = (evt) => {
-            if (resultsWindow && !resultsWindow.isDestroyed()) {
-              safeSend(resultsWindow, 'automation:progress', evt);
-            }
-            if (evt.type === 'all_done' && promptCaptureWindow && !promptCaptureWindow.isDestroyed()) {
-              safeSend(promptCaptureWindow, 'automation:progress', evt);
-            }
+            safeSendUnified('automation:progress', evt);
           };
 
           // Install confirmation: show card in Results window, wait for user reply
@@ -247,7 +255,7 @@ function startOverlayControlServer() {
 
           // Signal stream end to renderer (not for voice-only background escalations)
           if (!voiceOnly && resultsWindow && !resultsWindow.isDestroyed()) {
-            safeSend(resultsWindow, 'ws-bridge:message', { type: 'done' });
+            safeSendUnified('ws-bridge:message', { type: 'done' });
           }
 
           res.writeHead(200);
@@ -278,20 +286,18 @@ function startOverlayControlServer() {
         try {
           const data = JSON.parse(body || '{}');
           console.log(`🎙️ [Voice] Escalation result received — forwarding voice:response (lane=${data.lane})`);
-          if (promptCaptureWindow && !promptCaptureWindow.isDestroyed()) {
-            safeSend(promptCaptureWindow, 'voice:response', {
-              text: data.text || '',
-              fullAnswer: data.fullAnswer || '',
-              audioBase64: data.audioBase64 || '',
-              audioFormat: data.audioFormat || 'wav',
-              language: data.language || 'en',
-              lane: data.lane || 'stategraph',
-              durationEstimateMs: data.durationEstimateMs || null,
-            });
-          }
-          if (resultsWindow && !resultsWindow.isDestroyed() && data.fullAnswer) {
-            safeSend(resultsWindow, 'ws-bridge:message', { type: 'chunk', text: data.fullAnswer, lane: data.lane || 'stategraph' });
-            safeSend(resultsWindow, 'ws-bridge:message', { type: 'done', lane: data.lane || 'stategraph' });
+          safeSendUnified('voice:response', {
+            text: data.text || '',
+            fullAnswer: data.fullAnswer || '',
+            audioBase64: data.audioBase64 || '',
+            audioFormat: data.audioFormat || 'wav',
+            language: data.language || 'en',
+            lane: data.lane || 'stategraph',
+            durationEstimateMs: data.durationEstimateMs || null,
+          });
+          if (data.fullAnswer) {
+            safeSendUnified('ws-bridge:message', { type: 'chunk', text: data.fullAnswer, lane: data.lane || 'stategraph' });
+            safeSendUnified('ws-bridge:message', { type: 'done', lane: data.lane || 'stategraph' });
           }
           res.writeHead(200).end(JSON.stringify({ ok: true }));
         } catch (err) {
@@ -651,6 +657,10 @@ let activeScheduleCountdown = null; // { id, targetTime, label }
 // { active: bool, app: string|null, enteredAt: ISO }
 let appControlMode = { active: false, app: null, enteredAt: null };
 
+// Tracks whether the user has manually dragged the unified panel.
+// When true, resize handlers preserve the current Y position instead of reanchoring to screen bottom.
+let _userHasMovedPanel = false;
+
 // AbortController for the currently running stateGraph.execute — null when idle.
 // Hoisted to module scope so GET /activity (startOverlayControlServer) can read it.
 let activeAbortController = null;
@@ -691,8 +701,9 @@ function initStateGraph() {
   }
 }
 
-let promptCaptureWindow = null;
-let resultsWindow = null;
+let promptCaptureWindow = null;  // TODO: Migrate to unifiedWindow
+let resultsWindow = null;  // TODO: Migrate to unifiedWindow
+let unifiedWindow = null;
 
 // VS Code Bridge WebSocket
 let bridgeWs = null;
@@ -731,9 +742,6 @@ function connectToSocket() {
     console.log('✅ [VS Code Bridge] Connected');
     vscodeConnected = true;
     reconnectAttempts = 0;
-    if (resultsWindow && !resultsWindow.isDestroyed()) {
-      safeSend(resultsWindow, 'ws-bridge:connected');
-    }
   });
 
   bridgeWs.on('message', (data) => {
@@ -741,9 +749,12 @@ function connectToSocket() {
       const message = JSON.parse(data.toString());
       console.log('[VS Code Bridge] Message received:', message.type);
       
-      // Forward all messages to ResultsWindow
-      if (resultsWindow && !resultsWindow.isDestroyed()) {
-        safeSend(resultsWindow, 'ws-bridge:message', message);
+      // Forward all messages to unifiedWindow (and legacy windows)
+      safeSendUnified('ws-bridge:message', message);
+      
+      // Ensure unifiedWindow is visible for incoming bridge messages
+      if (unifiedWindow && !unifiedWindow.isDestroyed() && !unifiedWindow.isVisible()) {
+        unifiedWindow.showInactive();
       }
     } catch (error) {
       console.error('[VS Code Bridge] Failed to parse message:', error);
@@ -753,18 +764,12 @@ function connectToSocket() {
   bridgeWs.on('error', (error) => {
     console.error('[VS Code Bridge] Error:', error.message);
     vscodeConnected = false;
-    if (resultsWindow && !resultsWindow.isDestroyed()) {
-      safeSend(resultsWindow, 'ws-bridge:error', error.message);
-    }
   });
 
   bridgeWs.on('close', () => {
     console.log('[VS Code Bridge] Disconnected');
     vscodeConnected = false;
     bridgeWs = null;
-    if (resultsWindow && !resultsWindow.isDestroyed()) {
-      safeSend(resultsWindow, 'ws-bridge:disconnected');
-    }
 
     if (reconnectAttempts < MAX_RECONNECT_ATTEMPTS) {
       reconnectAttempts++;
@@ -995,6 +1000,112 @@ function createResultsWindow() {
   return resultsWindow;
 }
 
+// Unified Overlay Window - combines prompt capture and results
+function createUnifiedWindow() {
+  const primaryDisplay = screen.getPrimaryDisplay();
+  const { width: screenWidth, height: screenHeight } = primaryDisplay.workAreaSize;
+  const windowMinWidth = 400;
+  const windowMinHeight = 300;
+  const windowMaxHeight = 800;
+  const margin = 20;
+
+  // Position at bottom-right like the old ResultsWindow
+  const initialX = (screenWidth - windowMinWidth) - margin;
+  const initialY = screenHeight; // Off-screen initially
+
+  unifiedWindow = new BrowserWindow({
+    x: initialX,
+    y: initialY,
+    width: windowMinWidth,
+    height: windowMinHeight,
+    minWidth: windowMinWidth,
+    maxWidth: 800,
+    minHeight: windowMinHeight,
+    maxHeight: windowMaxHeight,
+    transparent: true,
+    frame: false,
+    alwaysOnTop: true,
+    skipTaskbar: true,
+    resizable: true,
+    movable: true,
+    minimizable: false,
+    maximizable: false,
+    closable: true,
+    hasShadow: true,
+    show: false,
+    focusable: true,
+    // 'panel' type suppresses the macOS native OS focus ring on transparent frameless windows
+    ...(process.platform === 'darwin' ? { type: 'panel' } : {}),
+    webPreferences: {
+      nodeIntegration: false,
+      contextIsolation: true,
+      preload: path.join(__dirname, 'preload.js'),
+      backgroundThrottling: false,
+    },
+  });
+
+  if (process.platform === 'darwin') {
+    unifiedWindow.setWindowButtonVisibility(false);
+    unifiedWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+    unifiedWindow.setAlwaysOnTop(true, 'floating', 5);
+  }
+
+  const isDev = process.env.NODE_ENV === 'development';
+  if (isDev) {
+    unifiedWindow.loadURL('http://localhost:5173/index.html?mode=unified&cacheBust=' + Date.now());
+  } else {
+    unifiedWindow.loadFile(path.join(__dirname, '../../dist-renderer/index.html'),
+      { query: { mode: 'unified' } });
+  }
+
+  // Grant microphone access for voice input
+  unifiedWindow.webContents.session.setPermissionRequestHandler((webContents, permission, callback) => {
+    if (permission === 'media' || permission === 'microphone' || permission === 'audiocapture' || permission === 'speech') {
+      callback(true);
+    } else {
+      callback(false);
+    }
+  });
+  unifiedWindow.webContents.session.setPermissionCheckHandler((webContents, permission) => {
+    if (permission === 'media' || permission === 'microphone' || permission === 'audiocapture' || permission === 'speech') return true;
+    return false;
+  });
+
+  unifiedWindow.webContents.on('did-finish-load', () => {
+    console.log('[Unified Window] Content finished loading.');
+    unifiedWindow.webContents.setAudioMuted(false);
+  });
+
+  // Block navigation to prevent render frame disposal
+  let unifiedWindowLoaded = false;
+  unifiedWindow.webContents.once('did-finish-load', () => { unifiedWindowLoaded = true; });
+  unifiedWindow.webContents.on('will-navigate', (event, url) => {
+    if (unifiedWindowLoaded) {
+      console.log('[Unified Window] Blocking navigation to prevent render frame disposal:', url);
+      event.preventDefault();
+    }
+  });
+
+  unifiedWindow.webContents.on('did-fail-load', (event, errorCode, errorDescription) => {
+    console.error(`Unified Window failed to load: [${errorCode}] ${errorDescription}`);
+    if (errorCode === -102 || errorCode === -6) {
+      setTimeout(() => {
+        if (unifiedWindow && !unifiedWindow.isDestroyed()) {
+          console.log('[Unified Window] Retrying load...');
+          unifiedWindow.loadURL('http://localhost:5173/index.html?mode=unified&cacheBust=' + Date.now());
+        }
+      }, 500);
+    }
+  });
+
+  unifiedWindow.on('closed', () => {
+    console.log('Unified Window closed.');
+    unifiedWindow = null;
+  });
+
+  return unifiedWindow;
+}
+
 // Clipboard monitoring functionality
 function startClipboardMonitoring(checkInitial = false) {
   // Polling disabled — tagging is now explicit via Shift+Cmd+C shortcut
@@ -1090,8 +1201,8 @@ app.whenReady().then(async () => {
     }
   }
 
-  createPromptCaptureWindow();
-  createResultsWindow();
+  // Create unified window (combines prompt capture and results)
+  createUnifiedWindow();
 
   // Start overlay control HTTP server so command-service skills can hide/show windows before screenshotting
   startOverlayControlServer();
@@ -1477,6 +1588,7 @@ app.whenReady().then(async () => {
           resultsWindow.moveTop();
         }
         const progressCallback = (event) => {
+          safeSendUnified('automation:progress', event);
           if (resultsWindow && !resultsWindow.isDestroyed()) {
             safeSend(resultsWindow, 'automation:progress', event);
           }
@@ -1634,6 +1746,7 @@ app.whenReady().then(async () => {
 
     const id = promptQueue.enqueue(trimmedPrompt, enqueueOpts);
     console.log(`[PromptQueue] IPC prompt-queue:submit → enqueued id=${id}`);
+    safeSendUnified('queue:enqueued', { id });
   });
 
   ipcMain.on('prompt-queue:cancel', (_event, { id } = {}) => {
@@ -2205,24 +2318,41 @@ app.whenReady().then(async () => {
         }
       }
 
-      // Forward responses to Results window:
-      // - stategraph: full answer (if not already streamed live during execution)
+      // Forward responses to unifiedWindow:
+      // - stategraph: full answer (always send full answer to ensure display)
       // - fast: response text (butler reply — show so user can read what was spoken)
-      if (result.lane === 'stategraph' && result.fullAnswer && !result._hadLiveStream) {
+      if (result.lane === 'stategraph' && result.fullAnswer) {
+        // Send ws-bridge messages to unifiedWindow (outside resultsWindow guard)
+        // Note: removed !result._hadLiveStream check to ensure answer always displays
+        console.log(`[MAIN] Sending chunk to unifiedWindow, text length: ${result.fullAnswer?.length || 0}`);
+        safeSendUnified('ws-bridge:message', { type: 'chunk', text: result.fullAnswer, lane: 'stategraph' });
+        safeSendUnified('ws-bridge:message', { type: 'done', lane: 'stategraph' });
+        console.log('[MAIN] Sent chunk and done to unifiedWindow');
+        // Show unifiedWindow for results
+        if (unifiedWindow && !unifiedWindow.isDestroyed()) {
+          unifiedWindow.showInactive();
+          unifiedWindow.moveTop();
+        }
+        // Legacy resultsWindow support
         if (resultsWindow && !resultsWindow.isDestroyed()) {
           if (result.transcript) safeSend(resultsWindow, 'results-window:set-prompt', result.transcript);
           resultsWindow.showInactive();
           resultsWindow.moveTop();
-          safeSend(resultsWindow, 'ws-bridge:message', { type: 'chunk', text: result.fullAnswer, lane: 'stategraph' });
-          safeSend(resultsWindow, 'ws-bridge:message', { type: 'done', lane: 'stategraph' });
         }
       } else if (result.lane === 'fast' && result.responseEnglish && !result.skipped) {
+        // Send ws-bridge messages to unifiedWindow (outside resultsWindow guard)
+        safeSendUnified('ws-bridge:message', { type: 'chunk', text: result.responseEnglish, lane: 'fast' });
+        safeSendUnified('ws-bridge:message', { type: 'done', lane: 'fast' });
+        // Show unifiedWindow for results
+        if (unifiedWindow && !unifiedWindow.isDestroyed()) {
+          unifiedWindow.showInactive();
+          unifiedWindow.moveTop();
+        }
+        // Legacy resultsWindow support
         if (resultsWindow && !resultsWindow.isDestroyed()) {
           if (result.transcript) safeSend(resultsWindow, 'results-window:set-prompt', result.transcript);
           resultsWindow.showInactive();
           resultsWindow.moveTop();
-          safeSend(resultsWindow, 'ws-bridge:message', { type: 'chunk', text: result.responseEnglish, lane: 'fast' });
-          safeSend(resultsWindow, 'ws-bridge:message', { type: 'done', lane: 'fast' });
         }
       }
 
@@ -2301,19 +2431,38 @@ app.whenReady().then(async () => {
           safeSend(win, 'voice:transcript', { text: result.transcript, language: result.detectedLanguage });
         }
       }
-      if (result.lane === 'stategraph' && result.fullAnswer && !result._hadLiveStream) {
+      if (result.lane === 'stategraph' && result.fullAnswer) {
+        // Send ws-bridge messages to unifiedWindow (outside resultsWindow guard)
+        // Note: removed !result._hadLiveStream check to ensure answer always displays
+        console.log(`[MAIN] Sending chunk to unifiedWindow, text length: ${result.fullAnswer?.length || 0}`);
+        safeSendUnified('ws-bridge:message', { type: 'chunk', text: result.fullAnswer, lane: 'stategraph' });
+        safeSendUnified('ws-bridge:message', { type: 'done', lane: 'stategraph' });
+        console.log('[MAIN] Sent chunk and done to unifiedWindow');
+        // Show unifiedWindow for results
+        if (unifiedWindow && !unifiedWindow.isDestroyed()) {
+          unifiedWindow.showInactive();
+          unifiedWindow.moveTop();
+        }
+        // Legacy resultsWindow support
         if (resultsWindow && !resultsWindow.isDestroyed()) {
           if (result.transcript) safeSend(resultsWindow, 'results-window:set-prompt', result.transcript);
-          resultsWindow.showInactive(); resultsWindow.moveTop();
-          safeSend(resultsWindow, 'ws-bridge:message', { type: 'chunk', text: result.fullAnswer, lane: 'stategraph' });
-          safeSend(resultsWindow, 'ws-bridge:message', { type: 'done', lane: 'stategraph' });
+          resultsWindow.showInactive();
+          resultsWindow.moveTop();
         }
       } else if (result.lane === 'fast' && result.responseEnglish && !result.skipped) {
+        // Send ws-bridge messages to unifiedWindow (outside resultsWindow guard)
+        safeSendUnified('ws-bridge:message', { type: 'chunk', text: result.responseEnglish, lane: 'fast' });
+        safeSendUnified('ws-bridge:message', { type: 'done', lane: 'fast' });
+        // Show unifiedWindow for results
+        if (unifiedWindow && !unifiedWindow.isDestroyed()) {
+          unifiedWindow.showInactive();
+          unifiedWindow.moveTop();
+        }
+        // Legacy resultsWindow support
         if (resultsWindow && !resultsWindow.isDestroyed()) {
           if (result.transcript) safeSend(resultsWindow, 'results-window:set-prompt', result.transcript);
-          resultsWindow.showInactive(); resultsWindow.moveTop();
-          safeSend(resultsWindow, 'ws-bridge:message', { type: 'chunk', text: result.responseEnglish, lane: 'fast' });
-          safeSend(resultsWindow, 'ws-bridge:message', { type: 'done', lane: 'fast' });
+          resultsWindow.showInactive();
+          resultsWindow.moveTop();
         }
       }
       if (result.audioBase64) {
@@ -2406,8 +2555,10 @@ app.whenReady().then(async () => {
     // Show ResultsWindow and set prompt display (without stealing focus from active app)
     // Skip for skill-plan re-runs — PlanPanel already shows the plan in executing state
     // and firing set-prompt would reset PlanPanel to idle before step events arrive.
+    // Send set-prompt directly via safeSendUnified (bypasses resultsWindow relay) so the
+    // streamingResponse reset arrives at unifiedWindow BEFORE the first streaming token.
     if (resultsWindow && !resultsWindow.isDestroyed()) {
-      if (!_skillPlan) safeSend(resultsWindow, 'results-window:set-prompt', prompt);
+      if (!_skillPlan) safeSendUnified('results-window:set-prompt', prompt);
       resultsWindow.showInactive();
       resultsWindow.moveTop();
     }
@@ -2416,12 +2567,12 @@ app.whenReady().then(async () => {
     // reference becomes stale and safeSend would spam "Render frame was disposed" errors.
     const targetContents = (resultsWindow && !resultsWindow.isDestroyed()) ? resultsWindow.webContents : null;
 
-    // Stream callback: forward each token to ResultsWindow as it arrives.
+    // Stream callback: forward each token to unifiedWindow as it arrives.
     let streamingUsed = false;
     const streamCallback = (token) => {
       streamingUsed = true;
-      if (!targetContents || targetContents.isDestroyed()) return;
-      try { targetContents.send('ws-bridge:message', { type: 'chunk', text: token }); } catch (_) {}
+      console.log(`[MAIN] streamCallback sending token, length: ${token?.length || 0}`);
+      safeSendUnified('ws-bridge:message', { type: 'chunk', text: token });
     };
 
     // Per-invocation flag: fire queue:started + queue:enqueued only once per stategraph run
@@ -2453,10 +2604,11 @@ app.whenReady().then(async () => {
           safeSend(promptCaptureWindow, 'queue:started', {});
         }
       }
+      // Always forward to unifiedWindow (primary)
+      safeSendUnified('automation:progress', event);
+      // Legacy: also forward to resultsWindow if it still exists
       if (resultsWindow && !resultsWindow.isDestroyed()) {
         safeSend(resultsWindow, 'automation:progress', event);
-      } else if (!resultsWindow || resultsWindow.isDestroyed()) {
-        console.warn('[ProgressCallback] resultsWindow not available for event:', event.type);
       }
       // Forward all_done to promptCaptureWindow so its glow clears
       if (event.type === 'all_done' && promptCaptureWindow && !promptCaptureWindow.isDestroyed()) {
@@ -2511,6 +2663,12 @@ app.whenReady().then(async () => {
         if (promptCaptureWindow && !promptCaptureWindow.isDestroyed()) {
           safeSend(promptCaptureWindow, 'automation:progress', { type: 'plan:mode:cleared', source: 'complete' });
         }
+      }
+
+      // _skillPlan approval-gate path never emits plan:complete (only planExecutor.js does).
+      // Clear pendingPlanContext on all_done so the next prompt isn't routed as _planCorrectionMode.
+      if (event.type === 'all_done') {
+        pendingPlanContext = null;
       }
 
       // needs_skill gap — notify resultsWindow so AutomationProgress shows the capability gap card
@@ -3718,11 +3876,9 @@ app.whenReady().then(async () => {
         if (finalState.enrichmentNeeded?.length > 0 && finalState.answer && !finalState.pendingQuestion) {
           pausedAutomationState = { ...finalState, _pausedAt: Date.now() };
           console.log(`[StateGraph] Enrichment gap (${intentType}): pausing for entity info — next prompt will resume`);
-          if (resultsWindow && !resultsWindow.isDestroyed()) {
-            // Strip internal routing markers before showing to user
-            const cleanAnswer = finalState.answer.replace(/^\[.*?\]\s*/s, '').trim();
-            safeSend(resultsWindow, 'ws-bridge:message', { type: 'chunk', text: cleanAnswer });
-          }
+          // Strip internal routing markers before showing to user
+          const cleanAnswer = finalState.answer.replace(/^\[.*?\]\s*/s, '').trim();
+          safeSendUnified('ws-bridge:message', { type: 'chunk', text: cleanAnswer });
         }
         // Plan error not caught by progressCallback (e.g. no skillPlan at all)
         if (finalState.planError && !finalState.skillPlan && !finalState.pendingQuestion) {
@@ -3751,19 +3907,8 @@ app.whenReady().then(async () => {
         // Do NOT send ws-bridge:message for normal completion — AutomationProgress shows it
       }
 
-      // For non-streaming intents (e.g. memory_store), the answer node is skipped so
-      // streamCallback is never called. Send the answer as a single chunk so the UI
-      // shows it instead of the "Waiting for response..." placeholder.
-      if (intentType !== 'command_automate' && finalState.answer && !streamingUsed) {
-        if (resultsWindow && !resultsWindow.isDestroyed()) {
-          safeSend(resultsWindow, 'ws-bridge:message', { type: 'chunk', text: finalState.answer });
-        }
-      }
-
       // Signal stream end (stops thinking spinner + clears prompt glow)
-      if (resultsWindow && !resultsWindow.isDestroyed()) {
-        safeSend(resultsWindow, 'ws-bridge:message', { type: 'done' });
-      }
+      safeSendUnified('ws-bridge:message', { type: 'done' });
       if (promptCaptureWindow && !promptCaptureWindow.isDestroyed()) {
         safeSend(promptCaptureWindow, 'ws-bridge:message', { type: 'done' });
       }
@@ -3819,8 +3964,8 @@ app.whenReady().then(async () => {
       safeSend(promptCaptureWindow, 'app-control:mode-change', { active: false, app: null });
       safeSend(resultsWindow, 'app-control:mode-change', { active: false, app: null });
       const msg = `Control mode deactivated${prevApp ? ` (was: ${prevApp})` : ''}.`;
-      safeSend(resultsWindow, 'ws-bridge:message', { type: 'chunk', text: msg });
-      safeSend(resultsWindow, 'ws-bridge:message', { type: 'done' });
+      safeSendUnified('ws-bridge:message', { type: 'chunk', text: msg });
+      safeSendUnified('ws-bridge:message', { type: 'done' });
       if (promptQueueId) promptQueue.markDone(promptQueueId);
       return true;
     }
@@ -3915,66 +4060,37 @@ app.whenReady().then(async () => {
     // Instead: reply with an in-mode help nudge and swallow the prompt.
     console.log(`[AppControl] Unrecognized control command (swallowed): "${text}"`);
     const helpMsg = `⚠ Unknown control command: "${text}"\nTry: scroll up/down, type <text>, press <key>, or say **stop** to exit.`;
-    safeSend(resultsWindow, 'ws-bridge:message', { type: 'chunk', text: helpMsg });
-    safeSend(resultsWindow, 'ws-bridge:message', { type: 'done' });
+    safeSendUnified('ws-bridge:message', { type: 'chunk', text: helpMsg });
+    safeSendUnified('ws-bridge:message', { type: 'done' });
     if (promptQueueId) promptQueue.markDone(promptQueueId);
     return true;
   }
 
   globalShortcut.register('CommandOrControl+Shift+Space', () => {
-    if (promptCaptureWindow) {
-      if (promptCaptureWindow.isVisible()) {
-        promptCaptureWindow.hide();
-        if (resultsWindow) resultsWindow.hide();
+    if (unifiedWindow) {
+      if (unifiedWindow.isVisible()) {
+        unifiedWindow.hide();
         stopClipboardMonitoring();
       } else {
         const primaryDisplay = screen.getPrimaryDisplay();
         const { width: screenWidth, height: screenHeight } = primaryDisplay.workAreaSize;
         
-        // Position prompt capture at center-bottom of screen
-        const pcBounds = promptCaptureWindow.getBounds();
-        const pcWidth = pcBounds.width || 500;
-        const pcX = Math.round((screenWidth - pcWidth) / 2);
-        const pcY = screenHeight - 140;
-        promptCaptureWindow.setPosition(pcX, pcY);
-        promptCaptureWindow.show();
-        promptCaptureWindow.focus();
-        safeSend(promptCaptureWindow, 'prompt-capture:show', { position: { x: pcX, y: pcY } });
-
-        // Position results window in bottom-right corner
-        if (resultsWindow && !resultsWindow.isDestroyed()) {
-          const margin = 20;
-          let newX;
-          let newY;
-          
-          // If we have a tracked content height, reuse it; otherwise default to 300
-          if (resultsWindowInitialHeight && resultsWindowInitialHeight > 0) {
-            // Preserve existing content-based size, just re-show at correct position
-            const currentBounds = resultsWindow.getBounds();
-            const windowWidth = currentBounds.width || 400;
-            const windowHeight = currentBounds.height || 300;
-            newX = screenWidth - windowWidth - margin;
-            newY = screenHeight - windowHeight - margin;
-            console.log(`📐 [Results Window] Re-showing with existing size ${windowWidth}x${windowHeight} at (${newX}, ${newY})`);
-            resultsWindow.setBounds({ x: newX, y: newY, width: windowWidth, height: windowHeight });
-          } else {
-            // First time or no content yet — use default size
-            const windowWidth = 400;
-            const windowHeight = 300;
-            newX = screenWidth - windowWidth - margin;
-            newY = screenHeight - windowHeight - margin;
-            console.log(`📐 [Results Window] Initial show ${windowWidth}x${windowHeight} at (${newX}, ${newY})`);
-            resultsWindow.setBounds({ x: newX, y: newY, width: windowWidth, height: windowHeight });
-          }
-
-          resultsWindow.showInactive();
-          // Notify renderer to re-measure and resize based on current content
-          safeSend(resultsWindow, 'results-window:show', { position: { x: newX, y: newY } });
-          console.log('[Results Window] Shown alongside Prompt Capture Window.');
-        }
+        // Position unified window at bottom-right of screen (like old ResultsWindow)
+        const bounds = unifiedWindow.getBounds();
+        const windowWidth = bounds.width || 400;
+        const windowHeight = bounds.height || 300;
+        const margin = 20;
+        const x = screenWidth - windowWidth - margin;
+        const y = screenHeight - windowHeight - margin;
+        
+        console.log(`[Unified Window] Positioning at (${x}, ${y}) - screen: ${screenWidth}x${screenHeight}, window: ${windowWidth}x${windowHeight}`);
+        _userHasMovedPanel = false; // Reset on shortcut-show so resize reanchors to bottom-right
+        unifiedWindow.setBounds({ x, y, width: windowWidth, height: windowHeight });
+        unifiedWindow.show();
+        unifiedWindow.focus();
 
         startClipboardMonitoring(true);
-        console.log('[Prompt Capture] Activated via global shortcut.');
+        console.log('[Unified Window] Activated via global shortcut.');
       }
     }
   });
@@ -3982,10 +4098,9 @@ app.whenReady().then(async () => {
   // Backtick PTT — toggle mode: press once to start, press again to stop.
   let pttGlobalActive = false;
   const safeSendToWins = (channel) => {
-    [promptCaptureWindow, resultsWindow].forEach(w => {
-      if (!w || w.isDestroyed()) return;
-      try { w.webContents.send(channel); } catch (_) {}
-    });
+    if (unifiedWindow && !unifiedWindow.isDestroyed()) {
+      try { unifiedWindow.webContents.send(channel); } catch (_) {}
+    }
   };
 
   globalShortcut.register('`', () => {
@@ -4068,7 +4183,7 @@ app.whenReady().then(async () => {
           resultsWindow.showInactive();
         }
       }
-      safeSend(promptCaptureWindow, 'prompt-capture:add-highlight', tagContent);
+      safeSend(unifiedWindow, 'highlights:update', [{ type: 'text', content: tagContent }]);
       sentHighlights.add(tagContent);
     }
 
@@ -4079,19 +4194,37 @@ app.whenReady().then(async () => {
     }, 500);
   });
 
+  // File drop handler — receives files from drag-and-drop in renderer
+  ipcMain.on('file-drop', (_event, data) => {
+    console.log('[IPC] file-drop received:', data);
+    if (data.files && data.files.length > 0) {
+      const highlights = data.files.map((f) => {
+        const isDir = f.type === '' || f.name.endsWith('/');
+        return {
+          type: isDir ? 'folder' : 'file',
+          content: f.name,
+          fullPath: f.path || f.name,
+        };
+      });
+      console.log('[IPC] Sending file-drop:result with highlights:', highlights);
+      safeSend(unifiedWindow, 'file-drop:result', { highlights });
+    }
+  });
+
   // Native file picker — opens dialog and sends selected paths back to renderer
-  ipcMain.on('prompt-capture:pick-file', async (event) => {
+  ipcMain.on('dialog:open-file', async () => {
     const { dialog } = require('electron');
-    const result = await dialog.showOpenDialog(promptCaptureWindow, {
+    const result = await dialog.showOpenDialog(unifiedWindow, {
       properties: ['openFile', 'openDirectory', 'multiSelections'],
       title: 'Select file or folder to tag as context',
     });
     if (!result.canceled && result.filePaths.length > 0) {
-      result.filePaths.forEach(fp => {
-        if (promptCaptureWindow && !promptCaptureWindow.isDestroyed()) {
-          safeSend(promptCaptureWindow, 'prompt-capture:add-highlight', `[File: ${fp}]`);
-        }
-      });
+      const highlights = result.filePaths.map(fp => ({
+        type: 'file',
+        content: fp.split('/').pop() || fp,
+        fullPath: fp,
+      }));
+      safeSend(unifiedWindow, 'file-drop:result', { highlights });
     }
   });
 
@@ -4228,19 +4361,6 @@ app.whenReady().then(async () => {
     const initialState = {
       message: `Build ThinkDrop skill: ${displayName || name}`,
       intent: { type: 'skill_build', confidence: 1.0 },
-      skillBuildRequest: { name, displayName, description, category, ocUrl, rawUrl },
-      skillBuildRound: 1,
-      skillBuildRounds: [],
-      skillBuildPhase: 'fetching',
-      progressCallback,
-      streamCallback: (token) => {
-        if (resultsWindow && !resultsWindow.isDestroyed()) {
-          try { resultsWindow.webContents.send('ws-bridge:message', { type: 'chunk', text: token }); } catch (_) {}
-        }
-      },
-      confirmInstallCallback: () => Promise.resolve(true),
-      confirmGuideCallback: () => Promise.resolve(false),
-      isGuideCancelled: () => false,
       context: { sessionId: currentSessionId, userId: 'default_user', source: 'skill_store' },
     };
 
@@ -4265,14 +4385,10 @@ app.whenReady().then(async () => {
         }
       } else if (finalState.skillBuildPhase === 'done') {
         safeSend(promptCaptureWindow, 'skill:build-done', { name, ok: true, installedPath: finalState.skillBuildInstalledPath });
-        if (resultsWindow && !resultsWindow.isDestroyed()) {
-          safeSend(resultsWindow, 'ws-bridge:message', { type: 'done' });
-        }
+        safeSendUnified('ws-bridge:message', { type: 'done' });
       } else if (finalState.skillBuildPhase === 'error') {
         safeSend(promptCaptureWindow, 'skill:build-done', { name, ok: false, error: finalState.skillBuildError });
-        if (resultsWindow && !resultsWindow.isDestroyed()) {
-          safeSend(resultsWindow, 'ws-bridge:message', { type: 'done' });
-        }
+        safeSendUnified('ws-bridge:message', { type: 'done' });
       }
     } catch (err) {
       console.error(`[SkillBuild] Pipeline error for "${name}":`, err.message);
@@ -4519,12 +4635,94 @@ app.whenReady().then(async () => {
     }
   });
 
-  ipcMain.on('results-window:show', () => {
-    if (resultsWindow) {
-      resultsWindow.show();
-      if (!promptCaptureWindow.isVisible()) {
-        promptCaptureWindow.show();
+  ipcMain.on('window:hide', () => {
+    if (unifiedWindow) {
+      unifiedWindow.hide();
+    }
+  });
+
+  ipcMain.on('window:resize', (_e, { width }) => {
+    console.log(`[IPC] window:resize called with width: ${width}`);
+    console.log(`[DEBUG] window:resize called with width: ${width}`);
+    if (unifiedWindow && !unifiedWindow.isDestroyed()) {
+      const bounds = unifiedWindow.getBounds();
+      console.log(`[IPC] Current bounds:`, bounds);
+      console.log(`[DEBUG] Current bounds:`, bounds);
+      unifiedWindow.setBounds({ ...bounds, width });
+      console.log(`[IPC] Resized to width: ${width}`);
+      console.log(`[DEBUG] Resized to width: ${width}`);
+    } else {
+      console.log('[IPC] unifiedWindow not available');
+      console.log('[DEBUG] unifiedWindow not available');
+    }
+  });
+
+  // Smart resize with position awareness - expands toward center of screen
+  ipcMain.on('window:smart-resize', (_e, { width, height, animate = true, keepPosition = false }) => {
+    if (!unifiedWindow || unifiedWindow.isDestroyed()) return;
+    
+    const bounds = unifiedWindow.getBounds();
+    const { width: screenWidth, height: screenHeight } = screen.getPrimaryDisplay().workAreaSize;
+    const margin = 20;
+    let newHeight = Math.min(height || 900, 900);
+    // If the user has manually dragged the panel, always keep its position
+    const effectiveKeepPosition = keepPosition || _userHasMovedPanel;
+
+    let newX, newY;
+    if (effectiveKeepPosition) {
+      // Keep current position — only nudge x left if panel would clip off the right screen edge
+      newY = Math.min(bounds.y, screenHeight - height - margin);
+      newY = Math.max(margin, newY);
+      newX = Math.min(bounds.x, screenWidth - width - margin);
+      newX = Math.max(margin, newX);
+    } else {
+      // Original behavior: anchor to screen bottom, adjust for right-side overflow
+      const isExpanding = width > 500;
+      const isOnRightSide = (bounds.x + bounds.width) > (screenWidth - 100);
+      newY = screenHeight - newHeight - margin;
+      newX = bounds.x;
+      if (isExpanding && isOnRightSide) {
+        newX = Math.max(margin, bounds.x - (width - bounds.width));
       }
+      newX = Math.max(margin, Math.min(newX, screenWidth - width - margin));
+    }
+
+    console.log(`[Smart Resize] width: ${width}, height: ${newHeight}, x: ${newX}, y: ${newY}, keepPosition: ${effectiveKeepPosition}`);
+    unifiedWindow.setBounds({ x: Math.round(newX), y: Math.round(newY), width, height: newHeight }, animate);
+  });
+
+  // Dynamic height resize based on content (from UnifiedOverlay)
+  ipcMain.on('unified:resize-window', (_e, { height }) => {
+    if (!unifiedWindow || unifiedWindow.isDestroyed()) return;
+    
+    const bounds = unifiedWindow.getBounds();
+    const { height: screenHeight } = screen.getPrimaryDisplay().workAreaSize;
+    const margin = 20;
+    
+    // Clamp height to reasonable bounds
+    const newHeight = Math.min(Math.max(height, 350), 900);
+    
+    // If user has manually moved the panel, preserve their Y position (grow upward from current bottom)
+    // Otherwise reanchor to screen bottom-right
+    const newY = _userHasMovedPanel
+      ? Math.max(margin, bounds.y + bounds.height - newHeight) // grow upward from current bottom edge
+      : screenHeight - newHeight - margin;
+    
+    console.log(`[Unified Window] Resizing to height: ${newHeight} (y: ${newY}, userMoved: ${_userHasMovedPanel})`);
+    unifiedWindow.setBounds({
+      x: bounds.x,
+      y: newY,
+      width: bounds.width,
+      height: newHeight
+    }, true); // true = animate
+  });
+
+  ipcMain.on('window:move', (_e, { x, y }) => {
+    if (unifiedWindow && !unifiedWindow.isDestroyed()) {
+      _userHasMovedPanel = true;
+      unifiedWindow.setPosition(x, y);
+    } else {
+      console.log('[IPC] unifiedWindow not available');
     }
   });
 
@@ -4570,47 +4768,38 @@ app.whenReady().then(async () => {
     console.log('[Results Window] Received set-prompt request.');
     console.log(`[Results Window] Prompt text length: ${text.length} characters.`);
 
-    if (resultsWindow && !resultsWindow.isDestroyed()) {
+    if (unifiedWindow && !unifiedWindow.isDestroyed()) {
       console.log(`[Results Window] Setting prompt text and showing window. ${text.substring(0, 100)}...`);
-      safeSend(resultsWindow, 'results-window:set-prompt', text);
+      safeSend(unifiedWindow, 'results-window:set-prompt', text);
       
-  
-      const primaryDisplay = screen.getPrimaryDisplay();
-      const { width: screenWidth, height: screenHeight } = primaryDisplay.workAreaSize;
-      const windowWidth = 400; // Assuming a default width, adjust as needed
-      const windowHeight = 300; // Assuming a default height, adjust as needed
-      const margin = 20;
+      // Don't change unified window position/size - keep it where user placed it
       
-      resultsWindow.setPosition(screenWidth - windowWidth - margin, screenHeight - windowHeight - margin);
-      resultsWindow.setSize(windowWidth, windowHeight);
-      
-      
-      if (resultsWindow.webContents.isLoading()) {
+      if (unifiedWindow.webContents.isLoading()) {
         console.log('[Results Window] Still loading content, waiting to show.');
-        resultsWindow.webContents.once('did-finish-load', () => {
+        unifiedWindow.webContents.once('did-finish-load', () => {
           console.log('[Results Window] Finished loading, now showing window.');
-          safeSend(resultsWindow, 'results-window:set-prompt', text);
-          resultsWindow.showInactive(); // show without stealing focus
+          safeSend(unifiedWindow, 'results-window:set-prompt', text);
+          unifiedWindow.showInactive(); // show without stealing focus
         });
       } else {
         console.log('[Results Window] Content already loaded, showing window immediately.');
-        resultsWindow.showInactive(); // show without stealing focus from active app
-        resultsWindow.moveTop();
+        unifiedWindow.showInactive(); // show without stealing focus from active app
+        unifiedWindow.moveTop();
         console.log('[Results Window] Prompt text set and window shown.');
       }   
     } else {
-      console.error('[Results Window] Cannot set prompt, window is not available.');
-      if (!resultsWindow) {
-        console.log('[Results Window] Recreating results window.');
-        createResultsWindow();
+      console.error('[Results Window] Cannot set prompt, unified window is not available.');
+      if (!unifiedWindow) {
+        console.log('[Results Window] Recreating unified window.');
+        createUnifiedWindow();
       }
     }
   });
 
-  ipcMain.on('results-window:show-error', (event, errorMessage) => {
-    if (resultsWindow) {
-      safeSend(resultsWindow, 'results-window:display-error', errorMessage);
-      resultsWindow.show();
+  ipcMain.on('results-window:show-error', (_e, errorMessage) => {
+    if (unifiedWindow) {
+      safeSend(unifiedWindow, 'results-window:display-error', errorMessage);
+      unifiedWindow.show();
     }
   });
 
@@ -6833,8 +7022,7 @@ app.on('before-quit', (e) => {
 
 app.on('activate', () => {
   if (BrowserWindow.getAllWindows().length === 0) {
-    createPromptCaptureWindow();
-    createResultsWindow();
-    if (resultsWindow) resultsWindow.hide();
+    createUnifiedWindow();
+    if (unifiedWindow) unifiedWindow.hide();
   }
 });

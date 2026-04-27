@@ -8,7 +8,7 @@
  *   4. Final summary on completion or error banner on failure
  */
 
-import { useEffect, useState, useRef } from 'react';
+import { useEffect, useState, useRef, useCallback } from 'react';
 import { RichContentRenderer } from './rich-content';
 
 const ipcRenderer = (window as any).electron?.ipcRenderer;
@@ -102,7 +102,7 @@ interface GuideStepCard {
 }
 
 interface AutomationProgressProps {
-  onHeightChange?: () => void;
+  onHeightChange?: (height: number) => void;
   onActiveChange?: (active: boolean) => void;
 }
 
@@ -528,10 +528,30 @@ export default function AutomationProgress({ onHeightChange, onActiveChange }: A
   const agentLiveTurns = useRef<Map<number, { turn: number; maxTurns: number }>>(new Map());
   const [_heartbeatTick, setHeartbeatTick] = useState(0);
 
-  // Notify parent to re-measure height whenever visible content changes
-  useEffect(() => {
-    onHeightChange?.();
-  }, [phase, steps, expandedSteps]);
+  // Callback ref for ResizeObserver — useCallback fires when div actually mounts/unmounts.
+  // useRef+useEffect([]) misses the mount because the component returns null during idle phase.
+  const rootObserverRef = useRef<ResizeObserver | null>(null);
+  const rootDebounceRef = useRef<NodeJS.Timeout | null>(null);
+  const rootCallbackRef = useCallback((node: HTMLDivElement | null) => {
+    if (rootObserverRef.current) {
+      rootObserverRef.current.disconnect();
+      rootObserverRef.current = null;
+    }
+    if (rootDebounceRef.current) {
+      clearTimeout(rootDebounceRef.current);
+      rootDebounceRef.current = null;
+    }
+    if (!node) return;
+    const obs = new ResizeObserver(([entry]) => {
+      if (rootDebounceRef.current) clearTimeout(rootDebounceRef.current);
+      rootDebounceRef.current = setTimeout(() => {
+        console.log('[AutomationProgress] ResizeObserver fired, height:', Math.round(entry.contentRect.height));
+        onHeightChange?.(Math.round(entry.contentRect.height));
+      }, 60);
+    });
+    obs.observe(node);
+    rootObserverRef.current = obs;
+  }, [onHeightChange]);
 
   // Notify parent when we become active/inactive
   // Only active during planning/executing — done/failed/idle should NOT keep the glow on
@@ -587,6 +607,7 @@ export default function AutomationProgress({ onHeightChange, onActiveChange }: A
       stepOffsetRef.current = 0;
     };
     ipcRenderer.on('results-window:set-prompt', handleNewPrompt);
+    ipcRenderer.on('queue:enqueued', handleNewPrompt);
 
     const handleScanProgress = (_event: any, data: any) => {
       if (!active) return;
@@ -1110,6 +1131,7 @@ export default function AutomationProgress({ onHeightChange, onActiveChange }: A
 
     // Capture streaming synthesis answer chunks
     const handleBridgeMessage = (_event: any, message: any) => {
+      if (!message) return;
       if (message.type === 'chunk' || message.type === 'llm_stream_chunk') {
         const text = message?.text || message.payload?.text || '';
         if (text) setSynthesisAnswer(prev => prev + text);
@@ -1125,21 +1147,25 @@ export default function AutomationProgress({ onHeightChange, onActiveChange }: A
       setPhase('executing');
     };
 
-    ipcRenderer.on('automation:progress', handleProgress);
-    ipcRenderer.on('ws-bridge:message', handleBridgeMessage);
-    ipcRenderer.on('app-control:mode-change', handleControlModeChange);
-    ipcRenderer.on('plan:approved', handlePlanApproved);
+    const AP_TOKEN = 'automation-progress';
+    ipcRenderer.on('results-window:set-prompt', handleNewPrompt, AP_TOKEN);
+    ipcRenderer.on('queue:enqueued', handleNewPrompt, AP_TOKEN);
+    ipcRenderer.on('scan:progress', handleScanProgress, AP_TOKEN);
+    ipcRenderer.on('scan:discovery', handleScanDiscovery, AP_TOKEN);
+    ipcRenderer.on('automation:progress', handleProgress, AP_TOKEN);
+    ipcRenderer.on('ws-bridge:message', handleBridgeMessage, AP_TOKEN);
+    ipcRenderer.on('app-control:mode-change', handleControlModeChange, AP_TOKEN);
+    ipcRenderer.on('plan:approved', handlePlanApproved, AP_TOKEN);
     return () => {
       active = false;
-      if (ipcRenderer.removeListener) {
-        ipcRenderer.removeListener('automation:progress', handleProgress);
-        ipcRenderer.removeListener('results-window:set-prompt', handleNewPrompt);
-        ipcRenderer.removeListener('ws-bridge:message', handleBridgeMessage);
-        ipcRenderer.removeListener('app-control:mode-change', handleControlModeChange);
-        ipcRenderer.removeListener('plan:approved', handlePlanApproved);
-        ipcRenderer.removeListener('scan:progress', handleScanProgress);
-        ipcRenderer.removeListener('scan:discovery', handleScanDiscovery);
-      }
+      ipcRenderer.removeListenerByToken('automation:progress', AP_TOKEN);
+      ipcRenderer.removeListenerByToken('results-window:set-prompt', AP_TOKEN);
+      ipcRenderer.removeListenerByToken('queue:enqueued', AP_TOKEN);
+      ipcRenderer.removeListenerByToken('ws-bridge:message', AP_TOKEN);
+      ipcRenderer.removeListenerByToken('app-control:mode-change', AP_TOKEN);
+      ipcRenderer.removeListenerByToken('plan:approved', AP_TOKEN);
+      ipcRenderer.removeListenerByToken('scan:progress', AP_TOKEN);
+      ipcRenderer.removeListenerByToken('scan:discovery', AP_TOKEN);
     };
   }, []);
 
@@ -1201,7 +1227,9 @@ export default function AutomationProgress({ onHeightChange, onActiveChange }: A
   const handlePlanApprove = () => {
     if (!planReview) return;
     ipcRenderer?.send('plan:approve', { planFile: planReview.planFile });
-    // phase transitions to 'executing' via plan:approved IPC event
+    // Optimistic UI: transition immediately without waiting for plan:approved IPC echo
+    setPlanReview(null);
+    setPhase('executing');
   };
 
   const handlePlanCancel = () => {
@@ -1229,7 +1257,7 @@ export default function AutomationProgress({ onHeightChange, onActiveChange }: A
   if (phase === 'idle' && !controlMode.active && !maintenanceScan && !scanDiscovery) return null;
 
   return (
-    <div className="space-y-3">
+    <div ref={rootCallbackRef} className="space-y-3">
       <style>{`
         @keyframes agentGloss {
           0% { background-position: -200% center; }
@@ -1866,7 +1894,7 @@ export default function AutomationProgress({ onHeightChange, onActiveChange }: A
 
       {/* ── Step list ────────────────────────────────────────────────────── */}
       {steps.length > 0 && (
-        <div className="space-y-2" style={{ maxHeight: 340, overflowY: 'auto', overflowX: 'hidden' }}>
+        <div className="space-y-2" style={{ overflowX: 'hidden' }}>
           {steps.map((step) => {
             const isSynthesize = step.skill === 'synthesize';
             const isNeedsSkill = step.skill === 'needs_skill';
