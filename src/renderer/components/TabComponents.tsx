@@ -75,6 +75,31 @@ export interface SkillItem {
   projectId?: string;
 }
 
+// ── Agent types ────────────────────────────────────────────────────────────────
+
+export interface AgentSkill {
+  name: string;           // e.g., create_track
+  status: 'draft' | 'published';
+  description?: string;
+  parameters?: string[];  // parameter names for the skill
+  testable?: boolean;
+}
+
+export interface AgentItem {
+  id: string;             // e.g., spotify.agent
+  name: string;           // display name
+  domain: string;         // e.g., open.spotify.com
+  category: string;       // Entertainment & Media, etc.
+  status: 'pending' | 'learning' | 'learned';
+  created?: string;       // ISO timestamp
+  lastLearned?: string;   // ISO timestamp
+  userGoals?: string[];   // what user wants to accomplish (multiple goals)
+  userGoal?: string;      // legacy: single goal (keep for backward compat)
+  learnedStates?: string[]; // page states discovered during learning
+  skills?: AgentSkill[];  // trained skills
+  faviconUrl?: string;    // cached favicon path
+}
+
 export type CronStatus = 'active' | 'idle' | 'paused' | 'error';
 export type CronStepStatus = 'pending' | 'running' | 'done' | 'failed';
 export interface CronStep {
@@ -1614,3 +1639,7 @@ export function StoreTab({ initialSearch, onBuildSkill }: {
     </div>
   );
 }
+
+// ── Agents tab (re-export from separate file) ─────────────────────────────────
+
+export { AgentsTab } from './AgentsTab';

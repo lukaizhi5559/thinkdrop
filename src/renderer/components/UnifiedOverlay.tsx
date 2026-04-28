@@ -9,6 +9,7 @@ import {
   SkillsTab,
   ConnectionsTab,
   StoreTab,
+  AgentsTab,
   type TabId,
 } from './TabComponents';
 import VoiceButton from './VoiceButton';
@@ -17,9 +18,11 @@ import { RichContentRenderer } from './rich-content';
 import SkillBuildProgress from './SkillBuildProgress';
 import { SlideoutDrawer } from './SlideoutDrawer';
 import { SettingsTab } from './SettingsTab';
+import { TrainingBanner } from './TrainingBanner';
+import { TeachMeDialog } from './TeachMeDialog';
 
 // --- Types (imported from TabComponents for compatibility) ---
-import type { QueueItem, CronItem, SkillItem, ConnectionItem } from './TabComponents';
+import type { QueueItem, CronItem, SkillItem, ConnectionItem, AgentItem } from './TabComponents';
 
 interface PromptQueueItem {
   id: string;
@@ -35,6 +38,18 @@ interface SkillBuildState {
   error?: string;
   language?: string;
   confirmMessage?: string;
+}
+
+interface TrainingModeState {
+  active: boolean;
+  agentId: string | null;
+  hostname: string | null;
+  phase: 'observing' | 'teach_me' | 'review' | 'testing' | 'generating';
+  narrative: Array<{ timestamp: number; action: string; description: string }>;
+  teachMeQuestion?: string;
+  teachMeOptions?: string[];
+  testResult?: { success: boolean; message: string };
+  generatedSkill?: { name: string; parameters: string[] };
 }
 
 interface BridgeStatus {
@@ -102,17 +117,32 @@ export function UnifiedOverlay() {
   // Synthesis/streaming response block is collapsed by default; user can expand
   const [isSynthesisCollapsed, setIsSynthesisCollapsed] = useState(true);
 
-  // --- Queue/Cron/Skills/Connections State ---
+  // --- Queue/Cron/Skills/Connections/Agents State ---
   const [queueItems, setQueueItems] = useState<QueueItem[]>([]);
   const [cronItems, setCronItems] = useState<CronItem[]>([]);
   const [skillItems, setSkillItems] = useState<SkillItem[]>([]);
   const [connectionItems, setConnectionItems] = useState<ConnectionItem[]>([]);
+  const [agentItems, setAgentItems] = useState<AgentItem[]>([]);
   const [promptQueueItems, setPromptQueueItems] = useState<PromptQueueItem[]>([]);
   const [restartAlert, setRestartAlert] = useState<{ items: PromptQueueItem[] } | null>(null);
 
   // --- Skill Build State ---
   const [skillBuild, setSkillBuild] = useState<SkillBuildState | null>(null);
   const pendingInstallRef = useRef<((confirmed: boolean) => void) | null>(null);
+
+  // --- Agent Training State ---
+  const [trainingMode, setTrainingMode] = useState<TrainingModeState | null>(null);
+
+  // --- Agent Learn State ---
+  const [learnMode, setLearnMode] = useState<{
+    active: boolean;
+    agentId: string | null;
+    hostname: string | null;
+    progress: number;
+    message: string;
+    discoveredStates: string[];
+    startTime: number | null;
+  } | null>(null);
 
   // --- UI State ---
   const [schedulePending, setSchedulePending] = useState<{ id: string; label: string; targetTime: string } | null>(null);
@@ -197,6 +227,8 @@ export function UnifiedOverlay() {
       ipcRenderer?.send('connections:list');
     } else if (tab === 'cron') {
       ipcRenderer?.send('cron:list');
+    } else if (tab === 'agents') {
+      ipcRenderer?.send('agents:list');
     }
   }, []);
 
@@ -216,6 +248,8 @@ export function UnifiedOverlay() {
       ipcRenderer?.send('connections:list');
     } else if (tab === 'cron') {
       ipcRenderer?.send('cron:list');
+    } else if (tab === 'agents') {
+      ipcRenderer?.send('agents:list');
     }
   }, []);
 
@@ -780,6 +814,11 @@ export function UnifiedOverlay() {
       setSkillItems(items);
     };
 
+    // --- Agents ---
+    const handleAgentsList = (items: AgentItem[]) => {
+      setAgentItems(items);
+    };
+
     // --- Connections ---
     const handleConnectionsList = (items: ConnectionItem[]) => {
       setConnectionItems(items);
@@ -902,6 +941,159 @@ export function UnifiedOverlay() {
       setSearchSources(sources);
     };
 
+    // --- Agent Learn Progress ---
+    const handleAgentLearnProgress = (data: { 
+      type: string; 
+      agentId: string; 
+      hostname?: string; 
+      startUrl?: string;
+      message?: string;
+      states?: string[];
+      stateCount?: number;
+      duration?: number;
+      error?: string;
+    }) => {
+      switch (data.type) {
+        case 'learn:start':
+          setLearnMode({
+            active: true,
+            agentId: data.agentId,
+            hostname: data.hostname || null,
+            progress: 0,
+            message: 'Starting learn mode...',
+            discoveredStates: [],
+            startTime: Date.now(),
+          });
+          break;
+        case 'learn:navigating':
+          setLearnMode(prev => prev ? { ...prev, message: data.message || 'Navigating...' } : null);
+          break;
+        case 'learn:exploring':
+          setLearnMode(prev => prev ? { 
+            ...prev, 
+            progress: (prev.discoveredStates.length / (data.stateCount || 10)) * 100,
+            message: data.message || 'Exploring site...'
+          } : null);
+          break;
+        case 'learn:state_discovered':
+          setLearnMode(prev => prev ? { 
+            ...prev, 
+            discoveredStates: [...prev.discoveredStates, ...(data.states || [])],
+            message: `Discovered ${data.states?.length || 0} new states`
+          } : null);
+          break;
+        case 'learn:complete':
+          setLearnMode(prev => prev ? {
+            ...prev,
+            active: false,
+            progress: 100,
+            message: `Learn complete! Found ${data.stateCount} states`,
+            discoveredStates: data.states || [],
+          } : null);
+          // Clear after 3 seconds
+          setTimeout(() => setLearnMode(null), 3000);
+          break;
+        case 'learn:error':
+          setLearnMode(prev => prev ? {
+            ...prev,
+            active: false,
+            message: `Error: ${data.error}`,
+          } : null);
+          setTimeout(() => setLearnMode(null), 5000);
+          break;
+        case 'learn:cancelling':
+          setLearnMode(prev => prev ? { ...prev, message: 'Cancelling...' } : null);
+          break;
+        case 'learn:cancelled':
+          setLearnMode({
+            active: false,
+            agentId: data.agentId,
+            hostname: null,
+            progress: 0,
+            message: 'Learn cancelled',
+            discoveredStates: [],
+            startTime: null,
+          });
+          setTimeout(() => setLearnMode(null), 3000);
+          break;
+      }
+    };
+
+    // --- Agent Training Progress ---
+    const handleTrainingProgress = (data: {
+      type: string;
+      agentId: string;
+      hostname?: string;
+      startUrl?: string;
+      message?: string;
+      narrative?: Array<{ timestamp: number; action: string; description: string }>;
+      question?: string;
+      options?: string[];
+      success?: boolean;
+      skillName?: string;
+      parameters?: string[];
+    }) => {
+      switch (data.type) {
+        case 'training:start':
+          setTrainingMode({
+            active: true,
+            agentId: data.agentId,
+            hostname: data.hostname || null,
+            phase: 'observing',
+            narrative: [],
+          });
+          break;
+        case 'training:observing':
+        case 'training:narrative':
+          setTrainingMode(prev => prev ? {
+            ...prev,
+            phase: 'observing',
+            narrative: data.narrative || prev.narrative,
+          } : null);
+          break;
+        case 'training:teach_me':
+          setTrainingMode(prev => prev ? {
+            ...prev,
+            phase: 'teach_me',
+            teachMeQuestion: data.question,
+            teachMeOptions: data.options,
+          } : null);
+          break;
+        case 'training:review':
+          setTrainingMode(prev => prev ? {
+            ...prev,
+            phase: 'review',
+            narrative: data.narrative || prev.narrative,
+          } : null);
+          break;
+        case 'testing:start':
+        case 'testing:progress':
+          setTrainingMode(prev => prev ? { ...prev, phase: 'testing' } : null);
+          break;
+        case 'testing:complete':
+        case 'testing:failed':
+          setTrainingMode(prev => prev ? {
+            ...prev,
+            phase: 'review',
+            testResult: { success: data.success || false, message: data.message || '' },
+          } : null);
+          break;
+        case 'generating:start':
+          setTrainingMode(prev => prev ? { ...prev, phase: 'generating' } : null);
+          break;
+        case 'generating:complete':
+          setTrainingMode(prev => prev ? {
+            ...prev,
+            phase: 'review',
+            generatedSkill: { name: data.skillName || '', parameters: data.parameters || [] },
+          } : null);
+          break;
+        case 'training:cancelled':
+          setTrainingMode(null);
+          break;
+      }
+    };
+
     // Register all listeners with the stable 'unified-overlay' token.
     // Preload deduplicates per channel so StrictMode remounts are safe.
     const token = listenerToken.current;
@@ -921,6 +1113,7 @@ export function UnifiedOverlay() {
     ipcRenderer.on('cron:list', handleCronList, token);
     ipcRenderer.on('cron:update', handleCronUpdate, token);
     ipcRenderer.on('skills:list', handleSkillsList, token);
+    ipcRenderer.on('agents:list', handleAgentsList, token);
     ipcRenderer.on('connections:list', handleConnectionsList, token);
     ipcRenderer.on('prompt-queue:update', handlePromptQueueUpdate, token);
     ipcRenderer.on('prompt-queue:restart-alert', handleRestartAlert, token);
@@ -937,6 +1130,8 @@ export function UnifiedOverlay() {
     ipcRenderer.on('schedule:pending', handleSchedulePending, token);
     ipcRenderer.on('bridge:status', handleBridgeStatus, token);
     ipcRenderer.on('scan:progress', handleScanProgress, token);
+    ipcRenderer.on('agents:learn-progress', handleAgentLearnProgress, token);
+    ipcRenderer.on('agents:train-progress', handleTrainingProgress, token);
     ipcRenderer.on('action-chips', handleActionChips, token);
     ipcRenderer.on('search:sources', handleSearchSources, token);
     ipcRenderer.on('window:show', handleWindowShow, token);
@@ -947,6 +1142,7 @@ export function UnifiedOverlay() {
     ipcRenderer.send('queue:list');
     ipcRenderer.send('cron:list');
     ipcRenderer.send('skills:list');
+    ipcRenderer.send('agents:list');
     ipcRenderer.send('connections:list');
 
     return () => {
@@ -961,6 +1157,7 @@ export function UnifiedOverlay() {
       ipcRenderer.removeListenerByToken('cron:list', token);
       ipcRenderer.removeListenerByToken('cron:update', token);
       ipcRenderer.removeListenerByToken('skills:list', token);
+      ipcRenderer.removeListenerByToken('agents:list', token);
       ipcRenderer.removeListenerByToken('connections:list', token);
       ipcRenderer.removeListenerByToken('prompt-queue:update', token);
       ipcRenderer.removeListenerByToken('prompt-queue:restart-alert', token);
@@ -977,6 +1174,8 @@ export function UnifiedOverlay() {
       ipcRenderer.removeListenerByToken('schedule:pending', token);
       ipcRenderer.removeListenerByToken('bridge:status', token);
       ipcRenderer.removeListenerByToken('scan:progress', token);
+      ipcRenderer.removeListenerByToken('agents:learn-progress', token);
+      ipcRenderer.removeListenerByToken('agents:train-progress', token);
       ipcRenderer.removeListenerByToken('action-chips', token);
       ipcRenderer.removeListenerByToken('search:sources', token);
       ipcRenderer.removeListenerByToken('window:show', token);
@@ -1733,13 +1932,13 @@ export function UnifiedOverlay() {
             </div>
           )}
 
-          {/* Agents Tab - Blank for now */}
+          {/* Agents Tab */}
           {activeTab === 'agents' && (
-            <div className="h-full overflow-y-auto overflow-x-hidden p-4 flex items-center justify-center">
-              <div className="text-center">
-                <div style={{ fontSize: '2rem', marginBottom: '12px' }}>🤖</div>
-                <div style={{ color: '#6b7280', fontSize: '0.9rem' }}>Agents coming soon...</div>
-              </div>
+            <div className="h-full overflow-y-auto overflow-x-hidden">
+              <AgentsTab
+                items={agentItems}
+                onRefresh={() => ipcRenderer?.send('agents:list')}
+              />
             </div>
           )}
 
@@ -1872,6 +2071,131 @@ export function UnifiedOverlay() {
           </div>
         </div>
       </div>
+
+      {/* Learn Mode Blocking Overlay */}
+      {learnMode?.active && (
+        <div style={{
+          position: 'fixed',
+          top: 0, left: 0, right: 0, bottom: 0,
+          backgroundColor: 'rgba(0,0,0,0.85)',
+          display: 'flex',
+          flexDirection: 'column',
+          alignItems: 'center',
+          justifyContent: 'center',
+          zIndex: 9999,
+        }}>
+          <div style={{
+            width: 320,
+            padding: 32,
+            backgroundColor: '#1f2937',
+            borderRadius: 16,
+            textAlign: 'center',
+            boxShadow: '0 25px 50px -12px rgba(0,0,0,0.5)',
+          }}>
+            {/* Robot icon with pulse */}
+            <div style={{
+              fontSize: '3rem',
+              marginBottom: 20,
+              animation: 'pulse 1.5s ease-in-out infinite',
+            }}>
+              🤖
+            </div>
+            
+            <h3 style={{ margin: '0 0 8px 0', color: '#fff', fontSize: '1.1rem' }}>
+              Learning Mode Active
+            </h3>
+            
+            <p style={{ margin: '0 0 16px 0', color: '#9ca3af', fontSize: '0.85rem' }}>
+              Agent is exploring {learnMode.hostname || 'domain'}...
+            </p>
+            
+            {/* Progress bar */}
+            <div style={{
+              width: '100%',
+              height: 6,
+              backgroundColor: 'rgba(255,255,255,0.1)',
+              borderRadius: 3,
+              overflow: 'hidden',
+              marginBottom: 12,
+            }}>
+              <div style={{
+                width: `${learnMode.progress}%`,
+                height: '100%',
+                backgroundColor: '#f59e0b',
+                borderRadius: 3,
+                transition: 'width 0.3s ease',
+              }} />
+            </div>
+            
+            {/* Status message */}
+            <p style={{ margin: '0 0 20px 0', color: '#6b7280', fontSize: '0.75rem' }}>
+              {learnMode.message}
+            </p>
+            
+            {/* Discovered states count */}
+            {learnMode.discoveredStates.length > 0 && (
+              <p style={{ margin: '0 0 16px 0', color: '#10b981', fontSize: '0.7rem' }}>
+                Discovered {learnMode.discoveredStates.length} states
+              </p>
+            )}
+            
+            {/* Cancel button */}
+            <button
+              onClick={() => {
+                ipcRenderer?.send('agents:learn-cancel', { agentId: learnMode.agentId });
+              }}
+              style={{
+                padding: '8px 16px',
+                borderRadius: 6,
+                border: '1px solid rgba(255,255,255,0.2)',
+                backgroundColor: 'transparent',
+                color: '#9ca3af',
+                fontSize: '0.8rem',
+                cursor: 'pointer',
+              }}
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Training Mode Banner */}
+      {trainingMode?.active && trainingMode.agentId && trainingMode.hostname && (
+        <TrainingBanner
+          agentId={trainingMode.agentId}
+          hostname={trainingMode.hostname}
+          onDone={() => {
+            ipcRenderer?.send('agents:train-finish', { agentId: trainingMode.agentId });
+          }}
+          onCancel={() => {
+            ipcRenderer?.send('agents:train-cancel', { agentId: trainingMode.agentId });
+          }}
+        />
+      )}
+
+      {/* Teach Me Dialog */}
+      {trainingMode?.active && trainingMode.phase === 'teach_me' && trainingMode.agentId && (
+        <TeachMeDialog
+          agentId={trainingMode.agentId}
+          question={trainingMode.teachMeQuestion || 'What should I learn here?'}
+          options={trainingMode.teachMeOptions || ['Continue', 'Skip']}
+          onAnswer={(answer, explanation) => {
+            ipcRenderer?.send('agents:train-answer', { 
+              agentId: trainingMode.agentId, 
+              answer, 
+              explanation 
+            });
+          }}
+          onSkip={() => {
+            ipcRenderer?.send('agents:train-answer', { 
+              agentId: trainingMode.agentId, 
+              answer: 'Skip', 
+              explanation: 'User chose to skip' 
+            });
+          }}
+        />
+      )}
     </div>
   );
 }

@@ -569,6 +569,46 @@ function startOverlayControlServer() {
       return;
     }
 
+    // ── POST /learn.progress — learn mode events from learn.agent ─────────────
+    if (req.url === '/learn.progress') {
+      let body = '';
+      req.on('data', chunk => { body += chunk; });
+      req.on('end', () => {
+        try {
+          const data = JSON.parse(body || '{}');
+          res.writeHead(200).end(JSON.stringify({ ok: true }));
+
+          // Forward to unified window
+          if (unifiedWindow && !unifiedWindow.isDestroyed()) {
+            safeSend(unifiedWindow, 'agents:learn-progress', data);
+          }
+        } catch (err) {
+          res.writeHead(400).end(JSON.stringify({ error: err.message }));
+        }
+      });
+      return;
+    }
+
+    // ── POST /training.progress — training mode events from trainer.agent ───────
+    if (req.url === '/training.progress') {
+      let body = '';
+      req.on('data', chunk => { body += chunk; });
+      req.on('end', () => {
+        try {
+          const data = JSON.parse(body || '{}');
+          res.writeHead(200).end(JSON.stringify({ ok: true }));
+
+          // Forward to unified window
+          if (unifiedWindow && !unifiedWindow.isDestroyed()) {
+            safeSend(unifiedWindow, 'agents:train-progress', data);
+          }
+        } catch (err) {
+          res.writeHead(400).end(JSON.stringify({ error: err.message }));
+        }
+      });
+      return;
+    }
+
     const hide = req.url === '/overlay/hide';
     const show = req.url === '/overlay/show';
 
@@ -1718,7 +1758,7 @@ app.whenReady().then(async () => {
       return;
     }
 
-    const enqueueOpts = { selectedText, responseLanguage };
+    const enqueueOpts = { selectedText, responseLanguage, sessionId: currentSessionId };
     if (pendingPlanContext) {
       enqueueOpts._planCorrectionMode = true;
       enqueueOpts._planCorrectionText = trimmedPrompt;
@@ -2494,7 +2534,7 @@ app.whenReady().then(async () => {
   ipcMain.on('stategraph:process', (_event, { prompt, selectedText = '', sessionId = null, responseLanguage = null } = {}) => {
     if (!prompt?.trim()) return;
     console.log('🧠 [StateGraph] Enqueuing prompt via prompt-queue:', prompt.substring(0, 80));
-    promptQueue.enqueue(prompt.trim(), { selectedText: selectedText || '', responseLanguage: responseLanguage || null });
+    promptQueue.enqueue(prompt.trim(), { selectedText: selectedText || '', responseLanguage: responseLanguage || null, sessionId: sessionId || currentSessionId });
   });
 
   // ─── StateGraph: Core execution — called by promptQueue serially ─────────
@@ -4644,7 +4684,6 @@ app.whenReady().then(async () => {
       newX = Math.max(margin, Math.min(newX, screenWidth - width - margin));
     }
 
-    console.log(`[Smart Resize] width: ${width}, height: ${newHeight}, x: ${newX}, y: ${newY}, keepPosition: ${effectiveKeepPosition}`);
     unifiedWindow.setBounds({ x: Math.round(newX), y: Math.round(newY), width, height: newHeight }, animate);
   });
 
@@ -5189,10 +5228,304 @@ app.whenReady().then(async () => {
         };
       }));
       if (resultsWindow && !resultsWindow.isDestroyed()) safeSend(resultsWindow, 'skills:update', items);
+      if (unifiedWindow && !unifiedWindow.isDestroyed()) safeSend(unifiedWindow, 'skills:list', items);
     } catch (e) {
       console.error('[Skills] skills:list failed:', e.message);
       if (resultsWindow && !resultsWindow.isDestroyed()) safeSend(resultsWindow, 'skills:update', []);
+      if (unifiedWindow && !unifiedWindow.isDestroyed()) safeSend(unifiedWindow, 'skills:list', []);
     }
+  });
+
+  // ─── Agents: list / learn / train / create ────────────────────────────────
+  ipcMain.on('agents:list', async () => {
+    try {
+      const fsMod = require('fs');
+      const osMod = require('os');
+      const pathMod = require('path');
+      
+      const agentsDir = pathMod.join(osMod.homedir(), '.thinkdrop', 'agents');
+      if (!fsMod.existsSync(agentsDir)) {
+        if (unifiedWindow && !unifiedWindow.isDestroyed()) {
+          safeSend(unifiedWindow, 'agents:list', []);
+        }
+        return;
+      }
+
+      const files = fsMod.readdirSync(agentsDir).filter(f => f.endsWith('.agent.md'));
+      
+      const agents = files.map(file => {
+        const filePath = pathMod.join(agentsDir, file);
+        const content = fsMod.readFileSync(filePath, 'utf8');
+        
+        // Parse frontmatter
+        const fmMatch = content.match(/^---\s*\n([\s\S]*?)\n---/);
+        const fm = fmMatch ? fmMatch[1] : '';
+        
+        // Extract fields
+        const getField = (key) => {
+          const m = fm.match(new RegExp(`^${key}\\s*:\\s*(.+)$`, 'm'));
+          return m ? m[1].trim() : undefined;
+        };
+        
+        const getArrayField = (key) => {
+          const m = fm.match(new RegExp(`^${key}\\s*:\\s*\\n((?:\\s+-\\s+[^\\n]+\\n?)+)`, 'm'));
+          if (m) {
+            return m[1].split('\n')
+              .map(l => l.replace(/^\s*-\s*/, '').trim())
+              .filter(Boolean);
+          }
+          return undefined;
+        };
+        
+        const id = file.replace('.agent.md', '');
+        const domain = getField('domain') || getField('start_url')?.replace(/^https?:\/\//, '').split('/')[0] || id.replace('.agent', '');
+        
+        // Parse skills from frontmatter
+        let skills = [];
+        const skillsMatch = content.match(/## Capabilities[\s\S]*?(?=##|$)/);
+        
+        if (skillsMatch) {
+          const skillLines = skillsMatch[0].split('\n').filter(l => l.trim().startsWith('-'));
+          skills = skillLines.map(l => {
+            const match = l.match(/-\s+(\w+)\s*-\s*(.+)/);
+            if (match) {
+              return {
+                name: match[1],
+                status: 'published',
+                description: match[2].trim()
+              };
+            }
+            return null;
+          }).filter(Boolean);
+        }
+        
+        return {
+          id,
+          name: id.replace('.agent', '').replace(/\./g, ' ').replace(/\b\w/g, l => l.toUpperCase()),
+          domain,
+          category: getField('category') || 'Utility',
+          status: getField('status') || 'pending',
+          created: getField('created'),
+          lastLearned: getField('last_learned'),
+          userGoal: getField('user_goal'),
+          learnedStates: getArrayField('learned_states'),
+          skills,
+          faviconUrl: getField('favicon_url')
+        };
+      });
+      
+      if (unifiedWindow && !unifiedWindow.isDestroyed()) {
+        safeSend(unifiedWindow, 'agents:list', agents);
+      }
+    } catch (e) {
+      console.error('[Agents] agents:list failed:', e.message);
+      if (unifiedWindow && !unifiedWindow.isDestroyed()) {
+        safeSend(unifiedWindow, 'agents:list', []);
+      }
+    }
+  });
+
+  // Agent creation handler - uses browser.agent build_agent for unified creation
+  ipcMain.on('agents:create', async (_event, { domain, goal, goals }) => {
+    try {
+      const pathMod = require('path');
+      
+      // Generate service key from domain
+      const hostname = domain.replace(/^https?:\/\//, '').split('/')[0].replace(/^www\./, '');
+      const serviceKey = hostname.toLowerCase().replace(/[^a-z0-9]/g, '');
+      const agentId = `${serviceKey}.agent`;
+      
+      // Normalize goals to array
+      const goalsArray = goals || (goal ? [goal] : ['General task automation']);
+      
+      // Determine category based on goals
+      const goalsText = goalsArray.join(' ').toLowerCase();
+      let category = 'Utility';
+      if (/music|video|stream|watch|listen|play/i.test(goalsText)) category = 'Entertainment & Media';
+      else if (/email|message|chat|social|post|share/i.test(goalsText)) category = 'Social & Communication';
+      else if (/buy|shop|purchase|order|pay/i.test(goalsText)) category = 'Commerce & Finance';
+      else if (/write|create|edit|upload|generate/i.test(goalsText)) category = 'Creation & Contribution';
+      else if (/read|browse|search|find|news/i.test(goalsText)) category = 'Consumption & Discovery';
+      
+      const startUrl = domain.startsWith('http') ? domain : `https://${domain}`;
+      
+      // Call browser.agent build_agent for unified creation
+      const browserAgent = require(pathMod.join(__dirname, '..', '..', 'mcp-services', 'command-service', 'src', 'skills', 'browser.agent.cjs'));
+      const buildResult = await browserAgent({ 
+        action: 'build_agent', 
+        service: serviceKey, 
+        startUrl,
+        goals: goalsArray 
+      });
+      
+      if (!buildResult.ok) {
+        if (buildResult.alreadyExists) {
+          if (unifiedWindow && !unifiedWindow.isDestroyed()) {
+            safeSend(unifiedWindow, 'agents:error', { message: 'Agent already exists for this domain' });
+          }
+          return;
+        }
+        throw new Error(buildResult.error || 'Failed to create agent');
+      }
+      
+      const newAgent = {
+        id: agentId,
+        name: hostname.replace(/\b\w/g, l => l.toUpperCase()),
+        domain: hostname,
+        category,
+        status: buildResult.status || 'pending',
+        created: new Date().toISOString(),
+        userGoals: goalsArray,
+        skills: []
+      };
+      
+      if (unifiedWindow && !unifiedWindow.isDestroyed()) {
+        safeSend(unifiedWindow, 'agents:new', newAgent);
+      }
+      
+      console.log(`[Agents] Created agent: ${agentId} via browser.agent`);
+    } catch (e) {
+      console.error('[Agents] agents:create failed:', e.message);
+      if (unifiedWindow && !unifiedWindow.isDestroyed()) {
+        safeSend(unifiedWindow, 'agents:error', { message: e.message });
+      }
+    }
+  });
+
+  // Agent learn handler - triggers learn.agent for blocking domain scan
+  ipcMain.on('agents:learn', async (_event, { agentId, options = {} }) => {
+    try {
+      console.log(`[Agents] Starting learn mode for ${agentId}`, options);
+      
+      // Send initial learning status
+      if (unifiedWindow && !unifiedWindow.isDestroyed()) {
+        safeSend(unifiedWindow, 'agents:update', { agentId, status: 'learning' });
+      }
+      
+      // Call learn.agent skill
+      const learnAgent = require('../../mcp-services/command-service/src/skills/learn.agent.cjs');
+      
+      const result = await learnAgent.actionLearn({
+        agentId,
+        maxScanDepth: 2,
+        options: {
+          headed: options.headed || false,  // default headless
+        }
+      });
+      
+      if (result.ok) {
+        // Send completion update with learned states
+        if (unifiedWindow && !unifiedWindow.isDestroyed()) {
+          safeSend(unifiedWindow, 'agents:update', { 
+            agentId, 
+            status: 'learned',
+            learnedStates: result.states,
+            stateCount: result.stateCount,
+            duration: result.duration
+          });
+        }
+        console.log(`[Agents] Learn complete for ${agentId}: ${result.stateCount} states`);
+      } else {
+        // Handle error or cancellation
+        if (unifiedWindow && !unifiedWindow.isDestroyed()) {
+          safeSend(unifiedWindow, 'agents:update', { 
+            agentId, 
+            status: result.reason === 'cancelled' ? 'pending' : 'error',
+            error: result.error
+          });
+        }
+        console.error(`[Agents] Learn failed for ${agentId}: ${result.error || result.reason}`);
+      }
+    } catch (e) {
+      console.error('[Agents] agents:learn failed:', e.message);
+      if (unifiedWindow && !unifiedWindow.isDestroyed()) {
+        safeSend(unifiedWindow, 'agents:update', { 
+          agentId, 
+          status: 'error',
+          error: e.message
+        });
+      }
+    }
+  });
+
+  // Agent train handler - opens training mode
+  ipcMain.on('agents:train', async (_event, { agentId }) => {
+    try {
+      console.log(`[Agents] Starting train mode for ${agentId}`);
+      
+      // Call trainer.agent skill
+      const trainerAgent = require('../../mcp-services/command-service/src/skills/trainer.agent.cjs');
+      
+      const result = await trainerAgent.actionTrain({ agentId });
+      
+      if (result.ok) {
+        console.log(`[Agents] Training started for ${agentId}`);
+      } else {
+        console.error(`[Agents] Training failed: ${result.error}`);
+        if (unifiedWindow && !unifiedWindow.isDestroyed()) {
+          safeSend(unifiedWindow, 'agents:train-error', { agentId, error: result.error });
+        }
+      }
+    } catch (e) {
+      console.error('[Agents] agents:train failed:', e.message);
+    }
+  });
+
+  // Agent train actions
+  ipcMain.on('agents:train-answer', async (_event, { agentId, answer, explanation }) => {
+    try {
+      const trainerAgent = require('../../mcp-services/command-service/src/skills/trainer.agent.cjs');
+      await trainerAgent.actionAnswerTeachMe({ agentId, answer, explanation });
+    } catch (e) {
+      console.error('[Agents] train-answer failed:', e.message);
+    }
+  });
+
+  ipcMain.on('agents:train-finish', async (_event, { agentId }) => {
+    try {
+      const trainerAgent = require('../../mcp-services/command-service/src/skills/trainer.agent.cjs');
+      await trainerAgent.actionFinishTraining({ agentId });
+    } catch (e) {
+      console.error('[Agents] train-finish failed:', e.message);
+    }
+  });
+
+  ipcMain.on('agents:train-cancel', async (_event, { agentId }) => {
+    try {
+      const trainerAgent = require('../../mcp-services/command-service/src/skills/trainer.agent.cjs');
+      await trainerAgent.actionCancelTraining({ agentId });
+    } catch (e) {
+      console.error('[Agents] train-cancel failed:', e.message);
+    }
+  });
+
+  ipcMain.on('agents:train-test', async (_event, { agentId, testValues }) => {
+    try {
+      const trainerAgent = require('../../mcp-services/command-service/src/skills/trainer.agent.cjs');
+      await trainerAgent.actionRunSelfTest({ agentId, testValues });
+    } catch (e) {
+      console.error('[Agents] train-test failed:', e.message);
+    }
+  });
+
+  ipcMain.on('agents:train-generate', async (_event, { agentId, skillName }) => {
+    try {
+      const trainerAgent = require('../../mcp-services/command-service/src/skills/trainer.agent.cjs');
+      await trainerAgent.actionGenerateSkill({ agentId, skillName });
+    } catch (e) {
+      console.error('[Agents] train-generate failed:', e.message);
+    }
+  });
+
+  // Skill test/publish handlers
+  ipcMain.on('agents:test-skill', async (_event, { agentId, skillName }) => {
+    console.log(`[Agents] Testing skill ${skillName} for ${agentId}`);
+    // TODO: Implement skill testing
+  });
+
+  ipcMain.on('agents:publish-skill', async (_event, { agentId, skillName }) => {
+    console.log(`[Agents] Publishing skill ${skillName} for ${agentId}`);
+    // TODO: Implement skill publishing (move from .draft.cjs to .skill.cjs)
   });
 
   ipcMain.on('skills:refresh', () => {
