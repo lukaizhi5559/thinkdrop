@@ -27,9 +27,10 @@ const statusColors: Record<string, string> = {
 };
 
 // Favicon fetch with fallback
-function AgentIcon({ domain, name }: { domain: string; name: string }) {
+function AgentIcon({ domain, name, size = 32 }: { domain: string; name: string; size?: number }) {
   const [iconUrl, setIconUrl] = useState<string | null>(null);
   const [error, setError] = useState(false);
+  const radius = Math.round(size * 0.22);
 
   useEffect(() => {
     if (!domain || error) return;
@@ -49,9 +50,9 @@ function AgentIcon({ domain, name }: { domain: string; name: string }) {
         src={iconUrl} 
         alt={name}
         style={{ 
-          width: 40, 
-          height: 40, 
-          borderRadius: 8,
+          width: size, 
+          height: size, 
+          borderRadius: radius,
           objectFit: 'cover',
           backgroundColor: 'rgba(255,255,255,0.1)'
         }}
@@ -60,29 +61,47 @@ function AgentIcon({ domain, name }: { domain: string; name: string }) {
     );
   }
 
-  // Fallback emoji based on category or robot
+  const svgSize = Math.round(size * 0.5);
+
+  // Fallback: CPU/chip outline SVG — no emoji
   return (
     <div style={{
-      width: 40,
-      height: 40,
-      borderRadius: 8,
+      width: size,
+      height: size,
+      borderRadius: radius,
       display: 'flex',
       alignItems: 'center',
       justifyContent: 'center',
-      backgroundColor: 'rgba(255,255,255,0.1)',
-      fontSize: '1.5rem'
+      backgroundColor: 'rgba(245,158,11,0.12)',
+      border: '1px solid rgba(245,158,11,0.2)',
     }}>
-      🤖
+      <svg width={svgSize} height={svgSize} viewBox="0 0 24 24" fill="none" stroke="#f59e0b" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+        <rect x="9" y="9" width="6" height="6" rx="1"/>
+        <rect x="4" y="4" width="16" height="16" rx="2"/>
+        <line x1="9" y1="4" x2="9" y2="2"/>
+        <line x1="12" y1="4" x2="12" y2="2"/>
+        <line x1="15" y1="4" x2="15" y2="2"/>
+        <line x1="9" y1="20" x2="9" y2="22"/>
+        <line x1="12" y1="20" x2="12" y2="22"/>
+        <line x1="15" y1="20" x2="15" y2="22"/>
+        <line x1="4" y1="9" x2="2" y2="9"/>
+        <line x1="4" y1="12" x2="2" y2="12"/>
+        <line x1="4" y1="15" x2="2" y2="15"/>
+        <line x1="20" y1="9" x2="22" y2="9"/>
+        <line x1="20" y1="12" x2="22" y2="12"/>
+        <line x1="20" y1="15" x2="22" y2="15"/>
+      </svg>
     </div>
   );
 }
 
-// Individual agent card
+// Individual agent card — matches CronItemCard / SkillItemCard compact style
 function AgentCard({ 
   agent, 
   onLearn, 
   onTrain, 
   onEdit,
+  onDelete,
   onTestSkill,
   onPublishSkill,
   expanded,
@@ -92,6 +111,7 @@ function AgentCard({
   onLearn: (agentId: string, options?: { headed?: boolean }) => void;
   onTrain: (agentId: string) => void;
   onEdit: (agentId: string) => void;
+  onDelete: (agentId: string) => void;
   onTestSkill: (agentId: string, skillName: string) => void;
   onPublishSkill: (agentId: string, skillName: string) => void;
   expanded: boolean;
@@ -99,158 +119,241 @@ function AgentCard({
 }) {
   const categoryColor = categoryColors[agent.category] || '#6b7280';
   const statusColor = statusColors[agent.status] || '#6b7280';
+  const isLearning = agent.status === 'learning';
+  const [confirmDelete, setConfirmDelete] = useState(false);
 
   return (
     <div style={{
-      backgroundColor: 'rgba(255,255,255,0.05)',
-      borderRadius: 12,
-      padding: 16,
-      marginBottom: 12,
-      border: '1px solid rgba(255,255,255,0.08)',
+      borderRadius: 9,
+      padding: '10px 12px',
+      marginBottom: 6,
+      backgroundColor: 'rgba(255,255,255,0.025)',
+      border: '1px solid rgba(255,255,255,0.07)',
     }}>
-      {/* Header */}
-      <div 
-        onClick={onToggle}
-        onKeyDown={(e: React.KeyboardEvent) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onToggle(); }}}
-        role="button"
-        tabIndex={0}
-        style={{
-          display: 'flex',
-          alignItems: 'center',
-          gap: 12,
-          cursor: 'pointer',
-        }}
-      >
-        <AgentIcon domain={agent.domain} name={agent.name} />
-        
-        <div style={{ flex: 1 }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            <span style={{ fontWeight: 600, color: '#fff' }}>{agent.name}</span>
+      {/* Main row: icon · info · actions */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 9 }}>
+
+        {/* Favicon / fallback icon — compact 28px */}
+        <div style={{ flexShrink: 0 }}>
+          <AgentIcon domain={agent.domain} name={agent.name} size={28} />
+        </div>
+
+        {/* Name + domain */}
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 5, flexWrap: 'nowrap', overflow: 'hidden' }}>
             <span style={{
-              fontSize: '0.65rem',
-              padding: '2px 8px',
-              borderRadius: 12,
-              backgroundColor: categoryColor + '33',
+              fontSize: '0.72rem',
+              fontWeight: 600,
+              color: '#e5e7eb',
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+              whiteSpace: 'nowrap',
+            }}>
+              {agent.name}
+            </span>
+            <span style={{
+              fontSize: '0.58rem',
+              padding: '1px 5px',
+              borderRadius: 3,
+              backgroundColor: categoryColor + '22',
               color: categoryColor,
-              fontWeight: 500,
+              border: `1px solid ${categoryColor}44`,
+              flexShrink: 0,
+              whiteSpace: 'nowrap',
             }}>
               {agent.category}
             </span>
           </div>
-          <div style={{ fontSize: '0.75rem', color: '#9ca3af', marginTop: 2 }}>
-            {agent.domain}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 5, marginTop: 2 }}>
+            <div style={{
+              width: 6,
+              height: 6,
+              borderRadius: '50%',
+              backgroundColor: statusColor,
+              flexShrink: 0,
+              boxShadow: isLearning ? `0 0 5px ${statusColor}` : 'none',
+              animation: isLearning ? 'pulse 1.5s infinite' : undefined,
+            }} />
+            <span style={{ fontSize: '0.62rem', color: '#6b7280', textTransform: 'capitalize' }}>
+              {isLearning ? 'Learning…' : agent.status}
+            </span>
+            <span style={{ fontSize: '0.62rem', color: '#4b5563' }}>·</span>
+            <span style={{
+              fontSize: '0.62rem',
+              color: '#4b5563',
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+              whiteSpace: 'nowrap',
+            }}>
+              {agent.domain}
+            </span>
           </div>
         </div>
 
-        {/* Status indicator */}
-        <div style={{
-          display: 'flex',
-          alignItems: 'center',
-          gap: 6,
-        }}>
-          <div style={{
-            width: 8,
-            height: 8,
-            borderRadius: '50%',
-            backgroundColor: statusColor,
-            animation: agent.status === 'learning' ? 'pulse 1.5s infinite' : undefined,
-          }} />
-          <span style={{ fontSize: '0.7rem', color: '#9ca3af', textTransform: 'capitalize' }}>
-            {agent.status}
-          </span>
-        </div>
+        {/* Icon-only action buttons — never overflow */}
+        <div style={{ display: 'flex', gap: 4, flexShrink: 0, alignItems: 'center' }}>
 
-        {/* Action buttons */}
-        <div style={{ display: 'flex', gap: 8 }}>
+          {/* Learn (headless) — amber play triangle */}
           <button
             onClick={(e: React.MouseEvent) => { e.stopPropagation(); onLearn(agent.id); }}
-            disabled={agent.status === 'learning'}
-            title="Learn in headless mode (background)"
+            disabled={isLearning}
+            title="Learn (headless background)"
             style={{
-              padding: '6px 12px',
-              borderRadius: 6,
-              border: 'none',
-              backgroundColor: agent.status === 'learning' ? '#374151' : '#f59e0b',
-              color: '#fff',
-              fontSize: '0.75rem',
-              cursor: agent.status === 'learning' ? 'not-allowed' : 'pointer',
-              opacity: agent.status === 'learning' ? 0.6 : 1,
+              padding: '4px 7px',
+              borderRadius: 5,
+              cursor: isLearning ? 'not-allowed' : 'pointer',
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              background: 'rgba(245,158,11,0.12)',
+              border: '1px solid rgba(245,158,11,0.3)',
+              color: '#f59e0b',
+              opacity: isLearning ? 0.4 : 1,
             }}
           >
-            {agent.status === 'learning' ? 'Learning...' : 'Learn'}
-          </button>
-          
-          <button
-            onClick={(e: React.MouseEvent) => { e.stopPropagation(); onLearn(agent.id, { headed: true }); }}
-            disabled={agent.status === 'learning'}
-            title="Learn in visible mode (watch the browser)"
-            style={{
-              padding: '6px 10px',
-              borderRadius: 6,
-              border: '1px solid rgba(255,255,255,0.2)',
-              backgroundColor: agent.status === 'learning' ? '#374151' : 'transparent',
-              color: '#9ca3af',
-              fontSize: '0.75rem',
-              cursor: agent.status === 'learning' ? 'not-allowed' : 'pointer',
-              opacity: agent.status === 'learning' ? 0.6 : 1,
-            }}
-          >
-            👁️
-          </button>
-          
-          <button
-            onClick={(e: React.MouseEvent) => { e.stopPropagation(); onTrain(agent.id); }}
-            style={{
-              padding: '6px 12px',
-              borderRadius: 6,
-              border: 'none',
-              backgroundColor: '#3b82f6',
-              color: '#fff',
-              fontSize: '0.75rem',
-              cursor: 'pointer',
-            }}
-          >
-            Train
+            {isLearning ? (
+              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" style={{ animation: 'spin 0.9s linear infinite' }}>
+                <path d="M21 12a9 9 0 1 1-6.219-8.56"/>
+              </svg>
+            ) : (
+              <svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor" stroke="none">
+                <polygon points="5,3 19,12 5,21"/>
+              </svg>
+            )}
           </button>
 
+          {/* Preview (headed/visible) — eye SVG, indigo */}
           <button
-            onClick={(e: React.MouseEvent) => { e.stopPropagation(); onEdit(agent.id); }}
+            onClick={(e: React.MouseEvent) => { e.stopPropagation(); onLearn(agent.id, { headed: true }); }}
+            disabled={isLearning}
+            title="Learn visible (watch the browser)"
             style={{
-              padding: '6px 10px',
-              borderRadius: 6,
-              border: 'none',
-              backgroundColor: 'transparent',
-              color: '#9ca3af',
-              fontSize: '0.75rem',
-              cursor: 'pointer',
+              padding: '4px 7px',
+              borderRadius: 5,
+              cursor: isLearning ? 'not-allowed' : 'pointer',
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              background: 'rgba(99,102,241,0.1)',
+              border: '1px solid rgba(99,102,241,0.28)',
+              color: '#818cf8',
+              opacity: isLearning ? 0.4 : 1,
             }}
           >
-            ✏️
+            <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
+              <circle cx="12" cy="12" r="3"/>
+            </svg>
+          </button>
+
+          {/* Train — lightning bolt, blue */}
+          <button
+            onClick={(e: React.MouseEvent) => { e.stopPropagation(); onTrain(agent.id); }}
+            title="Train agent"
+            style={{
+              padding: '4px 7px',
+              borderRadius: 5,
+              cursor: 'pointer',
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              background: 'rgba(59,130,246,0.12)',
+              border: '1px solid rgba(59,130,246,0.3)',
+              color: '#60a5fa',
+            }}
+          >
+            <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+              <polyline points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/>
+            </svg>
+          </button>
+
+          {/* Edit — pencil SVG, gray */}
+          <button
+            onClick={(e: React.MouseEvent) => { e.stopPropagation(); onEdit(agent.id); }}
+            title="Edit agent"
+            style={{
+              padding: '4px 7px',
+              borderRadius: 5,
+              cursor: 'pointer',
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              background: 'rgba(255,255,255,0.04)',
+              border: '1px solid rgba(255,255,255,0.12)',
+              color: '#9ca3af',
+            }}
+          >
+            <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
+              <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
+            </svg>
+          </button>
+
+          {/* Delete — trash icon with two-click confirm */}
+          <button
+            onClick={(e: React.MouseEvent) => {
+              e.stopPropagation();
+              if (confirmDelete) {
+                onDelete(agent.id);
+              } else {
+                setConfirmDelete(true);
+                setTimeout(() => setConfirmDelete(false), 3000);
+              }
+            }}
+            title={confirmDelete ? 'Click again to confirm delete' : 'Delete agent'}
+            style={{
+              padding: confirmDelete ? '4px 6px' : '4px 7px',
+              borderRadius: 5,
+              cursor: 'pointer',
+              display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 3,
+              background: confirmDelete ? 'rgba(239,68,68,0.18)' : 'rgba(255,255,255,0.04)',
+              border: confirmDelete ? '1px solid rgba(239,68,68,0.45)' : '1px solid rgba(255,255,255,0.1)',
+              color: confirmDelete ? '#f87171' : '#6b7280',
+              transition: 'all 0.15s',
+            }}
+          >
+            <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+              <polyline points="3 6 5 6 21 6"/>
+              <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/>
+              <path d="M10 11v6"/><path d="M14 11v6"/>
+              <path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/>
+            </svg>
+            {confirmDelete && <span style={{ fontSize: '0.58rem', fontWeight: 600, whiteSpace: 'nowrap' }}>sure?</span>}
+          </button>
+
+          {/* Expand chevron */}
+          <button
+            onClick={(e: React.MouseEvent) => { e.stopPropagation(); onToggle(); }}
+            title={expanded ? 'Collapse' : 'Show details'}
+            style={{
+              padding: '4px 7px',
+              borderRadius: 5,
+              cursor: 'pointer',
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              background: expanded ? 'rgba(99,102,241,0.15)' : 'rgba(255,255,255,0.04)',
+              border: expanded ? '1px solid rgba(99,102,241,0.25)' : '1px solid rgba(255,255,255,0.1)',
+              color: expanded ? '#818cf8' : '#6b7280',
+            }}
+          >
+            <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round">
+              {expanded ? <polyline points="18,15 12,9 6,15"/> : <polyline points="6,9 12,15 18,9"/>}
+            </svg>
           </button>
         </div>
       </div>
 
       {/* Expanded details */}
       {expanded && (
-        <div style={{ marginTop: 16, paddingTop: 16, borderTop: '1px solid rgba(255,255,255,0.08)' }}>
-          {/* Description */}
+        <div style={{ marginTop: 10, paddingTop: 10, borderTop: '1px solid rgba(255,255,255,0.06)' }}>
+
+          {/* Goals */}
           {agent.userGoals && agent.userGoals.length > 0 && (
-            <div style={{ marginBottom: 12 }}>
-              <div style={{ fontSize: '0.7rem', color: '#6b7280', marginBottom: 4 }}>
-                Goals ({agent.userGoals.length})
+            <div style={{ marginBottom: 8 }}>
+              <div style={{ fontSize: '0.62rem', color: '#4b5563', marginBottom: 4, textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+                Goals
               </div>
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
                 {agent.userGoals.map((goal, idx) => (
-                  <span 
-                    key={idx}
-                    style={{ 
-                      fontSize: '0.8rem', 
-                      color: '#d1d5db',
-                      backgroundColor: 'rgba(255,255,255,0.05)',
-                      padding: '2px 8px',
-                      borderRadius: 4,
-                    }}
-                  >
+                  <span key={idx} style={{
+                    fontSize: '0.65rem',
+                    color: '#9ca3af',
+                    backgroundColor: 'rgba(255,255,255,0.04)',
+                    border: '1px solid rgba(255,255,255,0.07)',
+                    padding: '2px 7px',
+                    borderRadius: 4,
+                  }}>
                     {goal}
                   </span>
                 ))}
@@ -260,15 +363,18 @@ function AgentCard({
 
           {/* Learned States */}
           {agent.learnedStates && agent.learnedStates.length > 0 && (
-            <div style={{ marginBottom: 12 }}>
-              <div style={{ fontSize: '0.7rem', color: '#6b7280', marginBottom: 4 }}>Learned Pages</div>
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+            <div style={{ marginBottom: 8 }}>
+              <div style={{ fontSize: '0.62rem', color: '#4b5563', marginBottom: 4, textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+                Learned Pages
+              </div>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
                 {agent.learnedStates.map((state) => (
                   <span key={state} style={{
-                    fontSize: '0.65rem',
-                    padding: '3px 8px',
+                    fontSize: '0.62rem',
+                    padding: '2px 7px',
                     borderRadius: 4,
-                    backgroundColor: 'rgba(16,185,129,0.15)',
+                    backgroundColor: 'rgba(16,185,129,0.1)',
+                    border: '1px solid rgba(16,185,129,0.2)',
                     color: '#10b981',
                   }}>
                     {state.replace(/_/g, ' ')}
@@ -281,11 +387,13 @@ function AgentCard({
           {/* Skills */}
           {agent.skills && agent.skills.length > 0 && (
             <div>
-              <div style={{ fontSize: '0.7rem', color: '#6b7280', marginBottom: 8 }}>Skills</div>
+              <div style={{ fontSize: '0.62rem', color: '#4b5563', marginBottom: 6, textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+                Skills
+              </div>
               {agent.skills.map((skill) => (
-                <SkillRow 
-                  key={skill.name} 
-                  skill={skill} 
+                <SkillRow
+                  key={skill.name}
+                  skill={skill}
                   onTest={() => onTestSkill(agent.id, skill.name)}
                   onPublish={() => onPublishSkill(agent.id, skill.name)}
                 />
@@ -294,7 +402,7 @@ function AgentCard({
           )}
 
           {agent.lastLearned && (
-            <div style={{ marginTop: 12, fontSize: '0.65rem', color: '#6b7280' }}>
+            <div style={{ marginTop: 8, fontSize: '0.6rem', color: '#4b5563' }}>
               Last learned: {new Date(agent.lastLearned).toLocaleDateString()}
             </div>
           )}
@@ -304,7 +412,7 @@ function AgentCard({
   );
 }
 
-// Individual skill row
+// Individual skill row — compact, matching other tabs
 function SkillRow({ 
   skill, 
   onTest,
@@ -315,81 +423,89 @@ function SkillRow({
   onPublish: () => void;
 }) {
   const isDraft = skill.status === 'draft';
-  
+
   return (
     <div style={{
       display: 'flex',
       alignItems: 'center',
-      padding: '8px 12px',
-      backgroundColor: 'rgba(255,255,255,0.03)',
-      borderRadius: 6,
-      marginBottom: 6,
-      gap: 12,
+      padding: '6px 8px',
+      backgroundColor: 'rgba(255,255,255,0.02)',
+      border: '1px solid rgba(255,255,255,0.05)',
+      borderRadius: 5,
+      marginBottom: 4,
+      gap: 8,
     }}>
-      <input 
-        type="checkbox" 
-        checked={!isDraft}
-        readOnly
-        style={{ cursor: 'default' }}
-      />
-      
-      <div style={{ flex: 1 }}>
-        <div style={{ 
-          fontSize: '0.8rem', 
-          color: '#d1d5db',
-          textDecoration: isDraft ? 'none' : 'none'
-        }}>
+      <div style={{
+        width: 6,
+        height: 6,
+        borderRadius: '50%',
+        flexShrink: 0,
+        backgroundColor: isDraft ? '#f59e0b' : '#10b981',
+        boxShadow: isDraft ? 'none' : '0 0 4px #10b981',
+      }} />
+
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ fontSize: '0.68rem', color: '#d1d5db', fontFamily: 'ui-monospace,monospace', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
           {skill.name}
         </div>
         {skill.description && (
-          <div style={{ fontSize: '0.65rem', color: '#6b7280' }}>{skill.description}</div>
-        )}
-        {skill.parameters && skill.parameters.length > 0 && (
-          <div style={{ fontSize: '0.6rem', color: '#4b5563', marginTop: 2 }}>
-            params: {skill.parameters.join(', ')}
-          </div>
+          <div style={{ fontSize: '0.6rem', color: '#6b7280', marginTop: 1 }}>{skill.description}</div>
         )}
       </div>
 
       <span style={{
-        fontSize: '0.6rem',
-        padding: '2px 6px',
-        borderRadius: 4,
-        backgroundColor: isDraft ? 'rgba(245,158,11,0.2)' : 'rgba(16,185,129,0.2)',
+        fontSize: '0.58rem',
+        padding: '1px 5px',
+        borderRadius: 3,
+        backgroundColor: isDraft ? 'rgba(245,158,11,0.12)' : 'rgba(16,185,129,0.12)',
+        border: `1px solid ${isDraft ? 'rgba(245,158,11,0.25)' : 'rgba(16,185,129,0.25)'}`,
         color: isDraft ? '#f59e0b' : '#10b981',
+        flexShrink: 0,
       }}>
         {skill.status}
       </span>
 
+      {/* Test — play icon */}
       <button
         onClick={onTest}
+        title="Test skill"
         style={{
-          padding: '4px 10px',
+          padding: '3px 6px',
           borderRadius: 4,
-          border: 'none',
-          backgroundColor: '#374151',
-          color: '#fff',
-          fontSize: '0.7rem',
           cursor: 'pointer',
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          background: 'rgba(255,255,255,0.05)',
+          border: '1px solid rgba(255,255,255,0.1)',
+          color: '#9ca3af',
+          flexShrink: 0,
         }}
       >
-        Test
+        <svg width="9" height="9" viewBox="0 0 24 24" fill="currentColor" stroke="none">
+          <polygon points="5,3 19,12 5,21"/>
+        </svg>
       </button>
 
+      {/* Publish — upload icon, only for draft */}
       {isDraft && (
         <button
           onClick={onPublish}
+          title="Publish skill"
           style={{
-            padding: '4px 10px',
+            padding: '3px 6px',
             borderRadius: 4,
-            border: 'none',
-            backgroundColor: '#10b981',
-            color: '#fff',
-            fontSize: '0.7rem',
             cursor: 'pointer',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            background: 'rgba(16,185,129,0.1)',
+            border: '1px solid rgba(16,185,129,0.28)',
+            color: '#10b981',
+            flexShrink: 0,
           }}
         >
-          Publish
+          <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+            <polyline points="16 16 12 12 8 16"/>
+            <line x1="12" y1="12" x2="12" y2="21"/>
+            <path d="M20.39 18.39A5 5 0 0 0 18 9h-1.26A8 8 0 1 0 3 16.3"/>
+          </svg>
         </button>
       )}
     </div>
@@ -569,6 +685,8 @@ export function AgentsTab({ items, onRefresh }: AgentsTabProps) {
   const [expandedAgent, setExpandedAgent] = useState<string | null>(null);
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
   const [localItems, setLocalItems] = useState<AgentItem[]>(items);
+  const [isCreating, setIsCreating] = useState(false);
+  const [createError, setCreateError] = useState<string | null>(null);
 
   // Sync with props
   useEffect(() => {
@@ -589,14 +707,31 @@ export function AgentsTab({ items, onRefresh }: AgentsTabProps) {
 
     const handleNewAgent = (_: any, agent: AgentItem) => {
       setLocalItems(prev => [...prev, agent]);
+      setIsCreating(false);
+      setCreateError(null);
+    };
+
+    const handleCreating = () => {
+      setIsCreating(true);
+      setCreateError(null);
+    };
+
+    const handleCreateError = (_: any, data: { message: string }) => {
+      setIsCreating(false);
+      setCreateError(data?.message || 'Failed to create agent');
+      setTimeout(() => setCreateError(null), 5000);
     };
 
     ipcRenderer.on('agents:update', handleAgentUpdate);
     ipcRenderer.on('agents:new', handleNewAgent);
+    ipcRenderer.on('agents:creating', handleCreating);
+    ipcRenderer.on('agents:error', handleCreateError);
 
     return () => {
       ipcRenderer.removeListener('agents:update', handleAgentUpdate);
       ipcRenderer.removeListener('agents:new', handleNewAgent);
+      ipcRenderer.removeListener('agents:creating', handleCreating);
+      ipcRenderer.removeListener('agents:error', handleCreateError);
     };
   }, []);
 
@@ -620,6 +755,12 @@ export function AgentsTab({ items, onRefresh }: AgentsTabProps) {
     console.log('Edit agent:', agentId);
   };
 
+  const handleDelete = (agentId: string) => {
+    // Optimistically remove from UI immediately
+    setLocalItems(prev => prev.filter(a => a.id !== agentId));
+    ipcRenderer?.send('agents:delete', { agentId });
+  };
+
   const handleTestSkill = (agentId: string, skillName: string) => {
     ipcRenderer?.send('agents:test-skill', { agentId, skillName });
   };
@@ -641,7 +782,9 @@ export function AgentsTab({ items, onRefresh }: AgentsTabProps) {
   };
 
   const handleCreateAgent = (domain: string, goals: string[]) => {
-    ipcRenderer?.send('agents:create', { domain, goals });
+    setIsCreating(true);
+    setCreateError(null);
+    ipcRenderer?.send('agents:create', { domain, goals, headed: true });
   };
 
   const toggleExpanded = (agentId: string) => {
@@ -655,56 +798,96 @@ export function AgentsTab({ items, onRefresh }: AgentsTabProps) {
       height: '100%',
     }}>
       {/* Header */}
-      <div style={{
-        display: 'flex',
-        justifyContent: 'space-between',
-        alignItems: 'center',
-        marginBottom: 20,
-      }}>
-        <div>
-          <h2 style={{ margin: 0, color: '#fff', fontSize: '1.2rem' }}>Agents</h2>
-          <p style={{ margin: '4px 0 0 0', color: '#9ca3af', fontSize: '0.8rem' }}>
-            Domain-specific automation agents that learn and adapt
-          </p>
-        </div>
-        
-        <div style={{ display: 'flex', gap: 8 }}>
+      <div style={{ marginBottom: 16 }}>
+        <h2 style={{ margin: 0, color: '#fff', fontSize: '1.1rem', fontWeight: 600 }}>Agents</h2>
+        <p style={{ margin: '3px 0 10px 0', color: '#6b7280', fontSize: '0.78rem' }}>
+          Domain-specific automation agents that learn and adapt
+        </p>
+
+        {/* Action buttons — compact inline row */}
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
           <button
             onClick={onRefresh}
             style={{
-              padding: '8px 14px',
-              borderRadius: 6,
-              border: '1px solid rgba(255,255,255,0.2)',
-              backgroundColor: 'transparent',
-              color: '#9ca3af',
-              fontSize: '0.8rem',
-              cursor: 'pointer',
-              display: 'flex',
+              display: 'inline-flex',
               alignItems: 'center',
               gap: 6,
+              padding: '8px 16px',
+              borderRadius: 8,
+              border: '1px solid rgba(255,255,255,0.18)',
+              backgroundColor: 'rgba(255,255,255,0.07)',
+              color: '#d1d5db',
+              fontSize: '0.85rem',
+              cursor: 'pointer',
+              lineHeight: 1,
+              whiteSpace: 'nowrap',
+              fontWeight: 500,
             }}
           >
-            🔄 Refresh
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+              <polyline points="23 4 23 10 17 10"/>
+              <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/>
+            </svg>
+            Refresh
           </button>
-          
+
           <button
-            onClick={() => setIsCreateModalOpen(true)}
+            onClick={() => {
+              if (!isCreating) {
+                setCreateError(null);
+                setIsCreateModalOpen(true);
+              }
+            }}
+            disabled={isCreating}
             style={{
-              padding: '8px 14px',
-              borderRadius: 6,
-              border: 'none',
-              backgroundColor: '#3b82f6',
-              color: '#fff',
-              fontSize: '0.8rem',
-              cursor: 'pointer',
-              display: 'flex',
+              display: 'inline-flex',
               alignItems: 'center',
               gap: 6,
+              padding: '8px 18px',
+              borderRadius: 8,
+              border: 'none',
+              backgroundColor: isCreating ? 'rgba(59,130,246,0.5)' : '#3b82f6',
+              color: '#fff',
+              fontSize: '0.85rem',
+              cursor: isCreating ? 'not-allowed' : 'pointer',
+              lineHeight: 1,
+              whiteSpace: 'nowrap',
+              fontWeight: 500,
             }}
           >
-            + Create Agent
+            {isCreating ? (
+              <>
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" style={{ animation: 'spin 1s linear infinite' }}>
+                  <path d="M21 12a9 9 0 1 1-6.219-8.56"/>
+                </svg>
+                Creating...
+              </>
+            ) : (
+              <>
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                  <line x1="12" y1="5" x2="12" y2="19"/>
+                  <line x1="5" y1="12" x2="19" y2="12"/>
+                </svg>
+                Create Agent
+              </>
+            )}
           </button>
         </div>
+
+        {/* Error feedback */}
+        {createError && (
+          <div style={{
+            marginTop: 8,
+            padding: '6px 10px',
+            borderRadius: 6,
+            backgroundColor: 'rgba(239,68,68,0.1)',
+            border: '1px solid rgba(239,68,68,0.3)',
+            color: '#f87171',
+            fontSize: '0.75rem',
+          }}>
+            {createError}
+          </div>
+        )}
       </div>
 
       {/* Agent list */}
@@ -714,7 +897,26 @@ export function AgentsTab({ items, onRefresh }: AgentsTabProps) {
           padding: 60,
           color: '#6b7280',
         }}>
-          <div style={{ fontSize: '3rem', marginBottom: 16 }}>🤖</div>
+          <div style={{ marginBottom: 16, display: 'flex', justifyContent: 'center' }}>
+            <div style={{ width: 56, height: 56, borderRadius: 12, backgroundColor: 'rgba(245,158,11,0.12)', border: '1px solid rgba(245,158,11,0.25)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+              <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#f59e0b" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+                <rect x="9" y="9" width="6" height="6" rx="1"/>
+                <rect x="4" y="4" width="16" height="16" rx="2"/>
+                <line x1="9" y1="4" x2="9" y2="2"/>
+                <line x1="12" y1="4" x2="12" y2="2"/>
+                <line x1="15" y1="4" x2="15" y2="2"/>
+                <line x1="9" y1="20" x2="9" y2="22"/>
+                <line x1="12" y1="20" x2="12" y2="22"/>
+                <line x1="15" y1="20" x2="15" y2="22"/>
+                <line x1="4" y1="9" x2="2" y2="9"/>
+                <line x1="4" y1="12" x2="2" y2="12"/>
+                <line x1="4" y1="15" x2="2" y2="15"/>
+                <line x1="20" y1="9" x2="22" y2="9"/>
+                <line x1="20" y1="12" x2="22" y2="12"/>
+                <line x1="20" y1="15" x2="22" y2="15"/>
+              </svg>
+            </div>
+          </div>
           <div style={{ fontSize: '1rem', marginBottom: 8 }}>No agents yet</div>
           <div style={{ fontSize: '0.85rem' }}>
             Create your first agent to start automating websites
@@ -728,6 +930,7 @@ export function AgentsTab({ items, onRefresh }: AgentsTabProps) {
             onLearn={handleLearn}
             onTrain={handleTrain}
             onEdit={handleEdit}
+            onDelete={handleDelete}
             onTestSkill={handleTestSkill}
             onPublishSkill={handlePublishSkill}
             expanded={expandedAgent === agent.id}
@@ -747,6 +950,10 @@ export function AgentsTab({ items, onRefresh }: AgentsTabProps) {
         @keyframes pulse {
           0%, 100% { opacity: 1; }
           50% { opacity: 0.5; }
+        }
+        @keyframes spin {
+          from { transform: rotate(0deg); }
+          to { transform: rotate(360deg); }
         }
       `}</style>
     </div>

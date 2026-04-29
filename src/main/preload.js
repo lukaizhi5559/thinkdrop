@@ -85,6 +85,13 @@ contextBridge.exposeInMainWorld('electron', {
         'plan:new',
         'plan:rescan',
         'plan:open-editor',
+        'agents:list',
+        'agents:create',
+        'agents:learn',
+        'agents:train',
+        'agents:delete',
+        'agents:test-skill',
+        'agents:publish-skill',
       ];
       if (validChannels.includes(channel)) {
         ipcRenderer.send(channel, data);
@@ -152,6 +159,13 @@ contextBridge.exposeInMainWorld('electron', {
         'search:sources',
         'window:show',
         'is-streaming',
+        'agents:list',
+        'agents:new',
+        'agents:creating',
+        'agents:error',
+        'agents:update',
+        'agents:learn-progress',
+        'agents:train-progress',
       ];
       if (validChannels.includes(channel)) {
         const wrapped = (_event, ...args) => func(...args);
@@ -261,6 +275,11 @@ contextBridge.exposeInMainWorld('electron', {
         'ws-bridge:disconnected',
         'ws-bridge:error',
         'queue:started',
+        'agents:list',
+        'agents:new',
+        'agents:creating',
+        'agents:error',
+        'agents:update',
       ];
       if (validChannels.includes(channel)) {
         const chMap = _wiredListeners.get(channel);
@@ -321,6 +340,13 @@ contextBridge.exposeInMainWorld('electron', {
         'plan:approved',
         'plan:rescanned',
         'plan:error',
+        'agents:list',
+        'agents:new',
+        'agents:creating',
+        'agents:error',
+        'agents:update',
+        'agents:learn-progress',
+        'agents:train-progress',
       ];
       if (validChannels.includes(channel)) {
         // Legacy path: func-reference removal won't work across contextBridge.

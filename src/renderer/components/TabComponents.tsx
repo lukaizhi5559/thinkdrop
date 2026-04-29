@@ -196,6 +196,34 @@ export function ConnectionsIcon({ active }: { active: boolean }) {
   );
 }
 
+export function AgentsIcon({ active }: { active: boolean }) {
+  const c = active ? '#f59e0b' : '#6b7280';
+  return (
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="none"
+      stroke={c} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      {/* CPU/chip body */}
+      <rect x="9" y="9" width="6" height="6" rx="1"/>
+      <rect x="4" y="4" width="16" height="16" rx="2"/>
+      {/* Pins — top */}
+      <line x1="9" y1="4" x2="9" y2="2"/>
+      <line x1="12" y1="4" x2="12" y2="2"/>
+      <line x1="15" y1="4" x2="15" y2="2"/>
+      {/* Pins — bottom */}
+      <line x1="9" y1="20" x2="9" y2="22"/>
+      <line x1="12" y1="20" x2="12" y2="22"/>
+      <line x1="15" y1="20" x2="15" y2="22"/>
+      {/* Pins — left */}
+      <line x1="4" y1="9" x2="2" y2="9"/>
+      <line x1="4" y1="12" x2="2" y2="12"/>
+      <line x1="4" y1="15" x2="2" y2="15"/>
+      {/* Pins — right */}
+      <line x1="20" y1="9" x2="22" y2="9"/>
+      <line x1="20" y1="12" x2="22" y2="12"/>
+      <line x1="20" y1="15" x2="22" y2="15"/>
+    </svg>
+  );
+}
+
 // ── Tab bar ───────────────────────────────────────────────────────────────────
 
 export function TabBar({ active, onSelect, queueCount, cronCount, unreadTabs }: {
@@ -209,7 +237,7 @@ export function TabBar({ active, onSelect, queueCount, cronCount, unreadTabs }: 
     { id: 'results',     label: 'Results',  icon: <ResultsIcon     active={active === 'results'}     />, activeColor: '#60a5fa' },
     { id: 'queue',       label: 'Queue',    icon: <QueueIcon       active={active === 'queue'}       />, badge: queueCount, activeColor: '#a78bfa' },
     { id: 'cron',        label: 'Cron',     icon: <CronIcon        active={active === 'cron'}        />, badge: cronCount,  activeColor: '#34d399' },
-    { id: 'agents',      label: 'Agents',   icon: <span style={{ fontSize: '0.7rem' }}>🤖</span>, activeColor: '#f59e0b' },
+    { id: 'agents',      label: 'Agents',   icon: <AgentsIcon      active={active === 'agents'}      />, activeColor: '#f59e0b' },
   ];
 
   return (

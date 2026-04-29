@@ -322,6 +322,7 @@ export function UnifiedOverlay() {
         setSearchSources([]);
         setIsStreaming(false);
         setIsThinking(true);
+        setIsSubmitting(true);
         setIsAutomationMode(false);
         setInstallPrompt(null);
         setActionChips([]);
@@ -354,7 +355,6 @@ export function UnifiedOverlay() {
     }
 
     playThinkDropSound();
-    setIsSubmitting(true);
 
     let finalPrompt = '';
     
@@ -819,6 +819,19 @@ export function UnifiedOverlay() {
       setAgentItems(items);
     };
 
+    const handleAgentNew = (agent: AgentItem) => {
+      setAgentItems(prev => {
+        const exists = prev.find(a => a.id === agent.id);
+        return exists ? prev.map(a => a.id === agent.id ? agent : a) : [...prev, agent];
+      });
+    };
+
+    const handleAgentUpdate = (_data: { agentId: string; status: string; progress?: number }) => {
+      setAgentItems(prev => prev.map(a =>
+        a.id === _data.agentId ? { ...a, status: _data.status as any } : a
+      ));
+    };
+
     // --- Connections ---
     const handleConnectionsList = (items: ConnectionItem[]) => {
       setConnectionItems(items);
@@ -1114,6 +1127,8 @@ export function UnifiedOverlay() {
     ipcRenderer.on('cron:update', handleCronUpdate, token);
     ipcRenderer.on('skills:list', handleSkillsList, token);
     ipcRenderer.on('agents:list', handleAgentsList, token);
+    ipcRenderer.on('agents:new', handleAgentNew, token);
+    ipcRenderer.on('agents:update', handleAgentUpdate, token);
     ipcRenderer.on('connections:list', handleConnectionsList, token);
     ipcRenderer.on('prompt-queue:update', handlePromptQueueUpdate, token);
     ipcRenderer.on('prompt-queue:restart-alert', handleRestartAlert, token);
@@ -1158,6 +1173,8 @@ export function UnifiedOverlay() {
       ipcRenderer.removeListenerByToken('cron:update', token);
       ipcRenderer.removeListenerByToken('skills:list', token);
       ipcRenderer.removeListenerByToken('agents:list', token);
+      ipcRenderer.removeListenerByToken('agents:new', token);
+      ipcRenderer.removeListenerByToken('agents:update', token);
       ipcRenderer.removeListenerByToken('connections:list', token);
       ipcRenderer.removeListenerByToken('prompt-queue:update', token);
       ipcRenderer.removeListenerByToken('prompt-queue:restart-alert', token);

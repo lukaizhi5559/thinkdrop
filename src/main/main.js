@@ -5326,7 +5326,7 @@ app.whenReady().then(async () => {
   });
 
   // Agent creation handler - uses browser.agent build_agent for unified creation
-  ipcMain.on('agents:create', async (_event, { domain, goal, goals }) => {
+  ipcMain.on('agents:create', async (_event, { domain, goal, goals, headed }) => {
     try {
       const pathMod = require('path');
       
@@ -5334,6 +5334,11 @@ app.whenReady().then(async () => {
       const hostname = domain.replace(/^https?:\/\//, '').split('/')[0].replace(/^www\./, '');
       const serviceKey = hostname.toLowerCase().replace(/[^a-z0-9]/g, '');
       const agentId = `${serviceKey}.agent`;
+
+      // Emit immediately so UI can show a loading state — build_agent is async and can take 10-30s
+      if (unifiedWindow && !unifiedWindow.isDestroyed()) {
+        safeSend(unifiedWindow, 'agents:creating', { agentId, domain: hostname });
+      }
       
       // Normalize goals to array
       const goalsArray = goals || (goal ? [goal] : ['General task automation']);
@@ -5355,13 +5360,25 @@ app.whenReady().then(async () => {
         action: 'build_agent', 
         service: serviceKey, 
         startUrl,
-        goals: goalsArray 
+        goals: goalsArray,
+        force: headed === true, // force rebuild when headed mode requested (debug)
       });
       
       if (!buildResult.ok) {
         if (buildResult.alreadyExists) {
+          // Agent already exists — still emit agents:new so UI shows it
+          const existingAgent = {
+            id: agentId,
+            name: hostname.replace(/\b\w/g, l => l.toUpperCase()),
+            domain: hostname,
+            category,
+            status: buildResult.status || 'healthy',
+            created: new Date().toISOString(),
+            userGoals: goalsArray,
+            skills: []
+          };
           if (unifiedWindow && !unifiedWindow.isDestroyed()) {
-            safeSend(unifiedWindow, 'agents:error', { message: 'Agent already exists for this domain' });
+            safeSend(unifiedWindow, 'agents:new', existingAgent);
           }
           return;
         }
@@ -5526,6 +5543,32 @@ app.whenReady().then(async () => {
   ipcMain.on('agents:publish-skill', async (_event, { agentId, skillName }) => {
     console.log(`[Agents] Publishing skill ${skillName} for ${agentId}`);
     // TODO: Implement skill publishing (move from .draft.cjs to .skill.cjs)
+  });
+
+  // Agent delete handler — removes all artifacts (descriptor, DuckDB rows, profiles, domain maps)
+  ipcMain.on('agents:delete', async (_event, { agentId }) => {
+    try {
+      console.log(`[Agents] Deleting agent ${agentId} and all artifacts`);
+      const { actionDeleteAgent } = require('../../mcp-services/command-service/src/skills/browser.agent.cjs');
+      const result = await actionDeleteAgent({ id: agentId });
+      if (result.ok) {
+        console.log(`[Agents] Deleted ${result.deleted.length} artifacts for ${agentId}`);
+        if (result.errors && result.errors.length > 0) {
+          console.warn(`[Agents] Delete had non-fatal errors:`, result.errors);
+        }
+      } else {
+        console.error(`[Agents] Delete failed for ${agentId}: ${result.error}`);
+      }
+      // Always refresh the agents list so UI is in sync
+      if (unifiedWindow && !unifiedWindow.isDestroyed()) {
+        ipcMain.emit('agents:list');
+      }
+    } catch (e) {
+      console.error('[Agents] agents:delete failed:', e.message);
+      if (unifiedWindow && !unifiedWindow.isDestroyed()) {
+        ipcMain.emit('agents:list');
+      }
+    }
   });
 
   ipcMain.on('skills:refresh', () => {
