@@ -121,6 +121,7 @@ function AgentCard({
   const statusColor = statusColors[agent.status] || '#6b7280';
   const isLearning = agent.status === 'learning';
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [learnExpanded, setLearnExpanded] = useState(false);
 
   return (
     <div style={{
@@ -193,54 +194,87 @@ function AgentCard({
         {/* Icon-only action buttons — never overflow */}
         <div style={{ display: 'flex', gap: 4, flexShrink: 0, alignItems: 'center' }}>
 
-          {/* Learn (headless) — amber play triangle */}
-          <button
-            onClick={(e: React.MouseEvent) => { e.stopPropagation(); onLearn(agent.id); }}
-            disabled={isLearning}
-            title="Learn (headless background)"
-            style={{
-              padding: '4px 7px',
-              borderRadius: 5,
-              cursor: isLearning ? 'not-allowed' : 'pointer',
-              display: 'flex', alignItems: 'center', justifyContent: 'center',
-              background: 'rgba(245,158,11,0.12)',
-              border: '1px solid rgba(245,158,11,0.3)',
-              color: '#f59e0b',
-              opacity: isLearning ? 0.4 : 1,
-            }}
-          >
-            {isLearning ? (
+          {/* Learn — single ▶ expands into headless + headed choice buttons */}
+          {isLearning ? (
+            <button
+              disabled
+              title="Learning in progress…"
+              style={{
+                padding: '4px 7px', borderRadius: 5, cursor: 'not-allowed',
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                background: 'rgba(245,158,11,0.12)', border: '1px solid rgba(245,158,11,0.3)',
+                color: '#f59e0b', opacity: 0.4,
+              }}
+            >
               <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" style={{ animation: 'spin 0.9s linear infinite' }}>
                 <path d="M21 12a9 9 0 1 1-6.219-8.56"/>
               </svg>
-            ) : (
+            </button>
+          ) : learnExpanded ? (
+            <>
+              {/* Headless learn */}
+              <button
+                onClick={(e: React.MouseEvent) => { e.stopPropagation(); onLearn(agent.id, { headed: false }); setLearnExpanded(false); }}
+                title="Learn headless (background)"
+                style={{
+                  padding: '4px 7px', borderRadius: 5, cursor: 'pointer',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  background: 'rgba(245,158,11,0.18)', border: '1px solid rgba(245,158,11,0.5)',
+                  color: '#f59e0b',
+                }}
+              >
+                <svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor" stroke="none">
+                  <polygon points="5,3 19,12 5,21"/>
+                </svg>
+              </button>
+              {/* Headed/visible learn */}
+              <button
+                onClick={(e: React.MouseEvent) => { e.stopPropagation(); onLearn(agent.id, { headed: true }); setLearnExpanded(false); }}
+                title="Learn visible (watch the browser)"
+                style={{
+                  padding: '4px 7px', borderRadius: 5, cursor: 'pointer',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  background: 'rgba(99,102,241,0.18)', border: '1px solid rgba(99,102,241,0.5)',
+                  color: '#818cf8',
+                }}
+              >
+                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
+                  <circle cx="12" cy="12" r="3"/>
+                </svg>
+              </button>
+              {/* Collapse back */}
+              <button
+                onClick={(e: React.MouseEvent) => { e.stopPropagation(); setLearnExpanded(false); }}
+                title="Cancel"
+                style={{
+                  padding: '4px 6px', borderRadius: 5, cursor: 'pointer',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  background: 'rgba(107,114,128,0.12)', border: '1px solid rgba(107,114,128,0.25)',
+                  color: '#6b7280',
+                }}
+              >
+                <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+                  <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+                </svg>
+              </button>
+            </>
+          ) : (
+            <button
+              onClick={(e: React.MouseEvent) => { e.stopPropagation(); setLearnExpanded(true); }}
+              title="Learn agent"
+              style={{
+                padding: '4px 7px', borderRadius: 5, cursor: 'pointer',
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                background: 'rgba(245,158,11,0.12)', border: '1px solid rgba(245,158,11,0.3)',
+                color: '#f59e0b',
+              }}
+            >
               <svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor" stroke="none">
                 <polygon points="5,3 19,12 5,21"/>
               </svg>
-            )}
-          </button>
-
-          {/* Preview (headed/visible) — eye SVG, indigo */}
-          <button
-            onClick={(e: React.MouseEvent) => { e.stopPropagation(); onLearn(agent.id, { headed: true }); }}
-            disabled={isLearning}
-            title="Learn visible (watch the browser)"
-            style={{
-              padding: '4px 7px',
-              borderRadius: 5,
-              cursor: isLearning ? 'not-allowed' : 'pointer',
-              display: 'flex', alignItems: 'center', justifyContent: 'center',
-              background: 'rgba(99,102,241,0.1)',
-              border: '1px solid rgba(99,102,241,0.28)',
-              color: '#818cf8',
-              opacity: isLearning ? 0.4 : 1,
-            }}
-          >
-            <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
-              <circle cx="12" cy="12" r="3"/>
-            </svg>
-          </button>
+            </button>
+          )}
 
           {/* Train — lightning bolt, blue */}
           <button
@@ -512,6 +546,195 @@ function SkillRow({
   );
 }
 
+// Edit agent modal — same form as CreateAgentModal but pre-filled, domain read-only
+function EditAgentModal({
+  isOpen,
+  agent,
+  onClose,
+  onSave,
+}: {
+  isOpen: boolean;
+  agent: AgentItem | null;
+  onClose: () => void;
+  onSave: (agentId: string, goals: string[]) => void;
+}) {
+  const [goals, setGoals] = useState<string[]>(['']);
+
+  useEffect(() => {
+    if (agent) {
+      const existing = [
+        ...(agent.userGoals || []),
+        ...(agent.userGoal && !agent.userGoals?.includes(agent.userGoal) ? [agent.userGoal] : []),
+      ].filter(Boolean);
+      setGoals(existing.length > 0 ? existing : ['']);
+    }
+  }, [agent]);
+
+  if (!isOpen || !agent) return null;
+
+  const addGoal = () => setGoals([...goals, '']);
+  const removeGoal = (index: number) => {
+    if (goals.length > 1) setGoals(goals.filter((_, i) => i !== index));
+  };
+  const updateGoal = (index: number, value: string) => {
+    const next = [...goals];
+    next[index] = value;
+    setGoals(next);
+  };
+
+  const validGoals = goals.filter(g => g.trim().length > 0);
+  const hasNoGoalsYet = !agent.userGoals?.length && !agent.userGoal;
+
+  return (
+    <div style={{
+      position: 'fixed',
+      top: 0, left: 0, right: 0, bottom: 0,
+      backgroundColor: 'rgba(0,0,0,0.7)',
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'center',
+      zIndex: 1000,
+    }}>
+      <div style={{
+        backgroundColor: '#1f2937',
+        borderRadius: 12,
+        padding: 24,
+        width: 450,
+        maxWidth: '90vw',
+        maxHeight: '80vh',
+        overflowY: 'auto',
+      }}>
+        <h3 style={{ margin: '0 0 6px 0', color: '#fff', fontSize: '1.1rem' }}>Edit Agent Goals</h3>
+        <p style={{ margin: '0 0 16px 0', color: '#6b7280', fontSize: '0.8rem' }}>{agent.domain}</p>
+
+        {hasNoGoalsYet && (
+          <div style={{
+            marginBottom: 16,
+            padding: '10px 14px',
+            borderRadius: 8,
+            backgroundColor: 'rgba(245,158,11,0.1)',
+            border: '1px solid rgba(245,158,11,0.3)',
+            color: '#fbbf24',
+            fontSize: '0.8rem',
+            lineHeight: 1.5,
+          }}>
+            💡 Set at least one goal so ThinkDrop knows what to learn on this site.
+            Focused goals = better results. You can skip for a basic general scan.
+          </div>
+        )}
+
+        <div style={{ marginBottom: 12 }}>
+          <label style={{ display: 'block', fontSize: '0.8rem', color: '#9ca3af', marginBottom: 6 }}>
+            What would you like to do on this site?
+          </label>
+          {goals.map((goal, index) => (
+            <div key={index} style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
+              <input
+                type="text"
+                value={goal}
+                onChange={(e) => updateGoal(index, e.target.value)}
+                placeholder={`Goal ${index + 1}: e.g., Search for answers, Save threads...`}
+                style={{
+                  flex: 1,
+                  padding: '10px 12px',
+                  borderRadius: 6,
+                  border: '1px solid rgba(255,255,255,0.1)',
+                  backgroundColor: 'rgba(255,255,255,0.05)',
+                  color: '#fff',
+                  fontSize: '0.9rem',
+                }}
+              />
+              {goals.length > 1 && (
+                <button
+                  onClick={() => removeGoal(index)}
+                  style={{
+                    padding: '8px 12px',
+                    borderRadius: 6,
+                    border: '1px solid rgba(255,255,255,0.2)',
+                    backgroundColor: 'transparent',
+                    color: '#9ca3af',
+                    cursor: 'pointer',
+                    fontSize: '0.8rem',
+                  }}
+                >
+                  ✕
+                </button>
+              )}
+            </div>
+          ))}
+          <button
+            onClick={addGoal}
+            style={{
+              padding: '6px 12px',
+              borderRadius: 6,
+              border: '1px dashed rgba(255,255,255,0.3)',
+              backgroundColor: 'transparent',
+              color: '#9ca3af',
+              cursor: 'pointer',
+              fontSize: '0.8rem',
+              marginTop: 4,
+            }}
+          >
+            + Add Another Goal
+          </button>
+        </div>
+
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginTop: 20 }}>
+          <button
+            onClick={() => { onSave(agent.id, validGoals); onClose(); }}
+            disabled={validGoals.length === 0}
+            style={{
+              width: '100%',
+              padding: '12px 16px',
+              borderRadius: 8,
+              border: 'none',
+              backgroundColor: validGoals.length === 0 ? 'rgba(59,130,246,0.4)' : '#3b82f6',
+              color: '#fff',
+              cursor: validGoals.length === 0 ? 'not-allowed' : 'pointer',
+              fontSize: '0.95rem',
+              fontWeight: 600,
+            }}
+          >
+            Start Learning
+          </button>
+          {hasNoGoalsYet && (
+            <button
+              onClick={() => { onSave(agent.id, []); onClose(); }}
+              style={{
+                width: '100%',
+                padding: '11px 16px',
+                borderRadius: 8,
+                border: '1px solid rgba(255,255,255,0.2)',
+                backgroundColor: 'transparent',
+                color: '#d1d5db',
+                cursor: 'pointer',
+                fontSize: '0.9rem',
+              }}
+            >
+              Skip — Basic Scan
+            </button>
+          )}
+          <button
+            onClick={onClose}
+            style={{
+              width: '100%',
+              padding: '10px 16px',
+              borderRadius: 8,
+              border: '1px solid rgba(255,255,255,0.1)',
+              backgroundColor: 'transparent',
+              color: '#6b7280',
+              cursor: 'pointer',
+              fontSize: '0.85rem',
+            }}
+          >
+            Cancel
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // Create agent modal
 function CreateAgentModal({ 
   isOpen, 
@@ -684,66 +907,71 @@ function CreateAgentModal({
 export function AgentsTab({ items, onRefresh }: AgentsTabProps) {
   const [expandedAgent, setExpandedAgent] = useState<string | null>(null);
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
+  const [editModalAgent, setEditModalAgent] = useState<AgentItem | null>(null);
   const [localItems, setLocalItems] = useState<AgentItem[]>(items);
   const [isCreating, setIsCreating] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
+  const [autoScanEnabled, setAutoScanEnabled] = useState<boolean>(false);
 
   // Sync with props
   useEffect(() => {
     setLocalItems(items);
   }, [items]);
 
-  // Listen for agent updates from main process
+  // Request auto-scan setting on mount
   useEffect(() => {
     if (!ipcRenderer) return;
+    ipcRenderer.invoke?.('agents:auto-scan-get')?.then((result: { enabled?: boolean }) => {
+      setAutoScanEnabled(!!result?.enabled);
+    }).catch(() => {
+      setAutoScanEnabled(false);
+    });
+  }, []);
 
-    const handleAgentUpdate = (_: any, data: { agentId: string; status: string; progress?: number }) => {
-      setLocalItems(prev => prev.map(agent => 
-        agent.id === data.agentId 
-          ? { ...agent, status: data.status as any }
-          : agent
-      ));
-    };
-
-    const handleNewAgent = (_: any, agent: AgentItem) => {
-      setLocalItems(prev => [...prev, agent]);
-      setIsCreating(false);
-      setCreateError(null);
-    };
+  // Listen for create-specific events from main process.
+  // NOTE: agents:update and agents:new are handled centrally in UnifiedOverlay
+  // which passes updated items as props — registering them here again would cause
+  // duplicate listeners with wrong signatures (preload strips the IPC event arg
+  // before calling callbacks, so handlers must accept (data) not (event, data)).
+  useEffect(() => {
+    if (!ipcRenderer) return;
 
     const handleCreating = () => {
       setIsCreating(true);
       setCreateError(null);
     };
 
-    const handleCreateError = (_: any, data: { message: string }) => {
+    // Preload strips the IPC event arg — callback receives (data) directly
+    const handleCreateError = (data: { message: string }) => {
       setIsCreating(false);
       setCreateError(data?.message || 'Failed to create agent');
       setTimeout(() => setCreateError(null), 5000);
     };
 
-    ipcRenderer.on('agents:update', handleAgentUpdate);
-    ipcRenderer.on('agents:new', handleNewAgent);
     ipcRenderer.on('agents:creating', handleCreating);
     ipcRenderer.on('agents:error', handleCreateError);
 
     return () => {
-      ipcRenderer.removeListener('agents:update', handleAgentUpdate);
-      ipcRenderer.removeListener('agents:new', handleNewAgent);
       ipcRenderer.removeListener('agents:creating', handleCreating);
       ipcRenderer.removeListener('agents:error', handleCreateError);
     };
   }, []);
 
-  const handleLearn = (agentId: string, options: { headed?: boolean } = {}) => {
-    ipcRenderer?.send('agents:learn', { agentId, options });
-    
-    // Optimistic UI update
-    setLocalItems(prev => prev.map(agent => 
-      agent.id === agentId 
-        ? { ...agent, status: 'learning' }
-        : agent
+  const _fireLearning = (agentId: string, goals: string[], options: { headed?: boolean } = {}) => {
+    ipcRenderer?.send('agents:learn', { agentId, goals, options });
+    setLocalItems(prev => prev.map(agent =>
+      agent.id === agentId ? { ...agent, status: 'learning' } : agent
     ));
+  };
+
+  const handleLearn = (agentId: string, options: { headed?: boolean } = {}) => {
+    const agent = localItems.find(a => a.id === agentId);
+    const hasGoals = (agent?.userGoals?.length ?? 0) > 0 || !!agent?.userGoal;
+    if (!hasGoals) {
+      setEditModalAgent(agent || null);
+      return;
+    }
+    _fireLearning(agentId, agent?.userGoals || [], options);
   };
 
   const handleTrain = (agentId: string) => {
@@ -751,8 +979,15 @@ export function AgentsTab({ items, onRefresh }: AgentsTabProps) {
   };
 
   const handleEdit = (agentId: string) => {
-    // TODO: Open edit modal
-    console.log('Edit agent:', agentId);
+    const agent = localItems.find(a => a.id === agentId);
+    if (agent) setEditModalAgent(agent);
+  };
+
+  const handleEditSave = (agentId: string, goals: string[]) => {
+    setLocalItems(prev => prev.map(a =>
+      a.id === agentId ? { ...a, userGoals: goals } : a
+    ));
+    _fireLearning(agentId, goals);
   };
 
   const handleDelete = (agentId: string) => {
@@ -888,6 +1123,61 @@ export function AgentsTab({ items, onRefresh }: AgentsTabProps) {
             {createError}
           </div>
         )}
+
+        {/* Auto-scan toggle - compact row */}
+        <div style={{
+          marginTop: 12,
+          display: 'flex',
+          alignItems: 'center',
+          gap: 8,
+        }}>
+          <label style={{
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: 6,
+            cursor: 'pointer',
+            fontSize: '0.75rem',
+            color: autoScanEnabled ? '#10b981' : '#6b7280',
+            transition: 'color 0.15s',
+          }} title="Automatically scan all agents when system has been idle for 30+ minutes (once per 24h max)">
+            <div style={{
+              width: 32,
+              height: 18,
+              borderRadius: 9,
+              backgroundColor: autoScanEnabled ? '#10b981' : 'rgba(255,255,255,0.2)',
+              position: 'relative',
+              transition: 'background-color 0.15s',
+            }}>
+              <div style={{
+                width: 14,
+                height: 14,
+                borderRadius: '50%',
+                backgroundColor: '#fff',
+                position: 'absolute',
+                top: 2,
+                left: autoScanEnabled ? 16 : 2,
+                transition: 'left 0.15s',
+              }} />
+              <input
+                type="checkbox"
+                checked={autoScanEnabled}
+                onChange={(e) => {
+                  const enabled = e.target.checked;
+                  setAutoScanEnabled(enabled);
+                  ipcRenderer?.send('agents:auto-scan-set', { enabled });
+                }}
+                style={{
+                  position: 'absolute',
+                  opacity: 0,
+                  width: '100%',
+                  height: '100%',
+                  cursor: 'pointer',
+                }}
+              />
+            </div>
+            <span>Auto-scan when idle</span>
+          </label>
+        </div>
       </div>
 
       {/* Agent list */}
@@ -923,7 +1213,7 @@ export function AgentsTab({ items, onRefresh }: AgentsTabProps) {
           </div>
         </div>
       ) : (
-        localItems.map((agent) => (
+        localItems.filter((agent): agent is AgentItem => !!agent && !!agent.id).map((agent) => (
           <AgentCard
             key={agent.id}
             agent={agent}
@@ -944,6 +1234,14 @@ export function AgentsTab({ items, onRefresh }: AgentsTabProps) {
         isOpen={isCreateModalOpen}
         onClose={() => setIsCreateModalOpen(false)}
         onCreate={handleCreateAgent}
+      />
+
+      {/* Edit / goal-gate modal */}
+      <EditAgentModal
+        isOpen={editModalAgent !== null}
+        agent={editModalAgent}
+        onClose={() => setEditModalAgent(null)}
+        onSave={handleEditSave}
       />
 
       <style>{`

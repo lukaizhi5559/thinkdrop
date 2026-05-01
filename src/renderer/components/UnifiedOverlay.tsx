@@ -142,6 +142,19 @@ export function UnifiedOverlay() {
     message: string;
     discoveredStates: string[];
     startTime: number | null;
+    authRequired: boolean;
+    // Scan summary stats
+    scanStats?: {
+      totalElements: number;
+      successful: number;
+      failed: number;
+      filtered: number;
+      states: number;
+      skillsGenerated: number;
+      dataItems?: number;
+      duration: number;
+    };
+    requiresDismissal?: boolean;
   } | null>(null);
 
   // --- UI State ---
@@ -973,10 +986,36 @@ export function UnifiedOverlay() {
             agentId: data.agentId,
             hostname: data.hostname || null,
             progress: 0,
-            message: 'Starting learn mode...',
+            message: 'Opening browser — sign in when prompted...',
             discoveredStates: [],
             startTime: Date.now(),
+            authRequired: false,
           });
+          break;
+        case 'learn:auth_required':
+          setLearnMode(prev => prev ? {
+            ...prev,
+            authRequired: true,
+            message: data.message || 'Sign in to continue.',
+          } : null);
+          break;
+        case 'learn:auth_waiting':
+          setLearnMode(prev => prev ? { ...prev, authRequired: true, message: data.message || 'Waiting for sign-in...' } : null);
+          break;
+        case 'learn:auth_resolved':
+          // Early dismissal: browser.act detected login callback params before waitForAuth returned
+          setLearnMode(prev => prev ? { ...prev, authRequired: false, message: '✓ Signed in! Starting site scan...' } : null);
+          break;
+        case 'learn:auth_success':
+          setLearnMode(prev => prev ? { ...prev, authRequired: false, message: '✓ Signed in! Starting site scan...' } : null);
+          break;
+        case 'learn:auth_failed':
+          setLearnMode(prev => prev ? {
+            ...prev,
+            active: false,
+            message: 'Sign-in not completed. Click Learn again to retry.',
+          } : null);
+          setTimeout(() => setLearnMode(null), 5000);
           break;
         case 'learn:navigating':
           setLearnMode(prev => prev ? { ...prev, message: data.message || 'Navigating...' } : null);
@@ -995,17 +1034,29 @@ export function UnifiedOverlay() {
             message: `Discovered ${data.states?.length || 0} new states`
           } : null);
           break;
-        case 'learn:complete':
-          setLearnMode(prev => prev ? {
-            ...prev,
+        case 'learn:complete': {
+          // Calculate resolved value BEFORE setLearnMode so we can use it for timeout check
+          const resolvedRequiresDismissal = (data as any).requiresDismissal ?? (learnMode?.requiresDismissal) ?? false;
+          setLearnMode(prev => ({
             active: false,
+            agentId: prev?.agentId || null,
+            hostname: prev?.hostname || null,
             progress: 100,
-            message: `Learn complete! Found ${data.stateCount} states`,
-            discoveredStates: data.states || [],
-          } : null);
-          // Clear after 3 seconds
-          setTimeout(() => setLearnMode(null), 3000);
+            message: (data as any).message || `Learn complete! Found ${data.stateCount} states`,
+            discoveredStates: data.states || prev?.discoveredStates || [],
+            startTime: prev?.startTime || null,
+            authRequired: prev?.authRequired || false,
+            requiresDismissal: resolvedRequiresDismissal,
+            scanStats: (data as any).scanStats ?? prev?.scanStats ?? null,
+          }));
+          // Only auto-dismiss if requiresDismissal is not set
+          if (!resolvedRequiresDismissal) {
+            setTimeout(() => setLearnMode(null), 3000);
+          }
+          // Refresh agents list to show updated status and skills
+          ipcRenderer?.send('agents:list');
           break;
+        }
         case 'learn:error':
           setLearnMode(prev => prev ? {
             ...prev,
@@ -1015,7 +1066,8 @@ export function UnifiedOverlay() {
           setTimeout(() => setLearnMode(null), 5000);
           break;
         case 'learn:cancelling':
-          setLearnMode(prev => prev ? { ...prev, message: 'Cancelling...' } : null);
+          setLearnMode(prev => prev ? { ...prev, active: false, message: 'Cancelling...' } : null);
+          setTimeout(() => setLearnMode(null), 1500);
           break;
         case 'learn:cancelled':
           setLearnMode({
@@ -1026,8 +1078,85 @@ export function UnifiedOverlay() {
             message: 'Learn cancelled',
             discoveredStates: [],
             startTime: null,
+            authRequired: false,
           });
           setTimeout(() => setLearnMode(null), 3000);
+          break;
+        case 'explore:scan_start':
+          setLearnMode(prev => prev ? { ...prev, message: `Scanning ${data.hostname || 'site'}…` } : null);
+          break;
+        case 'explore:scan_elements_start':
+          setLearnMode(prev => prev ? {
+            ...prev,
+            message: `Discovered ${(data as any).elementCount || 0} interactive elements on ${(data as any).state || 'page'}…`,
+          } : null);
+          break;
+        case 'explore:scan_progress':
+          setLearnMode(prev => prev ? {
+            ...prev,
+            message: data.message || `Processing ${(data as any).current || 0}/${(data as any).total || 0}...`,
+            progress: (data as any).percent || ((data as any).current / (data as any).total) * 100 || 0,
+          } : null);
+          break;
+        case 'explore:scan_filtered':
+        case 'explore:scan_extracting':
+        case 'explore:scan_success':
+        case 'explore:scan_failed':
+          // Detailed progress updates - show the message but don't change progress bar
+          setLearnMode(prev => prev ? {
+            ...prev,
+            message: data.message || prev.message,
+          } : null);
+          break;
+        case 'explore:scan_skill_progress':
+          setLearnMode(prev => prev ? {
+            ...prev,
+            message: data.message || `Generating skills...`,
+            progress: (data as any).total ? ((data as any).current / (data as any).total) * 100 : 90,
+          } : null);
+          break;
+        case 'explore:scan_complete':
+          setLearnMode(prev => prev ? {
+            ...prev,
+            message: data.message || `Site scan done — found ${(data as any).totalActions || 0} interactive elements`,
+            progress: 85,
+          } : null);
+          break;
+        case 'explore:scan_summary':
+          // Final completion with stats and requiresDismissal flag
+          // Always update state - don't check prev, scan_summary should always display
+          console.log('[UnifiedOverlay] scan_summary received:', data);
+          setLearnMode(prev => ({
+            active: false,
+            agentId: prev?.agentId || null,
+            hostname: prev?.hostname || null,
+            progress: 100,
+            message: data.message || `Scan complete!`,
+            discoveredStates: prev?.discoveredStates || [],
+            startTime: prev?.startTime || null,
+            authRequired: prev?.authRequired || false,
+            requiresDismissal: (data as any).requiresDismissal || false,
+            scanStats: {
+              totalElements: (data as any).totalElements || 0,
+              successful: (data as any).successful || 0,
+              failed: (data as any).failed || 0,
+              filtered: (data as any).filtered || 0,
+              states: (data as any).states || 0,
+              skillsGenerated: (data as any).skillsGenerated || 0,
+              dataItems: (data as any).dataItems || 0,
+              duration: (data as any).duration || 0,
+            },
+          }));
+          // Only auto-dismiss if requiresDismissal is not set
+          if (!(data as any).requiresDismissal) {
+            setTimeout(() => setLearnMode(null), 3000);
+          }
+          break;
+        case 'explore:scan_error':
+          setLearnMode(prev => prev ? {
+            ...prev,
+            message: `Scan error: ${data.error || 'unknown'}`,
+          } : null);
           break;
       }
     };
@@ -2089,90 +2218,202 @@ export function UnifiedOverlay() {
         </div>
       </div>
 
-      {/* Learn Mode Blocking Overlay */}
-      {learnMode?.active && (
+      {/* Learn Mode Overlay — shown when learning is active OR when showing completion summary */}
+      {learnMode && (
         <div style={{
-          position: 'fixed',
+          position: 'absolute',
           top: 0, left: 0, right: 0, bottom: 0,
-          backgroundColor: 'rgba(0,0,0,0.85)',
+          backgroundColor: 'rgba(0,0,0,0.80)',
           display: 'flex',
           flexDirection: 'column',
           alignItems: 'center',
           justifyContent: 'center',
           zIndex: 9999,
+          pointerEvents: 'none', // backdrop passes mouse events through to drag header
         }}>
           <div style={{
             width: 320,
-            padding: 32,
+            padding: 28,
             backgroundColor: '#1f2937',
             borderRadius: 16,
             textAlign: 'center',
-            boxShadow: '0 25px 50px -12px rgba(0,0,0,0.5)',
+            boxShadow: learnMode.authRequired
+              ? '0 0 0 2px #f59e0b, 0 25px 50px -12px rgba(0,0,0,0.6)'
+              : '0 25px 50px -12px rgba(0,0,0,0.5)',
+            border: learnMode.authRequired ? '1px solid rgba(245,158,11,0.5)' : '1px solid transparent',
+            pointerEvents: 'auto',
+            transition: 'box-shadow 0.3s ease, border 0.3s ease',
           }}>
-            {/* Robot icon with pulse */}
-            <div style={{
-              fontSize: '3rem',
-              marginBottom: 20,
-              animation: 'pulse 1.5s ease-in-out infinite',
-            }}>
-              🤖
-            </div>
-            
-            <h3 style={{ margin: '0 0 8px 0', color: '#fff', fontSize: '1.1rem' }}>
-              Learning Mode Active
-            </h3>
-            
-            <p style={{ margin: '0 0 16px 0', color: '#9ca3af', fontSize: '0.85rem' }}>
-              Agent is exploring {learnMode.hostname || 'domain'}...
-            </p>
-            
-            {/* Progress bar */}
-            <div style={{
-              width: '100%',
-              height: 6,
-              backgroundColor: 'rgba(255,255,255,0.1)',
-              borderRadius: 3,
-              overflow: 'hidden',
-              marginBottom: 12,
-            }}>
-              <div style={{
-                width: `${learnMode.progress}%`,
-                height: '100%',
-                backgroundColor: '#f59e0b',
-                borderRadius: 3,
-                transition: 'width 0.3s ease',
-              }} />
-            </div>
-            
-            {/* Status message */}
-            <p style={{ margin: '0 0 20px 0', color: '#6b7280', fontSize: '0.75rem' }}>
-              {learnMode.message}
-            </p>
-            
-            {/* Discovered states count */}
-            {learnMode.discoveredStates.length > 0 && (
-              <p style={{ margin: '0 0 16px 0', color: '#10b981', fontSize: '0.7rem' }}>
-                Discovered {learnMode.discoveredStates.length} states
-              </p>
+            {learnMode.authRequired ? (
+              <>
+                {/* Auth required — prominent lock icon */}
+                <div style={{
+                  fontSize: '3.5rem',
+                  marginBottom: 12,
+                  animation: 'pulse 1.2s ease-in-out infinite',
+                }}>
+                  🔐
+                </div>
+
+                {/* ACTION REQUIRED badge */}
+                <div style={{
+                  display: 'inline-block',
+                  padding: '3px 10px',
+                  borderRadius: 20,
+                  backgroundColor: 'rgba(245,158,11,0.2)',
+                  border: '1px solid rgba(245,158,11,0.5)',
+                  color: '#fbbf24',
+                  fontSize: '0.7rem',
+                  fontWeight: 700,
+                  letterSpacing: '0.08em',
+                  textTransform: 'uppercase' as const,
+                  marginBottom: 14,
+                }}>
+                  ⚠️ Action Required
+                </div>
+
+                <h3 style={{ margin: '0 0 10px 0', color: '#fff', fontSize: '1.3rem', fontWeight: 700 }}>
+                  Sign in to {learnMode.hostname || 'the site'}
+                </h3>
+
+                <p style={{
+                  margin: '0 0 20px 0',
+                  color: '#d1d5db',
+                  fontSize: '0.9rem',
+                  lineHeight: 1.6,
+                }}>
+                  A browser window is open and waiting.<br />
+                  Sign in with Google, Apple, or email —<br />
+                  this panel updates automatically once you're in.
+                </p>
+              </>
+            ) : learnMode.requiresDismissal ? (
+              <>
+                {/* Completion state — scan summary with Done button */}
+                <h3 style={{ margin: '0 0 8px 0', color: '#fff', fontSize: '1.1rem' }}>
+                  Learning Complete
+                </h3>
+
+                <p style={{ margin: '0 0 16px 0', color: '#9ca3af', fontSize: '0.85rem' }}>
+                  {learnMode.message || `Agent finished exploring ${learnMode.hostname || 'the site'}`}
+                </p>
+
+                {/* Completion summary stats */}
+                {learnMode.scanStats && (
+                  <div style={{
+                    margin: '16px 0',
+                    padding: '12px',
+                    backgroundColor: 'rgba(16, 185, 129, 0.1)',
+                    border: '1px solid rgba(16, 185, 129, 0.3)',
+                    borderRadius: 8,
+                    textAlign: 'left',
+                  }}>
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '6px 12px', fontSize: '0.75rem', color: '#9ca3af' }}>
+                      <div>Elements found: <span style={{ color: '#fff' }}>{learnMode.scanStats.totalElements}</span></div>
+                      <div>Successful: <span style={{ color: '#10b981' }}>{learnMode.scanStats.successful}</span></div>
+                      <div>Filtered: <span style={{ color: '#f59e0b' }}>{learnMode.scanStats.filtered}</span></div>
+                      <div>Failed: <span style={{ color: '#ef4444' }}>{learnMode.scanStats.failed}</span></div>
+                      <div>States scanned: <span style={{ color: '#fff' }}>{learnMode.scanStats.states}</span></div>
+                      <div>Skills generated: <span style={{ color: '#3b82f6' }}>{learnMode.scanStats.skillsGenerated}</span></div>
+                      <div>Data items: <span style={{ color: '#8b5cf6' }}>{learnMode.scanStats.dataItems || 0}</span></div>
+                    </div>
+                    <div style={{ marginTop: '8px', fontSize: '0.7rem', color: '#6b7280' }}>
+                      Duration: {learnMode.scanStats.duration}s
+                    </div>
+                  </div>
+                )}
+
+                {/* Done button */}
+                <button
+                  onClick={() => {
+                    setLearnMode(null);
+                    // Switch back to agents tab
+                    setActiveTab('agents');
+                  }}
+                  style={{
+                    padding: '8px 24px',
+                    borderRadius: 6,
+                    border: 'none',
+                    backgroundColor: '#10b981',
+                    color: '#fff',
+                    fontSize: '0.85rem',
+                    fontWeight: 500,
+                    cursor: 'pointer',
+                    marginTop: 8,
+                  }}
+                >
+                  Done
+                </button>
+              </>
+            ) : (
+              <>
+                {/* Scanning — robot icon */}
+                <div style={{
+                  fontSize: '3rem',
+                  marginBottom: 20,
+                  animation: 'pulse 1.5s ease-in-out infinite',
+                }}>
+                  🤖
+                </div>
+
+                <h3 style={{ margin: '0 0 8px 0', color: '#fff', fontSize: '1.1rem' }}>
+                  Learning Mode Active
+                </h3>
+
+                <p style={{ margin: '0 0 16px 0', color: '#9ca3af', fontSize: '0.85rem' }}>
+                  Agent is exploring {learnMode.hostname || 'domain'}...
+                </p>
+
+                {/* Progress bar */}
+                <div style={{
+                  width: '100%',
+                  height: 6,
+                  backgroundColor: 'rgba(255,255,255,0.1)',
+                  borderRadius: 3,
+                  overflow: 'hidden',
+                  marginBottom: 12,
+                }}>
+                  <div style={{
+                    width: `${learnMode.progress}%`,
+                    height: '100%',
+                    backgroundColor: '#f59e0b',
+                    borderRadius: 3,
+                    transition: 'width 0.3s ease',
+                  }} />
+                </div>
+
+                {/* Status message */}
+                <p style={{ margin: '0 0 20px 0', color: '#6b7280', fontSize: '0.75rem' }}>
+                  {learnMode.message}
+                </p>
+
+                {/* Discovered states count */}
+                {learnMode.discoveredStates.length > 0 && (
+                  <p style={{ margin: '0 0 16px 0', color: '#10b981', fontSize: '0.7rem' }}>
+                    Discovered {learnMode.discoveredStates.length} states
+                  </p>
+                )}
+
+                {/* Cancel button */}
+                <button
+                  onClick={() => {
+                    ipcRenderer?.send('agents:learn-cancel', { agentId: learnMode.agentId });
+                  }}
+                  style={{
+                    padding: '8px 20px',
+                    borderRadius: 6,
+                    border: '1px solid rgba(255,255,255,0.2)',
+                    backgroundColor: 'transparent',
+                    color: '#9ca3af',
+                    fontSize: '0.8rem',
+                    cursor: 'pointer',
+                    marginTop: 4,
+                  }}
+                >
+                  Cancel
+                </button>
+              </>
             )}
-            
-            {/* Cancel button */}
-            <button
-              onClick={() => {
-                ipcRenderer?.send('agents:learn-cancel', { agentId: learnMode.agentId });
-              }}
-              style={{
-                padding: '8px 16px',
-                borderRadius: 6,
-                border: '1px solid rgba(255,255,255,0.2)',
-                backgroundColor: 'transparent',
-                color: '#9ca3af',
-                fontSize: '0.8rem',
-                cursor: 'pointer',
-              }}
-            >
-              Cancel
-            </button>
           </div>
         </div>
       )}

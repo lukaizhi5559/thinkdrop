@@ -696,6 +696,9 @@ let appControlMode = { active: false, app: null, enteredAt: null };
 // When true, resize handlers preserve the current Y position instead of reanchoring to screen bottom.
 let _userHasMovedPanel = false;
 
+// Tracks whether a learn session is active so the overlay can resist macOS panel auto-hide.
+let _learnSessionActive = false;
+
 // AbortController for the currently running stateGraph.execute — null when idle.
 // Hoisted to module scope so GET /activity (startOverlayControlServer) can read it.
 let activeAbortController = null;
@@ -1136,6 +1139,15 @@ function createUnifiedWindow() {
   unifiedWindow.on('closed', () => {
     console.log('Unified Window closed.');
     unifiedWindow = null;
+  });
+
+  // macOS NSPanel auto-hides when another app takes focus. During an active learn session
+  // (headed Chromium opens for auth) we must keep the overlay visible — re-show it immediately
+  // without stealing focus from the browser the user needs to interact with.
+  unifiedWindow.on('hide', () => {
+    if (_learnSessionActive && unifiedWindow && !unifiedWindow.isDestroyed()) {
+      unifiedWindow.showInactive();
+    }
   });
 
   return unifiedWindow;
@@ -2195,6 +2207,53 @@ app.whenReady().then(async () => {
     } catch (err) {
       console.warn('[MaintenanceScan] scan:status failed', err.message);
       return { ok: false, error: err.message };
+    }
+  });
+
+  // ─── Auto-scan setting IPC handlers ────────────────────────────────────────
+  const osMod = require('os');
+  const AUTO_SCAN_SETTINGS_FILE = path.join(osMod.homedir(), '.thinkdrop', 'settings.json');
+
+  function _loadAutoScanSetting() {
+    try {
+      const fs = require('fs');
+      if (fs.existsSync(AUTO_SCAN_SETTINGS_FILE)) {
+        const data = JSON.parse(fs.readFileSync(AUTO_SCAN_SETTINGS_FILE, 'utf8'));
+        return !!data.autoScanEnabled;
+      }
+    } catch (_) {}
+    return false; // Default: disabled
+  }
+
+  function _saveAutoScanSetting(enabled) {
+    try {
+      const fs = require('fs');
+      let data = {};
+      if (fs.existsSync(AUTO_SCAN_SETTINGS_FILE)) {
+        data = JSON.parse(fs.readFileSync(AUTO_SCAN_SETTINGS_FILE, 'utf8'));
+      }
+      data.autoScanEnabled = enabled;
+      fs.mkdirSync(path.dirname(AUTO_SCAN_SETTINGS_FILE), { recursive: true });
+      fs.writeFileSync(AUTO_SCAN_SETTINGS_FILE, JSON.stringify(data, null, 2), 'utf8');
+    } catch (err) {
+      console.warn('[AutoScan] Failed to save setting:', err);
+    }
+  }
+
+  // Get current auto-scan setting (returns { enabled: boolean })
+  ipcMain.handle('agents:auto-scan-get', async () => {
+    return { enabled: _loadAutoScanSetting() };
+  });
+
+  // Set auto-scan enabled/disabled and notify command-service
+  ipcMain.on('agents:auto-scan-set', async (_event, { enabled } = {}) => {
+    console.log(`[AutoScan] Setting auto-scan enabled=${enabled}`);
+    _saveAutoScanSetting(!!enabled);
+    // Notify command-service to start/stop idle watcher
+    try {
+      await _scanHttpPost('/scan.idle-watcher', { enabled: !!enabled });
+    } catch (err) {
+      console.warn('[AutoScan] Failed to notify command-service:', err.message);
     }
   });
 
@@ -5252,67 +5311,77 @@ app.whenReady().then(async () => {
       }
 
       const files = fsMod.readdirSync(agentsDir).filter(f => f.endsWith('.agent.md'));
+      console.log(`[Agents] Found ${files.length} agent files:`, files);
       
       const agents = files.map(file => {
-        const filePath = pathMod.join(agentsDir, file);
-        const content = fsMod.readFileSync(filePath, 'utf8');
-        
-        // Parse frontmatter
-        const fmMatch = content.match(/^---\s*\n([\s\S]*?)\n---/);
-        const fm = fmMatch ? fmMatch[1] : '';
-        
-        // Extract fields
-        const getField = (key) => {
-          const m = fm.match(new RegExp(`^${key}\\s*:\\s*(.+)$`, 'm'));
-          return m ? m[1].trim() : undefined;
-        };
-        
-        const getArrayField = (key) => {
-          const m = fm.match(new RegExp(`^${key}\\s*:\\s*\\n((?:\\s+-\\s+[^\\n]+\\n?)+)`, 'm'));
-          if (m) {
-            return m[1].split('\n')
-              .map(l => l.replace(/^\s*-\s*/, '').trim())
-              .filter(Boolean);
-          }
-          return undefined;
-        };
-        
-        const id = file.replace('.agent.md', '');
-        const domain = getField('domain') || getField('start_url')?.replace(/^https?:\/\//, '').split('/')[0] || id.replace('.agent', '');
-        
-        // Parse skills from frontmatter
-        let skills = [];
-        const skillsMatch = content.match(/## Capabilities[\s\S]*?(?=##|$)/);
-        
-        if (skillsMatch) {
-          const skillLines = skillsMatch[0].split('\n').filter(l => l.trim().startsWith('-'));
-          skills = skillLines.map(l => {
-            const match = l.match(/-\s+(\w+)\s*-\s*(.+)/);
-            if (match) {
-              return {
-                name: match[1],
-                status: 'published',
-                description: match[2].trim()
-              };
+        try {
+          const filePath = pathMod.join(agentsDir, file);
+          const content = fsMod.readFileSync(filePath, 'utf8');
+          
+          // Parse frontmatter
+          const fmMatch = content.match(/^---\s*\n([\s\S]*?)\n---/);
+          const fm = fmMatch ? fmMatch[1] : '';
+          
+          // Extract fields (handles both old and new format)
+          const getField = (key) => {
+            const m = fm.match(new RegExp(`^${key}\\s*:\\s*(.+)$`, 'm'));
+            return m ? m[1].trim() : undefined;
+          };
+          
+          // Parse YAML array format: "key:\n  - item1\n  - item2"
+          const getYamlArray = (key) => {
+            const regex = new RegExp(`^${key}\\s*:\\s*\\n((?:\\s+-\\s+[^\\n]*\\n?)*)`, 'm');
+            const m = fm.match(regex);
+            if (m && m[1]) {
+              return m[1].split('\n')
+                .map(l => l.replace(/^\s*-\s*/, '').trim())
+                .filter(Boolean);
             }
-            return null;
-          }).filter(Boolean);
+            return [];
+          };
+          
+          const id = file.replace('.agent.md', '');
+          const service = getField('service');
+          const startUrl = getField('start_url');
+          const domain = getField('domain') || service || (startUrl?.replace(/^https?:\/\//, '').split('/')[0]) || id.replace('.agent', '');
+          const type = getField('type') || 'browser';
+          
+          // Get capabilities from YAML array in frontmatter
+          const capabilities = getYamlArray('capabilities');
+          const learnedStates = getYamlArray('learned_states');
+          
+          // Build skills from capabilities
+          const skills = capabilities.map(cap => ({
+            name: cap,
+            status: 'published',
+            description: ''
+          })).filter(s => s.name && !s.name.includes('computer')); // Filter out generic caps
+          
+          // Parse status - map to UI status values
+          let status = getField('status') || 'pending';
+          if (status === 'needs_training') status = 'needs_training';
+          if (status === 'healthy') status = 'learned';
+          
+          return {
+            id,
+            name: service ? service.charAt(0).toUpperCase() + service.slice(1) : id.replace('.agent', '').replace(/\./g, ' ').replace(/\b\w/g, l => l.toUpperCase()),
+            domain,
+            category: type === 'browser' ? 'Social & Communication' : 'Utility',
+            status,
+            created: getField('created'),
+            lastLearned: getField('last_learned'),
+            userGoal: getField('user_goal') || getField('user_goals'),
+            learnedStates,
+            skills,
+            faviconUrl: getField('favicon_url') || `https://www.google.com/s2/favicons?domain=${domain}&sz=128`
+          };
+        } catch (fileErr) {
+          console.error(`[Agents] Error parsing ${file}:`, fileErr.message);
+          return null;
         }
-        
-        return {
-          id,
-          name: id.replace('.agent', '').replace(/\./g, ' ').replace(/\b\w/g, l => l.toUpperCase()),
-          domain,
-          category: getField('category') || 'Utility',
-          status: getField('status') || 'pending',
-          created: getField('created'),
-          lastLearned: getField('last_learned'),
-          userGoal: getField('user_goal'),
-          learnedStates: getArrayField('learned_states'),
-          skills,
-          faviconUrl: getField('favicon_url')
-        };
-      });
+      }).filter(Boolean); // Remove null entries from failed parses
+      
+      console.log(`[Agents] Parsed ${agents.length} agents:`, agents.map(a => a.id));
       
       if (unifiedWindow && !unifiedWindow.isDestroyed()) {
         safeSend(unifiedWindow, 'agents:list', agents);
@@ -5410,7 +5479,19 @@ app.whenReady().then(async () => {
   });
 
   // Agent learn handler - triggers learn.agent for blocking domain scan
-  ipcMain.on('agents:learn', async (_event, { agentId, options = {} }) => {
+  ipcMain.on('agents:learn', async (_event, { agentId, goals = [], options = {} }) => {
+    // Elevate overlay above headed Chromium so it stays visible during auth
+    const _bumpOverlay = () => {
+      if (unifiedWindow && !unifiedWindow.isDestroyed()) {
+        unifiedWindow.setAlwaysOnTop(true, 'screen-saver', 5);
+      }
+    };
+    const _restoreOverlay = () => {
+      if (unifiedWindow && !unifiedWindow.isDestroyed()) {
+        unifiedWindow.setAlwaysOnTop(true, 'floating', 5);
+      }
+    };
+
     try {
       console.log(`[Agents] Starting learn mode for ${agentId}`, options);
       
@@ -5418,17 +5499,24 @@ app.whenReady().then(async () => {
       if (unifiedWindow && !unifiedWindow.isDestroyed()) {
         safeSend(unifiedWindow, 'agents:update', { agentId, status: 'learning' });
       }
+
+      _learnSessionActive = true;
+      _bumpOverlay();
       
       // Call learn.agent skill
       const learnAgent = require('../../mcp-services/command-service/src/skills/learn.agent.cjs');
       
       const result = await learnAgent.actionLearn({
         agentId,
+        goals,
         maxScanDepth: 2,
         options: {
           headed: options.headed || false,  // default headless
         }
       });
+
+      _learnSessionActive = false;
+      _restoreOverlay();
       
       if (result.ok) {
         // Send completion update with learned states
@@ -5454,6 +5542,8 @@ app.whenReady().then(async () => {
         console.error(`[Agents] Learn failed for ${agentId}: ${result.error || result.reason}`);
       }
     } catch (e) {
+      _learnSessionActive = false;
+      _restoreOverlay();
       console.error('[Agents] agents:learn failed:', e.message);
       if (unifiedWindow && !unifiedWindow.isDestroyed()) {
         safeSend(unifiedWindow, 'agents:update', { 
@@ -5462,6 +5552,29 @@ app.whenReady().then(async () => {
           error: e.message
         });
       }
+    }
+  });
+
+  // Agent learn-cancel handler — signals the active learn session to stop
+  ipcMain.on('agents:learn-cancel', (_event, { agentId } = {}) => {
+    try {
+      console.log(`[Agents] Cancel requested for learn session: ${agentId}`);
+      // Reset overlay state immediately so panel returns to normal
+      _learnSessionActive = false;
+      if (unifiedWindow && !unifiedWindow.isDestroyed()) {
+        unifiedWindow.setAlwaysOnTop(true, 'floating', 5);
+        safeSend(unifiedWindow, 'agents:learn-progress', {
+          type: 'learn:cancelling', agentId, timestamp: Date.now(),
+        });
+        // Reset the card spinner immediately — don't wait for the async learn unwind
+        safeSend(unifiedWindow, 'agents:update', { agentId, status: 'pending' });
+      }
+      // Mark the session as cancelled in learn.agent
+      const learnAgent = require('../../mcp-services/command-service/src/skills/learn.agent.cjs');
+      const result = learnAgent.actionCancelLearn({ agentId });
+      console.log(`[Agents] Cancel result for ${agentId}:`, result);
+    } catch (e) {
+      console.error('[Agents] agents:learn-cancel failed:', e.message);
     }
   });
 
