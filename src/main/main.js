@@ -1096,6 +1096,16 @@ function createUnifiedWindow() {
       { query: { mode: 'unified' } });
   }
 
+  // Strip COEP/COOP headers to allow cross-origin resources (e.g. Google favicon service)
+  unifiedWindow.webContents.session.webRequest.onHeadersReceived((details, callback) => {
+    const headers = { ...details.responseHeaders };
+    delete headers['cross-origin-embedder-policy'];
+    delete headers['cross-origin-opener-policy'];
+    delete headers['Cross-Origin-Embedder-Policy'];
+    delete headers['Cross-Origin-Opener-Policy'];
+    callback({ responseHeaders: headers });
+  });
+
   // Grant microphone access for voice input
   unifiedWindow.webContents.session.setPermissionRequestHandler((webContents, permission, callback) => {
     if (permission === 'media' || permission === 'microphone' || permission === 'audiocapture' || permission === 'speech') {
@@ -5310,6 +5320,45 @@ app.whenReady().then(async () => {
         return;
       }
 
+      // Pre-scan ~/.thinkdrop/skills/ to build a map of agentId → real skills on disk
+      const skillsBaseDir = pathMod.join(osMod.homedir(), '.thinkdrop', 'skills');
+      const agentSkillsMap = {};
+      try {
+        if (fsMod.existsSync(skillsBaseDir)) {
+          const skillDirs = fsMod.readdirSync(skillsBaseDir);
+          for (const skillDir of skillDirs) {
+            const skillPath = pathMod.join(skillsBaseDir, skillDir);
+            const indexPath = pathMod.join(skillPath, 'index.cjs');
+            if (!fsMod.existsSync(indexPath)) continue;
+            // Read skill.json to find which agent this skill belongs to
+            const metaPath = pathMod.join(skillPath, 'skill.json');
+            if (fsMod.existsSync(metaPath)) {
+              try {
+                const meta = JSON.parse(fsMod.readFileSync(metaPath, 'utf8'));
+                // Build human-readable display name from source_action or raw name
+                const rawAction = meta.source_action || meta.name || skillDir;
+                const displayName = rawAction
+                  .replace(/_/g, ' ')
+                  .replace(/\b\w/g, l => l.toUpperCase());
+                const skillEntry = {
+                  name: displayName,
+                  status: 'published',
+                  description: meta.description || ''
+                };
+                // Key by all known identifiers — agentId, domain, and source_domain
+                const keys = [meta.agentId, meta.agent_id, meta.domain, meta.source_domain].filter(Boolean);
+                for (const key of keys) {
+                  if (!agentSkillsMap[key]) agentSkillsMap[key] = [];
+                  agentSkillsMap[key].push(skillEntry);
+                }
+              } catch (_) {}
+            }
+          }
+        }
+      } catch (skillScanErr) {
+        console.warn('[Agents] Skills dir scan failed:', skillScanErr.message);
+      }
+
       const files = fsMod.readdirSync(agentsDir).filter(f => f.endsWith('.agent.md'));
       console.log(`[Agents] Found ${files.length} agent files:`, files);
       
@@ -5322,7 +5371,7 @@ app.whenReady().then(async () => {
           const fmMatch = content.match(/^---\s*\n([\s\S]*?)\n---/);
           const fm = fmMatch ? fmMatch[1] : '';
           
-          // Extract fields (handles both old and new format)
+          // Extract scalar fields
           const getField = (key) => {
             const m = fm.match(new RegExp(`^${key}\\s*:\\s*(.+)$`, 'm'));
             return m ? m[1].trim() : undefined;
@@ -5334,7 +5383,7 @@ app.whenReady().then(async () => {
             const m = fm.match(regex);
             if (m && m[1]) {
               return m[1].split('\n')
-                .map(l => l.replace(/^\s*-\s*/, '').trim())
+                .map(l => l.replace(/^\s*-\s*/, '').replace(/^["']|["']$/g, '').trim())
                 .filter(Boolean);
             }
             return [];
@@ -5343,23 +5392,27 @@ app.whenReady().then(async () => {
           const id = file.replace('.agent.md', '');
           const service = getField('service');
           const startUrl = getField('start_url');
-          const domain = getField('domain') || service || (startUrl?.replace(/^https?:\/\//, '').split('/')[0]) || id.replace('.agent', '');
+
+          // Build proper full domain from start_url (e.g. https://www.krea.ai/ → krea.ai)
+          let domain = getField('domain');
+          if (!domain && startUrl) {
+            try {
+              domain = new URL(startUrl).hostname.replace(/^www\./, '');
+            } catch (_) {}
+          }
+          if (!domain) domain = service ? `${service}.com` : id.replace('.agent', '');
+
           const type = getField('type') || 'browser';
-          
-          // Get capabilities from YAML array in frontmatter
-          const capabilities = getYamlArray('capabilities');
           const learnedStates = getYamlArray('learned_states');
+
+          // Parse user_goals as YAML array (fix: was using scalar parser on array field)
+          const userGoals = getYamlArray('user_goals');
           
-          // Build skills from capabilities
-          const skills = capabilities.map(cap => ({
-            name: cap,
-            status: 'published',
-            description: ''
-          })).filter(s => s.name && !s.name.includes('computer')); // Filter out generic caps
+          // Real skills from disk (not capabilities)
+          const skills = agentSkillsMap[id] || agentSkillsMap[service] || agentSkillsMap[domain] || [];
           
           // Parse status - map to UI status values
           let status = getField('status') || 'pending';
-          if (status === 'needs_training') status = 'needs_training';
           if (status === 'healthy') status = 'learned';
           
           return {
@@ -5370,7 +5423,7 @@ app.whenReady().then(async () => {
             status,
             created: getField('created'),
             lastLearned: getField('last_learned'),
-            userGoal: getField('user_goal') || getField('user_goals'),
+            userGoals,
             learnedStates,
             skills,
             faviconUrl: getField('favicon_url') || `https://www.google.com/s2/favicons?domain=${domain}&sz=128`
@@ -5494,7 +5547,32 @@ app.whenReady().then(async () => {
 
     try {
       console.log(`[Agents] Starting learn mode for ${agentId}`, options);
-      
+
+      // Persist goals to the .agent.md frontmatter before learning starts
+      if (goals && goals.length > 0) {
+        try {
+          const fsMod = require('fs');
+          const osMod = require('os');
+          const pathMod = require('path');
+          const agentMdPath = pathMod.join(osMod.homedir(), '.thinkdrop', 'agents', `${agentId}.agent.md`);
+          if (fsMod.existsSync(agentMdPath)) {
+            let mdContent = fsMod.readFileSync(agentMdPath, 'utf8');
+            const goalsYaml = goals.map(g => `  - "${g.replace(/"/g, '\\"')}"`).join('\n');
+            const newGoalsBlock = `user_goals:\n${goalsYaml}`;
+            // Replace existing user_goals block or insert before closing ---
+            if (/^user_goals\s*:/m.test(mdContent)) {
+              mdContent = mdContent.replace(/^user_goals\s*:\s*\n((?:\s+-\s+[^\n]*\n?)*)/m, `${newGoalsBlock}\n`);
+            } else {
+              mdContent = mdContent.replace(/^---\s*\n([\s\S]*?)\n---/, (match, body) => `---\n${body}\n${newGoalsBlock}\n---`);
+            }
+            fsMod.writeFileSync(agentMdPath, mdContent, 'utf8');
+            console.log(`[Agents] Persisted ${goals.length} goals to ${agentId}.agent.md`);
+          }
+        } catch (goalWriteErr) {
+          console.warn(`[Agents] Failed to persist goals for ${agentId}:`, goalWriteErr.message);
+        }
+      }
+
       // Send initial learning status
       if (unifiedWindow && !unifiedWindow.isDestroyed()) {
         safeSend(unifiedWindow, 'agents:update', { agentId, status: 'learning' });
@@ -5648,14 +5726,307 @@ app.whenReady().then(async () => {
   });
 
   // Skill test/publish handlers
-  ipcMain.on('agents:test-skill', async (_event, { agentId, skillName }) => {
-    console.log(`[Agents] Testing skill ${skillName} for ${agentId}`);
-    // TODO: Implement skill testing
+  ipcMain.on('agents:test-skill', async (_event, { agentId, skillName, headed }) => {
+    const isHeaded = headed === true;
+    console.log(`[Agents] Testing skill "${skillName}" for ${agentId} (${isHeaded ? 'headed' : 'headless'})`);
+    try {
+      const fsMod = require('fs');
+      const osMod = require('os');
+      const pathMod = require('path');
+      const httpMod = require('http');
+
+      // 1. Resolve display name → raw skill.json name + source_action
+      const skillsBaseDir = pathMod.join(osMod.homedir(), '.thinkdrop', 'skills');
+      let rawSkillName = null;
+      let sourceAction = null;
+      let sourceDomain = null;
+
+      if (fsMod.existsSync(skillsBaseDir)) {
+        for (const dirName of fsMod.readdirSync(skillsBaseDir)) {
+          const metaPath = pathMod.join(skillsBaseDir, dirName, 'skill.json');
+          if (!fsMod.existsSync(metaPath)) continue;
+          try {
+            const meta = JSON.parse(fsMod.readFileSync(metaPath, 'utf8'));
+            const rawAction = meta.source_action || meta.name || dirName;
+            const display = rawAction.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+            if (display === skillName || meta.name === skillName || dirName === skillName) {
+              rawSkillName = meta.name || dirName;
+              sourceAction = meta.source_action || null;
+              sourceDomain = meta.source_domain || null;
+              break;
+            }
+          } catch (_) {}
+        }
+      }
+
+      if (!rawSkillName) {
+        console.error(`[Agents] Cannot test "${skillName}": skill not found on disk`);
+        return;
+      }
+
+      // 2. Get start_url from agent descriptor
+      const agentsDir = pathMod.join(osMod.homedir(), '.thinkdrop', 'agents');
+      let startUrl = sourceDomain ? `https://${sourceDomain}` : null;
+      const agentFile = pathMod.join(agentsDir, `${agentId}.agent.md`);
+      if (fsMod.existsSync(agentFile)) {
+        const content = fsMod.readFileSync(agentFile, 'utf8');
+        const urlMatch = content.match(/^start_url:\s*(.+)$/m);
+        if (urlMatch) startUrl = urlMatch[1].trim();
+      }
+
+      if (!startUrl) {
+        console.error(`[Agents] Cannot test "${skillName}": no start_url for agent ${agentId}`);
+        return;
+      }
+
+      // 3. Load domain map and find skill action
+      const hostname = startUrl.replace(/^https?:\/\//, '').replace(/\/.*$/, '').replace(/^www\./, '');
+      const domainMapPath = pathMod.join(osMod.homedir(), '.thinkdrop', 'domain-maps', `${hostname}.json`);
+      if (!fsMod.existsSync(domainMapPath)) {
+        console.error(`[Agents] Cannot test "${skillName}": no domain map for ${hostname}`);
+        return;
+      }
+
+      const domainMap = JSON.parse(fsMod.readFileSync(domainMapPath, 'utf8'));
+      const lookupKey = sourceAction || rawSkillName;
+      let actionEntry = null;
+      for (const stateKey of Object.keys(domainMap.states || {})) {
+        const actions = domainMap.states[stateKey].actions || {};
+        if (actions[lookupKey]) { actionEntry = actions[lookupKey]; break; }
+        // Try partial match
+        const matchKey = Object.keys(actions).find(k => k === lookupKey || lookupKey.includes(k) || k.includes(lookupKey));
+        if (matchKey) { actionEntry = actions[matchKey]; break; }
+      }
+
+      if (!actionEntry || !actionEntry.locators?.primary) {
+        console.error(`[Agents] Cannot test "${skillName}": no locator found in domain map for "${lookupKey}"`);
+        return;
+      }
+
+      console.log(`[Agents] Running skill test: "${skillName}" → ${actionEntry.locators.primary} on ${startUrl}`);
+
+      // 4. Notify UI: testing started
+      if (unifiedWindow && !unifiedWindow.isDestroyed()) {
+        unifiedWindow.webContents.send('agents:skill-test-update', { agentId, skillName, status: 'testing' });
+      }
+
+      // 5. Execute via browser.act MCP
+      // Use the _agent-suffixed session ID — this matches the profile created by learn.agent.cjs
+      // (e.g. "perplexity_agent") so browser.act points to the correct browser-profiles/ directory
+      // where the user's logged-in cookies already live. Using plain agentId creates a fresh empty
+      // profile → Chrome shows the login page every time.
+      const BROWSER_ACT_PORT = parseInt(process.env.SERVICE_PORT || process.env.COMMAND_SERVICE_PORT || '3007', 10);
+      const sessionId = `${agentId.replace(/[^a-z0-9_]/gi, '_')}_agent`;
+
+      async function browserActCall(args) {
+        return new Promise((resolve) => {
+          const body = JSON.stringify({ payload: { skill: 'browser.act', args } });
+          const req = httpMod.request({
+            hostname: '127.0.0.1', port: BROWSER_ACT_PORT, path: '/command.automate', method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) },
+            timeout: 20000,
+          }, res => {
+            let raw = '';
+            res.on('data', c => { raw += c; });
+            res.on('end', () => { try { resolve(JSON.parse(raw)); } catch (_) { resolve({}); } });
+          });
+          req.on('error', (e) => { console.warn(`[Agents] browser.act error: ${e.message}`); resolve({}); });
+          req.on('timeout', () => { req.destroy(); resolve({}); });
+          req.write(body);
+          req.end();
+        });
+      }
+
+      // Navigate to start URL
+      await browserActCall({ action: 'navigate', url: startUrl, sessionId, headed: isHeaded, timeoutMs: 15000 });
+
+      // Click the skill's primary locator
+      const selector = actionEntry.locators.primary;
+      await browserActCall({ action: 'click', selector, sessionId, headed: isHeaded, timeoutMs: 10000 });
+
+      console.log(`[Agents] Skill test complete: "${skillName}"`);
+
+      // 6. Notify UI: testing done
+      if (unifiedWindow && !unifiedWindow.isDestroyed()) {
+        unifiedWindow.webContents.send('agents:skill-test-update', { agentId, skillName, status: 'done' });
+      }
+    } catch (err) {
+      console.error(`[Agents] agents:test-skill failed: ${err.message}`);
+      if (unifiedWindow && !unifiedWindow.isDestroyed()) {
+        unifiedWindow.webContents.send('agents:skill-test-update', { agentId, skillName, status: 'error' });
+      }
+    }
   });
 
   ipcMain.on('agents:publish-skill', async (_event, { agentId, skillName }) => {
-    console.log(`[Agents] Publishing skill ${skillName} for ${agentId}`);
-    // TODO: Implement skill publishing (move from .draft.cjs to .skill.cjs)
+    console.log(`[Agents] Publishing skill "${skillName}" for ${agentId}`);
+    try {
+      const fsMod = require('fs');
+      const osMod = require('os');
+      const pathMod = require('path');
+      const httpMod = require('http');
+
+      // skillName from UI is a display name (e.g. "Animate Image").
+      // Scan ~/.thinkdrop/skills/ to find the matching dir by source_action display name or raw name.
+      const skillsBaseDir = pathMod.join(osMod.homedir(), '.thinkdrop', 'skills');
+      let resolvedSkillDir = null;
+      let resolvedMeta = {};
+
+      if (fsMod.existsSync(skillsBaseDir)) {
+        for (const dirName of fsMod.readdirSync(skillsBaseDir)) {
+          const dirPath = pathMod.join(skillsBaseDir, dirName);
+          const metaPath = pathMod.join(dirPath, 'skill.json');
+          if (!fsMod.existsSync(metaPath)) continue;
+          try {
+            const meta = JSON.parse(fsMod.readFileSync(metaPath, 'utf8'));
+            const rawAction = meta.source_action || meta.name || dirName;
+            const display = rawAction.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+            if (display === skillName || meta.name === skillName || dirName === skillName) {
+              resolvedSkillDir = dirPath;
+              resolvedMeta = meta;
+              break;
+            }
+          } catch (_) {}
+        }
+      }
+
+      if (!resolvedSkillDir) {
+        console.error(`[Agents] Cannot publish "${skillName}": no matching skill dir found in ${skillsBaseDir}`);
+        return;
+      }
+
+      const indexPath = pathMod.join(resolvedSkillDir, 'index.cjs');
+      if (!fsMod.existsSync(indexPath)) {
+        console.error(`[Agents] Cannot publish "${skillName}": index.cjs not found at ${indexPath}`);
+        return;
+      }
+
+      const rawSkillName = resolvedMeta.name || pathMod.basename(resolvedSkillDir);
+      const description = resolvedMeta.description || `Skill for ${rawSkillName}`;
+      const contractMd = ['---', `name: ${rawSkillName}`, `description: ${description}`, `exec_path: ${indexPath}`, `exec_type: node`, '---'].join('\n');
+
+      const memPort = parseInt(process.env.MEMORY_SERVICE_PORT || process.env.MCP_USER_MEMORY_PORT || '3001', 10);
+      const memKey = process.env.MCP_USER_MEMORY_API_KEY || process.env.USER_MEMORY_API_KEY || '';
+      const payload = JSON.stringify({
+        version: 'mcp.v1', service: 'user-memory', action: 'skill.upsert',
+        payload: { name: rawSkillName, description, execPath: indexPath, execType: 'node', enabled: true, contractMd },
+        requestId: `publish-${rawSkillName}-${Date.now()}`,
+      });
+
+      await new Promise((resolve) => {
+        const req = httpMod.request({
+          hostname: '127.0.0.1', port: memPort, path: '/skill.upsert', method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(payload), ...(memKey ? { 'Authorization': `Bearer ${memKey}` } : {}) },
+          timeout: 8000,
+        }, res => {
+          let body = '';
+          res.on('data', c => { body += c; });
+          res.on('end', () => {
+            if (res.statusCode === 200) {
+              console.log(`[Agents] Skill "${skillName}" (${rawSkillName}) published to DuckDB`);
+            } else {
+              console.warn(`[Agents] Skill publish returned ${res.statusCode} for "${skillName}": ${body}`);
+            }
+            resolve();
+          });
+        });
+        req.on('error', (err) => { console.error(`[Agents] Skill publish error: ${err.message}`); resolve(); });
+        req.on('timeout', () => { req.destroy(); resolve(); });
+        req.write(payload);
+        req.end();
+      });
+    } catch (err) {
+      console.error(`[Agents] agents:publish-skill failed: ${err.message}`);
+    }
+  });
+
+  ipcMain.on('agents:delete-skill', async (_event, { agentId, skillName }) => {
+    console.log(`[Agents] Deleting skill "${skillName}" for ${agentId}`);
+    try {
+      const fsMod = require('fs');
+      const osMod = require('os');
+      const pathMod = require('path');
+      const httpMod = require('http');
+
+      // Resolve display name → actual skill dir + raw name
+      const skillsBaseDir = pathMod.join(osMod.homedir(), '.thinkdrop', 'skills');
+      let resolvedSkillDir = null;
+      let rawSkillName = null;
+
+      if (fsMod.existsSync(skillsBaseDir)) {
+        for (const dirName of fsMod.readdirSync(skillsBaseDir)) {
+          const dirPath = pathMod.join(skillsBaseDir, dirName);
+          const metaPath = pathMod.join(dirPath, 'skill.json');
+          if (!fsMod.existsSync(metaPath)) continue;
+          try {
+            const meta = JSON.parse(fsMod.readFileSync(metaPath, 'utf8'));
+            const rawAction = meta.source_action || meta.name || dirName;
+            const display = rawAction.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+            if (display === skillName || meta.name === skillName || dirName === skillName) {
+              resolvedSkillDir = dirPath;
+              rawSkillName = meta.name || dirName;
+              break;
+            }
+          } catch (_) {}
+        }
+      }
+
+      if (!resolvedSkillDir || !rawSkillName) {
+        console.error(`[Agents] Cannot delete "${skillName}": skill dir not found`);
+        return;
+      }
+
+      // 1. Remove from DuckDB via /skill.remove
+      const memPort = parseInt(process.env.MEMORY_SERVICE_PORT || process.env.MCP_USER_MEMORY_PORT || '3001', 10);
+      const memKey = process.env.MCP_USER_MEMORY_API_KEY || process.env.USER_MEMORY_API_KEY || '';
+      const payload = JSON.stringify({
+        version: 'mcp.v1', service: 'user-memory', action: 'skill.remove',
+        payload: { name: rawSkillName },
+        requestId: `delete-${rawSkillName}-${Date.now()}`,
+      });
+
+      await new Promise((resolve) => {
+        const req = httpMod.request({
+          hostname: '127.0.0.1', port: memPort, path: '/skill.remove', method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(payload), ...(memKey ? { 'Authorization': `Bearer ${memKey}` } : {}) },
+          timeout: 8000,
+        }, res => {
+          let body = '';
+          res.on('data', c => { body += c; });
+          res.on('end', () => {
+            if (res.statusCode === 200) {
+              console.log(`[Agents] Skill "${rawSkillName}" removed from DuckDB`);
+            } else {
+              console.warn(`[Agents] Skill remove returned ${res.statusCode}: ${body}`);
+            }
+            resolve();
+          });
+        });
+        req.on('error', (err) => { console.warn(`[Agents] Skill remove DB error: ${err.message}`); resolve(); });
+        req.on('timeout', () => { req.destroy(); resolve(); });
+        req.write(payload);
+        req.end();
+      });
+
+      // 2. Remove skill directory from disk
+      try {
+        fsMod.rmSync(resolvedSkillDir, { recursive: true, force: true });
+        console.log(`[Agents] Skill dir removed from disk: ${resolvedSkillDir}`);
+      } catch (rmErr) {
+        console.warn(`[Agents] Could not remove skill dir ${resolvedSkillDir}: ${rmErr.message}`);
+      }
+
+      console.log(`[Agents] Skill "${skillName}" (${rawSkillName}) deleted successfully`);
+
+      // Refresh agents list so UI reflects removal
+      setTimeout(() => {
+        if (unifiedWindow && !unifiedWindow.isDestroyed()) {
+          unifiedWindow.webContents.send('agents:list-request');
+        }
+      }, 300);
+    } catch (err) {
+      console.error(`[Agents] agents:delete-skill failed: ${err.message}`);
+    }
   });
 
   // Agent delete handler — removes all artifacts (descriptor, DuckDB rows, profiles, domain maps)

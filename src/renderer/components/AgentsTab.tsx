@@ -24,6 +24,14 @@ const statusColors: Record<string, string> = {
   pending: '#6b7280',
   learning: '#f59e0b',
   learned: '#10b981',
+  needs_training: '#f97316',
+};
+
+const statusLabels: Record<string, string> = {
+  pending: 'Pending',
+  learning: 'Learning…',
+  learned: 'Learned',
+  needs_training: 'Needs training',
 };
 
 // Favicon fetch with fallback
@@ -104,6 +112,8 @@ function AgentCard({
   onDelete,
   onTestSkill,
   onPublishSkill,
+  onDeleteSkill,
+  testingSkills,
   expanded,
   onToggle
 }: { 
@@ -112,8 +122,10 @@ function AgentCard({
   onTrain: (agentId: string) => void;
   onEdit: (agentId: string) => void;
   onDelete: (agentId: string) => void;
-  onTestSkill: (agentId: string, skillName: string) => void;
+  onTestSkill: (agentId: string, skillName: string, headed: boolean) => void;
   onPublishSkill: (agentId: string, skillName: string) => void;
+  onDeleteSkill: (agentId: string, skillName: string) => void;
+  testingSkills: Record<string, boolean>;
   expanded: boolean;
   onToggle: () => void;
 }) {
@@ -141,17 +153,42 @@ function AgentCard({
 
         {/* Name + domain */}
         <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 5, flexWrap: 'nowrap', overflow: 'hidden' }}>
+          {/* Name row — name + (domain) clickable */}
+          <div style={{ display: 'flex', alignItems: 'baseline', gap: 4, overflow: 'hidden' }}>
             <span style={{
               fontSize: '0.72rem',
               fontWeight: 600,
               color: '#e5e7eb',
-              overflow: 'hidden',
-              textOverflow: 'ellipsis',
               whiteSpace: 'nowrap',
+              flexShrink: 0,
             }}>
               {agent.name}
             </span>
+            <span
+              onClick={(e) => {
+                e.stopPropagation();
+                const url = agent.domain ? `https://${agent.domain}` : undefined;
+                if (url) ipcRenderer?.send('shell:open-url', url);
+              }}
+              title={`Open ${agent.domain}`}
+              style={{
+                fontSize: '0.62rem',
+                color: '#6b7280',
+                whiteSpace: 'nowrap',
+                overflow: 'hidden',
+                textOverflow: 'ellipsis',
+                cursor: agent.domain ? 'pointer' : 'default',
+                textDecoration: 'none',
+                flexShrink: 1,
+              }}
+              onMouseEnter={(e) => { if (agent.domain) (e.currentTarget as HTMLElement).style.textDecoration = 'underline'; }}
+              onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.textDecoration = 'none'; }}
+            >
+              {agent.domain ? `(${agent.domain})` : ''}
+            </span>
+          </div>
+          {/* Badge row */}
+          <div style={{ marginTop: 1, marginBottom: 2 }}>
             <span style={{
               fontSize: '0.58rem',
               padding: '1px 5px',
@@ -159,13 +196,14 @@ function AgentCard({
               backgroundColor: categoryColor + '22',
               color: categoryColor,
               border: `1px solid ${categoryColor}44`,
-              flexShrink: 0,
               whiteSpace: 'nowrap',
+              display: 'inline-block',
             }}>
               {agent.category}
             </span>
           </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 5, marginTop: 2 }}>
+          {/* Status row — dot + label only */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
             <div style={{
               width: 6,
               height: 6,
@@ -175,18 +213,8 @@ function AgentCard({
               boxShadow: isLearning ? `0 0 5px ${statusColor}` : 'none',
               animation: isLearning ? 'pulse 1.5s infinite' : undefined,
             }} />
-            <span style={{ fontSize: '0.62rem', color: '#6b7280', textTransform: 'capitalize' }}>
-              {isLearning ? 'Learning…' : agent.status}
-            </span>
-            <span style={{ fontSize: '0.62rem', color: '#4b5563' }}>·</span>
-            <span style={{
-              fontSize: '0.62rem',
-              color: '#4b5563',
-              overflow: 'hidden',
-              textOverflow: 'ellipsis',
-              whiteSpace: 'nowrap',
-            }}>
-              {agent.domain}
+            <span style={{ fontSize: '0.62rem', color: '#6b7280' }}>
+              {statusLabels[agent.status] || agent.status}
             </span>
           </div>
         </div>
@@ -428,8 +456,10 @@ function AgentCard({
                 <SkillRow
                   key={skill.name}
                   skill={skill}
-                  onTest={() => onTestSkill(agent.id, skill.name)}
+                  onTest={(headed) => onTestSkill(agent.id, skill.name, headed)}
                   onPublish={() => onPublishSkill(agent.id, skill.name)}
+                  onDelete={() => onDeleteSkill(agent.id, skill.name)}
+                  isTesting={testingSkills[`${agent.id}::${skill.name}`] === true}
                 />
               ))}
             </div>
@@ -450,12 +480,18 @@ function AgentCard({
 function SkillRow({ 
   skill, 
   onTest,
-  onPublish 
+  onPublish,
+  onDelete,
+  isTesting,
 }: { 
   skill: AgentSkill; 
-  onTest: () => void;
+  onTest: (headed: boolean) => void;
   onPublish: () => void;
+  onDelete: () => void;
+  isTesting?: boolean;
 }) {
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const [choosing, setChoosing] = useState(false);
   const isDraft = skill.status === 'draft';
 
   return (
@@ -499,46 +535,157 @@ function SkillRow({
         {skill.status}
       </span>
 
-      {/* Test — play icon */}
+      {/* Test — play ▶ → expands to ghost (headless) / eye (headed) chooser */}
+      {isTesting ? (
+        // Spinner while test is running
+        <button
+          disabled
+          title="Running test…"
+          style={{
+            padding: '3px 6px', borderRadius: 4, cursor: 'default',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            background: 'rgba(99,102,241,0.12)', border: '1px solid rgba(99,102,241,0.35)',
+            color: '#818cf8', flexShrink: 0,
+          }}
+        >
+          <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" style={{ animation: 'spin 1s linear infinite' }}>
+            <circle cx="12" cy="12" r="10" strokeOpacity="0.25"/>
+            <path d="M12 2a10 10 0 0 1 10 10" />
+          </svg>
+        </button>
+      ) : choosing ? (
+        // Mode chooser — ghost (headless) + eye (headed)
+        <div style={{ display: 'flex', gap: 3, flexShrink: 0 }}>
+          {/* Ghost = headless */}
+          <button
+            onClick={() => { setChoosing(false); onTest(false); }}
+            title="Run headless (silent)"
+            style={{
+              padding: '3px 6px', borderRadius: 4, cursor: 'pointer',
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.14)',
+              color: '#9ca3af', flexShrink: 0,
+            }}
+          >
+            <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor" stroke="none">
+              <path d="M12 2C7.03 2 3 6.03 3 11v7l3-2 2 2 2-2 2 2 2-2 3 2v-7c0-4.97-4.03-9-9-9zm-3 8a1 1 0 1 1 0-2 1 1 0 0 1 0 2zm6 0a1 1 0 1 1 0-2 1 1 0 0 1 0 2z"/>
+            </svg>
+          </button>
+          {/* Eye = headed */}
+          <button
+            onClick={() => { setChoosing(false); onTest(true); }}
+            title="Run headed (watch in browser)"
+            style={{
+              padding: '3px 6px', borderRadius: 4, cursor: 'pointer',
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              background: 'rgba(99,102,241,0.1)', border: '1px solid rgba(99,102,241,0.3)',
+              color: '#818cf8', flexShrink: 0,
+            }}
+          >
+            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
+              <circle cx="12" cy="12" r="3"/>
+            </svg>
+          </button>
+          {/* Cancel */}
+          <button
+            onClick={() => setChoosing(false)}
+            title="Cancel"
+            style={{
+              padding: '3px 5px', borderRadius: 4, cursor: 'pointer',
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              background: 'transparent', border: '1px solid rgba(255,255,255,0.07)',
+              color: '#4b5563', flexShrink: 0,
+            }}
+          >
+            <svg width="7" height="7" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+              <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+            </svg>
+          </button>
+        </div>
+      ) : (
+        // Default: play button
+        <button
+          onClick={() => setChoosing(true)}
+          title="Test skill"
+          style={{
+            padding: '3px 6px', borderRadius: 4, cursor: 'pointer',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)',
+            color: '#9ca3af', flexShrink: 0,
+          }}
+        >
+          <svg width="9" height="9" viewBox="0 0 24 24" fill="currentColor" stroke="none">
+            <polygon points="5,3 19,12 5,21"/>
+          </svg>
+        </button>
+      )}
+
+      {/* Publish — always visible, re-registers skill in DuckDB */}
       <button
-        onClick={onTest}
-        title="Test skill"
+        onClick={onPublish}
+        title="Publish skill to DuckDB"
         style={{
           padding: '3px 6px',
           borderRadius: 4,
           cursor: 'pointer',
           display: 'flex', alignItems: 'center', justifyContent: 'center',
-          background: 'rgba(255,255,255,0.05)',
-          border: '1px solid rgba(255,255,255,0.1)',
-          color: '#9ca3af',
+          background: isDraft ? 'rgba(16,185,129,0.1)' : 'rgba(255,255,255,0.05)',
+          border: `1px solid ${isDraft ? 'rgba(16,185,129,0.28)' : 'rgba(255,255,255,0.1)'}`,
+          color: isDraft ? '#10b981' : '#6b7280',
           flexShrink: 0,
         }}
       >
-        <svg width="9" height="9" viewBox="0 0 24 24" fill="currentColor" stroke="none">
-          <polygon points="5,3 19,12 5,21"/>
+        <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+          <polyline points="16 16 12 12 8 16"/>
+          <line x1="12" y1="12" x2="12" y2="21"/>
+          <path d="M20.39 18.39A5 5 0 0 0 18 9h-1.26A8 8 0 1 0 3 16.3"/>
         </svg>
       </button>
 
-      {/* Publish — upload icon, only for draft */}
-      {isDraft && (
+      {/* Delete — trash icon with confirm */}
+      {confirmDelete ? (
         <button
-          onClick={onPublish}
-          title="Publish skill"
+          onClick={() => { onDelete(); setConfirmDelete(false); }}
+          title="Confirm delete"
+          style={{
+            padding: '3px 7px',
+            borderRadius: 4,
+            cursor: 'pointer',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            background: 'rgba(239,68,68,0.18)',
+            border: '1px solid rgba(239,68,68,0.45)',
+            color: '#ef4444',
+            fontSize: '0.58rem',
+            fontWeight: 600,
+            flexShrink: 0,
+          }}
+          onBlur={() => setConfirmDelete(false)}
+        >
+          Sure?
+        </button>
+      ) : (
+        <button
+          onClick={() => setConfirmDelete(true)}
+          title="Delete skill"
           style={{
             padding: '3px 6px',
             borderRadius: 4,
             cursor: 'pointer',
             display: 'flex', alignItems: 'center', justifyContent: 'center',
-            background: 'rgba(16,185,129,0.1)',
-            border: '1px solid rgba(16,185,129,0.28)',
-            color: '#10b981',
+            background: 'rgba(255,255,255,0.04)',
+            border: '1px solid rgba(255,255,255,0.08)',
+            color: '#6b7280',
             flexShrink: 0,
           }}
+          onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.color = '#ef4444'; (e.currentTarget as HTMLElement).style.borderColor = 'rgba(239,68,68,0.35)'; }}
+          onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.color = '#6b7280'; (e.currentTarget as HTMLElement).style.borderColor = 'rgba(255,255,255,0.08)'; }}
         >
           <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-            <polyline points="16 16 12 12 8 16"/>
-            <line x1="12" y1="12" x2="12" y2="21"/>
-            <path d="M20.39 18.39A5 5 0 0 0 18 9h-1.26A8 8 0 1 0 3 16.3"/>
+            <polyline points="3 6 5 6 21 6"/>
+            <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/>
+            <path d="M10 11v6M14 11v6"/>
+            <path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/>
           </svg>
         </button>
       )}
@@ -912,6 +1059,8 @@ export function AgentsTab({ items, onRefresh }: AgentsTabProps) {
   const [isCreating, setIsCreating] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
   const [autoScanEnabled, setAutoScanEnabled] = useState<boolean>(false);
+  // testingSkills: key = "agentId::skillName" → true while test is running
+  const [testingSkills, setTestingSkills] = useState<Record<string, boolean>>({});
 
   // Sync with props
   useEffect(() => {
@@ -957,6 +1106,22 @@ export function AgentsTab({ items, onRefresh }: AgentsTabProps) {
     };
   }, []);
 
+  // Listen for skill test status updates
+  useEffect(() => {
+    if (!ipcRenderer) return;
+    const handleTestUpdate = (data: { agentId: string; skillName: string; status: 'testing' | 'done' | 'error' }) => {
+      const key = `${data.agentId}::${data.skillName}`;
+      setTestingSkills(prev => {
+        if (data.status === 'testing') return { ...prev, [key]: true };
+        const next = { ...prev };
+        delete next[key];
+        return next;
+      });
+    };
+    ipcRenderer.on('agents:skill-test-update', handleTestUpdate);
+    return () => { ipcRenderer.removeListener('agents:skill-test-update', handleTestUpdate); };
+  }, []);
+
   const _fireLearning = (agentId: string, goals: string[], options: { headed?: boolean } = {}) => {
     ipcRenderer?.send('agents:learn', { agentId, goals, options });
     setLocalItems(prev => prev.map(agent =>
@@ -996,8 +1161,20 @@ export function AgentsTab({ items, onRefresh }: AgentsTabProps) {
     ipcRenderer?.send('agents:delete', { agentId });
   };
 
-  const handleTestSkill = (agentId: string, skillName: string) => {
-    ipcRenderer?.send('agents:test-skill', { agentId, skillName });
+  const handleTestSkill = (agentId: string, skillName: string, headed: boolean) => {
+    // Optimistically mark as testing immediately
+    setTestingSkills(prev => ({ ...prev, [`${agentId}::${skillName}`]: true }));
+    ipcRenderer?.send('agents:test-skill', { agentId, skillName, headed });
+  };
+
+  const handleDeleteSkill = (agentId: string, skillName: string) => {
+    ipcRenderer?.send('agents:delete-skill', { agentId, skillName });
+    // Optimistic update — remove skill from UI immediately
+    setLocalItems(prev => prev.map(agent =>
+      agent.id === agentId
+        ? { ...agent, skills: agent.skills?.filter(s => s.name !== skillName) }
+        : agent
+    ));
   };
 
   const handlePublishSkill = (agentId: string, skillName: string) => {
@@ -1223,6 +1400,8 @@ export function AgentsTab({ items, onRefresh }: AgentsTabProps) {
             onDelete={handleDelete}
             onTestSkill={handleTestSkill}
             onPublishSkill={handlePublishSkill}
+            onDeleteSkill={handleDeleteSkill}
+            testingSkills={testingSkills}
             expanded={expandedAgent === agent.id}
             onToggle={() => toggleExpanded(agent.id)}
           />

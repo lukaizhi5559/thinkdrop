@@ -90,7 +90,7 @@ export interface AgentItem {
   name: string;           // display name
   domain: string;         // e.g., open.spotify.com
   category: string;       // Entertainment & Media, etc.
-  status: 'pending' | 'learning' | 'learned';
+  status: 'pending' | 'learning' | 'learned' | 'needs_training';
   created?: string;       // ISO timestamp
   lastLearned?: string;   // ISO timestamp
   userGoals?: string[];   // what user wants to accomplish (multiple goals)
