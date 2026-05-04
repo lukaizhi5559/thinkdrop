@@ -500,6 +500,25 @@ export default function AutomationProgress({ onHeightChange, onActiveChange }: A
     similarity?: number;
   } | null>(null);
 
+  // Name-a-plan state (Part 5)
+  const [showNamePlan, setShowNamePlan] = useState(false);
+  const [planNameInput, setPlanNameInput] = useState('');
+  const [planNameSaved, setPlanNameSaved] = useState(false);
+  const [planNameError, setPlanNameError] = useState('');
+  const _planFileRef = useRef<string>('');
+  const DOT_NAME_RE = /^[a-z][a-z0-9]*(?:\.[a-z][a-z0-9]*)+$/;
+  const isValidDotName = (n: string) => {
+    if (!DOT_NAME_RE.test(n)) return false;
+    const segs = n.split('.');
+    return segs.length >= 2 && segs.length <= 5;
+  };
+  const derivePlanName = (title: string) => {
+    const stop = new Set(['a','an','the','for','to','in','on','at','of','and','or','with','from','by','check','find','get','run','go']);
+    const words = title.toLowerCase().replace(/[^a-z0-9\s]/g, ' ').split(/\s+/).filter(w => w.length >= 3 && !stop.has(w)).slice(0, 5);
+    const c = words.join('.');
+    return isValidDotName(c) ? c : '';
+  };
+
   // Maintenance scan state
   const [maintenanceScan, setMaintenanceScan] = useState<{
     active: boolean;
@@ -1014,6 +1033,16 @@ export default function AutomationProgress({ onHeightChange, onActiveChange }: A
           setGuideStep(null);
           setPhase('done');
           setTotalCount(data.totalCount);
+          // Trigger name-a-plan card if 2+ steps all succeeded
+          if (Array.isArray(data.skillResults) && data.skillResults.length >= 2 && data.skillResults.every((r: any) => r.ok || r.skipped)) {
+            const _pf = data.planFile || '';
+            _planFileRef.current = _pf;
+            const _suggested = derivePlanName(planReview?.title || '');
+            setPlanNameInput(_suggested);
+            setPlanNameSaved(false);
+            setPlanNameError('');
+            setShowNamePlan(true);
+          }
           // Merge any final stdout from skillResults into steps.
           // Also backfill savedFilePath onto the step that wrote it so the
           // inline file link appears on the step row (shell.run write steps
@@ -1118,6 +1147,14 @@ export default function AutomationProgress({ onHeightChange, onActiveChange }: A
 
         case 'plan:complete':
           setPhase('done');
+          break;
+
+        case 'plan:name_saved':
+          if (data.ok) {
+            setPlanNameSaved(true);
+          } else {
+            setPlanNameError(data.error || 'Save failed');
+          }
           break;
       }
     };
@@ -2267,6 +2304,87 @@ export default function AutomationProgress({ onHeightChange, onActiveChange }: A
               Cancel
             </button>
           </div>
+        </div>
+      )}
+
+      {/* ── Name-a-plan card (Part 5) ───────────────────────────────────────── */}
+      {phase === 'done' && showNamePlan && !planNameSaved && (
+        <div style={{
+          marginTop: 12,
+          padding: '12px 14px',
+          borderRadius: 10,
+          backgroundColor: 'rgba(99,102,241,0.07)',
+          border: '1px solid rgba(99,102,241,0.25)',
+        }}>
+          <div style={{ fontSize: '0.75rem', fontWeight: 600, color: '#a5b4fc', marginBottom: 4, display: 'flex', alignItems: 'center', gap: 6 }}>
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#a5b4fc" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/>
+            </svg>
+            Save this plan for later?
+          </div>
+          <div style={{ fontSize: '0.69rem', color: '#94a3b8', marginBottom: 8 }}>
+            Give it a name and recall it anytime by prompt.
+          </div>
+          <input
+            type="text"
+            value={planNameInput}
+            onChange={e => {
+              const v = e.target.value.toLowerCase().replace(/[^a-z0-9.]/g, '');
+              setPlanNameInput(v);
+              setPlanNameError(!v || isValidDotName(v) ? '' : 'Only dot-syntax allowed: e.g. perplexity.history.vegan');
+            }}
+            placeholder="e.g. perplexity.history.vegan"
+            style={{
+              width: '100%',
+              padding: '6px 8px',
+              borderRadius: 6,
+              border: `1px solid ${planNameError ? 'rgba(239,68,68,0.6)' : isValidDotName(planNameInput) ? 'rgba(99,102,241,0.5)' : 'rgba(255,255,255,0.12)'}`,
+              backgroundColor: 'rgba(15,15,25,0.6)',
+              color: '#e2e8f0',
+              fontSize: '0.75rem',
+              fontFamily: 'monospace',
+              outline: 'none',
+              marginBottom: 4,
+              boxSizing: 'border-box',
+            }}
+          />
+          {planNameError && (
+            <div style={{ fontSize: '0.67rem', color: '#f87171', marginBottom: 6 }}>{planNameError}</div>
+          )}
+          {planNameInput && isValidDotName(planNameInput) && (
+            <div style={{ fontSize: '0.67rem', color: '#6b7280', marginBottom: 8, fontStyle: 'italic' }}>
+              Recall later: &ldquo;Run {planNameInput}&rdquo;
+            </div>
+          )}
+          <div style={{ display: 'flex', gap: 8 }}>
+            <button
+              disabled={!isValidDotName(planNameInput)}
+              onClick={() => {
+                const pf = _planFileRef.current || planReview?.planFile || '';
+                if (pf && isValidDotName(planNameInput)) {
+                  ipcRenderer?.send('plan:save_name', { planFile: pf, planName: planNameInput });
+                }
+              }}
+              style={{
+                padding: '5px 14px', borderRadius: 6, fontSize: '0.72rem', fontWeight: 600, cursor: isValidDotName(planNameInput) ? 'pointer' : 'not-allowed',
+                backgroundColor: isValidDotName(planNameInput) ? 'rgba(99,102,241,0.25)' : 'rgba(99,102,241,0.07)',
+                border: '1px solid rgba(99,102,241,0.4)', color: isValidDotName(planNameInput) ? '#a5b4fc' : '#4b5563',
+              }}
+            >
+              Save Plan
+            </button>
+            <button
+              onClick={() => setShowNamePlan(false)}
+              style={{ padding: '5px 12px', borderRadius: 6, fontSize: '0.72rem', cursor: 'pointer', backgroundColor: 'transparent', border: '1px solid rgba(107,114,128,0.3)', color: '#6b7280' }}
+            >
+              Skip
+            </button>
+          </div>
+        </div>
+      )}
+      {phase === 'done' && planNameSaved && (
+        <div style={{ marginTop: 8, padding: '7px 12px', borderRadius: 8, backgroundColor: 'rgba(34,197,94,0.08)', border: '1px solid rgba(34,197,94,0.25)', fontSize: '0.72rem', color: '#4ade80' }}>
+          ✓ Plan saved as <span style={{ fontFamily: 'monospace', fontWeight: 600 }}>{planNameInput}</span> — recall with &ldquo;Run {planNameInput}&rdquo;
         </div>
       )}
 

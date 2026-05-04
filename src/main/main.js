@@ -2051,6 +2051,37 @@ app.whenReady().then(async () => {
     }
   });
 
+  // plan:save_name — save a user-assigned dot-syntax name into the plan frontmatter
+  ipcMain.on('plan:save_name', (_event, { planFile, planName } = {}) => {
+    if (!planFile || !planName) {
+      console.warn('[Plan] plan:save_name: missing planFile or planName');
+      return;
+    }
+    const { isValidDotName } = require('../../stategraph-module/src/utils/planCacheHelpers');
+    if (!isValidDotName(planName)) {
+      console.warn(`[Plan] plan:save_name: invalid dot-syntax name "${planName}"`);
+      safeSend(resultsWindow, 'plan:name_saved', { ok: false, error: 'Invalid name — use dot-syntax: e.g. perplexity.history.vegan' });
+      return;
+    }
+    try {
+      const _fs = require('fs');
+      let content = _fs.readFileSync(planFile, 'utf8');
+      // Replace existing name: field or insert after first ---
+      if (/^name:\s*.+/m.test(content)) {
+        content = content.replace(/^name:\s*.+/m, `name: ${planName}`);
+      } else {
+        // Insert after the opening --- frontmatter delimiter
+        content = content.replace(/^---\n/, `---\nname: ${planName}\n`);
+      }
+      _fs.writeFileSync(planFile, content, 'utf8');
+      console.log(`[Plan] Plan named "${planName}" saved to ${planFile}`);
+      safeSend(resultsWindow, 'plan:name_saved', { ok: true, planName, planFile });
+    } catch (e) {
+      console.error('[Plan] plan:save_name error:', e.message);
+      safeSend(resultsWindow, 'plan:name_saved', { ok: false, error: e.message });
+    }
+  });
+
   // plan:open-editor — open plan.md in default system editor
   ipcMain.on('plan:open-editor', (_event, { planFile } = {}) => {
     const file = planFile || pendingPlanContext?.planFile;
@@ -5360,7 +5391,6 @@ app.whenReady().then(async () => {
       }
 
       const files = fsMod.readdirSync(agentsDir).filter(f => f.endsWith('.agent.md'));
-      console.log(`[Agents] Found ${files.length} agent files:`, files);
       
       const agents = files.map(file => {
         try {
@@ -5433,8 +5463,6 @@ app.whenReady().then(async () => {
           return null;
         }
       }).filter(Boolean); // Remove null entries from failed parses
-      
-      console.log(`[Agents] Parsed ${agents.length} agents:`, agents.map(a => a.id));
       
       if (unifiedWindow && !unifiedWindow.isDestroyed()) {
         safeSend(unifiedWindow, 'agents:list', agents);
@@ -5532,7 +5560,8 @@ app.whenReady().then(async () => {
   });
 
   // Agent learn handler - triggers learn.agent for blocking domain scan
-  ipcMain.on('agents:learn', async (_event, { agentId, goals = [], options = {} }) => {
+  ipcMain.on('agents:learn', async (_event, { agentId, goals: _incomingGoals = [], options = {} }) => {
+    let goals = _incomingGoals;
     // Elevate overlay above headed Chromium so it stays visible during auth
     const _bumpOverlay = () => {
       if (unifiedWindow && !unifiedWindow.isDestroyed()) {
@@ -5548,13 +5577,14 @@ app.whenReady().then(async () => {
     try {
       console.log(`[Agents] Starting learn mode for ${agentId}`, options);
 
+      const fsMod = require('fs');
+      const osMod = require('os');
+      const pathMod = require('path');
+      const agentMdPath = pathMod.join(osMod.homedir(), '.thinkdrop', 'agents', `${agentId}.agent.md`);
+
       // Persist goals to the .agent.md frontmatter before learning starts
       if (goals && goals.length > 0) {
         try {
-          const fsMod = require('fs');
-          const osMod = require('os');
-          const pathMod = require('path');
-          const agentMdPath = pathMod.join(osMod.homedir(), '.thinkdrop', 'agents', `${agentId}.agent.md`);
           if (fsMod.existsSync(agentMdPath)) {
             let mdContent = fsMod.readFileSync(agentMdPath, 'utf8');
             const goalsYaml = goals.map(g => `  - "${g.replace(/"/g, '\\"')}"`).join('\n');
@@ -5570,6 +5600,26 @@ app.whenReady().then(async () => {
           }
         } catch (goalWriteErr) {
           console.warn(`[Agents] Failed to persist goals for ${agentId}:`, goalWriteErr.message);
+        }
+      } else {
+        // UI sent empty goals — fall back to reading goals from .agent.md frontmatter
+        try {
+          if (fsMod.existsSync(agentMdPath)) {
+            const mdContent = fsMod.readFileSync(agentMdPath, 'utf8');
+            const goalsMatch = mdContent.match(/^user_goals:\s*\n((?:\s+-\s+[^\n]*\n?)*)/m);
+            if (goalsMatch) {
+              const frontmatterGoals = goalsMatch[1]
+                .split('\n')
+                .map(line => line.match(/^\s*-\s*"?([^"\n]+)"?/)?.[1])
+                .filter(Boolean);
+              if (frontmatterGoals.length > 0) {
+                goals = frontmatterGoals;
+                console.log(`[Agents] Loaded ${goals.length} goals from ${agentId}.agent.md frontmatter`);
+              }
+            }
+          }
+        } catch (goalReadErr) {
+          console.warn(`[Agents] Failed to read frontmatter goals for ${agentId}:`, goalReadErr.message);
         }
       }
 
@@ -5761,6 +5811,9 @@ app.whenReady().then(async () => {
 
       if (!rawSkillName) {
         console.error(`[Agents] Cannot test "${skillName}": skill not found on disk`);
+        if (unifiedWindow && !unifiedWindow.isDestroyed()) {
+          unifiedWindow.webContents.send('agents:skill-test-update', { agentId, skillName, status: 'error' });
+        }
         return;
       }
 
@@ -5776,6 +5829,57 @@ app.whenReady().then(async () => {
 
       if (!startUrl) {
         console.error(`[Agents] Cannot test "${skillName}": no start_url for agent ${agentId}`);
+        if (unifiedWindow && !unifiedWindow.isDestroyed()) {
+          unifiedWindow.webContents.send('agents:skill-test-update', { agentId, skillName, status: 'error' });
+        }
+        return;
+      }
+
+      // ── Special path: navigate_history skills ────────────────────────────────
+      // These are pure JS fuzzy-match skills — they have no DOM locator and will
+      // never appear in the domain map's actions. Test them by calling external.skill
+      // directly via the command-service MCP with a synthetic query.
+      if (sourceAction === 'navigate_history') {
+        console.log(`[Agents] navigate_history skill detected — testing via external.skill`);
+        if (unifiedWindow && !unifiedWindow.isDestroyed()) {
+          unifiedWindow.webContents.send('agents:skill-test-update', { agentId, skillName, status: 'testing' });
+        }
+        const BROWSER_ACT_PORT = parseInt(process.env.SERVICE_PORT || process.env.COMMAND_SERVICE_PORT || '3007', 10);
+        const _sessionId = `${agentId.replace(/[^a-z0-9_]/gi, '_')}_agent`;
+        // Extract a plausible test query from the skill module's first history item
+        let _testQuery = 'test';
+        try {
+          const _skillDirName = (rawSkillName || '').replace(/\./g, '_');
+          const _skillIndexPath = pathMod.join(osMod.homedir(), '.thinkdrop', 'skills', _skillDirName, 'index.cjs');
+          if (fsMod.existsSync(_skillIndexPath)) {
+            delete require.cache[require.resolve(_skillIndexPath)];
+            const _skillMod = require(_skillIndexPath);
+            // Pull description example from the query param, e.g. 'Keywords from the history item... (e.g., "winter clothes")'
+            const _eg = (_skillMod?.parameters?.query?.description || '').match(/e\.g\..*?"([^"]+)"/);
+            if (_eg) _testQuery = _eg[1];
+          }
+        } catch (_) {}
+        const _extBody = JSON.stringify({ payload: { skill: 'external.skill', args: { name: rawSkillName, args: { query: _testQuery, sessionId: _sessionId, headed: isHeaded } } } });
+        const _extResult = await new Promise((resolve) => {
+          const req = httpMod.request({
+            hostname: '127.0.0.1', port: BROWSER_ACT_PORT, path: '/command.automate', method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(_extBody) },
+            timeout: 30000,
+          }, res => {
+            let raw = '';
+            res.on('data', c => { raw += c; });
+            res.on('end', () => { try { resolve(JSON.parse(raw)); } catch (_) { resolve({}); } });
+          });
+          req.on('error', (e) => { console.warn(`[Agents] external.skill test error: ${e.message}`); resolve({ ok: false }); });
+          req.on('timeout', () => { req.destroy(); resolve({ ok: false }); });
+          req.write(_extBody);
+          req.end();
+        });
+        const _testStatus = (_extResult?.ok === false || _extResult?.error) ? 'error' : 'done';
+        console.log(`[Agents] navigate_history test complete: "${skillName}" → ${_testStatus}`);
+        if (unifiedWindow && !unifiedWindow.isDestroyed()) {
+          unifiedWindow.webContents.send('agents:skill-test-update', { agentId, skillName, status: _testStatus });
+        }
         return;
       }
 
@@ -5784,6 +5888,9 @@ app.whenReady().then(async () => {
       const domainMapPath = pathMod.join(osMod.homedir(), '.thinkdrop', 'domain-maps', `${hostname}.json`);
       if (!fsMod.existsSync(domainMapPath)) {
         console.error(`[Agents] Cannot test "${skillName}": no domain map for ${hostname}`);
+        if (unifiedWindow && !unifiedWindow.isDestroyed()) {
+          unifiedWindow.webContents.send('agents:skill-test-update', { agentId, skillName, status: 'error' });
+        }
         return;
       }
 
@@ -5800,6 +5907,9 @@ app.whenReady().then(async () => {
 
       if (!actionEntry || !actionEntry.locators?.primary) {
         console.error(`[Agents] Cannot test "${skillName}": no locator found in domain map for "${lookupKey}"`);
+        if (unifiedWindow && !unifiedWindow.isDestroyed()) {
+          unifiedWindow.webContents.send('agents:skill-test-update', { agentId, skillName, status: 'error' });
+        }
         return;
       }
 

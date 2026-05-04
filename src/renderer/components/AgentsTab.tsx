@@ -1132,7 +1132,9 @@ export function AgentsTab({ items, onRefresh }: AgentsTabProps) {
   const handleLearn = (agentId: string, options: { headed?: boolean } = {}) => {
     const agent = localItems.find(a => a.id === agentId);
     const hasGoals = (agent?.userGoals?.length ?? 0) > 0 || !!agent?.userGoal;
-    if (!hasGoals) {
+    // Always show goal modal if: no goals set, OR agent has never been learned (status 'pending')
+    // This ensures the user always sees the goal prompt before a first scan.
+    if (!hasGoals || agent?.status === 'pending') {
       setEditModalAgent(agent || null);
       return;
     }
