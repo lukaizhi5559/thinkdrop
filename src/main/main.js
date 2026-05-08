@@ -6,6 +6,11 @@ require('dotenv').config({
   path: require('path').join(__dirname, '..', '..', 'mcp-services', 'command-service', '.env'),
   override: false,
 });
+// Load user-memory service .env for API_KEY used by rules management IPC handlers.
+require('dotenv').config({
+  path: require('path').join(__dirname, '..', '..', 'mcp-services', 'thinkdrop-user-memory-service', '.env'),
+  override: false,
+});
 const { app, BrowserWindow, ipcMain, screen, globalShortcut, clipboard, safeStorage } = require('electron');
 
 // Enable webkitSpeechRecognition network access — must be called before app is ready.
@@ -679,6 +684,7 @@ let currentSessionId = null; // Persists across prompts for conversation continu
 let currentBrowserSessionId = null; // Persists active Playwright session across prompts
 let currentBrowserUrl = null;        // Last known URL in the active Playwright session
 let currentLastOpenedFilePath = null; // Persists last opened file path so "close it" knows the target
+let sessionFileCreations = []; // Track all file creation operations in current session for "newly created" references
 
 // Module-level gather:answer resolver — set per-question, cleared on answer.
 // Registered ONCE (not per stategraph:process run) to avoid listener accumulation.
@@ -694,6 +700,35 @@ let appControlMode = { active: false, app: null, enteredAt: null };
 
 // Tracks whether the user has manually dragged the unified panel.
 // When true, resize handlers preserve the current Y position instead of reanchoring to screen bottom.
+
+// Helper: Detect if prompt is a browser continuation command (web-specific)
+// Only matches web/browser-specific context, NOT generic UI commands that could be native apps
+function isBrowserContinuationCommand(prompt) {
+  if (!prompt) return false;
+  const p = prompt.toLowerCase().trim();
+  
+  // Web-specific patterns that clearly indicate browser context
+  const webPatterns = [
+    // Web elements and navigation
+    /\b(the page|the tab|url|website|web page|site|domain)\b/i,
+    /\b(address bar|url bar|omnibox|location bar)\b/i,
+    /\b(back button|forward button|browser button)\b/i,
+    /\b(search results?|web results?)\b/i,
+    /\b(login form|web form|online form)\b/i,
+    /\b(web|browser|chrome|safari|firefox)\b/i,
+    // Web-specific actions with context
+    /\b(refresh|reload)\s+(?:the\s+)?(?:page|site|tab)\b/i,
+    /\b(go\s+back|go\s+forward)\s+(?:to\s+)?(?:the\s+)?(?:page|site|tab)\b/i,
+    /\b(navigate\s+(?:to|back|forward))\b/i,
+    /\b(open|visit|go\s+to)\s+(?:the\s+)?(?:url|site|page|website|web)\b/i,
+    // Web-specific interactions
+    /\bclick\s+(?:the\s+)?(?:link|url|href|anchor)\b/i,
+    /\b(the\s+)?web\s+(?:version|interface|app|application)\b/i,
+    /\bon\s+(?:the\s+)?(?:website|web\s+page|page)\b/i,
+  ];
+  
+  return webPatterns.some(pattern => pattern.test(p));
+}
 let _userHasMovedPanel = false;
 
 // Tracks whether a learn session is active so the overlay can resist macOS panel auto-hide.
@@ -2053,8 +2088,8 @@ app.whenReady().then(async () => {
 
   // plan:save_name — save a user-assigned dot-syntax name into the plan frontmatter
   ipcMain.on('plan:save_name', (_event, { planFile, planName } = {}) => {
-    if (!planFile || !planName) {
-      console.warn('[Plan] plan:save_name: missing planFile or planName');
+    if (!planName) {
+      console.warn('[Plan] plan:save_name: missing planName');
       return;
     }
     const { isValidDotName } = require('../../stategraph-module/src/utils/planCacheHelpers');
@@ -2065,17 +2100,31 @@ app.whenReady().then(async () => {
     }
     try {
       const _fs = require('fs');
-      let content = _fs.readFileSync(planFile, 'utf8');
-      // Replace existing name: field or insert after first ---
-      if (/^name:\s*.+/m.test(content)) {
-        content = content.replace(/^name:\s*.+/m, `name: ${planName}`);
+      const _path = require('path');
+      const _os = require('os');
+      let resolvedPlanFile = planFile;
+      // Safety net: if planFile is missing (e.g. domain fast-path edge case),
+      // create a minimal plan .md named after the plan name.
+      if (!resolvedPlanFile || !_fs.existsSync(resolvedPlanFile)) {
+        const PLANS_DIR = _path.join(_os.homedir(), '.thinkdrop', 'plans');
+        _fs.mkdirSync(PLANS_DIR, { recursive: true });
+        resolvedPlanFile = _path.join(PLANS_DIR, `${planName}.md`);
+        const _ts = new Date().toISOString();
+        const _minimalMd = `---\nid: ${planName}\nname: ${planName}\ncreated_at: ${_ts}\nstatus: complete\n---\n\n# ${planName}\n\n*Saved by user.*\n`;
+        _fs.writeFileSync(resolvedPlanFile, _minimalMd, 'utf8');
+        console.log(`[Plan] Created minimal plan file at ${resolvedPlanFile}`);
       } else {
-        // Insert after the opening --- frontmatter delimiter
-        content = content.replace(/^---\n/, `---\nname: ${planName}\n`);
+        let content = _fs.readFileSync(resolvedPlanFile, 'utf8');
+        // Replace existing name: field or insert after first ---
+        if (/^name:\s*.+/m.test(content)) {
+          content = content.replace(/^name:\s*.+/m, `name: ${planName}`);
+        } else {
+          content = content.replace(/^---\n/, `---\nname: ${planName}\n`);
+        }
+        _fs.writeFileSync(resolvedPlanFile, content, 'utf8');
       }
-      _fs.writeFileSync(planFile, content, 'utf8');
-      console.log(`[Plan] Plan named "${planName}" saved to ${planFile}`);
-      safeSend(resultsWindow, 'plan:name_saved', { ok: true, planName, planFile });
+      console.log(`[Plan] Plan named "${planName}" saved to ${resolvedPlanFile}`);
+      safeSend(resultsWindow, 'plan:name_saved', { ok: true, planName, planFile: resolvedPlanFile });
     } catch (e) {
       console.error('[Plan] plan:save_name error:', e.message);
       safeSend(resultsWindow, 'plan:name_saved', { ok: false, error: e.message });
@@ -3175,7 +3224,7 @@ app.whenReady().then(async () => {
         if (isFreshPrompt) {
           console.log('[StateGraph] ASK_USER resume: new prompt looks like a fresh request — clearing paused state and processing fresh');
           pausedAutomationState = null;
-          initialState = { message: prompt, selectedText, streamCallback, progressCallback, confirmInstallCallback, confirmGuideCallback, isGuideCancelled, activeBrowserSessionId: currentBrowserSessionId || null, activeBrowserUrl: currentBrowserUrl || null, context: { sessionId: sessionId || currentSessionId, userId, source: 'thinkdrop_electron' } };
+          initialState = { message: prompt, selectedText, streamCallback, progressCallback, confirmInstallCallback, confirmGuideCallback, isGuideCancelled, activeBrowserSessionId: null, activeBrowserUrl: null, context: { sessionId: sessionId || currentSessionId, userId, source: 'thinkdrop_electron' } };
         } else if (paused.enrichmentNeeded?.length > 0 && !paused.pendingQuestion) {
           // Enrichment gap resume — user answered an entity question (e.g. "who is your cousin?")
           // enrichIntent MODE B detects [ENTITY_QUESTION marker in conversation history,
@@ -3769,6 +3818,12 @@ app.whenReady().then(async () => {
           };
         }
 
+        // Determine if we should preserve browser session for this prompt
+        const shouldPreserveBrowserSession = isBrowserContinuationCommand(prompt) && currentBrowserSessionId;
+        if (shouldPreserveBrowserSession) {
+          console.log(`[StateGraph] Preserving browser session ${currentBrowserSessionId} for continuation prompt: "${prompt.substring(0, 50)}..."`);
+        }
+        
         initialState = {
           message: prompt,
           selectedText,
@@ -3782,9 +3837,10 @@ app.whenReady().then(async () => {
           keytarCheckCallback,
           gatherOAuthCallback,
           queueBridge,
-          activeBrowserSessionId: currentBrowserSessionId || null,
-          activeBrowserUrl: currentBrowserUrl || null,
+          activeBrowserSessionId: shouldPreserveBrowserSession ? currentBrowserSessionId : null,
+          activeBrowserUrl: shouldPreserveBrowserSession ? currentBrowserUrl : null,
           lastOpenedFilePath: currentLastOpenedFilePath || null,
+          sessionFileCreations: sessionFileCreations || [],
           responseLanguage: responseLanguage || null,
           // Plan execution: set when plan:approve re-enqueues with _planFile or _skillPlan
           _planFile: _planFile || null,
@@ -3886,6 +3942,19 @@ app.whenReady().then(async () => {
         console.log(`[StateGraph] Persisted lastOpenedFilePath: ${currentLastOpenedFilePath}`);
       }
 
+      // Persist file creation operations so "the newly created file" references work
+      if (finalState.sessionFileCreations && finalState.sessionFileCreations.length > 0) {
+        // Avoid duplicates by operationId
+        const existingIds = new Set(sessionFileCreations.map(op => op.operationId));
+        const newOps = finalState.sessionFileCreations.filter(op => !existingIds.has(op.operationId));
+        sessionFileCreations = [...sessionFileCreations, ...newOps];
+        // Keep only last 20 operations to prevent bloat
+        if (sessionFileCreations.length > 20) {
+          sessionFileCreations = sessionFileCreations.slice(-20);
+        }
+        console.log(`[StateGraph] Persisted ${newOps.length} new file creation(s), total: ${sessionFileCreations.length}`);
+      }
+
       // Auto-trigger OAuth scope repair when a skill fails due to missing/wrong token.
       // recoverSkill sets triggerOAuthRepair: { skillName } — fire the IPC handler which
       // re-scans index.cjs, patches contractMd, and refreshes the Skills tab.
@@ -3953,6 +4022,7 @@ app.whenReady().then(async () => {
               skillResults: finalState.skillResults || [],
               savedFilePaths: [],
               answer: '',
+              planFile: finalState._planFile || null,
             });
           }
         } else {
@@ -3998,6 +4068,7 @@ app.whenReady().then(async () => {
             skillResults: finalState.skillResults || [],
             savedFilePaths: finalState.savedFilePaths || [],
             answer: finalState.answer || '',
+            planFile: finalState._planFile || finalState._skillPlanFile || null,
           });
           // Auto-refresh Skills + Cron tabs whenever a creator skill was just built
           if (finalState.creatorSkillName) {
@@ -5366,21 +5437,33 @@ app.whenReady().then(async () => {
             if (fsMod.existsSync(metaPath)) {
               try {
                 const meta = JSON.parse(fsMod.readFileSync(metaPath, 'utf8'));
-                // Build human-readable display name from source_action or raw name
-                const rawAction = meta.source_action || meta.name || skillDir;
-                const displayName = rawAction
-                  .replace(/_/g, ' ')
-                  .replace(/\b\w/g, l => l.toUpperCase());
+                // Skip composite skills (legacy, no longer supported in UI)
+                if (meta.composite === true) {
+                  console.log(`[Agents] Skipping composite skill: ${skillDir}`);
+                  continue;
+                }
+                // Store raw action + state key — display names are resolved in a
+                // second pass below that deduplicates same-action skills per agent.
                 const skillEntry = {
-                  name: displayName,
+                  name: meta.source_action || meta.name || skillDir,
+                  _sourceAction: meta.source_action || '',
+                  _sourceStateKey: meta.source_state_key || '',
+                  _skillDir: skillDir,
                   status: 'published',
-                  description: meta.description || ''
+                  description: meta.description || '',
+                  skillPath: skillPath
                 };
-                // Key by all known identifiers — agentId, domain, and source_domain
-                const keys = [meta.agentId, meta.agent_id, meta.domain, meta.source_domain].filter(Boolean);
-                for (const key of keys) {
+                // Key by agentId (primary) and domain (secondary lookup) only.
+                // Deduplicate within each key using a Set of skill directory names.
+                if (!agentSkillsMap.__seen__) agentSkillsMap.__seen__ = {};
+                const dedupKeys = [...new Set([meta.agentId, meta.agent_id, meta.domain].filter(Boolean))];
+                for (const key of dedupKeys) {
                   if (!agentSkillsMap[key]) agentSkillsMap[key] = [];
-                  agentSkillsMap[key].push(skillEntry);
+                  if (!agentSkillsMap.__seen__[key]) agentSkillsMap.__seen__[key] = new Set();
+                  if (!agentSkillsMap.__seen__[key].has(skillDir)) {
+                    agentSkillsMap.__seen__[key].add(skillDir);
+                    agentSkillsMap[key].push(skillEntry);
+                  }
                 }
               } catch (_) {}
             }
@@ -5388,6 +5471,53 @@ app.whenReady().then(async () => {
         }
       } catch (skillScanErr) {
         console.warn('[Agents] Skills dir scan failed:', skillScanErr.message);
+      }
+
+      // Second pass: resolve human-readable display names and deduplicate same-action skills.
+      // Within each agent bucket, if multiple skills share the same source_action:
+      //   - skills WITH a source_state_key get a contextual suffix (e.g. "Settings (General)")
+      //   - legacy skills WITHOUT a source_state_key are dropped in favour of the keyed ones
+      // If only one skill has a given source_action it just gets the plain Title Case name.
+      for (const key of Object.keys(agentSkillsMap)) {
+        if (key === '__seen__') continue;
+        const bucket = agentSkillsMap[key];
+        // Group by source_action
+        const byAction = {};
+        for (const entry of bucket) {
+          const act = entry._sourceAction || entry.name;
+          if (!byAction[act]) byAction[act] = [];
+          byAction[act].push(entry);
+        }
+        for (const [act, entries] of Object.entries(byAction)) {
+          const titled = act.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+          if (entries.length === 1) {
+            entries[0].name = titled;
+          } else {
+            // Multiple skills share the same action — keep only those with a state key,
+            // drop legacy ones that have no state key (old collision-era skills).
+            const withState = entries.filter(e => e._sourceStateKey);
+            const toKeep = withState.length > 0 ? withState : entries;
+            // Mark the ones to drop
+            const toDrop = new Set(entries.filter(e => !toKeep.includes(e)).map(e => e._skillDir));
+            agentSkillsMap[key] = bucket.filter(e => !toDrop.has(e._skillDir));
+            // Assign contextual names to kept entries
+            for (const entry of toKeep) {
+              if (entry._sourceStateKey) {
+                // Build a short readable context from the state key:
+                // "settings_general_logged_in" → remove leading action words and trailing _logged/_in
+                const ctx = entry._sourceStateKey
+                  .replace(/_logged_in$|_logged$/, '')
+                  .replace(/^[^_]+_/, '')   // drop the first segment (usually repeats the action)
+                  .replace(/_/g, ' ')
+                  .replace(/\b\w/g, l => l.toUpperCase())
+                  .trim();
+                entry.name = ctx ? `${titled} (${ctx})` : titled;
+              } else {
+                entry.name = titled;
+              }
+            }
+          }
+        }
       }
 
       const files = fsMod.readdirSync(agentsDir).filter(f => f.endsWith('.agent.md'));
@@ -5433,13 +5563,29 @@ app.whenReady().then(async () => {
           if (!domain) domain = service ? `${service}.com` : id.replace('.agent', '');
 
           const type = getField('type') || 'browser';
-          const learnedStates = getYamlArray('learned_states');
+          // Filter learned_states to valid http/https URLs to avoid snapshot text contamination
+          const learnedStates = getYamlArray('learned_states')
+            .filter(s => s.startsWith('http://') || s.startsWith('https://'));
 
           // Parse user_goals as YAML array (fix: was using scalar parser on array field)
           const userGoals = getYamlArray('user_goals');
           
-          // Real skills from disk (not capabilities)
-          const skills = agentSkillsMap[id] || agentSkillsMap[service] || agentSkillsMap[domain] || [];
+          // Read capabilities (composite skill names) for goal-skill mapping in UI
+          const capabilities = getYamlArray('capabilities');
+          
+          // Real skills from disk (not capabilities) — strip internal dedup fields before sending
+          const _rawSkills = agentSkillsMap[id] || agentSkillsMap[service] || agentSkillsMap[domain] || [];
+          let skills = _rawSkills.map(({ _sourceAction, _sourceStateKey, _skillDir, ...rest }) => rest);
+          // Fallback: read capabilities from frontmatter when no disk skill files exist yet
+          if (skills.length === 0) {
+            if (capabilities.length > 0) {
+              skills = capabilities.map(cap => ({
+                name: cap.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase()),
+                status: 'learned',
+                description: '',
+              }));
+            }
+          }
           
           // Parse status - map to UI status values
           let status = getField('status') || 'pending';
@@ -5454,6 +5600,7 @@ app.whenReady().then(async () => {
             created: getField('created'),
             lastLearned: getField('last_learned'),
             userGoals,
+            capabilities,
             learnedStates,
             skills,
             faviconUrl: getField('favicon_url') || `https://www.google.com/s2/favicons?domain=${domain}&sz=128`
@@ -5631,33 +5778,53 @@ app.whenReady().then(async () => {
       _learnSessionActive = true;
       _bumpOverlay();
       
-      // Call learn.agent skill
+      // Call learn.agent skill — goal-directed when goals present, legacy scan as fallback
       const learnAgent = require('../../mcp-services/command-service/src/skills/learn.agent.cjs');
       
-      const result = await learnAgent.actionLearn({
-        agentId,
-        goals,
-        maxScanDepth: 2,
-        options: {
-          headed: options.headed || false,  // default headless
-        }
-      });
+      const hasGoals = Array.isArray(goals) && goals.length > 0;
+      let result;
+      if (hasGoals) {
+        console.log(`[Agents] Using goal-directed learn for ${agentId} (${goals.length} goal(s))`);
+        result = await learnAgent.actionLearn({
+          agentId,
+          goals,
+          maxScanDepth: 2,
+          options: {
+            headed: options.headed || false,
+            includeLandingPage: options.includeLandingPage,
+          }
+        });
+      } else {
+        console.log(`[Agents] No goals set — using legacy domain scan for ${agentId}`);
+        result = await learnAgent.actionLearn({
+          agentId,
+          goals,
+          maxScanDepth: 2,
+          options: {
+            headed: options.headed || false,
+            includeLandingPage: true, // Default to scanning landing page when no URLs provided
+          }
+        });
+      }
 
       _learnSessionActive = false;
       _restoreOverlay();
       
       if (result.ok) {
-        // Send completion update with learned states
+        // Handle both result shapes: goal-directed (goalsProcessed) and legacy (stateCount)
+        const learnedStates = result.states || result.pagesVisited || [];
+        const stateCount = result.stateCount || learnedStates.length || result.goalsProcessed || 0;
         if (unifiedWindow && !unifiedWindow.isDestroyed()) {
           safeSend(unifiedWindow, 'agents:update', { 
             agentId, 
             status: 'learned',
-            learnedStates: result.states,
-            stateCount: result.stateCount,
-            duration: result.duration
+            learnedStates,
+            stateCount,
+            duration: result.duration,
+            compositeSkills: result.compositeSkills || [],
           });
         }
-        console.log(`[Agents] Learn complete for ${agentId}: ${result.stateCount} states`);
+        console.log(`[Agents] Learn complete for ${agentId}: ${stateCount} state(s), ${(result.compositeSkills || []).length} composite skill(s)`);
       } else {
         // Handle error or cancellation
         if (unifiedWindow && !unifiedWindow.isDestroyed()) {
@@ -5776,7 +5943,7 @@ app.whenReady().then(async () => {
   });
 
   // Skill test/publish handlers
-  ipcMain.on('agents:test-skill', async (_event, { agentId, skillName, headed }) => {
+  ipcMain.on('agents:test-skill', async (_event, { agentId, skillName, headed, skillPath }) => {
     const isHeaded = headed === true;
     console.log(`[Agents] Testing skill "${skillName}" for ${agentId} (${isHeaded ? 'headed' : 'headless'})`);
     try {
@@ -5785,13 +5952,31 @@ app.whenReady().then(async () => {
       const pathMod = require('path');
       const httpMod = require('http');
 
-      // 1. Resolve display name → raw skill.json name + source_action
+      // 1. Resolve skill directory → raw name + source_action + selector
+      // Prefer skillPath passed from UI (exact dir) over fragile display-name scan.
       const skillsBaseDir = pathMod.join(osMod.homedir(), '.thinkdrop', 'skills');
       let rawSkillName = null;
       let sourceAction = null;
       let sourceDomain = null;
+      let sourceUrl = null;            // exact page URL the skill was extracted from
+      let skillJsonSelector = null;   // stable selector stored by learn.agent
+      let skillJsonInteraction = null; // interaction stored by learn.agent
 
-      if (fsMod.existsSync(skillsBaseDir)) {
+      // Fast path: skillPath provided directly from UI
+      if (skillPath && fsMod.existsSync(pathMod.join(skillPath, 'skill.json'))) {
+        try {
+          const meta = JSON.parse(fsMod.readFileSync(pathMod.join(skillPath, 'skill.json'), 'utf8'));
+          rawSkillName = meta.name || pathMod.basename(skillPath);
+          sourceAction = meta.source_action || null;
+          sourceDomain = meta.source_domain || meta.domain || null;
+          sourceUrl = meta.source_url || null;
+          skillJsonSelector = meta.selector || null;
+          skillJsonInteraction = meta.interaction || 'click';
+        } catch (_) {}
+      }
+
+      // Fallback: scan all skill dirs matching by display name (backward compat)
+      if (!rawSkillName && fsMod.existsSync(skillsBaseDir)) {
         for (const dirName of fsMod.readdirSync(skillsBaseDir)) {
           const metaPath = pathMod.join(skillsBaseDir, dirName, 'skill.json');
           if (!fsMod.existsSync(metaPath)) continue;
@@ -5802,7 +5987,10 @@ app.whenReady().then(async () => {
             if (display === skillName || meta.name === skillName || dirName === skillName) {
               rawSkillName = meta.name || dirName;
               sourceAction = meta.source_action || null;
-              sourceDomain = meta.source_domain || null;
+              sourceDomain = meta.source_domain || meta.domain || null;
+              sourceUrl = meta.source_url || null;
+              skillJsonSelector = meta.selector || null;
+              skillJsonInteraction = meta.interaction || 'click';
               break;
             }
           } catch (_) {}
@@ -5812,25 +6000,81 @@ app.whenReady().then(async () => {
       if (!rawSkillName) {
         console.error(`[Agents] Cannot test "${skillName}": skill not found on disk`);
         if (unifiedWindow && !unifiedWindow.isDestroyed()) {
-          unifiedWindow.webContents.send('agents:skill-test-update', { agentId, skillName, status: 'error' });
+          unifiedWindow.webContents.send('agents:skill-test-update', { agentId, skillName, status: 'error', errorReason: 'skill_not_found' });
         }
         return;
       }
 
-      // 2. Get start_url from agent descriptor
+      // 2. Resolve startUrl: prefer exact source_url from skill.json (most specific),
+      //    fall back to agent's start_url from .agent.md, then bare domain.
       const agentsDir = pathMod.join(osMod.homedir(), '.thinkdrop', 'agents');
-      let startUrl = sourceDomain ? `https://${sourceDomain}` : null;
-      const agentFile = pathMod.join(agentsDir, `${agentId}.agent.md`);
-      if (fsMod.existsSync(agentFile)) {
-        const content = fsMod.readFileSync(agentFile, 'utf8');
-        const urlMatch = content.match(/^start_url:\s*(.+)$/m);
-        if (urlMatch) startUrl = urlMatch[1].trim();
+      let startUrl = sourceUrl || null;
+      if (!startUrl) {
+        const agentFile = pathMod.join(agentsDir, `${agentId}.agent.md`);
+        if (fsMod.existsSync(agentFile)) {
+          const content = fsMod.readFileSync(agentFile, 'utf8');
+          const urlMatch = content.match(/^start_url:\s*(.+)$/m);
+          if (urlMatch) startUrl = urlMatch[1].trim();
+        }
       }
+      if (!startUrl) startUrl = sourceDomain ? `https://${sourceDomain}` : null;
 
       if (!startUrl) {
         console.error(`[Agents] Cannot test "${skillName}": no start_url for agent ${agentId}`);
         if (unifiedWindow && !unifiedWindow.isDestroyed()) {
-          unifiedWindow.webContents.send('agents:skill-test-update', { agentId, skillName, status: 'error' });
+          unifiedWindow.webContents.send('agents:skill-test-update', { agentId, skillName, status: 'error', errorReason: 'no_start_url' });
+        }
+        return;
+      }
+
+      // ── Fast path: learn-agent skills with selector in skill.json ─────────────
+      // These skills were written by learn.agent and store a stable DOM selector
+      // directly in skill.json — no domain map lookup needed.
+      if (skillJsonSelector) {
+        console.log(`[Agents] Running skill test (direct): "${skillName}" → ${skillJsonSelector} on ${startUrl}`);
+        if (unifiedWindow && !unifiedWindow.isDestroyed()) {
+          unifiedWindow.webContents.send('agents:skill-test-update', { agentId, skillName, status: 'testing' });
+        }
+        const BROWSER_ACT_PORT_DIRECT = parseInt(process.env.SERVICE_PORT || process.env.COMMAND_SERVICE_PORT || '3007', 10);
+        const sessionIdDirect = `${agentId.replace(/[^a-z0-9_]/gi, '_')}_agent`;
+        // For headed tests, close any existing headless session first so browser.act
+        // cold-starts a fresh headed Chrome on the same auth profile (cookies preserved).
+        if (isHeaded) {
+          await new Promise((resolve) => {
+            const closeBody = JSON.stringify({ payload: { skill: 'browser.act', args: { action: 'close', sessionId: sessionIdDirect, headed: false } } });
+            const closeReq = httpMod.request({
+              hostname: '127.0.0.1', port: BROWSER_ACT_PORT_DIRECT, path: '/command.automate', method: 'POST',
+              headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(closeBody) }, timeout: 5000,
+            }, res => { res.resume(); resolve(); });
+            closeReq.on('error', () => resolve());
+            closeReq.on('timeout', () => { closeReq.destroy(); resolve(); });
+            closeReq.write(closeBody); closeReq.end();
+          });
+        }
+        async function browserActDirect(args) {
+          return new Promise((resolve) => {
+            const body = JSON.stringify({ payload: { skill: 'browser.act', args } });
+            const req = httpMod.request({
+              hostname: '127.0.0.1', port: BROWSER_ACT_PORT_DIRECT, path: '/command.automate', method: 'POST',
+              headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) },
+              timeout: 20000,
+            }, res => {
+              let raw = ''; res.on('data', c => { raw += c; });
+              res.on('end', () => { try { resolve(JSON.parse(raw)); } catch (_) { resolve({}); } });
+            });
+            req.on('error', (e) => { console.warn(`[Agents] browser.act direct error: ${e.message}`); resolve({}); });
+            req.on('timeout', () => { req.destroy(); resolve({}); });
+            req.write(body); req.end();
+          });
+        }
+        await browserActDirect({ action: 'navigate', url: startUrl, sessionId: sessionIdDirect, headed: isHeaded, timeoutMs: 15000 });
+        // Use first part of comma-separated multi-selector
+        const primarySel = skillJsonSelector.split(',')[0].trim();
+        await browserActDirect({ action: skillJsonInteraction, selector: primarySel, sessionId: sessionIdDirect, headed: isHeaded, timeoutMs: 10000 });
+        const directStatus = 'done';
+        console.log(`[Agents] Skill test (direct) complete: "${skillName}" → ${directStatus}`);
+        if (unifiedWindow && !unifiedWindow.isDestroyed()) {
+          unifiedWindow.webContents.send('agents:skill-test-update', { agentId, skillName, status: directStatus });
         }
         return;
       }
@@ -5889,7 +6133,7 @@ app.whenReady().then(async () => {
       if (!fsMod.existsSync(domainMapPath)) {
         console.error(`[Agents] Cannot test "${skillName}": no domain map for ${hostname}`);
         if (unifiedWindow && !unifiedWindow.isDestroyed()) {
-          unifiedWindow.webContents.send('agents:skill-test-update', { agentId, skillName, status: 'error' });
+          unifiedWindow.webContents.send('agents:skill-test-update', { agentId, skillName, status: 'error', errorReason: 'no_domain_map' });
         }
         return;
       }
@@ -5908,7 +6152,7 @@ app.whenReady().then(async () => {
       if (!actionEntry || !actionEntry.locators?.primary) {
         console.error(`[Agents] Cannot test "${skillName}": no locator found in domain map for "${lookupKey}"`);
         if (unifiedWindow && !unifiedWindow.isDestroyed()) {
-          unifiedWindow.webContents.send('agents:skill-test-update', { agentId, skillName, status: 'error' });
+          unifiedWindow.webContents.send('agents:skill-test-update', { agentId, skillName, status: 'error', errorReason: 'no_locator' });
         }
         return;
       }
@@ -5927,6 +6171,20 @@ app.whenReady().then(async () => {
       // profile → Chrome shows the login page every time.
       const BROWSER_ACT_PORT = parseInt(process.env.SERVICE_PORT || process.env.COMMAND_SERVICE_PORT || '3007', 10);
       const sessionId = `${agentId.replace(/[^a-z0-9_]/gi, '_')}_agent`;
+      // For headed tests, close any existing headless session first so browser.act
+      // cold-starts a fresh headed Chrome on the same auth profile (cookies preserved).
+      if (isHeaded) {
+        await new Promise((resolve) => {
+          const closeBody = JSON.stringify({ payload: { skill: 'browser.act', args: { action: 'close', sessionId, headed: false } } });
+          const closeReq = httpMod.request({
+            hostname: '127.0.0.1', port: BROWSER_ACT_PORT, path: '/command.automate', method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(closeBody) }, timeout: 5000,
+          }, res => { res.resume(); resolve(); });
+          closeReq.on('error', () => resolve());
+          closeReq.on('timeout', () => { closeReq.destroy(); resolve(); });
+          closeReq.write(closeBody); closeReq.end();
+        });
+      }
 
       async function browserActCall(args) {
         return new Promise((resolve) => {
@@ -6050,7 +6308,7 @@ app.whenReady().then(async () => {
     }
   });
 
-  ipcMain.on('agents:delete-skill', async (_event, { agentId, skillName }) => {
+  ipcMain.on('agents:delete-skill', async (_event, { agentId, skillName, skillPath }) => {
     console.log(`[Agents] Deleting skill "${skillName}" for ${agentId}`);
     try {
       const fsMod = require('fs');
@@ -6058,12 +6316,23 @@ app.whenReady().then(async () => {
       const pathMod = require('path');
       const httpMod = require('http');
 
-      // Resolve display name → actual skill dir + raw name
+      // Resolve skill directory → actual skill dir + raw name
+      // Prefer skillPath passed from UI (exact dir) over fragile display-name scan.
       const skillsBaseDir = pathMod.join(osMod.homedir(), '.thinkdrop', 'skills');
       let resolvedSkillDir = null;
       let rawSkillName = null;
 
-      if (fsMod.existsSync(skillsBaseDir)) {
+      // Fast path: skillPath provided directly from UI
+      if (skillPath && fsMod.existsSync(pathMod.join(skillPath, 'skill.json'))) {
+        try {
+          const meta = JSON.parse(fsMod.readFileSync(pathMod.join(skillPath, 'skill.json'), 'utf8'));
+          resolvedSkillDir = skillPath;
+          rawSkillName = meta.name || pathMod.basename(skillPath);
+        } catch (_) {}
+      }
+
+      // Fallback: scan all skill dirs matching by display name (backward compat)
+      if (!resolvedSkillDir && fsMod.existsSync(skillsBaseDir)) {
         for (const dirName of fsMod.readdirSync(skillsBaseDir)) {
           const dirPath = pathMod.join(skillsBaseDir, dirName);
           const metaPath = pathMod.join(dirPath, 'skill.json');
@@ -6081,52 +6350,89 @@ app.whenReady().then(async () => {
         }
       }
 
-      if (!resolvedSkillDir || !rawSkillName) {
-        console.error(`[Agents] Cannot delete "${skillName}": skill dir not found`);
-        return;
-      }
+      // Derive snake_case key from display name for frontmatter matching
+      // (used whether or not a disk dir was found — capability-only entries have no dir)
+      const snakeSkillName = rawSkillName
+        || skillName.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '');
 
-      // 1. Remove from DuckDB via /skill.remove
-      const memPort = parseInt(process.env.MEMORY_SERVICE_PORT || process.env.MCP_USER_MEMORY_PORT || '3001', 10);
-      const memKey = process.env.MCP_USER_MEMORY_API_KEY || process.env.USER_MEMORY_API_KEY || '';
-      const payload = JSON.stringify({
-        version: 'mcp.v1', service: 'user-memory', action: 'skill.remove',
-        payload: { name: rawSkillName },
-        requestId: `delete-${rawSkillName}-${Date.now()}`,
-      });
-
-      await new Promise((resolve) => {
-        const req = httpMod.request({
-          hostname: '127.0.0.1', port: memPort, path: '/skill.remove', method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(payload), ...(memKey ? { 'Authorization': `Bearer ${memKey}` } : {}) },
-          timeout: 8000,
-        }, res => {
-          let body = '';
-          res.on('data', c => { body += c; });
-          res.on('end', () => {
-            if (res.statusCode === 200) {
-              console.log(`[Agents] Skill "${rawSkillName}" removed from DuckDB`);
-            } else {
-              console.warn(`[Agents] Skill remove returned ${res.statusCode}: ${body}`);
-            }
-            resolve();
-          });
+      // 1. Remove from DuckDB if we have a resolved name
+      if (rawSkillName) {
+        const memPort = parseInt(process.env.MEMORY_SERVICE_PORT || process.env.MCP_USER_MEMORY_PORT || '3001', 10);
+        const memKey = process.env.MCP_USER_MEMORY_API_KEY || process.env.USER_MEMORY_API_KEY || '';
+        const payload = JSON.stringify({
+          version: 'mcp.v1', service: 'user-memory', action: 'skill.remove',
+          payload: { name: rawSkillName },
+          requestId: `delete-${rawSkillName}-${Date.now()}`,
         });
-        req.on('error', (err) => { console.warn(`[Agents] Skill remove DB error: ${err.message}`); resolve(); });
-        req.on('timeout', () => { req.destroy(); resolve(); });
-        req.write(payload);
-        req.end();
-      });
-
-      // 2. Remove skill directory from disk
-      try {
-        fsMod.rmSync(resolvedSkillDir, { recursive: true, force: true });
-        console.log(`[Agents] Skill dir removed from disk: ${resolvedSkillDir}`);
-      } catch (rmErr) {
-        console.warn(`[Agents] Could not remove skill dir ${resolvedSkillDir}: ${rmErr.message}`);
+        await new Promise((resolve) => {
+          const req = httpMod.request({
+            hostname: '127.0.0.1', port: memPort, path: '/skill.remove', method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(payload), ...(memKey ? { 'Authorization': `Bearer ${memKey}` } : {}) },
+            timeout: 8000,
+          }, res => {
+            let body = '';
+            res.on('data', c => { body += c; });
+            res.on('end', () => {
+              if (res.statusCode === 200) {
+                console.log(`[Agents] Skill "${rawSkillName}" removed from DuckDB`);
+              } else {
+                console.warn(`[Agents] Skill remove returned ${res.statusCode}: ${body}`);
+              }
+              resolve();
+            });
+          });
+          req.on('error', (err) => { console.warn(`[Agents] Skill remove DB error: ${err.message}`); resolve(); });
+          req.on('timeout', () => { req.destroy(); resolve(); });
+          req.write(payload);
+          req.end();
+        });
       }
 
-      console.log(`[Agents] Skill "${skillName}" (${rawSkillName}) deleted successfully`);
+      // 2. Remove skill directory from disk if found
+      if (resolvedSkillDir) {
+        try {
+          fsMod.rmSync(resolvedSkillDir, { recursive: true, force: true });
+          console.log(`[Agents] Skill dir removed from disk: ${resolvedSkillDir}`);
+        } catch (rmErr) {
+          console.warn(`[Agents] Could not remove skill dir ${resolvedSkillDir}: ${rmErr.message}`);
+        }
+      } else {
+        console.log(`[Agents] No disk dir for "${skillName}" — capability-only entry, patching frontmatter only`);
+      }
+
+      // 3. Remove from agent .md frontmatter (capabilities: array + ## Capabilities section)
+      //    This is the critical step that prevents the fallback from re-surfacing deleted skills.
+      const agentsDir = pathMod.join(osMod.homedir(), '.thinkdrop', 'agents');
+      // agentId may be "perplexity" or "perplexity.agent" — try both forms
+      const agentMdCandidates = [
+        pathMod.join(agentsDir, `${agentId}.md`),
+        pathMod.join(agentsDir, `${agentId}.agent.md`),
+        pathMod.join(agentsDir, `${agentId.replace(/\.agent$/, '')}.agent.md`),
+      ];
+      const agentMdPath = agentMdCandidates.find(p => fsMod.existsSync(p)) || null;
+
+      if (agentMdPath) {
+        try {
+          let md = fsMod.readFileSync(agentMdPath, 'utf8');
+          // Strip from capabilities: YAML array — matches "  - snakeSkillName" lines
+          md = md.replace(new RegExp(`^[ \\t]*-[ \\t]+${snakeSkillName}[ \\t]*$`, 'mi'), '');
+          // Strip from ## Capabilities section bullet — matches "- snakeSkillName ..." lines
+          md = md.replace(new RegExp(`^-[ \\t]+${snakeSkillName}[^\\n]*$`, 'mi'), '');
+          // Also strip display-name form if it appears (e.g. "- Search Thread History ...")
+          const displayEscaped = skillName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+          md = md.replace(new RegExp(`^[ \\t]*-[ \\t]+${displayEscaped}[^\\n]*$`, 'mi'), '');
+          // Clean up any triple+ blank lines left behind
+          md = md.replace(/\n{3,}/g, '\n\n');
+          fsMod.writeFileSync(agentMdPath, md, 'utf8');
+          console.log(`[Agents] Removed "${snakeSkillName}" from frontmatter: ${agentMdPath}`);
+        } catch (mdErr) {
+          console.warn(`[Agents] Could not patch agent md ${agentMdPath}: ${mdErr.message}`);
+        }
+      } else {
+        console.warn(`[Agents] No agent .md found for agentId="${agentId}"`);
+      }
+
+      console.log(`[Agents] Skill "${skillName}" (${snakeSkillName}) deleted successfully`);
 
       // Refresh agents list so UI reflects removal
       setTimeout(() => {
@@ -6136,6 +6442,104 @@ app.whenReady().then(async () => {
       }, 300);
     } catch (err) {
       console.error(`[Agents] agents:delete-skill failed: ${err.message}`);
+    }
+  });
+
+  // Skill refresh handler — rescan/regenerate a single skill
+  ipcMain.on('agents:refresh-skill', async (_event, { agentId, skillName, skillPath }) => {
+    console.log(`[Agents] Refreshing skill "${skillName}" for ${agentId}`);
+    try {
+      const fsMod = require('fs');
+      const pathMod = require('path');
+      
+      // Read skill.json to get metadata
+      const skillJsonPath = pathMod.join(skillPath, 'skill.json');
+      if (!fsMod.existsSync(skillJsonPath)) {
+        throw new Error(`Skill metadata not found at ${skillJsonPath}`);
+      }
+      
+      const skillMeta = JSON.parse(fsMod.readFileSync(skillJsonPath, 'utf8'));
+      const sourceDomain = skillMeta._meta?.source_domain || skillMeta.domain;
+      const sourceUrl = skillMeta._meta?.source_url;
+      
+      if (!sourceDomain) {
+        throw new Error('Skill missing source domain metadata');
+      }
+      
+      // Send refresh started update
+      if (unifiedWindow && !unifiedWindow.isDestroyed()) {
+        unifiedWindow.webContents.send('agents:skill-refresh-update', { agentId, skillName, status: 'refreshing' });
+      }
+      
+      // For single-element rescan, we need to:
+      // 1. Delete the existing skill files
+      // 2. Trigger a focused rescan of the specific element
+      
+      // Delete existing skill files
+      try {
+        const indexPath = pathMod.join(skillPath, 'index.cjs');
+        if (fsMod.existsSync(indexPath)) fsMod.unlinkSync(indexPath);
+        if (fsMod.existsSync(skillJsonPath)) fsMod.unlinkSync(skillJsonPath);
+        console.log(`[Agents] Deleted old skill files for ${skillName}`);
+      } catch (e) {
+        console.warn(`[Agents] Could not delete old skill files: ${e.message}`);
+      }
+      
+      // Get agent info to find the URL to scan
+      const os = require('os');
+      const agentsDir = pathMod.join(os.homedir(), '.thinkdrop', 'agents');
+      const agentFile = pathMod.join(agentsDir, `${agentId}.agent.md`);
+      let scanUrl = sourceUrl || `https://${sourceDomain}`;
+      
+      if (fsMod.existsSync(agentFile)) {
+        const content = fsMod.readFileSync(agentFile, 'utf8');
+        const fmMatch = content.match(/^---\s*\n([\s\S]*?)\n---/);
+        if (fmMatch) {
+          const userGoalsMatch = fmMatch[1].match(/userGoals:\s*\n((?:\s+-\s+.+\n?)+)/);
+          if (userGoalsMatch) {
+            const goals = userGoalsMatch[1].trim().split('\n').map(g => g.replace(/^\s+-\s+/, '')).filter(Boolean);
+            if (goals.length > 0) {
+              // Use the first goal URL if it matches the domain
+              const firstGoal = goals[0];
+              if (firstGoal.includes(sourceDomain) || sourceDomain.includes(firstGoal.replace(/^https?:\/\//, '').split('/')[0])) {
+                scanUrl = firstGoal.startsWith('http') ? firstGoal : `https://${firstGoal}`;
+              }
+            }
+          }
+        }
+      }
+      
+      // Trigger focused rescan via explore.agent
+      const exploreAgent = require('../../mcp-services/command-service/src/skills/explore.agent.cjs');
+      
+      // Run scan for just this one page with max depth 0 (single page)
+      const scanResult = await exploreAgent.scanDomain({
+        url: scanUrl,
+        agentId,
+        maxScanDepth: 0,  // Single page only
+        maxWait: 5000,
+        _focusSkill: skillMeta._meta?.source_action || skillName,  // Hint to focus on specific action
+        _progressCallbackUrl: null  // No progress updates for background refresh
+      });
+      
+      if (scanResult.ok) {
+        console.log(`[Agents] Skill refresh complete: ${skillName}`);
+      } else {
+        console.error(`[Agents] Skill refresh failed: ${scanResult.error}`);
+      }
+      
+      // Send refresh complete update
+      if (unifiedWindow && !unifiedWindow.isDestroyed()) {
+        unifiedWindow.webContents.send('agents:skill-refresh-update', { agentId, skillName, status: scanResult.ok ? 'done' : 'error' });
+        // Refresh agents list to show updated skill
+        unifiedWindow.webContents.send('agents:list-request');
+      }
+      
+    } catch (err) {
+      console.error(`[Agents] agents:refresh-skill failed: ${err.message}`);
+      if (unifiedWindow && !unifiedWindow.isDestroyed()) {
+        unifiedWindow.webContents.send('agents:skill-refresh-update', { agentId, skillName, status: 'error' });
+      }
     }
   });
 
@@ -7893,6 +8297,143 @@ app.whenReady().then(async () => {
     ipcMain.on('bridge:listener:start', () => startBridgeListener());
     ipcMain.on('bridge:listener:stop', () => stopBridgeListener());
     ipcMain.handle('bridge:listener:status', () => ({ active: bridgeListenerActive, bridgeFile: BRIDGE_FILE }));
+
+    // ─── Rules Management IPC handlers ──────────────────────────────────────────
+    const MEMORY_PORT = parseInt(process.env.MEMORY_SERVICE_PORT || '3001', 10);
+    const MEMORY_HOST = process.env.MEMORY_SERVICE_HOST || '127.0.0.1';
+    const MEMORY_API_KEY = process.env.MCP_USER_MEMORY_API_KEY || process.env.USER_MEMORY_API_KEY || process.env.MCP_API_KEY || process.env.API_KEY || '';
+
+    async function memoryHttpPost(path, action, payload) {
+      return new Promise((resolve, reject) => {
+        const http = require('http');
+        const data = JSON.stringify({
+          version: 'mcp.v1',
+          service: 'user-memory',
+          action,
+          payload,
+          requestId: 'rules-' + Date.now()
+        });
+        console.log(`[memoryHttpPost] POST ${path} to ${MEMORY_HOST}:${MEMORY_PORT}`);
+        const options = {
+          hostname: MEMORY_HOST,
+          port: MEMORY_PORT,
+          path,
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Content-Length': Buffer.byteLength(data),
+            'Authorization': `Bearer ${MEMORY_API_KEY}`,
+          },
+        };
+        const req = http.request(options, (res) => {
+          let response = '';
+          res.on('data', chunk => { response += chunk; });
+          res.on('end', () => {
+            console.log(`[memoryHttpPost] Response for ${path}:`, response.substring(0, 200));
+            try { resolve(JSON.parse(response)); }
+            catch (e) {
+              console.error(`[memoryHttpPost] Failed to parse JSON for ${path}:`, e.message);
+              resolve(null);
+            }
+          });
+        });
+        req.on('error', (err) => {
+          console.error(`[memoryHttpPost] Request error for ${path}:`, err.message);
+          reject(err);
+        });
+        req.write(data);
+        req.end();
+      });
+    }
+
+    // Context rules handlers
+    ipcMain.handle('rules:context:list_all', async () => {
+      try {
+        console.log('[IPC] rules:context:list_all - calling user-memory on port', MEMORY_PORT);
+        const result = await memoryHttpPost('/context_rule.list_all', 'context_rule.list_all', {});
+        console.log('[IPC] rules:context:list_all - result:', result);
+        return result;
+      } catch (err) {
+        console.error('[IPC] rules:context:list_all failed:', err.message);
+        return { error: err.message };
+      }
+    });
+
+    ipcMain.handle('rules:context:update', async (_event, { id, updates }) => {
+      try {
+        return await memoryHttpPost('/context_rule.update', 'context_rule.update', { id, updates });
+      } catch (err) {
+        console.error('[IPC] rules:context:update failed:', err.message);
+        return { error: err.message };
+      }
+    });
+
+    ipcMain.handle('rules:context:delete', async (_event, { id }) => {
+      try {
+        return await memoryHttpPost('/context_rule.delete_by_id', 'context_rule.delete_by_id', { id });
+      } catch (err) {
+        console.error('[IPC] rules:context:delete failed:', err.message);
+        return { error: err.message };
+      }
+    });
+
+    ipcMain.handle('rules:context:cleanup', async (_event, { contextKey }) => {
+      try {
+        return await memoryHttpPost('/context_rule.analyze_cleanup', 'context_rule.analyze_cleanup', { contextKey });
+      } catch (err) {
+        console.error('[IPC] rules:context:cleanup failed:', err.message);
+        return { error: err.message };
+      }
+    });
+
+    ipcMain.handle('rules:context:create', async (_event, data) => {
+      try {
+        return await memoryHttpPost('/context_rule.upsert', 'context_rule.upsert', data);
+      } catch (err) {
+        console.error('[IPC] rules:context:create failed:', err.message);
+        return { error: err.message };
+      }
+    });
+
+    // Constraint rules handlers
+    ipcMain.handle('rules:constraint:list', async () => {
+      try {
+        console.log('[IPC] rules:constraint:list - calling user-memory on port', MEMORY_PORT);
+        const result = await memoryHttpPost('/constraint.list', 'constraint.list', {});
+        console.log('[IPC] rules:constraint:list - result:', result);
+        return result;
+      } catch (err) {
+        console.error('[IPC] rules:constraint:list failed:', err.message);
+        return { error: err.message };
+      }
+    });
+
+    ipcMain.handle('rules:constraint:update', async (_event, { id, updates }) => {
+      try {
+        return await memoryHttpPost('/constraint.update', 'constraint.update', { id, updates });
+      } catch (err) {
+        console.error('[IPC] rules:constraint:update failed:', err.message);
+        return { error: err.message };
+      }
+    });
+
+    ipcMain.handle('rules:constraint:remove', async (_event, { id }) => {
+      try {
+        return await memoryHttpPost('/constraint.remove', 'constraint.remove', { id });
+      } catch (err) {
+        console.error('[IPC] rules:constraint:remove failed:', err.message);
+        return { error: err.message };
+      }
+    });
+
+    ipcMain.handle('rules:constraint:create', async (_event, data) => {
+      try {
+        return await memoryHttpPost('/constraint.add', 'constraint.add', data);
+      } catch (err) {
+        console.error('[IPC] rules:constraint:create failed:', err.message);
+        return { error: err.message };
+      }
+    });
 
     // Auto-start on launch
     startBridgeListener();

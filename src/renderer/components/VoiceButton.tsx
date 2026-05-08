@@ -72,7 +72,7 @@ export default function VoiceButton({ compact = false }: VoiceButtonProps) {
     : 'Click to open voice companion';
 
   return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: '4px', position: 'relative' }}>
+    <div style={{ display: 'flex', alignItems: 'center', gap: '4px', position: 'relative', zIndex: 20 }}>
       {/* Mic button */}
       <button
         title={title}

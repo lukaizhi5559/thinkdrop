@@ -357,10 +357,21 @@ contextBridge.exposeInMainWorld('electron', {
       }
     },
     invoke: (channel, data) => {
-      // const validChannels = ['capture-screenshot'];
-      // if (validChannels.includes(channel)) {
-      //   return ipcRenderer.invoke(channel, data);
-      // }
+      const validChannels = [
+        'rules:context:list_all',
+        'rules:context:update',
+        'rules:context:delete',
+        'rules:context:cleanup',
+        'rules:context:create',
+        'rules:constraint:list',
+        'rules:constraint:update',
+        'rules:constraint:remove',
+        'rules:constraint:create',
+        'capture-screenshot',
+      ];
+      if (validChannels.includes(channel)) {
+        return ipcRenderer.invoke(channel, data);
+      }
     },
   },
 });

@@ -29,9 +29,9 @@ const statusColors: Record<string, string> = {
 
 const statusLabels: Record<string, string> = {
   pending: 'Pending',
-  learning: 'Learning…',
-  learned: 'Learned',
-  needs_training: 'Needs training',
+  learning: 'Indexing…',
+  learned: 'Indexed',
+  needs_training: 'Needs scan',
 };
 
 // Favicon fetch with fallback
@@ -103,6 +103,172 @@ function AgentIcon({ domain, name, size = 32 }: { domain: string; name: string; 
   );
 }
 
+const SKILL_ERROR_MESSAGES: Record<string, string> = {
+  no_locator: 'No selector found — try rescanning',
+  no_domain_map: 'Not yet scanned — run Learn first',
+  skill_not_found: 'Skill file missing',
+  no_start_url: 'No URL configured for this agent',
+};
+
+// Compact skill row for atomic skills list (test + edit + refresh + delete)
+function CompactSkillRow({
+  skill,
+  agentId,
+  onTest,
+  onEdit,
+  onRefresh,
+  onDelete,
+  isTesting,
+  isRefreshing,
+  errorInfo,
+}: {
+  skill: AgentSkill;
+  agentId: string;
+  onTest: (agentId: string, skillName: string, headed: boolean, skillPath?: string) => void;
+  onEdit: (skillPath: string) => void;
+  onRefresh: (agentId: string, skillName: string, skillPath: string) => void;
+  onDelete: (agentId: string, skillName: string, skillPath?: string) => void;
+  isTesting?: boolean;
+  isRefreshing?: boolean;
+  errorInfo?: { reason: string } | null;
+}) {
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const [choosing, setChoosing] = useState(false);
+  const [showErrorTooltip, setShowErrorTooltip] = useState(false);
+  const isDraft = skill.status === 'draft';
+  const hasError = !!errorInfo;
+
+  return (
+    <div style={{
+      display: 'flex',
+      alignItems: 'center',
+      padding: '4px 6px',
+      backgroundColor: hasError ? 'rgba(239,68,68,0.04)' : 'rgba(255,255,255,0.02)',
+      border: `1px solid ${hasError ? 'rgba(239,68,68,0.18)' : 'rgba(255,255,255,0.05)'}`,
+      borderRadius: 4,
+      marginBottom: 3,
+      gap: 6,
+    }}>
+      <div style={{
+        width: 5,
+        height: 5,
+        borderRadius: '50%',
+        flexShrink: 0,
+        backgroundColor: hasError ? '#ef4444' : isDraft ? '#f59e0b' : '#10b981',
+      }} />
+
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ fontSize: '0.65rem', color: '#9ca3af', fontFamily: 'ui-monospace,monospace', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+          {skill.name}
+        </div>
+      </div>
+
+      {/* Inline error badge */}
+      {hasError && (
+        <div style={{ position: 'relative', flexShrink: 0 }}>
+          <button
+            onClick={() => setShowErrorTooltip(v => !v)}
+            title={SKILL_ERROR_MESSAGES[errorInfo!.reason] || 'Test failed'}
+            style={{ padding: '1px 4px', background: 'rgba(239,68,68,0.12)', border: '1px solid rgba(239,68,68,0.35)', borderRadius: 3, cursor: 'pointer', color: '#f87171', display: 'flex', alignItems: 'center', gap: 2 }}
+          >
+            <svg width="8" height="8" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2a10 10 0 1 0 0 20A10 10 0 0 0 12 2zm1 15h-2v-2h2v2zm0-4h-2V7h2v6z"/></svg>
+          </button>
+          {showErrorTooltip && (
+            <div style={{
+              position: 'absolute', right: 0, top: '110%', zIndex: 99,
+              background: '#1f2937', border: '1px solid rgba(239,68,68,0.3)',
+              borderRadius: 5, padding: '6px 8px', width: 170,
+              boxShadow: '0 4px 12px rgba(0,0,0,0.5)',
+            }}>
+              <div style={{ fontSize: '0.6rem', color: '#f87171', marginBottom: 4, fontWeight: 600 }}>⚠ Test failed</div>
+              <div style={{ fontSize: '0.59rem', color: '#9ca3af', marginBottom: 6, lineHeight: 1.4 }}>
+                {SKILL_ERROR_MESSAGES[errorInfo!.reason] || 'Unknown error'}
+              </div>
+              {skill.skillPath && (
+                <button
+                  onClick={() => { setShowErrorTooltip(false); onRefresh(agentId, skill.name, skill.skillPath!); }}
+                  style={{ width: '100%', padding: '3px 0', background: 'rgba(99,102,241,0.15)', border: '1px solid rgba(99,102,241,0.3)', borderRadius: 3, color: '#818cf8', fontSize: '0.59rem', cursor: 'pointer' }}
+                >
+                  Rescan skill
+                </button>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Test */}
+      {isTesting ? (
+        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" style={{ animation: 'spin 0.9s linear infinite', color: '#818cf8' }}>
+          <path d="M21 12a9 9 0 1 1-6.219-8.56"/>
+        </svg>
+      ) : choosing ? (
+        <div style={{ display: 'flex', gap: 2 }}>
+          <button onClick={() => { setChoosing(false); onTest(agentId, skill.name, false, skill.skillPath); }} title="Run headless" style={{ padding: '2px 4px', background: 'transparent', border: '1px solid rgba(255,255,255,0.1)', color: '#9ca3af', borderRadius: 3, cursor: 'pointer', display: 'flex', alignItems: 'center' }}>
+            <svg width="9" height="9" viewBox="0 0 24 24" fill="currentColor" stroke="none">
+              <path d="M12 2C7.03 2 3 6.03 3 11v7l3-2 2 2 2-2 2 2 2-2 3 2v-7c0-4.97-4.03-9-9-9zm-3 8a1 1 0 1 1 0-2 1 1 0 0 1 0 2zm6 0a1 1 0 1 1 0-2 1 1 0 0 1 0 2z"/>
+            </svg>
+          </button>
+          <button onClick={() => { setChoosing(false); onTest(agentId, skill.name, true, skill.skillPath); }} title="Run headed" style={{ padding: '2px 4px', background: 'transparent', border: '1px solid rgba(99,102,241,0.3)', color: '#818cf8', borderRadius: 3, cursor: 'pointer', display: 'flex', alignItems: 'center' }}>
+            <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
+              <circle cx="12" cy="12" r="3"/>
+            </svg>
+          </button>
+          <button onClick={() => setChoosing(false)} title="Cancel" style={{ padding: '2px 4px', background: 'transparent', border: 'none', color: '#4b5563', cursor: 'pointer', fontSize: '0.7rem' }}>×</button>
+        </div>
+      ) : (
+        <button onClick={() => setChoosing(true)} title="Test" style={{ padding: '2px 4px', background: 'transparent', border: '1px solid rgba(255,255,255,0.08)', borderRadius: 3, cursor: 'pointer', color: '#6b7280', display: 'flex', alignItems: 'center' }}>
+          <svg width="8" height="8" viewBox="0 0 24 24" fill="currentColor"><polygon points="5,3 19,12 5,21"/></svg>
+        </button>
+      )}
+
+      {/* Edit — opens skill file */}
+      {skill.skillPath && (
+        <button 
+          onClick={() => onEdit(skill.skillPath!)} 
+          title="Edit skill code" 
+          style={{ padding: '2px 4px', background: 'transparent', border: '1px solid rgba(255,255,255,0.08)', borderRadius: 3, cursor: 'pointer', color: '#6b7280', display: 'flex', alignItems: 'center' }}
+        >
+          <svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
+            <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
+          </svg>
+        </button>
+      )}
+
+      {/* Refresh — rescan/regenerate skill */}
+      {isRefreshing ? (
+        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" style={{ animation: 'spin 0.9s linear infinite', color: '#f59e0b' }}>
+          <path d="M21 12a9 9 0 1 1-6.219-8.56"/>
+        </svg>
+      ) : (
+        skill.skillPath && (
+          <button 
+            onClick={() => onRefresh(agentId, skill.name, skill.skillPath!)} 
+            title="Rescan this skill" 
+            style={{ padding: '2px 4px', background: 'transparent', border: '1px solid rgba(255,255,255,0.08)', borderRadius: 3, cursor: 'pointer', color: '#6b7280', display: 'flex', alignItems: 'center' }}
+          >
+            <svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <polyline points="23 4 23 10 17 10"/>
+              <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/>
+            </svg>
+          </button>
+        )
+      )}
+
+      {/* Delete */}
+      {confirmDelete ? (
+        <button onClick={() => { onDelete(agentId, skill.name, skill.skillPath); setConfirmDelete(false); }} style={{ padding: '2px 5px', background: 'rgba(239,68,68,0.15)', border: '1px solid rgba(239,68,68,0.4)', color: '#ef4444', borderRadius: 3, fontSize: '0.55rem', cursor: 'pointer' }}>sure?</button>
+      ) : (
+        <button onClick={() => setConfirmDelete(true)} title="Delete" style={{ padding: '2px 4px', background: 'transparent', border: '1px solid rgba(255,255,255,0.08)', borderRadius: 3, cursor: 'pointer', color: '#6b7280', display: 'flex', alignItems: 'center' }}>
+          <svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/></svg>
+        </button>
+      )}
+    </div>
+  );
+}
+
 // Individual agent card — matches CronItemCard / SkillItemCard compact style
 function AgentCard({ 
   agent, 
@@ -111,9 +277,12 @@ function AgentCard({
   onEdit,
   onDelete,
   onTestSkill,
-  onPublishSkill,
   onDeleteSkill,
+  onEditSkill,
+  onRefreshSkill,
   testingSkills,
+  refreshingSkills,
+  failedSkills,
   expanded,
   onToggle
 }: { 
@@ -122,10 +291,13 @@ function AgentCard({
   onTrain: (agentId: string) => void;
   onEdit: (agentId: string) => void;
   onDelete: (agentId: string) => void;
-  onTestSkill: (agentId: string, skillName: string, headed: boolean) => void;
-  onPublishSkill: (agentId: string, skillName: string) => void;
-  onDeleteSkill: (agentId: string, skillName: string) => void;
+  onTestSkill: (agentId: string, skillName: string, headed: boolean, skillPath?: string) => void;
+  onDeleteSkill: (agentId: string, skillName: string, skillPath?: string) => void;
+  onEditSkill: (skillPath: string) => void;
+  onRefreshSkill: (agentId: string, skillName: string, skillPath: string) => void;
   testingSkills: Record<string, boolean>;
+  refreshingSkills: Record<string, boolean>;
+  failedSkills: Record<string, { reason: string; ts: number }>;
   expanded: boolean;
   onToggle: () => void;
 }) {
@@ -202,7 +374,7 @@ function AgentCard({
               {agent.category}
             </span>
           </div>
-          {/* Status row — dot + label only */}
+          {/* Status row — dot + label + skills count */}
           <div style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
             <div style={{
               width: 6,
@@ -216,12 +388,23 @@ function AgentCard({
             <span style={{ fontSize: '0.62rem', color: '#6b7280' }}>
               {statusLabels[agent.status] || agent.status}
             </span>
+            <span style={{ color: '#6b7280' }}>|</span>
+            <span 
+              style={{
+                fontSize: '0.58rem',
+                color: (agent.skills?.length ?? 0) === 0 ? '#f59e0b' : '#10b981',
+                whiteSpace: 'nowrap',
+                userSelect: 'none',
+                marginTop: '2px',
+              }}
+            >
+              {(agent.skills?.length ?? 0) === 0 ? 'No skills' : `${agent.skills?.length ?? 0} skill${(agent.skills?.length ?? 0) === 1 ? '' : 's'}`}
+            </span>
           </div>
         </div>
 
         {/* Icon-only action buttons — never overflow */}
-        <div style={{ display: 'flex', gap: 4, flexShrink: 0, alignItems: 'center' }}>
-
+        <div style={{ display: 'flex', flexDirection: 'row', gap: 4, flexShrink: 0, alignItems: 'center'}}>
           {/* Learn — single ▶ expands into headless + headed choice buttons */}
           {isLearning ? (
             <button
@@ -400,28 +583,34 @@ function AgentCard({
       {expanded && (
         <div style={{ marginTop: 10, paddingTop: 10, borderTop: '1px solid rgba(255,255,255,0.06)' }}>
 
-          {/* Goals */}
-          {agent.userGoals && agent.userGoals.length > 0 && (
-            <div style={{ marginBottom: 8 }}>
-              <div style={{ fontSize: '0.62rem', color: '#4b5563', marginBottom: 4, textTransform: 'uppercase', letterSpacing: '0.04em' }}>
-                Goals
+          {/* URLs to Index - only show actual URLs, not natural language prompts */}
+          {(() => {
+            const urls = (agent.userGoals || []).filter(g => 
+              g && (g.startsWith('http://') || g.startsWith('https://') || g.startsWith('/'))
+            );
+            if (urls.length === 0) return null;
+            return (
+              <div style={{ marginBottom: 8 }}>
+                <div style={{ fontSize: '0.62rem', color: '#4b5563', marginBottom: 4, textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+                  URLs to Index ({urls.length})
+                </div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+                  {urls.map((url, idx) => (
+                    <div key={idx} style={{
+                      fontSize: '0.62rem',
+                      color: '#6b7280',
+                      fontFamily: 'ui-monospace,monospace',
+                      overflow: 'hidden',
+                      textOverflow: 'ellipsis',
+                      whiteSpace: 'nowrap',
+                    }}>
+                      {url}
+                    </div>
+                  ))}
+                </div>
               </div>
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
-                {agent.userGoals.map((goal, idx) => (
-                  <span key={idx} style={{
-                    fontSize: '0.65rem',
-                    color: '#9ca3af',
-                    backgroundColor: 'rgba(255,255,255,0.04)',
-                    border: '1px solid rgba(255,255,255,0.07)',
-                    padding: '2px 7px',
-                    borderRadius: 4,
-                  }}>
-                    {goal}
-                  </span>
-                ))}
-              </div>
-            </div>
-          )}
+            );
+          })()}
 
           {/* Learned States */}
           {agent.learnedStates && agent.learnedStates.length > 0 && (
@@ -446,20 +635,24 @@ function AgentCard({
             </div>
           )}
 
-          {/* Skills */}
+          {/* Atomic Skills Section */}
           {agent.skills && agent.skills.length > 0 && (
-            <div>
+            <div style={{ marginTop: 8 }}>
               <div style={{ fontSize: '0.62rem', color: '#4b5563', marginBottom: 6, textTransform: 'uppercase', letterSpacing: '0.04em' }}>
-                Skills
+                Atomic Skills ({agent.skills.length})
               </div>
               {agent.skills.map((skill) => (
-                <SkillRow
+                <CompactSkillRow
                   key={skill.name}
                   skill={skill}
-                  onTest={(headed) => onTestSkill(agent.id, skill.name, headed)}
-                  onPublish={() => onPublishSkill(agent.id, skill.name)}
-                  onDelete={() => onDeleteSkill(agent.id, skill.name)}
+                  agentId={agent.id}
+                  onTest={onTestSkill}
+                  onEdit={onEditSkill}
+                  onRefresh={onRefreshSkill}
+                  onDelete={onDeleteSkill}
                   isTesting={testingSkills[`${agent.id}::${skill.name}`] === true}
+                  isRefreshing={refreshingSkills[`${agent.id}::${skill.name}`] === true}
+                  errorInfo={failedSkills[`${agent.id}::${skill.name}`] || null}
                 />
               ))}
             </div>
@@ -476,222 +669,11 @@ function AgentCard({
   );
 }
 
-// Individual skill row — compact, matching other tabs
-function SkillRow({ 
-  skill, 
-  onTest,
-  onPublish,
-  onDelete,
-  isTesting,
-}: { 
-  skill: AgentSkill; 
-  onTest: (headed: boolean) => void;
-  onPublish: () => void;
-  onDelete: () => void;
-  isTesting?: boolean;
-}) {
-  const [confirmDelete, setConfirmDelete] = useState(false);
-  const [choosing, setChoosing] = useState(false);
-  const isDraft = skill.status === 'draft';
+// Note: SkillRow removed — composite skills disabled in Atomic Index model
+// Using CompactSkillRow for atomic skills only
 
-  return (
-    <div style={{
-      display: 'flex',
-      alignItems: 'center',
-      padding: '6px 8px',
-      backgroundColor: 'rgba(255,255,255,0.02)',
-      border: '1px solid rgba(255,255,255,0.05)',
-      borderRadius: 5,
-      marginBottom: 4,
-      gap: 8,
-    }}>
-      <div style={{
-        width: 6,
-        height: 6,
-        borderRadius: '50%',
-        flexShrink: 0,
-        backgroundColor: isDraft ? '#f59e0b' : '#10b981',
-        boxShadow: isDraft ? 'none' : '0 0 4px #10b981',
-      }} />
-
-      <div style={{ flex: 1, minWidth: 0 }}>
-        <div style={{ fontSize: '0.68rem', color: '#d1d5db', fontFamily: 'ui-monospace,monospace', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-          {skill.name}
-        </div>
-        {skill.description && (
-          <div style={{ fontSize: '0.6rem', color: '#6b7280', marginTop: 1 }}>{skill.description}</div>
-        )}
-      </div>
-
-      <span style={{
-        fontSize: '0.58rem',
-        padding: '1px 5px',
-        borderRadius: 3,
-        backgroundColor: isDraft ? 'rgba(245,158,11,0.12)' : 'rgba(16,185,129,0.12)',
-        border: `1px solid ${isDraft ? 'rgba(245,158,11,0.25)' : 'rgba(16,185,129,0.25)'}`,
-        color: isDraft ? '#f59e0b' : '#10b981',
-        flexShrink: 0,
-      }}>
-        {skill.status}
-      </span>
-
-      {/* Test — play ▶ → expands to ghost (headless) / eye (headed) chooser */}
-      {isTesting ? (
-        // Spinner while test is running
-        <button
-          disabled
-          title="Running test…"
-          style={{
-            padding: '3px 6px', borderRadius: 4, cursor: 'default',
-            display: 'flex', alignItems: 'center', justifyContent: 'center',
-            background: 'rgba(99,102,241,0.12)', border: '1px solid rgba(99,102,241,0.35)',
-            color: '#818cf8', flexShrink: 0,
-          }}
-        >
-          <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" style={{ animation: 'spin 1s linear infinite' }}>
-            <circle cx="12" cy="12" r="10" strokeOpacity="0.25"/>
-            <path d="M12 2a10 10 0 0 1 10 10" />
-          </svg>
-        </button>
-      ) : choosing ? (
-        // Mode chooser — ghost (headless) + eye (headed)
-        <div style={{ display: 'flex', gap: 3, flexShrink: 0 }}>
-          {/* Ghost = headless */}
-          <button
-            onClick={() => { setChoosing(false); onTest(false); }}
-            title="Run headless (silent)"
-            style={{
-              padding: '3px 6px', borderRadius: 4, cursor: 'pointer',
-              display: 'flex', alignItems: 'center', justifyContent: 'center',
-              background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.14)',
-              color: '#9ca3af', flexShrink: 0,
-            }}
-          >
-            <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor" stroke="none">
-              <path d="M12 2C7.03 2 3 6.03 3 11v7l3-2 2 2 2-2 2 2 2-2 3 2v-7c0-4.97-4.03-9-9-9zm-3 8a1 1 0 1 1 0-2 1 1 0 0 1 0 2zm6 0a1 1 0 1 1 0-2 1 1 0 0 1 0 2z"/>
-            </svg>
-          </button>
-          {/* Eye = headed */}
-          <button
-            onClick={() => { setChoosing(false); onTest(true); }}
-            title="Run headed (watch in browser)"
-            style={{
-              padding: '3px 6px', borderRadius: 4, cursor: 'pointer',
-              display: 'flex', alignItems: 'center', justifyContent: 'center',
-              background: 'rgba(99,102,241,0.1)', border: '1px solid rgba(99,102,241,0.3)',
-              color: '#818cf8', flexShrink: 0,
-            }}
-          >
-            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
-              <circle cx="12" cy="12" r="3"/>
-            </svg>
-          </button>
-          {/* Cancel */}
-          <button
-            onClick={() => setChoosing(false)}
-            title="Cancel"
-            style={{
-              padding: '3px 5px', borderRadius: 4, cursor: 'pointer',
-              display: 'flex', alignItems: 'center', justifyContent: 'center',
-              background: 'transparent', border: '1px solid rgba(255,255,255,0.07)',
-              color: '#4b5563', flexShrink: 0,
-            }}
-          >
-            <svg width="7" height="7" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
-              <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
-            </svg>
-          </button>
-        </div>
-      ) : (
-        // Default: play button
-        <button
-          onClick={() => setChoosing(true)}
-          title="Test skill"
-          style={{
-            padding: '3px 6px', borderRadius: 4, cursor: 'pointer',
-            display: 'flex', alignItems: 'center', justifyContent: 'center',
-            background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)',
-            color: '#9ca3af', flexShrink: 0,
-          }}
-        >
-          <svg width="9" height="9" viewBox="0 0 24 24" fill="currentColor" stroke="none">
-            <polygon points="5,3 19,12 5,21"/>
-          </svg>
-        </button>
-      )}
-
-      {/* Publish — always visible, re-registers skill in DuckDB */}
-      <button
-        onClick={onPublish}
-        title="Publish skill to DuckDB"
-        style={{
-          padding: '3px 6px',
-          borderRadius: 4,
-          cursor: 'pointer',
-          display: 'flex', alignItems: 'center', justifyContent: 'center',
-          background: isDraft ? 'rgba(16,185,129,0.1)' : 'rgba(255,255,255,0.05)',
-          border: `1px solid ${isDraft ? 'rgba(16,185,129,0.28)' : 'rgba(255,255,255,0.1)'}`,
-          color: isDraft ? '#10b981' : '#6b7280',
-          flexShrink: 0,
-        }}
-      >
-        <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-          <polyline points="16 16 12 12 8 16"/>
-          <line x1="12" y1="12" x2="12" y2="21"/>
-          <path d="M20.39 18.39A5 5 0 0 0 18 9h-1.26A8 8 0 1 0 3 16.3"/>
-        </svg>
-      </button>
-
-      {/* Delete — trash icon with confirm */}
-      {confirmDelete ? (
-        <button
-          onClick={() => { onDelete(); setConfirmDelete(false); }}
-          title="Confirm delete"
-          style={{
-            padding: '3px 7px',
-            borderRadius: 4,
-            cursor: 'pointer',
-            display: 'flex', alignItems: 'center', justifyContent: 'center',
-            background: 'rgba(239,68,68,0.18)',
-            border: '1px solid rgba(239,68,68,0.45)',
-            color: '#ef4444',
-            fontSize: '0.58rem',
-            fontWeight: 600,
-            flexShrink: 0,
-          }}
-          onBlur={() => setConfirmDelete(false)}
-        >
-          Sure?
-        </button>
-      ) : (
-        <button
-          onClick={() => setConfirmDelete(true)}
-          title="Delete skill"
-          style={{
-            padding: '3px 6px',
-            borderRadius: 4,
-            cursor: 'pointer',
-            display: 'flex', alignItems: 'center', justifyContent: 'center',
-            background: 'rgba(255,255,255,0.04)',
-            border: '1px solid rgba(255,255,255,0.08)',
-            color: '#6b7280',
-            flexShrink: 0,
-          }}
-          onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.color = '#ef4444'; (e.currentTarget as HTMLElement).style.borderColor = 'rgba(239,68,68,0.35)'; }}
-          onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.color = '#6b7280'; (e.currentTarget as HTMLElement).style.borderColor = 'rgba(255,255,255,0.08)'; }}
-        >
-          <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-            <polyline points="3 6 5 6 21 6"/>
-            <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/>
-            <path d="M10 11v6M14 11v6"/>
-            <path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/>
-          </svg>
-        </button>
-      )}
-    </div>
-  );
-}
+// Note: GoalSkillsSection removed — composite skills disabled in Atomic Index model
+// Atomic skills are now displayed directly without goal-based grouping
 
 // Edit agent modal — same form as CreateAgentModal but pre-filled, domain read-only
 function EditAgentModal({
@@ -703,9 +685,10 @@ function EditAgentModal({
   isOpen: boolean;
   agent: AgentItem | null;
   onClose: () => void;
-  onSave: (agentId: string, goals: string[]) => void;
+  onSave: (agentId: string, goals: string[], options?: { includeLandingPage?: boolean }) => void;
 }) {
   const [goals, setGoals] = useState<string[]>(['']);
+  const [includeLandingPage, setIncludeLandingPage] = useState(false);
 
   useEffect(() => {
     if (agent) {
@@ -714,10 +697,18 @@ function EditAgentModal({
         ...(agent.userGoal && !agent.userGoals?.includes(agent.userGoal) ? [agent.userGoal] : []),
       ].filter(Boolean);
       setGoals(existing.length > 0 ? existing : ['']);
+      // Default: don't include landing page if URLs are provided
+      setIncludeLandingPage(existing.length === 0);
     }
   }, [agent]);
 
   if (!isOpen || !agent) return null;
+
+  // URL validation helper
+  const isValidUrl = (url: string): boolean => {
+    if (!url.trim()) return true; // Empty is allowed (will be filtered later)
+    return /^https?:\/\/.+/.test(url.trim());
+  };
 
   const addGoal = () => setGoals([...goals, '']);
   const removeGoal = (index: number) => {
@@ -729,8 +720,20 @@ function EditAgentModal({
     setGoals(next);
   };
 
-  const validGoals = goals.filter(g => g.trim().length > 0);
+  // Filter to only valid URLs (must start with http:// or https://)
+  const validUrls = goals.filter(g => {
+    const trimmed = g.trim();
+    return trimmed.length > 0 && isValidUrl(trimmed);
+  });
+  
+  // Check if any invalid URLs exist (non-empty but not valid)
+  const hasInvalidUrls = goals.some(g => {
+    const trimmed = g.trim();
+    return trimmed.length > 0 && !isValidUrl(trimmed);
+  });
+
   const hasNoGoalsYet = !agent.userGoals?.length && !agent.userGoal;
+  const isNewAgent = (agent.learnedStates?.length ?? 0) === 0 && !agent.lastLearned;
 
   return (
     <div style={{
@@ -751,7 +754,7 @@ function EditAgentModal({
         maxHeight: '80vh',
         overflowY: 'auto',
       }}>
-        <h3 style={{ margin: '0 0 6px 0', color: '#fff', fontSize: '1.1rem' }}>Edit Agent Goals</h3>
+        <h3 style={{ margin: '0 0 6px 0', color: '#fff', fontSize: '1.1rem' }}>{isNewAgent ? 'Set URLs to Index' : 'Edit URLs to Index'}</h3>
         <p style={{ margin: '0 0 16px 0', color: '#6b7280', fontSize: '0.8rem' }}>{agent.domain}</p>
 
         {hasNoGoalsYet && (
@@ -765,32 +768,45 @@ function EditAgentModal({
             fontSize: '0.8rem',
             lineHeight: 1.5,
           }}>
-            💡 Set at least one goal so ThinkDrop knows what to learn on this site.
-            Focused goals = better results. You can skip for a basic general scan.
+            💡 Add URLs to index for this domain. ThinkDrop will scan each page
+            and extract atomic skills (buttons, links, inputs) you can use directly.
           </div>
         )}
 
         <div style={{ marginBottom: 12 }}>
           <label style={{ display: 'block', fontSize: '0.8rem', color: '#9ca3af', marginBottom: 6 }}>
-            What would you like to do on this site?
+            Which pages should be scanned for skills?
           </label>
-          {goals.map((goal, index) => (
-            <div key={index} style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
+          {goals.map((goal, index) => {
+            const trimmed = goal.trim();
+            const isInvalid = trimmed.length > 0 && !isValidUrl(trimmed);
+            return (
+              <div key={index} style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
               <input
                 type="text"
                 value={goal}
                 onChange={(e) => updateGoal(index, e.target.value)}
-                placeholder={`Goal ${index + 1}: e.g., Search for answers, Save threads...`}
+                placeholder={`URL ${index + 1}: https://example.com/page`}
                 style={{
                   flex: 1,
                   padding: '10px 12px',
                   borderRadius: 6,
-                  border: '1px solid rgba(255,255,255,0.1)',
-                  backgroundColor: 'rgba(255,255,255,0.05)',
+                  border: `1px solid ${isInvalid ? 'rgba(239,68,68,0.5)' : 'rgba(255,255,255,0.1)'}`,
+                  backgroundColor: isInvalid ? 'rgba(239,68,68,0.1)' : 'rgba(255,255,255,0.05)',
                   color: '#fff',
                   fontSize: '0.9rem',
                 }}
               />
+              {isInvalid && (
+                <span style={{ 
+                  color: '#ef4444', 
+                  fontSize: '0.7rem', 
+                  alignSelf: 'center',
+                  whiteSpace: 'nowrap'
+                }}>
+                  Must start with http:// or https://
+                </span>
+              )}
               {goals.length > 1 && (
                 <button
                   onClick={() => removeGoal(index)}
@@ -808,7 +824,7 @@ function EditAgentModal({
                 </button>
               )}
             </div>
-          ))}
+          )})}
           <button
             onClick={addGoal}
             style={{
@@ -822,22 +838,43 @@ function EditAgentModal({
               marginTop: 4,
             }}
           >
-            + Add Another Goal
+            + Add Another URL
           </button>
+          
+          {/* Include landing page checkbox - only show when URLs are provided */}
+          {validUrls.length > 0 && (
+            <label style={{ 
+              display: 'flex', 
+              alignItems: 'center', 
+              gap: 8, 
+              marginTop: 8,
+              fontSize: '0.8rem',
+              color: '#9ca3af',
+              cursor: 'pointer'
+            }}>
+              <input
+                type="checkbox"
+                checked={includeLandingPage}
+                onChange={(e) => setIncludeLandingPage(e.target.checked)}
+                style={{ cursor: 'pointer' }}
+              />
+              Also scan landing page ({agent.domain || 'domain root'})
+            </label>
+          )}
         </div>
 
         <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginTop: 20 }}>
           <button
-            onClick={() => { onSave(agent.id, validGoals); onClose(); }}
-            disabled={validGoals.length === 0}
+            onClick={() => { onSave(agent.id, validUrls, { includeLandingPage }); onClose(); }}
+            disabled={validUrls.length === 0 && !includeLandingPage}
             style={{
               width: '100%',
               padding: '12px 16px',
               borderRadius: 8,
               border: 'none',
-              backgroundColor: validGoals.length === 0 ? 'rgba(59,130,246,0.4)' : '#3b82f6',
+              backgroundColor: (validUrls.length === 0 && !includeLandingPage) ? 'rgba(59,130,246,0.4)' : '#3b82f6',
               color: '#fff',
-              cursor: validGoals.length === 0 ? 'not-allowed' : 'pointer',
+              cursor: (validUrls.length === 0 && !includeLandingPage) ? 'not-allowed' : 'pointer',
               fontSize: '0.95rem',
               fontWeight: 600,
             }}
@@ -956,7 +993,7 @@ function CreateAgentModal({
 
         <div style={{ marginBottom: 12 }}>
           <label style={{ display: 'block', fontSize: '0.8rem', color: '#9ca3af', marginBottom: 6 }}>
-            What would you like to do on this site? (Add multiple goals)
+            Which pages should be scanned for skills? (Add multiple goals)
           </label>
           {goals.map((goal, index) => (
             <div key={index} style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
@@ -1006,7 +1043,7 @@ function CreateAgentModal({
               marginTop: 4,
             }}
           >
-            + Add Another Goal
+            + Add Another URL
           </button>
         </div>
 
@@ -1061,6 +1098,10 @@ export function AgentsTab({ items, onRefresh }: AgentsTabProps) {
   const [autoScanEnabled, setAutoScanEnabled] = useState<boolean>(false);
   // testingSkills: key = "agentId::skillName" → true while test is running
   const [testingSkills, setTestingSkills] = useState<Record<string, boolean>>({});
+  // refreshingSkills: key = "agentId::skillName" → true while refresh/rescan is running
+  const [refreshingSkills, setRefreshingSkills] = useState<Record<string, boolean>>({});
+  // failedSkills: key = "agentId::skillName" → { reason, ts } — auto-clears after 30s
+  const [failedSkills, setFailedSkills] = useState<Record<string, { reason: string; ts: number }>>({})
 
   // Sync with props
   useEffect(() => {
@@ -1109,7 +1150,7 @@ export function AgentsTab({ items, onRefresh }: AgentsTabProps) {
   // Listen for skill test status updates
   useEffect(() => {
     if (!ipcRenderer) return;
-    const handleTestUpdate = (data: { agentId: string; skillName: string; status: 'testing' | 'done' | 'error' }) => {
+    const handleTestUpdate = (data: { agentId: string; skillName: string; status: 'testing' | 'done' | 'error'; errorReason?: string }) => {
       const key = `${data.agentId}::${data.skillName}`;
       setTestingSkills(prev => {
         if (data.status === 'testing') return { ...prev, [key]: true };
@@ -1117,12 +1158,45 @@ export function AgentsTab({ items, onRefresh }: AgentsTabProps) {
         delete next[key];
         return next;
       });
+      if (data.status === 'error') {
+        const reason = data.errorReason || 'unknown';
+        setFailedSkills(prev => ({ ...prev, [key]: { reason, ts: Date.now() } }));
+        setTimeout(() => {
+          setFailedSkills(prev => {
+            const next = { ...prev };
+            delete next[key];
+            return next;
+          });
+        }, 30000);
+      } else if (data.status === 'done') {
+        setFailedSkills(prev => {
+          const next = { ...prev };
+          delete next[key];
+          return next;
+        });
+      }
     };
     ipcRenderer.on('agents:skill-test-update', handleTestUpdate);
     return () => { ipcRenderer.removeListener('agents:skill-test-update', handleTestUpdate); };
   }, []);
 
-  const _fireLearning = (agentId: string, goals: string[], options: { headed?: boolean } = {}) => {
+  // Listen for skill refresh status updates
+  useEffect(() => {
+    if (!ipcRenderer) return;
+    const handleRefreshUpdate = (data: { agentId: string; skillName: string; status: 'refreshing' | 'done' | 'error' }) => {
+      const key = `${data.agentId}::${data.skillName}`;
+      setRefreshingSkills(prev => {
+        if (data.status === 'refreshing') return { ...prev, [key]: true };
+        const next = { ...prev };
+        delete next[key];
+        return next;
+      });
+    };
+    ipcRenderer.on('agents:skill-refresh-update', handleRefreshUpdate);
+    return () => { ipcRenderer.removeListener('agents:skill-refresh-update', handleRefreshUpdate); };
+  }, []);
+
+  const _fireLearning = (agentId: string, goals: string[], options: { headed?: boolean; includeLandingPage?: boolean } = {}) => {
     ipcRenderer?.send('agents:learn', { agentId, goals, options });
     setLocalItems(prev => prev.map(agent =>
       agent.id === agentId ? { ...agent, status: 'learning' } : agent
@@ -1132,9 +1206,12 @@ export function AgentsTab({ items, onRefresh }: AgentsTabProps) {
   const handleLearn = (agentId: string, options: { headed?: boolean } = {}) => {
     const agent = localItems.find(a => a.id === agentId);
     const hasGoals = (agent?.userGoals?.length ?? 0) > 0 || !!agent?.userGoal;
-    // Always show goal modal if: no goals set, OR agent has never been learned (status 'pending')
-    // This ensures the user always sees the goal prompt before a first scan.
-    if (!hasGoals || agent?.status === 'pending') {
+    // Show goals modal if agent has no goals OR has never been learned.
+    // NOTE: build_agent returns status='needs_validation'|'healthy' — never 'pending'.
+    // Use lastLearned + learnedStates as the "has been learned before" signal instead.
+    const hasLearned = (agent?.learnedStates?.length ?? 0) > 0 || !!agent?.lastLearned;
+    const isNewAgent = !hasLearned;
+    if (!hasGoals || isNewAgent) {
       setEditModalAgent(agent || null);
       return;
     }
@@ -1150,11 +1227,11 @@ export function AgentsTab({ items, onRefresh }: AgentsTabProps) {
     if (agent) setEditModalAgent(agent);
   };
 
-  const handleEditSave = (agentId: string, goals: string[]) => {
+  const handleEditSave = (agentId: string, goals: string[], options?: { includeLandingPage?: boolean }) => {
     setLocalItems(prev => prev.map(a =>
       a.id === agentId ? { ...a, userGoals: goals } : a
     ));
-    _fireLearning(agentId, goals);
+    _fireLearning(agentId, goals, options);
   };
 
   const handleDelete = (agentId: string) => {
@@ -1163,14 +1240,17 @@ export function AgentsTab({ items, onRefresh }: AgentsTabProps) {
     ipcRenderer?.send('agents:delete', { agentId });
   };
 
-  const handleTestSkill = (agentId: string, skillName: string, headed: boolean) => {
+  const handleTestSkill = (agentId: string, skillName: string, headed: boolean, skillPath?: string) => {
+    const key = `${agentId}::${skillName}`;
+    // Clear any previous error when retesting
+    setFailedSkills(prev => { const next = { ...prev }; delete next[key]; return next; });
     // Optimistically mark as testing immediately
-    setTestingSkills(prev => ({ ...prev, [`${agentId}::${skillName}`]: true }));
-    ipcRenderer?.send('agents:test-skill', { agentId, skillName, headed });
+    setTestingSkills(prev => ({ ...prev, [key]: true }));
+    ipcRenderer?.send('agents:test-skill', { agentId, skillName, headed, skillPath });
   };
 
-  const handleDeleteSkill = (agentId: string, skillName: string) => {
-    ipcRenderer?.send('agents:delete-skill', { agentId, skillName });
+  const handleDeleteSkill = (agentId: string, skillName: string, skillPath?: string) => {
+    ipcRenderer?.send('agents:delete-skill', { agentId, skillName, skillPath });
     // Optimistic update — remove skill from UI immediately
     setLocalItems(prev => prev.map(agent =>
       agent.id === agentId
@@ -1193,6 +1273,18 @@ export function AgentsTab({ items, onRefresh }: AgentsTabProps) {
           }
         : agent
     ));
+  };
+
+  const handleEditSkill = (skillPath: string) => {
+    // Open the skill directory in the default file manager
+    ipcRenderer?.send('shell:open-path', skillPath);
+  };
+
+  const handleRefreshSkill = (agentId: string, skillName: string, skillPath: string) => {
+    // Optimistically mark as refreshing immediately
+    setRefreshingSkills(prev => ({ ...prev, [`${agentId}::${skillName}`]: true }));
+    // Send request to refresh/rescan this specific skill
+    ipcRenderer?.send('agents:refresh-skill', { agentId, skillName, skillPath });
   };
 
   const handleCreateAgent = (domain: string, goals: string[]) => {
@@ -1401,9 +1493,12 @@ export function AgentsTab({ items, onRefresh }: AgentsTabProps) {
             onEdit={handleEdit}
             onDelete={handleDelete}
             onTestSkill={handleTestSkill}
-            onPublishSkill={handlePublishSkill}
             onDeleteSkill={handleDeleteSkill}
+            onEditSkill={handleEditSkill}
+            onRefreshSkill={handleRefreshSkill}
             testingSkills={testingSkills}
+            refreshingSkills={refreshingSkills}
+            failedSkills={failedSkills}
             expanded={expandedAgent === agent.id}
             onToggle={() => toggleExpanded(agent.id)}
           />

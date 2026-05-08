@@ -2360,8 +2360,8 @@ export default function AutomationProgress({ onHeightChange, onActiveChange }: A
             <button
               disabled={!isValidDotName(planNameInput)}
               onClick={() => {
-                const pf = _planFileRef.current || planReview?.planFile || '';
-                if (pf && isValidDotName(planNameInput)) {
+                if (isValidDotName(planNameInput)) {
+                  const pf = _planFileRef.current || planReview?.planFile || '';
                   ipcRenderer?.send('plan:save_name', { planFile: pf, planName: planNameInput });
                 }
               }}

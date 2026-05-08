@@ -18,6 +18,7 @@ import { RichContentRenderer } from './rich-content';
 import SkillBuildProgress from './SkillBuildProgress';
 import { SlideoutDrawer } from './SlideoutDrawer';
 import { SettingsTab } from './SettingsTab';
+import { RulesManagementPanel } from './RulesManagementPanel';
 import { TrainingBanner } from './TrainingBanner';
 import { TeachMeDialog } from './TeachMeDialog';
 
@@ -73,7 +74,7 @@ interface ActionChip {
 // --- Components ---
 export function UnifiedOverlay() {
   // --- Tab State ---
-  const [activeTab, setActiveTab] = useState<TabId | 'settings'>('results');
+  const [activeTab, setActiveTab] = useState<TabId | 'settings' | 'rules'>('results');
   const [isSlideoutOpen, setIsSlideoutOpen] = useState(false);
   const [isExpanded, setIsExpanded] = useState(false);
   const [unreadTabs, setUnreadTabs] = useState<Set<TabId>>(new Set());
@@ -143,6 +144,8 @@ export function UnifiedOverlay() {
     discoveredStates: string[];
     startTime: number | null;
     authRequired: boolean;
+    totalUrls?: number;
+    currentUrlIndex?: number;
     // Scan summary stats
     scanStats?: {
       totalElements: number;
@@ -225,7 +228,7 @@ export function UnifiedOverlay() {
   }, [isExpanded]);
 
   // --- Tab Switching ---
-  const handleTabSelect = useCallback((tab: TabId | 'settings') => {
+  const handleTabSelect = useCallback((tab: TabId | 'settings' | 'rules') => {
     setActiveTab(tab);
     setUnreadTabs(prev => {
       const next = new Set(prev);
@@ -246,7 +249,7 @@ export function UnifiedOverlay() {
   }, []);
 
   // --- Slideout Navigation ---
-  const handleSlideoutNavigate = useCallback((tab: TabId | 'settings') => {
+  const handleSlideoutNavigate = useCallback((tab: TabId | 'settings' | 'rules') => {
     setActiveTab(tab);
     setIsSlideoutOpen(false);
     setUnreadTabs(prev => {
@@ -990,6 +993,8 @@ export function UnifiedOverlay() {
             discoveredStates: [],
             startTime: Date.now(),
             authRequired: false,
+            totalUrls: (data as any).totalUrls || 1,
+            currentUrlIndex: 0,
           });
           break;
         case 'learn:auth_required':
@@ -1022,11 +1027,36 @@ export function UnifiedOverlay() {
           break;
         case 'learn:exploring':
           setLearnMode(prev => prev ? { 
-            ...prev, 
-            progress: (prev.discoveredStates.length / (data.stateCount || 10)) * 100,
+            ...prev,
+            totalUrls: (data as any).totalUrls || prev.totalUrls || 1,
+            progress: Math.max(prev.progress, 5),
             message: data.message || 'Exploring site...'
           } : null);
           break;
+        case 'learn:url_scan_start': {
+          const _urlIdx = (data as any).urlIndex || 1;
+          const _urlTotal = (data as any).totalUrls || 1;
+          const _urlStartPct = ((_urlIdx - 1) / _urlTotal) * 80;
+          setLearnMode(prev => prev ? {
+            ...prev,
+            totalUrls: _urlTotal,
+            currentUrlIndex: _urlIdx,
+            message: (data as any).message || `Scanning URL ${_urlIdx}/${_urlTotal}…`,
+            progress: Math.max(prev.progress, _urlStartPct),
+          } : null);
+          break;
+        }
+        case 'learn:url_scan_complete': {
+          const _doneIdx = (data as any).urlIndex || 1;
+          const _doneTotal = (data as any).totalUrls || 1;
+          const _urlDonePct = (_doneIdx / _doneTotal) * 80;
+          setLearnMode(prev => prev ? {
+            ...prev,
+            message: (data as any).message || `Completed URL ${_doneIdx}/${_doneTotal}`,
+            progress: Math.max(prev.progress, _urlDonePct),
+          } : null);
+          break;
+        }
         case 'learn:state_discovered':
           setLearnMode(prev => prev ? { 
             ...prev, 
@@ -1082,44 +1112,212 @@ export function UnifiedOverlay() {
           });
           setTimeout(() => setLearnMode(null), 3000);
           break;
+        case 'learn:goal_start':
+          setLearnMode(prev => prev ? {
+            ...prev,
+            message: (data as any).message || `Goal ${(data as any).goalIndex}/${(data as any).totalGoals}: ${(data as any).goal}`,
+            progress: Math.max(prev.progress, ((((data as any).goalIndex - 1) / ((data as any).totalGoals || 1)) * 80)),
+          } : null);
+          break;
+        case 'learn:goal_complete':
+          setLearnMode(prev => prev ? {
+            ...prev,
+            message: (data as any).message || `Goal ${(data as any).goalIndex}/${(data as any).totalGoals} complete`,
+            progress: Math.max(prev.progress, (((data as any).goalIndex / ((data as any).totalGoals || 1)) * 80)),
+          } : null);
+          break;
+        case 'learn:goal_achieved':
+          setLearnMode(prev => prev ? {
+            ...prev,
+            message: (data as any).achieved === false
+              ? `⚠ Goal incomplete after ${(data as any).steps || 0} action(s)`
+              : `🏁 Goal achieved in ${(data as any).steps || 0} step(s)`,
+          } : null);
+          break;
+        case 'learn:decomposed':
+          setLearnMode(prev => prev ? {
+            ...prev,
+            message: (data as any).message || `🗺 Plan: ${((data as any).microSteps || []).length} step(s)`,
+          } : null);
+          break;
+        case 'learn:micro_step_start':
+          setLearnMode(prev => prev ? {
+            ...prev,
+            message: (data as any).message || `↳ Step ${(data as any).microStepIndex}/${(data as any).totalMicroSteps}: ${(data as any).microStep}`,
+          } : null);
+          break;
+        case 'learn:cache_hit':
+          setLearnMode(prev => prev ? {
+            ...prev,
+            message: `⚡ Cache hit — ${(data as any).count || 0} actions (no rescan needed)`,
+          } : null);
+          break;
+        case 'learn:cache_miss':
+          setLearnMode(prev => prev ? {
+            ...prev,
+            message: `🔍 Scanning page — ${(data as any).count || 0} elements found`,
+          } : null);
+          break;
+        case 'learn:action_executing':
+          setLearnMode(prev => prev ? {
+            ...prev,
+            message: (data as any).message || `▶ Step ${(data as any).step}: ${(data as any).action} — ${(data as any).element || ''}`,
+          } : null);
+          break;
+        case 'learn:action_executed':
+          setLearnMode(prev => prev ? {
+            ...prev,
+            message: (data as any).ok ? `✓ Step ${(data as any).step} done` : `⚠ Step ${(data as any).step} failed (continuing)`,
+          } : null);
+          break;
+        case 'learn:page_transition':
+          setLearnMode(prev => prev ? {
+            ...prev,
+            message: `↗ Navigated to new page`,
+          } : null);
+          break;
+        case 'learn:ui_state_detected':
+          setLearnMode(prev => prev ? {
+            ...prev,
+            message: `⚡ UI state: ${(data as any).state || 'modal/dropdown detected'}`,
+          } : null);
+          break;
         case 'explore:scan_start':
           setLearnMode(prev => prev ? { ...prev, message: `Scanning ${data.hostname || 'site'}…` } : null);
           break;
-        case 'explore:scan_elements_start':
+        case 'explore:url_scan_start': {
+          const _eUrlIdx = (data as any).urlIndex || 1;
+          const _eUrlTotalRaw = (data as any).totalUrls || 1;
+          setLearnMode(prev => {
+            if (!prev) return null;
+            const _eUrlTotal = _eUrlTotalRaw || prev.totalUrls || 1;
+            const _eStartPct = ((_eUrlIdx - 1) / _eUrlTotal) * 80;
+            return {
+              ...prev,
+              totalUrls: _eUrlTotal,
+              currentUrlIndex: _eUrlIdx,
+              message: `Scanning URL ${_eUrlIdx}/${_eUrlTotal}: ${(data as any).url || data.hostname || ''}`,
+              progress: Math.max(prev.progress, Math.max(5, _eStartPct)),
+            };
+          });
+          break;
+        }
+        case 'explore:url_scan_complete': {
+          const _eDoneIdx = (data as any).urlIndex || 1;
+          const _eDoneTotal = (data as any).totalUrls || 1;
+          const _eDonePct = (_eDoneIdx / _eDoneTotal) * 80;
           setLearnMode(prev => prev ? {
             ...prev,
-            message: `Discovered ${(data as any).elementCount || 0} interactive elements on ${(data as any).state || 'page'}…`,
+            message: `Completed URL ${_eDoneIdx}/${_eDoneTotal}`,
+            progress: Math.max(prev.progress, _eDonePct),
           } : null);
+          break;
+        }
+        case 'explore:scan_elements_start':
+          setLearnMode(prev => {
+            if (!prev) return null;
+            const urlIdx = prev.currentUrlIndex || 1;
+            const urlTotal = prev.totalUrls || 1;
+            const baseProgress = ((urlIdx - 1) / urlTotal) * 80;
+            return {
+              ...prev,
+              message: `Scanning ${(data as any).state || 'page'} — ${(data as any).elementCount || 0} interactive elements`,
+              progress: Math.max(prev.progress, Math.max(baseProgress, 5)),
+            };
+          });
           break;
         case 'explore:scan_progress':
-          setLearnMode(prev => prev ? {
-            ...prev,
-            message: data.message || `Processing ${(data as any).current || 0}/${(data as any).total || 0}...`,
-            progress: (data as any).percent || ((data as any).current / (data as any).total) * 100 || 0,
-          } : null);
+          setLearnMode(prev => {
+            if (!prev) return null;
+            const urlIdx = prev.currentUrlIndex || 1;
+            const urlTotal = prev.totalUrls || 1;
+            const baseProgress = ((urlIdx - 1) / urlTotal) * 80;
+            const sliceSize = (1 / urlTotal) * 80;
+            const pct = (data as any).percent != null
+              ? (data as any).percent
+              : (data as any).current != null && (data as any).total
+                ? ((data as any).current / (data as any).total) * 100
+                : 0;
+            const cumulative = baseProgress + (pct / 100) * sliceSize;
+            return {
+              ...prev,
+              message: data.message || `Processing elements…`,
+              progress: Math.max(prev.progress, cumulative),
+            };
+          });
           break;
         case 'explore:scan_filtered':
-        case 'explore:scan_extracting':
         case 'explore:scan_success':
         case 'explore:scan_failed':
-          // Detailed progress updates - show the message but don't change progress bar
           setLearnMode(prev => prev ? {
             ...prev,
             message: data.message || prev.message,
           } : null);
           break;
+        case 'explore:scan_extracting':
+          setLearnMode(prev => {
+            if (!prev) return null;
+            const urlIdx = prev.currentUrlIndex || 1;
+            const urlTotal = prev.totalUrls || 1;
+            const baseProgress = ((urlIdx - 1) / urlTotal) * 80;
+            const sliceSize = (1 / urlTotal) * 80;
+            const elemCurrent = (data as any).current || 0;
+            const elemTotal = (data as any).total || 1;
+            const cumulative = baseProgress + (elemCurrent / elemTotal) * sliceSize;
+            return {
+              ...prev,
+              message: `Extracting ${(data as any).interaction || 'element'}: "${(data as any).label || ''}"`,
+              progress: Math.max(prev.progress, cumulative),
+            };
+          });
+          break;
+        case 'explore:bot_detected':
+          setLearnMode(prev => prev ? {
+            ...prev,
+            message: `Bot protection detected on ${data.hostname || 'page'} — skipping`,
+          } : null);
+          break;
+        case 'explore:reveal_start':
+          setLearnMode(prev => prev ? {
+            ...prev,
+            message: `Opening ${(data as any).revealType || 'panel'} to find hidden elements…`,
+          } : null);
+          break;
+        case 'explore:reveal_complete':
+          setLearnMode(prev => prev ? {
+            ...prev,
+            message: `${(data as any).revealType || 'Panel'} scanned: ${(data as any).actionsFound || 0} elements found`,
+          } : null);
+          break;
+        case 'explore:scan_data_collected':
+          setLearnMode(prev => prev ? {
+            ...prev,
+            message: `Collected: "${(data as any).label || 'item'}"`,
+          } : null);
+          break;
+        case 'learn:re_exploring':
+          setLearnMode(prev => prev ? {
+            ...prev,
+            message: data.message || 'Re-scanning with web research insights…',
+          } : null);
+          break;
         case 'explore:scan_skill_progress':
           setLearnMode(prev => prev ? {
             ...prev,
-            message: data.message || `Generating skills...`,
-            progress: (data as any).total ? ((data as any).current / (data as any).total) * 100 : 90,
+            message: (data as any).message || 
+              ((data as any).total 
+                ? `Creating skills: ${(data as any).current || 0} of ${(data as any).total}` 
+                : `Creating atomic skills…`),
+            progress: Math.max(prev?.progress ?? 80, 80 + ((data as any).total 
+              ? ((data as any).current / (data as any).total) * 15 
+              : 5)),
           } : null);
           break;
         case 'explore:scan_complete':
           setLearnMode(prev => prev ? {
             ...prev,
             message: data.message || `Site scan done — found ${(data as any).totalActions || 0} interactive elements`,
-            progress: 85,
+            progress: Math.max(prev.progress, 85),
           } : null);
           break;
         case 'explore:scan_summary':
@@ -1147,6 +1345,9 @@ export function UnifiedOverlay() {
               duration: (data as any).duration || 0,
             },
           }));
+          // Refresh agents list immediately + after 1.5s to catch async DB writes
+          ipcRenderer?.send('agents:list');
+          setTimeout(() => ipcRenderer?.send('agents:list'), 1500);
           // Only auto-dismiss if requiresDismissal is not set
           if (!(data as any).requiresDismissal) {
             setTimeout(() => setLearnMode(null), 3000);
@@ -1919,7 +2120,7 @@ export function UnifiedOverlay() {
           <div style={{ flexShrink: 0 }}>
             <TabBar
               active={activeTab === 'settings' ? 'results' : activeTab}
-              onSelect={(tab) => handleTabSelect(tab as TabId | 'settings')}
+              onSelect={(tab) => handleTabSelect(tab as TabId | 'settings' | 'rules')}
               queueCount={queueItems.filter(i => i.status !== 'done').length + promptQueueItems.length}
               cronCount={cronItems.filter(i => i.status === 'active').length}
               unreadTabs={unreadTabs}
@@ -2129,11 +2330,18 @@ export function UnifiedOverlay() {
               <SettingsTab />
             </div>
           )}
+
+          {/* Rules Tab */}
+          {activeTab === 'rules' && (
+            <div className="h-full overflow-y-auto overflow-x-hidden p-4">
+              <RulesManagementPanel />
+            </div>
+          )}
         </div>
 
         {/* Bottom Input Bar */}
         <div
-          className="border-t p-4"
+          className="border-t p-4 relative"
           style={{ borderColor: 'rgba(255, 255, 255, 0.1)' }}
         >
           {/* Highlights */}
@@ -2291,7 +2499,7 @@ export function UnifiedOverlay() {
               <>
                 {/* Completion state — scan summary with Done button */}
                 <h3 style={{ margin: '0 0 8px 0', color: '#fff', fontSize: '1.1rem' }}>
-                  Learning Complete
+                  ✨ {learnMode.scanStats?.skillsGenerated || 0} Skills Created
                 </h3>
 
                 <p style={{ margin: '0 0 16px 0', color: '#9ca3af', fontSize: '0.85rem' }}>
@@ -2309,13 +2517,12 @@ export function UnifiedOverlay() {
                     textAlign: 'left',
                   }}>
                     <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '6px 12px', fontSize: '0.75rem', color: '#9ca3af' }}>
-                      <div>Elements found: <span style={{ color: '#fff' }}>{learnMode.scanStats.totalElements}</span></div>
+                      <div>Skills: <span style={{ color: '#3b82f6', fontWeight: 600 }}>{learnMode.scanStats.skillsGenerated}</span></div>
+                      <div>Elements: <span style={{ color: '#fff' }}>{learnMode.scanStats.totalElements}</span></div>
                       <div>Successful: <span style={{ color: '#10b981' }}>{learnMode.scanStats.successful}</span></div>
                       <div>Filtered: <span style={{ color: '#f59e0b' }}>{learnMode.scanStats.filtered}</span></div>
                       <div>Failed: <span style={{ color: '#ef4444' }}>{learnMode.scanStats.failed}</span></div>
-                      <div>States scanned: <span style={{ color: '#fff' }}>{learnMode.scanStats.states}</span></div>
-                      <div>Skills generated: <span style={{ color: '#3b82f6' }}>{learnMode.scanStats.skillsGenerated}</span></div>
-                      <div>Data items: <span style={{ color: '#8b5cf6' }}>{learnMode.scanStats.dataItems || 0}</span></div>
+                      <div>States: <span style={{ color: '#fff' }}>{learnMode.scanStats.states}</span></div>
                     </div>
                     <div style={{ marginTop: '8px', fontSize: '0.7rem', color: '#6b7280' }}>
                       Duration: {learnMode.scanStats.duration}s
@@ -2383,7 +2590,7 @@ export function UnifiedOverlay() {
                 </div>
 
                 {/* Status message */}
-                <p style={{ margin: '0 0 20px 0', color: '#6b7280', fontSize: '0.75rem' }}>
+                <p style={{ margin: '0 0 20px 0', color: '#6b7280', fontSize: '0.75rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={learnMode.message}>
                   {learnMode.message}
                 </p>
 

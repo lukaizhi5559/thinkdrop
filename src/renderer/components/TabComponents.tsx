@@ -3,7 +3,7 @@ import SkillStore from './SkillStore';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
-export type TabId = 'results' | 'queue' | 'cron' | 'agents' | 'skills' | 'store' | 'connections';
+export type TabId = 'results' | 'queue' | 'cron' | 'agents' | 'skills' | 'store' | 'connections' | 'rules';
 
 export interface ConnectionItem {
   provider: string;       // 'github' | 'google' | 'microsoft' etc.
@@ -83,6 +83,7 @@ export interface AgentSkill {
   description?: string;
   parameters?: string[];  // parameter names for the skill
   testable?: boolean;
+  skillPath?: string;     // path to skill directory for editing
 }
 
 export interface AgentItem {
@@ -95,8 +96,9 @@ export interface AgentItem {
   lastLearned?: string;   // ISO timestamp
   userGoals?: string[];   // what user wants to accomplish (multiple goals)
   userGoal?: string;      // legacy: single goal (keep for backward compat)
+  capabilities?: string[]; // composite skill names (from agent frontmatter)
   learnedStates?: string[]; // page states discovered during learning
-  skills?: AgentSkill[];  // trained skills
+  skills?: AgentSkill[];  // trained skills (both atomic and composite)
   faviconUrl?: string;    // cached favicon path
 }
 
@@ -192,6 +194,18 @@ export function ConnectionsIcon({ active }: { active: boolean }) {
       stroke={active ? '#38bdf8' : '#6b7280'} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
       <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/>
       <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>
+    </svg>
+  );
+}
+
+export function RulesIcon({ active }: { active: boolean }) {
+  return (
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="none"
+      stroke={active ? '#8b5cf6' : '#6b7280'} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M9 12h.01"/>
+      <path d="M15 12h.01"/>
+      <path d="M10 16c.5.3 1.2.5 2 .5s1.5-.2 2-.5"/>
+      <path d="M19 6.3a9 9 0 0 1 1.8 3.9 2 2 0 0 1 0 3.6 9 9 0 0 1-17.6 0 2 2 0 0 1 0-3.6A9 9 0 0 1 12 3c2 0 3.5 1.1 3.5 2.5s-.9 2.5-2 2.5c-.8 0-1.5-.4-1.5-1"/>
     </svg>
   );
 }

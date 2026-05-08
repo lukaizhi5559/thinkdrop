@@ -3,17 +3,18 @@ import { type TabId } from './TabComponents';
 interface SlideoutDrawerProps {
   isOpen: boolean;
   onClose: () => void;
-  onNavigate: (tab: TabId | 'settings') => void;
-  activeTab: TabId | 'settings';
+  onNavigate: (tab: TabId | 'settings' | 'rules') => void;
+  activeTab: TabId | 'settings' | 'rules';
 }
 
 type MenuItem =
-  | { type: 'item'; id: TabId | 'settings'; label: string; icon: string }
+  | { type: 'item'; id: TabId | 'settings' | 'rules'; label: string; icon: string }
   | { type: 'divider' };
 
 export function SlideoutDrawer({ isOpen, onClose, onNavigate, activeTab }: SlideoutDrawerProps) {
   const menuItems: MenuItem[] = [
     { type: 'item', id: 'settings', label: 'Settings', icon: '⚙️' },
+    { type: 'item', id: 'rules', label: 'Rules', icon: '📋' },
     { type: 'divider' },
     { type: 'item', id: 'skills', label: 'Skills', icon: '📦' },
     { type: 'item', id: 'connections', label: 'Connections', icon: '🔌' },
@@ -75,7 +76,9 @@ export function SlideoutDrawer({ isOpen, onClose, onNavigate, activeTab }: Slide
             return (
               <button
                 key={item.id}
-                onClick={() => onNavigate(item.id)}
+                onClick={() => {
+                  onNavigate(item.id);
+                }}
                 className="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-left transition-colors"
                 style={{
                   backgroundColor: isActive ? 'rgba(59, 130, 246, 0.15)' : 'transparent',
