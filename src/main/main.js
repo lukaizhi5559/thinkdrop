@@ -2095,7 +2095,7 @@ app.whenReady().then(async () => {
     const { isValidDotName } = require('../../stategraph-module/src/utils/planCacheHelpers');
     if (!isValidDotName(planName)) {
       console.warn(`[Plan] plan:save_name: invalid dot-syntax name "${planName}"`);
-      safeSend(resultsWindow, 'plan:name_saved', { ok: false, error: 'Invalid name — use dot-syntax: e.g. perplexity.history.vegan' });
+      safeSendUnified('automation:progress', { type: 'plan:name_saved', ok: false, error: 'Invalid name — use dot-syntax: e.g. perplexity.history.vegan' });
       return;
     }
     try {
@@ -2121,13 +2121,15 @@ app.whenReady().then(async () => {
         } else {
           content = content.replace(/^---\n/, `---\nname: ${planName}\n`);
         }
+        // Ensure status is 'complete' — user only sees Save Plan after successful execution
+        content = content.replace(/^status:\s*pending/m, 'status: complete');
         _fs.writeFileSync(resolvedPlanFile, content, 'utf8');
       }
       console.log(`[Plan] Plan named "${planName}" saved to ${resolvedPlanFile}`);
-      safeSend(resultsWindow, 'plan:name_saved', { ok: true, planName, planFile: resolvedPlanFile });
+      safeSendUnified('automation:progress', { type: 'plan:name_saved', ok: true, planName, planFile: resolvedPlanFile });
     } catch (e) {
       console.error('[Plan] plan:save_name error:', e.message);
-      safeSend(resultsWindow, 'plan:name_saved', { ok: false, error: e.message });
+      safeSendUnified('automation:progress', { type: 'plan:name_saved', ok: false, error: e.message });
     }
   });
 
@@ -2667,9 +2669,7 @@ app.whenReady().then(async () => {
     if (pendingGatherResolve) {
       const resolve = pendingGatherResolve;
       pendingGatherResolve = null;
-      if (promptCaptureWindow && !promptCaptureWindow.isDestroyed()) {
-        safeSend(promptCaptureWindow, 'gather:pending', { active: false, question: null });
-      }
+      safeSendUnified('gather:pending', { active: false, question: null });
       resolve(answer || '');
     } else {
       console.warn('[GatherContext] Received gather:answer but no pending resolve — ignoring');
@@ -3009,18 +3009,14 @@ app.whenReady().then(async () => {
       return new Promise((resolve) => {
         pendingGatherResolve = resolve;
         console.log('[GatherContext] Waiting for user answer…');
-        // Tell prompt bar to intercept next submit as gather:answer
-        if (promptCaptureWindow && !promptCaptureWindow.isDestroyed()) {
-          safeSend(promptCaptureWindow, 'gather:pending', { active: true, question: question || null });
-        }
+        // Tell unified overlay to intercept next submit as gather:answer
+        safeSendUnified('gather:pending', { active: true, question: question || null });
         // 10-minute timeout
         setTimeout(() => {
           if (pendingGatherResolve === resolve) {
             console.warn('[GatherContext] Timed out waiting for answer — skipping question');
             pendingGatherResolve = null;
-            if (promptCaptureWindow && !promptCaptureWindow.isDestroyed()) {
-              safeSend(promptCaptureWindow, 'gather:pending', { active: false });
-            }
+            safeSendUnified('gather:pending', { active: false });
             resolve(null);
           }
         }, 10 * 60 * 1000);
@@ -3738,29 +3734,6 @@ app.whenReady().then(async () => {
               skillCursor: 0,
               skillResults: [],
               stepRetryCount: 0,
-              context: { ...paused.context, sessionId: sessionId || currentSessionId }
-            };
-          } else if (q?._isGatherPlanQuestion) {
-            // ── gatherPlanContext clarification: user answered a pre-planning question ──
-            // Merge the answer into planGatheringAnswers and re-enter the graph.
-            // The full paused state is preserved so gatherPlanContext resumes in context.
-            const _priorAnswers = Array.isArray(paused.planGatheringAnswers) ? paused.planGatheringAnswers : [];
-            console.log(`[StateGraph] ASK_USER resume: gatherPlanContext answer "${chosenOption.slice(0, 80)}" — re-entering (round ${paused.planGatheringRound || 1})`);
-            initialState = {
-              ...paused,
-              message: paused.message,
-              streamCallback,
-              progressCallback,
-              confirmInstallCallback,
-              confirmGuideCallback,
-              isGuideCancelled,
-              pendingQuestion: null,
-              answer: undefined,
-              planGatheringAnswers: [..._priorAnswers, { question: q.question, answer: chosenOption }],
-              planGatheringComplete: false,
-              // Preserve gather resume flags for parseIntent to detect
-              _gatherQuestionPending: paused._gatherQuestionPending,
-              _pendingIntent: paused._pendingIntent,
               context: { ...paused.context, sessionId: sessionId || currentSessionId }
             };
           } else {

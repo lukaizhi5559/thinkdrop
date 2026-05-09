@@ -85,6 +85,7 @@ contextBridge.exposeInMainWorld('electron', {
         'plan:new',
         'plan:rescan',
         'plan:open-editor',
+        'plan:save_name',
         'agents:list',
         'agents:create',
         'agents:learn',

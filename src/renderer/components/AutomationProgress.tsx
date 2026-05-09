@@ -144,6 +144,57 @@ function StepIcon({ status }: { status: StepStatus }) {
   );
 }
 
+// ── ETA estimation ──────────────────────────────────────────────────────────
+// Per-skill execution time ranges [lo, hi] in milliseconds, based on observed runs.
+const SKILL_MS: Record<string, [number, number]> = {
+  'shell.run':      [300,   800],
+  'synthesize':     [1500,  3000],
+  'browser.act':    [2000,  4000],
+  'browser.agent':  [12000, 30000],
+  'external.skill': [3000,  8000],
+  'image.analyze':  [2000,  5000],
+  'fs.read':        [200,   600],
+  'fs.write':       [200,   600],
+  'cli.agent':      [3000,  8000],
+  'guide.step':     [5000,  15000],
+  'screen.capture': [1000,  3000],
+};
+// Fixed LLM pipeline overhead before execution starts (decomposePrompt + enrichIntent +
+// gatherPlanContext + planSkills + reviewExecution). Shell-only tasks now skip reviewExecution.
+const PIPELINE_OVERHEAD_MS: [number, number] = [14000, 20000];
+
+// Infer the likely skill type from a plain-text step description (used at plan:generated
+// time when skill names are not yet known — only step titles from the plan.md are available).
+function inferSkillFromDescription(desc: string): string {
+  const d = desc.toLowerCase();
+  if (/browser|navigate|open.*url|click|fill|scroll.*page|web page|website|search.*on|go to http/.test(d)) return 'browser.act';
+  if (/agent|autonomously|multi.?step|reason|browse.*and|visit.*and/.test(d)) return 'browser.agent';
+  if (/external.*skill|run.*skill|execute.*skill/.test(d)) return 'external.skill';
+  if (/analyze.*image|image.*analyze|screenshot.*analyze/.test(d)) return 'image.analyze';
+  if (/capture.*screen|screenshot|screen.*capture/.test(d)) return 'screen.capture';
+  if (/summarize|provide.*summary|generate.*summary|confirm.*complete|report|answer|tell me|create.*description/.test(d)) return 'synthesize';
+  if (/guide|instruction|manual step|click.*manually/.test(d)) return 'guide.step';
+  return 'shell.run';
+}
+
+function estimateEta(steps: Step[]): { lo: number; hi: number } {
+  const [oLo, oHi] = PIPELINE_OVERHEAD_MS;
+  let lo = oLo, hi = oHi;
+  for (const s of steps) {
+    const [sLo, sHi] = SKILL_MS[s.skill] ?? [500, 2000];
+    lo += sLo;
+    hi += sHi;
+  }
+  return { lo, hi };
+}
+
+function formatEta(lo: number, hi: number): string {
+  const loS = Math.round(lo / 1000);
+  const hiS = Math.round(hi / 1000);
+  if (Math.abs(hiS - loS) <= 4) return `~${loS}s`;
+  return `~${loS}–${hiS}s`;
+}
+
 function humanizeError(error: string): string {
   if (!error) return error;
   // Strip [MCPClient] prefix and URL noise
@@ -500,6 +551,11 @@ export default function AutomationProgress({ onHeightChange, onActiveChange }: A
     similarity?: number;
   } | null>(null);
 
+  // ETA estimate state
+  const [etaLabel, setEtaLabel] = useState<string | null>(null);
+  const [elapsedLabel, setElapsedLabel] = useState<string | null>(null);
+  const executionStartRef = useRef<number | null>(null);
+
   // Name-a-plan state (Part 5)
   const [showNamePlan, setShowNamePlan] = useState(false);
   const [planNameInput, setPlanNameInput] = useState('');
@@ -624,6 +680,9 @@ export default function AutomationProgress({ onHeightChange, onActiveChange }: A
       setPlanReview(null);
       // Reset multi-intent step accumulation offset
       stepOffsetRef.current = 0;
+      setEtaLabel(null);
+      setElapsedLabel(null);
+      executionStartRef.current = null;
     };
     const handleScanProgress = (data: any) => {
       if (!active) return;
@@ -700,6 +759,12 @@ export default function AutomationProgress({ onHeightChange, onActiveChange }: A
             setPhase('executing');
             setTotalCount(data.steps.length);
             if (data.intent) setIntentType(data.intent);
+            // Compute ETA from skill list now that we know the plan
+            const _etaSteps: Step[] = data.steps.map((s: any) => ({ index: s.index, skill: s.skill, description: s.description, status: 'pending' as StepStatus }));
+            const { lo, hi } = estimateEta(_etaSteps);
+            setEtaLabel(formatEta(lo, hi));
+            setElapsedLabel(null);
+            executionStartRef.current = Date.now();
             setSteps(data.steps.map((s: any) => ({
               index: s.index,
               skill: s.skill,
@@ -1031,6 +1096,12 @@ export default function AutomationProgress({ onHeightChange, onActiveChange }: A
           // Don't let all_done collapse an active plan review (awaitingPlanApproval path)
           if (phaseRef.current === 'plan_review') break;
           setGuideStep(null);
+          // Record actual elapsed and replace ETA with it
+          if (executionStartRef.current) {
+            const elapsed = Math.round((Date.now() - executionStartRef.current) / 1000);
+            setElapsedLabel(`${elapsed}s`);
+            setEtaLabel(null);
+          }
           setPhase('done');
           setTotalCount(data.totalCount);
           // Trigger name-a-plan card if 2+ steps all succeeded
@@ -1087,9 +1158,12 @@ export default function AutomationProgress({ onHeightChange, onActiveChange }: A
           });
           setTotalCount(_planStepTitles.length);
           setIntentType('command_automate');
-          setSteps(_planStepTitles.map((title, i) => ({
-            index: i, skill: '', description: title, status: 'pending' as StepStatus,
-          })));
+          const _planGenSteps: Step[] = _planStepTitles.map((title, i) => ({ index: i, skill: inferSkillFromDescription(title), description: title, status: 'pending' as StepStatus }));
+          setSteps(_planGenSteps.map(s => ({ ...s, skill: '' })));
+          const _planGenEta = estimateEta(_planGenSteps);
+          setEtaLabel(formatEta(_planGenEta.lo, _planGenEta.hi));
+          setElapsedLabel(null);
+          executionStartRef.current = null;
           stepOffsetRef.current = 0;
           break;
         }
@@ -1106,9 +1180,12 @@ export default function AutomationProgress({ onHeightChange, onActiveChange }: A
           });
           setTotalCount(_existingStepTitles.length);
           setIntentType('command_automate');
-          setSteps(_existingStepTitles.map((title, i) => ({
-            index: i, skill: '', description: title, status: 'pending' as StepStatus,
-          })));
+          const _existingSteps: Step[] = _existingStepTitles.map((title, i) => ({ index: i, skill: inferSkillFromDescription(title), description: title, status: 'pending' as StepStatus }));
+          setSteps(_existingSteps.map(s => ({ ...s, skill: '' })));
+          const _existingEta = estimateEta(_existingSteps);
+          setEtaLabel(formatEta(_existingEta.lo, _existingEta.hi));
+          setElapsedLabel(null);
+          executionStartRef.current = null;
           stepOffsetRef.current = 0;
           break;
         }
@@ -1458,6 +1535,18 @@ export default function AutomationProgress({ onHeightChange, onActiveChange }: A
               <span className="text-sm font-medium" style={{ color: allDone ? '#34d399' : '#e5e7eb' }}>
                 {doneCount} / {shownTotal} tasks done
               </span>
+              {!allDone && etaLabel && (
+                <span className="text-xs px-1.5 py-0.5 rounded-full font-medium"
+                  style={{ backgroundColor: 'rgba(107,114,128,0.12)', color: '#9ca3af', border: '1px solid rgba(107,114,128,0.2)' }}>
+                  {etaLabel}
+                </span>
+              )}
+              {allDone && elapsedLabel && (
+                <span className="text-xs px-1.5 py-0.5 rounded-full font-medium"
+                  style={{ backgroundColor: 'rgba(34,197,94,0.08)', color: '#86efac', border: '1px solid rgba(34,197,94,0.15)' }}>
+                  {elapsedLabel}
+                </span>
+              )}
               {intentType && (
                 <span className="text-xs px-1.5 py-0.5 rounded-full font-medium ml-1"
                   style={{
@@ -1505,6 +1594,16 @@ export default function AutomationProgress({ onHeightChange, onActiveChange }: A
                 Review plan
               </span>
             </div>
+            {etaLabel && (
+              <div className="flex items-center gap-2 mt-2" style={{ padding: '6px 10px', borderRadius: 7, backgroundColor: 'rgba(96,165,250,0.07)', border: '1px solid rgba(96,165,250,0.15)' }}>
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#93c5fd" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
+                  <circle cx="12" cy="12" r="10"/>
+                  <polyline points="12 6 12 12 16 14"/>
+                </svg>
+                <span style={{ fontSize: '0.75rem', color: '#9ca3af', fontWeight: 500 }}>Est. completion</span>
+                <span style={{ fontSize: '0.78rem', color: '#e5e7eb', fontWeight: 600, marginLeft: 2 }}>{etaLabel}</span>
+              </div>
+            )}
           </div>
         )}
         {phase === 'failed' && (
@@ -1549,6 +1648,26 @@ export default function AutomationProgress({ onHeightChange, onActiveChange }: A
           </>
         )}
       </div>
+
+      {/* ── Action required banner (ask_user) ───────────────────────────── */}
+      {phase === 'ask_user' && (
+        <div style={{ padding: '10px 14px', borderRadius: 10, backgroundColor: '#1a120a', border: '1px solid #d97706', position: 'sticky', top: 0, zIndex: 10 }}>
+          <div className="flex items-center gap-2.5">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#f59e0b" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
+              <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
+              <line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/>
+            </svg>
+            <div>
+              <div style={{ color: '#fbbf24', fontSize: '0.75rem', fontWeight: 600 }}>
+                Action required
+              </div>
+              <div style={{ color: '#a3a3a3', fontSize: '0.68rem', marginTop: 2 }}>
+                ThinkDrop couldn't complete this step automatically. Choose an option below.
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ── Evaluating banner ────────────────────────────────────────────── */}
       {phase === 'evaluating' && (
