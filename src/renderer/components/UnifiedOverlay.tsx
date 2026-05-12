@@ -2195,6 +2195,7 @@ export function UnifiedOverlay() {
                     setIsAutomationMode(active);
                     setIsGlowActive(active);
                   }}
+                  onOpenRules={() => handleTabSelect('rules')}
                 />
 
                 {skillBuild && (

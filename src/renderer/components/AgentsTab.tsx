@@ -1101,7 +1101,10 @@ export function AgentsTab({ items, onRefresh }: AgentsTabProps) {
   // refreshingSkills: key = "agentId::skillName" → true while refresh/rescan is running
   const [refreshingSkills, setRefreshingSkills] = useState<Record<string, boolean>>({});
   // failedSkills: key = "agentId::skillName" → { reason, ts } — auto-clears after 30s
-  const [failedSkills, setFailedSkills] = useState<Record<string, { reason: string; ts: number }>>({})
+  const [failedSkills, setFailedSkills] = useState<Record<string, { reason: string; ts: number }>>({});
+
+  // Subtab state: 'browser' | 'cli'
+  const [activeSubtab, setActiveSubtab] = useState<'browser' | 'cli'>('browser');
 
   // Sync with props
   useEffect(() => {
@@ -1451,7 +1454,53 @@ export function AgentsTab({ items, onRefresh }: AgentsTabProps) {
         </div>
       </div>
 
-      {/* Agent list */}
+      {/* Subtab switcher */}
+      <div style={{
+        marginTop: 12,
+        marginBottom: 16,
+        display: 'flex',
+        alignItems: 'center',
+        gap: 4,
+        borderBottom: '1px solid rgba(255,255,255,0.1)',
+        paddingBottom: 8,
+      }}>
+        <button
+          onClick={() => setActiveSubtab('browser')}
+          style={{
+            padding: '6px 14px',
+            borderRadius: 6,
+            border: 'none',
+            backgroundColor: activeSubtab === 'browser' ? 'rgba(99,102,241,0.25)' : 'transparent',
+            color: activeSubtab === 'browser' ? '#818cf8' : '#6b7280',
+            fontSize: '0.8rem',
+            cursor: 'pointer',
+            fontWeight: activeSubtab === 'browser' ? 500 : 400,
+            transition: 'all 0.15s',
+          }}
+        >
+          Browser Agents
+        </button>
+        <button
+          onClick={() => setActiveSubtab('cli')}
+          style={{
+            padding: '6px 14px',
+            borderRadius: 6,
+            border: 'none',
+            backgroundColor: activeSubtab === 'cli' ? 'rgba(16,185,129,0.25)' : 'transparent',
+            color: activeSubtab === 'cli' ? '#10b981' : '#6b7280',
+            fontSize: '0.8rem',
+            cursor: 'pointer',
+            fontWeight: activeSubtab === 'cli' ? 500 : 400,
+            transition: 'all 0.15s',
+          }}
+        >
+          CLI Agents
+        </button>
+      </div>
+
+      {/* Browser Agents Tab */}
+      {activeSubtab === 'browser' && (
+      <>
       {localItems.length === 0 ? (
         <div style={{
           textAlign: 'center',
@@ -1503,6 +1552,29 @@ export function AgentsTab({ items, onRefresh }: AgentsTabProps) {
             onToggle={() => toggleExpanded(agent.id)}
           />
         ))
+      )}
+      </>
+      )}
+
+      {/* CLI Agents Tab - Coming Soon */}
+      {activeSubtab === 'cli' && (
+        <div style={{ marginTop: 16, textAlign: 'center', padding: 40, color: '#6b7280' }}>
+          <div style={{ marginBottom: 16, display: 'flex', justifyContent: 'center' }}>
+            <div style={{ width: 56, height: 56, borderRadius: 12, backgroundColor: 'rgba(16,185,129,0.12)', border: '1px solid rgba(16,185,129,0.25)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+              <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#10b981" strokeWidth="1.6">
+                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+                <polyline points="14 2 14 8 20 8"/>
+                <line x1="16" y1="13" x2="8" y2="13"/>
+                <line x1="16" y1="17" x2="8" y2="17"/>
+                <polyline points="10 9 9 9 8 9"/>
+              </svg>
+            </div>
+          </div>
+          <div style={{ fontSize: '1rem', marginBottom: 8, color: '#fff' }}>CLI Agents</div>
+          <div style={{ fontSize: '0.85rem', maxWidth: 300, margin: '0 auto', lineHeight: 1.5 }}>
+            CLI agents are created automatically when you install command-line tools like <code style={{ background: 'rgba(16,185,129,0.2)', padding: '2px 4px', borderRadius: 4 }}>transcribe-anything</code> or <code style={{ background: 'rgba(16,185,129,0.2)', padding: '2px 4px', borderRadius: 4 }}>gh</code>
+          </div>
+        </div>
       )}
 
       {/* Create modal */}

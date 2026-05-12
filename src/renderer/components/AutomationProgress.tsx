@@ -15,7 +15,7 @@ const ipcRenderer = (window as any).electron?.ipcRenderer;
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
-type StepStatus = 'pending' | 'running' | 'done' | 'failed';
+type StepStatus = 'pending' | 'running' | 'done' | 'failed' | 'skipped';
 
 interface Step {
   index: number;
@@ -104,6 +104,7 @@ interface GuideStepCard {
 interface AutomationProgressProps {
   onHeightChange?: (height: number) => void;
   onActiveChange?: (active: boolean) => void;
+  onOpenRules?: () => void;
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -133,6 +134,17 @@ function StepIcon({ status }: { status: StepStatus }) {
         <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="3"
           strokeLinecap="round" strokeLinejoin="round">
           <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
+        </svg>
+      </div>
+    );
+  }
+  if (status === 'skipped') {
+    return (
+      <div className="flex-shrink-0 w-4 h-4 rounded-full flex items-center justify-center"
+        style={{ backgroundColor: 'rgba(245,158,11,0.15)', border: '1.5px solid #f59e0b' }}>
+        <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="#f59e0b" strokeWidth="2.5"
+          strokeLinecap="round" strokeLinejoin="round">
+          <line x1="18" y1="6" x2="6" y2="18" />
         </svg>
       </div>
     );
@@ -506,7 +518,7 @@ function parsePlanStepTitles(content: string): string[] {
   return titles;
 }
 
-export default function AutomationProgress({ onHeightChange, onActiveChange }: AutomationProgressProps) {
+export default function AutomationProgress({ onHeightChange, onActiveChange, onOpenRules }: AutomationProgressProps) {
   const [phase, setPhase] = useState<AutomationPhase>('idle');
   const [steps, setSteps] = useState<Step[]>([]);
   const [planMessage, setPlanMessage] = useState('Generating skill plan...');
@@ -561,6 +573,7 @@ export default function AutomationProgress({ onHeightChange, onActiveChange }: A
   const [planNameInput, setPlanNameInput] = useState('');
   const [planNameSaved, setPlanNameSaved] = useState(false);
   const [planNameError, setPlanNameError] = useState('');
+  const [savedContextRule, setSavedContextRule] = useState<{ ruleText: string; contextKey: string; category: string } | null>(null);
   const _planFileRef = useRef<string>('');
   const DOT_NAME_RE = /^[a-z][a-z0-9]*(?:\.[a-z][a-z0-9]*)+$/;
   const isValidDotName = (n: string) => {
@@ -678,6 +691,7 @@ export default function AutomationProgress({ onHeightChange, onActiveChange }: A
       setProjectBuild(null);
       setProjectBuildFiles([]);
       setPlanReview(null);
+      setSavedContextRule(null);
       // Reset multi-intent step accumulation offset
       stepOffsetRef.current = 0;
       setEtaLabel(null);
@@ -814,6 +828,15 @@ export default function AutomationProgress({ onHeightChange, onActiveChange }: A
               return [...prev, data.savedFilePath];
             });
           }
+          break;
+
+        case 'step_skipped':
+          agentStepStartTimes.current.delete(data.stepIndex + stepOffsetRef.current);
+          setSteps(prev => prev.map(s =>
+            s.index === data.stepIndex + stepOffsetRef.current
+              ? { ...s, status: 'skipped', stdout: data.reason ? `[Skipped: ${data.reason}]` : '[Skipped]' }
+              : s
+          ));
           break;
 
         case 'step_failed':
@@ -1087,6 +1110,9 @@ export default function AutomationProgress({ onHeightChange, onActiveChange }: A
         case 'retrying_with_fix':
           setPhase('retrying_with_fix');
           setRetryMessage(data.message || 'Adjusting approach and retrying...');
+          if (data.ruleText) {
+            setSavedContextRule({ ruleText: data.ruleText, contextKey: data.contextKey || '', category: data.category || 'general' });
+          }
           // Reset steps for the new plan run
           setSteps([]);
           setTotalCount(0);
@@ -1131,7 +1157,7 @@ export default function AutomationProgress({ onHeightChange, onActiveChange }: A
               }
               return {
                 ...s,
-                status: r.ok ? 'done' : 'failed',
+                status: r.skipped ? 'skipped' : r.ok ? 'done' : 'failed',
                 stdout: r.stdout || s.stdout,
                 stderr: r.stderr || s.stderr,
                 error: r.error || s.error,
@@ -1356,7 +1382,7 @@ export default function AutomationProgress({ onHeightChange, onActiveChange }: A
   };
 
   const doneCount = steps.filter(s =>
-    s.status === 'done' ||
+    s.status === 'done' || s.status === 'skipped' ||
     (s.status !== 'failed' && agentCompletes.get(s.index)?.ok === true)
   ).length;
   const shownTotal = totalCount || steps.length;
@@ -1701,6 +1727,44 @@ export default function AutomationProgress({ onHeightChange, onActiveChange }: A
                 A correction rule was saved. Replanning now — no action needed.
               </div>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Context rule saved toast ────────────────────────────────── */}
+      {savedContextRule && (
+        <div style={{
+          padding: '10px 14px', borderRadius: 10,
+          backgroundColor: 'rgba(245, 158, 11, 0.08)',
+          border: '1px solid rgba(245, 158, 11, 0.35)',
+          display: 'flex', flexDirection: 'column', gap: 6,
+        }}>
+          <div className="flex items-start justify-between gap-2">
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 3, flex: 1, minWidth: 0 }}>
+              <div style={{ color: '#fbbf24', fontSize: '0.72rem', fontWeight: 700, letterSpacing: '0.04em', textTransform: 'uppercase' }}>
+                Rule saved{savedContextRule.contextKey ? ` · ${savedContextRule.contextKey}` : ''}
+              </div>
+              <div style={{ color: '#e5e7eb', fontSize: '0.75rem', lineHeight: 1.45, wordBreak: 'break-word' }}>
+                {savedContextRule.ruleText.length > 140
+                  ? savedContextRule.ruleText.slice(0, 140) + '…'
+                  : savedContextRule.ruleText}
+              </div>
+            </div>
+            <button
+              onClick={() => setSavedContextRule(null)}
+              style={{ flexShrink: 0, color: '#9ca3af', background: 'none', border: 'none', cursor: 'pointer', padding: '0 2px', fontSize: '1rem', lineHeight: 1 }}
+              title="Dismiss"
+            >✕</button>
+          </div>
+          <div style={{ display: 'flex', gap: 6 }}>
+            <button
+              onClick={() => { setSavedContextRule(null); onOpenRules?.(); }}
+              style={{
+                fontSize: '0.7rem', fontWeight: 600, padding: '4px 10px', borderRadius: 6,
+                backgroundColor: 'rgba(245, 158, 11, 0.15)', border: '1px solid rgba(245, 158, 11, 0.4)',
+                color: '#fbbf24', cursor: 'pointer',
+              }}
+            >Edit Rule</button>
           </div>
         </div>
       )}
@@ -2071,6 +2135,7 @@ export default function AutomationProgress({ onHeightChange, onActiveChange }: A
                       <span className="text-sm" style={{
                         color: step.status === 'pending' ? '#6b7280'
                           : step.status === 'failed' ? '#fca5a5'
+                          : step.status === 'skipped' ? '#fbbf24'
                           : '#e5e7eb'
                       }}>
                         {step.description}
@@ -2095,6 +2160,11 @@ export default function AutomationProgress({ onHeightChange, onActiveChange }: A
                         </div>
                       );
                     })()}
+                    {step.status === 'skipped' && !isExpanded && (
+                      <div className="text-xs mt-0.5" style={{ color: '#fbbf24', opacity: 0.75 }}>
+                        {step.stdout?.replace(/^\[Skipped:\s*/i, '').replace(/\]$/, '') || 'Skipped'}
+                      </div>
+                    )}
                     {step.status === 'failed' && step.error && !isExpanded && (
                       <div className="text-xs mt-0.5" style={{ color: '#f87171' }}>
                         {humanizeError(step.error)}
