@@ -54,10 +54,14 @@ export function RulesManagementPanel() {
   // State
   const [contextRules, setContextRules] = useState<GroupedContextRules>({});
   const [constraints, setConstraints] = useState<ConstraintRule[]>([]);
+  const [allowedCmds, setAllowedCmds] = useState<{ builtin: string[]; user: string[] }>({ builtin: [], user: [] });
+  const [newCmdInput, setNewCmdInput] = useState('');
+  const [newCmdError, setNewCmdError] = useState<string | null>(null);
   const [expandedDomains, setExpandedDomains] = useState<Set<string>>(new Set());
   const [expandedSections, setExpandedSections] = useState({
     contextRules: true,
     constraints: false,
+    allowedCommands: false,
   });
   const [searchQuery, setSearchQuery] = useState('');
   const [isLoading, setIsLoading] = useState(false);
@@ -80,12 +84,14 @@ export function RulesManagementPanel() {
     setLoadError(null);
     try {
       console.log('[RulesManagementPanel] Loading rules...');
-      const [contextResult, constraintsResult] = await Promise.all([
+      const [contextResult, constraintsResult, allowedCmdsResult] = await Promise.all([
         ipcRenderer.invoke('rules:context:list_all'),
         ipcRenderer.invoke('rules:constraint:list'),
+        ipcRenderer.invoke('rules:allowedcmds:list'),
       ]);
       console.log('[RulesManagementPanel] Context result:', contextResult);
       console.log('[RulesManagementPanel] Constraints result:', constraintsResult);
+      console.log('[RulesManagementPanel] Allowed cmds result:', allowedCmdsResult);
       
       // Handle different response structures
       const contextData = contextResult?.data?.grouped || contextResult?.grouped || {};
@@ -93,6 +99,10 @@ export function RulesManagementPanel() {
       
       setContextRules(contextData);
       setConstraints(constraintsData);
+      setAllowedCmds({
+        builtin: allowedCmdsResult?.builtin || [],
+        user: allowedCmdsResult?.user || [],
+      });
       
       // Check for errors in response
       if (contextResult?.error) {
@@ -196,6 +206,49 @@ export function RulesManagementPanel() {
     if (!searchQuery) return true;
     return c.rule.toLowerCase().includes(searchQuery.toLowerCase());
   });
+
+  const filteredBuiltinCmds = allowedCmds.builtin.filter(c =>
+    !searchQuery || c.toLowerCase().includes(searchQuery.toLowerCase())
+  );
+  const filteredUserCmds = allowedCmds.user.filter(c =>
+    !searchQuery || c.toLowerCase().includes(searchQuery.toLowerCase())
+  );
+
+  const addAllowedCmd = async () => {
+    const cmd = newCmdInput.trim().toLowerCase();
+    if (!cmd) return;
+    if (/[;&|`$<>\\/ ]/.test(cmd)) {
+      setNewCmdError('Invalid command name — no spaces or special characters');
+      return;
+    }
+    setNewCmdError(null);
+    try {
+      await ipcRenderer.invoke('rules:allowedcmds:add', { command: cmd });
+      setNewCmdInput('');
+      await loadRules();
+    } catch (err) {
+      setNewCmdError('Failed to add command');
+    }
+  };
+
+  const removeAllowedCmd = async (cmd: string) => {
+    try {
+      await ipcRenderer.invoke('rules:allowedcmds:remove', { command: cmd });
+      await loadRules();
+    } catch (err) {
+      console.error('[RulesManagementPanel] Failed to remove command:', err);
+    }
+  };
+
+  const resetAllowedCmds = async () => {
+    if (!confirm('Reset user-added commands? Built-in commands are unaffected.')) return;
+    try {
+      await ipcRenderer.invoke('rules:allowedcmds:reset');
+      await loadRules();
+    } catch (err) {
+      console.error('[RulesManagementPanel] Failed to reset commands:', err);
+    }
+  };
 
   // Detect conflicts within a domain
   const detectConflicts = (rules: ContextRule[]): string[] => {
@@ -523,6 +576,130 @@ export function RulesManagementPanel() {
                     </div>
                   ))
                 )}
+              </div>
+            )}
+          </div>
+
+          {/* Allowed Commands Section */}
+          <div>
+            <button
+              onClick={() => setExpandedSections(prev => ({ ...prev, allowedCommands: !prev.allowedCommands }))}
+              className="w-full flex items-center justify-between px-3 py-2 rounded-lg hover:bg-white/5 transition-colors"
+            >
+              <div className="flex items-center gap-2">
+                <span className="text-sm font-medium text-gray-300">
+                  Allowed Commands
+                </span>
+                <span className="text-xs px-2 py-0.5 rounded-full bg-gray-700 text-gray-400">
+                  {allowedCmds.builtin.length + allowedCmds.user.length} commands
+                </span>
+              </div>
+              <svg
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                className="text-gray-500 transition-transform"
+                style={{ transform: expandedSections.allowedCommands ? 'rotate(180deg)' : 'rotate(0deg)' }}
+              >
+                <polyline points="6 9 12 15 18 9" />
+              </svg>
+            </button>
+
+            {expandedSections.allowedCommands && (
+              <div className="mt-2 space-y-3">
+                <p className="text-xs text-gray-500 px-1">
+                  Commands ThinkDrop can execute directly. Built-in commands (🔒) cannot be removed. Add custom CLIs below.
+                </p>
+
+                {/* Built-in commands */}
+                {filteredBuiltinCmds.length > 0 && (
+                  <div>
+                    <p className="text-[10px] text-gray-600 px-1 mb-1.5 uppercase tracking-wider">Built-in</p>
+                    <div className="flex flex-wrap gap-1.5">
+                      {filteredBuiltinCmds.map(cmd => (
+                        <span
+                          key={cmd}
+                          className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs text-gray-400"
+                          style={{ backgroundColor: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.08)' }}
+                        >
+                          <span className="text-[10px]">🔒</span>
+                          {cmd}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* User-added commands */}
+                <div>
+                  <div className="flex items-center justify-between mb-1.5">
+                    <p className="text-[10px] text-gray-600 px-1 uppercase tracking-wider">User-added</p>
+                    {allowedCmds.user.length > 0 && (
+                      <button
+                        onClick={resetAllowedCmds}
+                        className="text-[10px] text-gray-600 hover:text-red-400 transition-colors px-1"
+                      >
+                        Reset
+                      </button>
+                    )}
+                  </div>
+                  {filteredUserCmds.length === 0 && !searchQuery ? (
+                    <p className="text-xs text-gray-600 px-1">No user-added commands yet</p>
+                  ) : (
+                    <div className="flex flex-wrap gap-1.5">
+                      {filteredUserCmds.map(cmd => (
+                        <span
+                          key={cmd}
+                          className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs text-gray-300"
+                          style={{ backgroundColor: 'rgba(16,185,129,0.1)', border: '1px solid rgba(16,185,129,0.25)' }}
+                        >
+                          {cmd}
+                          <button
+                            onClick={() => removeAllowedCmd(cmd)}
+                            className="ml-0.5 text-gray-500 hover:text-red-400 transition-colors"
+                            title="Remove"
+                          >
+                            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                              <line x1="18" y1="6" x2="6" y2="18" />
+                              <line x1="6" y1="6" x2="18" y2="18" />
+                            </svg>
+                          </button>
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                {/* Add new command */}
+                <div className="pt-1">
+                  <div className="flex gap-2">
+                    <input
+                      type="text"
+                      value={newCmdInput}
+                      onChange={e => { setNewCmdInput(e.target.value); setNewCmdError(null); }}
+                      onKeyDown={e => e.key === 'Enter' && addAllowedCmd()}
+                      placeholder="Add command (e.g. my-cli)"
+                      className="flex-1 px-3 py-1.5 rounded text-xs text-gray-300 placeholder-gray-600 outline-none"
+                      style={{ backgroundColor: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)' }}
+                    />
+                    <button
+                      onClick={addAllowedCmd}
+                      disabled={!newCmdInput.trim()}
+                      className="px-3 py-1.5 rounded text-xs font-medium text-white transition-colors disabled:opacity-40"
+                      style={{ backgroundColor: 'rgba(59,130,246,0.6)' }}
+                    >
+                      Add
+                    </button>
+                  </div>
+                  {newCmdError && (
+                    <p className="text-[10px] text-red-400 mt-1 px-1">{newCmdError}</p>
+                  )}
+                </div>
               </div>
             )}
           </div>

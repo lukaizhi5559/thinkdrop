@@ -8408,6 +8408,83 @@ app.whenReady().then(async () => {
       }
     });
 
+    // ─── Allowed Commands IPC handlers ──────────────────────────────────────────
+    // Reads/writes ~/.thinkdrop/allowed-commands.json directly (file-based, no memory MCP).
+    // Returns { builtin: string[], user: string[] } — builtin comes from shell.run's static
+    // ALLOWED_COMMANDS set so the UI can show both groups with different affordances.
+    const ALLOWED_CMDS_PATH = require('path').join(require('os').homedir(), '.thinkdrop', 'allowed-commands.json');
+
+    function _readUserAllowedCmds() {
+      try {
+        if (!require('fs').existsSync(ALLOWED_CMDS_PATH)) return [];
+        const raw = JSON.parse(require('fs').readFileSync(ALLOWED_CMDS_PATH, 'utf8'));
+        return Array.isArray(raw) ? raw : (Array.isArray(raw?.commands) ? raw.commands : []);
+      } catch (_) { return []; }
+    }
+
+    function _writeUserAllowedCmds(cmds) {
+      require('fs').mkdirSync(require('path').dirname(ALLOWED_CMDS_PATH), { recursive: true });
+      require('fs').writeFileSync(ALLOWED_CMDS_PATH, JSON.stringify({ commands: [...cmds].sort() }, null, 2), 'utf8');
+    }
+
+    ipcMain.handle('rules:allowedcmds:list', async () => {
+      try {
+        // main.js is at src/main/main.js — shell.run.cjs is at
+        // mcp-services/command-service/src/skills/shell.run.cjs
+        const shellRunPath = require('path').join(__dirname, '../../mcp-services/command-service/src/skills/shell.run.cjs');
+        let builtinSet;
+        try {
+          builtinSet = require(shellRunPath).ALLOWED_COMMANDS;
+        } catch (_) {
+          builtinSet = new Set();
+        }
+        const builtin = [...builtinSet].sort();
+        const user = _readUserAllowedCmds();
+        return { ok: true, builtin, user };
+      } catch (err) {
+        console.error('[IPC] rules:allowedcmds:list failed:', err.message);
+        return { ok: false, error: err.message, builtin: [], user: [] };
+      }
+    });
+
+    ipcMain.handle('rules:allowedcmds:add', async (_event, { command }) => {
+      try {
+        if (!command || typeof command !== 'string') return { ok: false, error: 'command is required' };
+        const cmd = require('path').basename(command.trim().toLowerCase());
+        if (!cmd || /[;&|`$<>\\/ ]/.test(cmd)) return { ok: false, error: 'invalid command name' };
+        const existing = _readUserAllowedCmds();
+        if (!existing.includes(cmd)) {
+          _writeUserAllowedCmds([...existing, cmd]);
+        }
+        return { ok: true, command: cmd };
+      } catch (err) {
+        console.error('[IPC] rules:allowedcmds:add failed:', err.message);
+        return { ok: false, error: err.message };
+      }
+    });
+
+    ipcMain.handle('rules:allowedcmds:remove', async (_event, { command }) => {
+      try {
+        if (!command) return { ok: false, error: 'command is required' };
+        const existing = _readUserAllowedCmds();
+        _writeUserAllowedCmds(existing.filter(c => c !== command));
+        return { ok: true };
+      } catch (err) {
+        console.error('[IPC] rules:allowedcmds:remove failed:', err.message);
+        return { ok: false, error: err.message };
+      }
+    });
+
+    ipcMain.handle('rules:allowedcmds:reset', async () => {
+      try {
+        _writeUserAllowedCmds([]);
+        return { ok: true };
+      } catch (err) {
+        console.error('[IPC] rules:allowedcmds:reset failed:', err.message);
+        return { ok: false, error: err.message };
+      }
+    });
+
     // Auto-start on launch
     startBridgeListener();
   }

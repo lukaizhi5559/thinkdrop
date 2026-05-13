@@ -368,6 +368,10 @@ contextBridge.exposeInMainWorld('electron', {
         'rules:constraint:update',
         'rules:constraint:remove',
         'rules:constraint:create',
+        'rules:allowedcmds:list',
+        'rules:allowedcmds:add',
+        'rules:allowedcmds:remove',
+        'rules:allowedcmds:reset',
         'capture-screenshot',
       ];
       if (validChannels.includes(channel)) {

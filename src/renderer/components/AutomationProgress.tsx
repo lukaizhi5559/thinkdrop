@@ -77,6 +77,7 @@ interface AgentTurnEntry {
   maxTurns: number;
   action?: { action?: string; [key: string]: any };
   outcome?: { ok: boolean; error?: string; result?: string };
+  observation?: string;
   thoughts?: string;
 }
 
@@ -270,6 +271,14 @@ function formatActionLabel(action: { action?: string; url?: string; selector?: s
     case 'uncheck':   return `Uncheck "${action.selector || ''}"`;
     case 'return':    return 'Return result';
     case 'run_cmd':   return `Run command`;
+    case 'run_shell':  return action.script
+      ? `Probe: ${(action.script as string).slice(0, 60)}${(action.script as string).length > 60 ? '…' : ''}`
+      : 'Shell probe';
+    case 'run_help':   return `Read help${Array.isArray(action.subcmd) && action.subcmd.length ? ': ' + action.subcmd.join(' ') : ''}`;
+    case 'web_search': return `Search: ${((action.query as string) || '').slice(0, 50)}`;
+    case 'web_fetch':  { try { return `Fetch: ${new URL(action.url || '').hostname}`; } catch { return `Fetch: ${(action.url || '').slice(0, 40)}`; } }
+    case 'run_update': return `Update ${action.cli || 'CLI'}`;
+    case 'ask_user':   return `Ask: ${((action.question as string) || '').slice(0, 60)}`;
     case 'done':      return 'Done';
     default:          return action.action || JSON.stringify(action).slice(0, 60);
   }
@@ -613,7 +622,7 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
   // Tracks when each running step started (for flickering heartbeat status)
   const agentStepStartTimes = useRef<Map<number, number>>(new Map());
   // Tracks live turn progress (agent:turn_live) from the command-service callback
-  const agentLiveTurns = useRef<Map<number, { turn: number; maxTurns: number }>>(new Map());
+  const agentLiveTurns = useRef<Map<number, { turn: number; maxTurns: number; currentAction?: string | null; agentId?: string; thinking?: string | null }>>(new Map());
   const [_heartbeatTick, setHeartbeatTick] = useState(0);
 
   // Callback ref for ResizeObserver — useCallback fires when div actually mounts/unmounts.
@@ -876,7 +885,13 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
         case 'agent:turn_live': {
           // Real-time turn update from cli.agent during execution (before agent:complete fires)
           const stepIdx = (data.stepIndex ?? 0) + stepOffsetRef.current;
-          agentLiveTurns.current.set(stepIdx, { turn: data.turn, maxTurns: data.maxTurns });
+          agentLiveTurns.current.set(stepIdx, {
+            turn: data.turn,
+            maxTurns: data.maxTurns,
+            currentAction: data.currentAction ?? null,
+            agentId: data.agentId ?? null,
+            thinking: data.thinking ?? null,
+          });
           setHeartbeatTick(t => t + 1); // force re-render to show updated label
           break;
         }
@@ -887,16 +902,15 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
             const next = new Map(prev);
             const existing = next.get(stepIdx) || [];
             next.set(stepIdx, [...existing, {
-              turn:     data.turn,
-              maxTurns: data.maxTurns,
-              action:   data.action,
-              outcome:  data.outcome,
-              thoughts: data.thoughts,
+              turn:        data.turn,
+              maxTurns:    data.maxTurns,
+              action:      data.action,
+              outcome:     data.outcome,
+              observation: data.observation,
+              thoughts:    data.thoughts,
             }]);
             return next;
           });
-          // Auto-expand the card as soon as the first turn arrives
-          setExpandedAgentSteps(prev => prev.has(stepIdx) ? prev : new Set([...prev, stepIdx]));
           break;
         }
 
@@ -915,8 +929,6 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
             });
             return next;
           });
-          // Auto-expand on completion so turns are immediately visible
-          setExpandedAgentSteps(prev => new Set([...prev, stepIdx]));
           break;
         }
 
@@ -928,6 +940,7 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
             next.set(stepIdx, [...existing, String(data.thoughts || '')]);
             return next;
           });
+          setHeartbeatTick(t => t + 1); // force re-render so live thought text appears immediately
           break;
         }
 
@@ -1546,7 +1559,7 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
           const allDone = phase === 'done' || (shownTotal > 0 && doneCount >= shownTotal);
           return (
             <>
-              {allDone ? (
+              {allDone && (
                 <div className="flex-shrink-0 w-3.5 h-3.5 rounded-full flex items-center justify-center"
                   style={{ backgroundColor: '#22c55e' }}>
                   <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="3"
@@ -1554,9 +1567,6 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
                     <polyline points="20 6 9 17 4 12" />
                   </svg>
                 </div>
-              ) : (
-                <div className="w-3.5 h-3.5 rounded-full border-2 animate-spin flex-shrink-0"
-                  style={{ borderColor: '#60a5fa', borderTopColor: 'transparent' }} />
               )}
               <span className="text-sm font-medium" style={{ color: allDone ? '#34d399' : '#e5e7eb' }}>
                 {doneCount} / {shownTotal} tasks done
@@ -2141,8 +2151,46 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
                         {step.description}
                       </span>
                       <SkillBadge skill={step.skill} />
+                      {/* ── Inline agent header — shown right after badge, live and done ── */}
+                      {(() => {
+                        const liveTurn = agentLiveTurns.current.get(step.index);
+                        const complete = agentCompletes.get(step.index);
+                        if (!liveTurn && !complete) return null;
+                        const agentId = complete ? complete.agentId : liveTurn?.agentId;
+                        if (!agentId) return null;
+                        if (complete) {
+                          return (
+                            <>
+                              <span style={{ color: '#4b5563', fontSize: '11px' }}>→</span>
+                              <button
+                                onClick={e => { e.stopPropagation(); setExpandedAgentSteps(prev => { const n = new Set(prev); n.has(step.index) ? n.delete(step.index) : n.add(step.index); return n; }); }}
+                                style={{ display: 'inline-flex', alignItems: 'center', gap: 4, background: 'none', border: 'none', cursor: 'pointer', padding: 0, fontSize: '11px', color: '#94a3b8' }}
+                              >
+                                <span style={{ fontWeight: 600, color: '#818cf8' }}>{complete.agentId}</span>
+                                <span>·</span>
+                                <span>{complete.totalTurns} step{complete.totalTurns !== 1 ? 's' : ''}</span>
+                                <span>·</span>
+                                <span style={{ color: complete.ok ? '#34d399' : '#f87171' }}>{complete.ok ? '✓ done' : '✗ failed'}</span>
+                                <span style={{ fontSize: '9px', marginLeft: 2 }}>{expandedAgentSteps.has(step.index) ? '▲' : '▼'}</span>
+                              </button>
+                            </>
+                          );
+                        }
+                        return (
+                          <>
+                            <span style={{ color: '#4b5563', fontSize: '11px' }}>→</span>
+                            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: '11px', color: '#94a3b8' }}>
+                              <span style={{ fontWeight: 600, color: '#818cf8' }}>{agentId}</span>
+                              {liveTurn && (
+                                <><span style={{ color: '#4b5563' }}>·</span>
+                                <span style={{ color: '#6b7280' }}>{liveTurn.turn}/{liveTurn.maxTurns} steps</span></>
+                              )}
+                            </span>
+                          </>
+                        );
+                      })()}
                     </div>
-                    {step.status === 'done' && !isExpanded && (() => {
+                    {step.status === 'done' && !isExpanded && !agentCompletes.get(step.index) && (() => {
                       const out = step.stdout?.trim() || '';
                       if (out.length === 0) {
                         return (
@@ -2291,163 +2339,259 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
                     </div>
                   </div>
                 )}
-                {/* ── Flickering heartbeat — shown while step is running, before agent card appears ── */}
-                {step.status === 'running' && !agentCompletes.has(step.index) && loginGuidance?.stepIndex !== step.index && (() => {
-                  const startTime = agentStepStartTimes.current.get(step.index);
-                  const elapsedMs = startTime ? (Date.now() - startTime) : 0;
+                {/* ── Agent sub-card: step rows + live status (header now inline with SkillBadge above) ── */}
+                {(() => {
                   const liveTurn = agentLiveTurns.current.get(step.index);
-                  const label = liveTurn
-                    ? `Turn ${liveTurn.turn}/${liveTurn.maxTurns} — ${getAgentStatusLabel(elapsedMs)}`
-                    : getAgentStatusLabel(elapsedMs);
+                  const complete = agentCompletes.get(step.index);
+                  const isRunning = step.status === 'running' && !complete && loginGuidance?.stepIndex !== step.index;
+                  const isDone = !!complete;
+                  if (!liveTurn && !isDone) return null;
+
+                  const _actionVerbs: Record<string, string> = {
+                    run_cmd: 'running command', run_shell: 'probing',
+                    run_help: 'reading help', web_search: 'searching',
+                    web_fetch: 'fetching docs', run_update: 'updating CLI',
+                  };
+
+                  const isExpanded = expandedAgentSteps.has(step.index);
+                  const allSteps = agentTurns.get(step.index) || [];
+                  const lastStep = allSteps.length > 0 ? allSteps[allSteps.length - 1] : null;
+
                   return (
-                    <div style={{ marginTop: 2, marginLeft: 28 }}>
-                      <span style={{
-                        fontSize: '14px',
-                        fontStyle: 'italic',
-                        display: 'inline-block',
-                        background: 'linear-gradient(90deg, #818cf8 30%, #c4b5fd 50%, #818cf8 70%)',
-                        backgroundSize: '200% auto',
-                        WebkitBackgroundClip: 'text',
-                        WebkitTextFillColor: 'transparent',
-                        backgroundClip: 'text',
-                        animation: 'agentGloss 2s linear infinite',
-                      }}>
-                        {label}
-                      </span>
+                    <div style={{ marginTop: 3, marginLeft: 28 }}>
+                      {/* ── Latest step row — visible when done+collapsed (last result) ── */}
+                      {isDone && !isExpanded && lastStep && (() => {
+                        const t = lastStep;
+                        const isExecAction = t.action?.action === 'run_cmd' || t.action?.action === 'done';
+                        const isProbeAction = t.action?.action === 'run_shell' || t.action?.action === 'run_help' || t.action?.action === 'web_search' || t.action?.action === 'web_fetch';
+                        const isFailed = isExecAction && t.outcome && !t.outcome.ok;
+                        return (
+                          <div style={{
+                            fontSize: '11px',
+                            padding: '2px 0 2px 8px',
+                            borderLeft: `2px solid ${isFailed ? 'rgba(248,113,113,0.4)' : isProbeAction ? 'rgba(251,191,36,0.35)' : 'rgba(99,102,241,0.35)'}`,
+                            marginTop: 3,
+                          }}>
+                            <span style={{ color: '#6b7280', marginRight: 6 }}>Step {t.turn}</span>
+                            {t.action?.action && (
+                              <span style={{
+                                color: isFailed ? '#f87171' : isProbeAction ? '#fbbf24' : '#a5b4fc',
+                                marginRight: 4, fontFamily: 'ui-monospace,monospace', fontSize: '10px',
+                              }}>
+                                {formatActionLabel(t.action)}
+                              </span>
+                            )}
+                            {t.outcome && (
+                              <span style={{ color: t.outcome.ok ? '#6ee7b7' : '#fca5a5' }}>
+                                {t.outcome.ok
+                                  ? (t.outcome.result && t.action?.action !== 'snapshot'
+                                      ? `✓ ${t.outcome.result.length > 120 ? t.outcome.result.slice(0, 120) + '…' : t.outcome.result}`
+                                      : '✓')
+                                  : `✗ ${t.outcome.error || ''}`}
+                              </span>
+                            )}
+                          </div>
+                        );
+                      })()}
+
+                      {/* ── Live step rows while running (playwright.agent emits agent:turn live) ── */}
+                      {isRunning && allSteps.length > 0 && (() => {
+                        const t = allSteps[allSteps.length - 1];
+                        const isExecAction = t.action?.action === 'run_cmd' || t.action?.action === 'done';
+                        const isProbeAction = t.action?.action === 'run_shell' || t.action?.action === 'run_help' || t.action?.action === 'web_search' || t.action?.action === 'web_fetch';
+                        const isFailed = isExecAction && t.outcome && !t.outcome.ok;
+                        return (
+                          <div style={{
+                            fontSize: '11px',
+                            padding: '2px 0 2px 8px',
+                            borderLeft: `2px solid ${isFailed ? 'rgba(248,113,113,0.4)' : isProbeAction ? 'rgba(251,191,36,0.35)' : 'rgba(99,102,241,0.35)'}`,
+                            marginTop: 3,
+                          }}>
+                            <span style={{ color: '#6b7280', marginRight: 6 }}>Step {t.turn}</span>
+                            {t.action?.action && (
+                              <span style={{
+                                color: isFailed ? '#f87171' : isProbeAction ? '#fbbf24' : '#a5b4fc',
+                                marginRight: 4, fontFamily: 'ui-monospace,monospace', fontSize: '10px',
+                              }}>
+                                {formatActionLabel(t.action)}
+                              </span>
+                            )}
+                            {t.outcome && (
+                              <span style={{ color: t.outcome.ok ? '#6ee7b7' : '#fca5a5' }}>
+                                {t.outcome.ok
+                                  ? (t.outcome.result && t.action?.action !== 'snapshot'
+                                      ? `✓ ${t.outcome.result.length > 120 ? t.outcome.result.slice(0, 120) + '…' : t.outcome.result}`
+                                      : '✓')
+                                  : `✗ ${t.outcome.error || ''}`}
+                              </span>
+                            )}
+                          </div>
+                        );
+                      })()}
+
+                      {/* ── Live step label while running (heartbeat / cli.agent action verb) ── */}
+                      {isRunning && liveTurn && (() => {
+                        const startTime = agentStepStartTimes.current.get(step.index);
+                        const elapsedMs = startTime ? (Date.now() - startTime) : 0;
+                        const _actionVerb = liveTurn.currentAction ? (_actionVerbs[liveTurn.currentAction] ?? null) : null;
+                        const liveLabel = _actionVerb || getAgentStatusLabel(elapsedMs);
+                        return (
+                          <div style={{ marginTop: 3 }}>
+                            <span style={{
+                              fontSize: '11px',
+                              fontStyle: 'italic',
+                              display: 'inline-block',
+                              background: 'linear-gradient(90deg, #818cf8 30%, #c4b5fd 50%, #818cf8 70%)',
+                              backgroundSize: '200% auto',
+                              WebkitBackgroundClip: 'text',
+                              WebkitTextFillColor: 'transparent',
+                              backgroundClip: 'text',
+                              animation: 'agentGloss 2s linear infinite',
+                            }}>
+                              {liveLabel}
+                            </span>
+                          </div>
+                        );
+                      })()}
+
+                      {/* ── Fallback heartbeat when no liveTurn yet ── */}
+                      {isRunning && !liveTurn && (
+                        <div style={{ marginTop: 3 }}>
+                          <span style={{
+                            fontSize: '11px',
+                            fontStyle: 'italic',
+                            display: 'inline-block',
+                            background: 'linear-gradient(90deg, #818cf8 30%, #c4b5fd 50%, #818cf8 70%)',
+                            backgroundSize: '200% auto',
+                            WebkitBackgroundClip: 'text',
+                            WebkitTextFillColor: 'transparent',
+                            backgroundClip: 'text',
+                            animation: 'agentGloss 2s linear infinite',
+                          }}>
+                            {getAgentStatusLabel(agentStepStartTimes.current.get(step.index) ? Date.now() - agentStepStartTimes.current.get(step.index)! : 0)}
+                          </span>
+                        </div>
+                      )}
+
+                      {/* ── Live thinking — cli.agent (liveTurn.thinking) or playwright.agent (agentThoughts) ── */}
+                      {isRunning && liveTurn?.thinking && (
+                        <div style={{ marginTop: 3, fontSize: '11px', color: '#7c6fa0', fontStyle: 'italic', lineHeight: '1.45' }}>
+                          ☁️ {liveTurn.thinking.length > 140 ? liveTurn.thinking.slice(0, 140) + '…' : liveTurn.thinking}
+                        </div>
+                      )}
+                      {isRunning && !liveTurn?.thinking && (agentThoughts.get(step.index) || []).length > 0 && (() => {
+                        const thoughts = agentThoughts.get(step.index)!;
+                        const latest = thoughts[thoughts.length - 1];
+                        return (
+                          <div style={{ marginTop: 3, fontSize: '11px', color: '#7c6fa0', fontStyle: 'italic', lineHeight: '1.45' }}>
+                            ☁️ {latest.length > 160 ? latest.slice(0, 160) + '…' : latest}
+                          </div>
+                        );
+                      })()}
+
+                      {/* ── Learned rule rows — always visible ── */}
+                      {(learnedRules.get(step.index) || []).map((rule, ri) => (
+                        <div key={ri} style={{
+                          display: 'flex', alignItems: 'flex-start', gap: 5,
+                          marginTop: 4, padding: '3px 7px', borderRadius: 4,
+                          borderLeft: '2px solid rgba(245,158,11,0.5)',
+                          backgroundColor: 'rgba(245,158,11,0.05)',
+                        }}>
+                          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="#f59e0b" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0, marginTop: 1 }}>
+                            <path d="M9.5 2A2.5 2.5 0 0 1 12 4.5v15a2.5 2.5 0 0 1-4.96-.44 2.5 2.5 0 0 1-2.96-3.08 3 3 0 0 1-.34-5.58 2.5 2.5 0 0 1 1.32-4.24 2.5 2.5 0 0 1 1.44-3.16Z"/>
+                            <path d="M14.5 2A2.5 2.5 0 0 0 12 4.5v15a2.5 2.5 0 0 0 4.96-.44 2.5 2.5 0 0 0 2.96-3.08 3 3 0 0 0 .34-5.58 2.5 2.5 0 0 0-1.32-4.24 2.5 2.5 0 0 0-1.44-3.16Z"/>
+                          </svg>
+                          <span style={{ color: '#fbbf24', fontSize: '10px', fontWeight: 600, flexShrink: 0 }}>Saved to memory</span>
+                          <span title={rule} style={{
+                            color: '#92400e', fontSize: '10px', fontFamily: 'ui-monospace,monospace',
+                            overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 180,
+                          }}>
+                            {rule.length > 110 ? rule.slice(0, 110) + '…' : rule}
+                          </span>
+                        </div>
+                      ))}
+
+                      {/* ── Expanded step list — all steps, shown when user clicks header (done only) ── */}
+                      {isDone && isExpanded && (
+                        <div style={{ marginTop: 4 }}>
+                          {allSteps.map((t, i) => {
+                            const isExecAction = t.action?.action === 'run_cmd' || t.action?.action === 'done';
+                            const isProbeAction = t.action?.action === 'run_shell' || t.action?.action === 'run_help' || t.action?.action === 'web_search' || t.action?.action === 'web_fetch';
+                            const isFailed = isExecAction && t.outcome && !t.outcome.ok;
+                            const observationText = t.observation || '';
+                            const thoughtText = t.thoughts || '';
+                            return (
+                              <div key={i} style={{
+                                fontSize: '11px',
+                                padding: '2px 0 4px 8px',
+                                borderLeft: `2px solid ${isFailed ? 'rgba(248,113,113,0.4)' : isProbeAction ? 'rgba(251,191,36,0.35)' : 'rgba(99,102,241,0.35)'}`,
+                                marginBottom: 2,
+                              }}>
+                                <div>
+                                  <span style={{ color: '#6b7280', marginRight: 6 }}>Step {t.turn}</span>
+                                  {t.action?.action && (
+                                    <span style={{
+                                      color: isFailed ? '#f87171' : isProbeAction ? '#fbbf24' : '#a5b4fc',
+                                      marginRight: 4, fontFamily: 'ui-monospace,monospace', fontSize: '10px',
+                                    }}>
+                                      {formatActionLabel(t.action)}
+                                    </span>
+                                  )}
+                                  {t.outcome && (
+                                    <span style={{ color: t.outcome.ok ? '#6ee7b7' : '#fca5a5' }}>
+                                      {t.outcome.ok
+                                        ? (t.outcome.result && t.action?.action !== 'snapshot'
+                                            ? `✓ ${t.outcome.result.length > 120 ? t.outcome.result.slice(0, 120) + '…' : t.outcome.result}`
+                                            : '✓')
+                                        : `✗ ${t.outcome.error || ''}`}
+                                    </span>
+                                  )}
+                                </div>
+                                {thoughtText && (
+                                  <div style={{
+                                    marginTop: 2, fontSize: '10px', color: '#7c6fa0',
+                                    fontStyle: 'italic', lineHeight: '1.4',
+                                  }}>
+                                    ☁️ {thoughtText.length > 140 ? thoughtText.slice(0, 140) + '…' : thoughtText}
+                                  </div>
+                                )}
+                                {observationText && (
+                                  <div style={{
+                                    marginTop: 2, color: '#64748b', fontSize: '10px',
+                                    fontFamily: 'ui-monospace,monospace',
+                                    overflow: 'hidden', textOverflow: 'ellipsis',
+                                    whiteSpace: 'nowrap', maxWidth: '100%',
+                                  }} title={observationText}>
+                                    ↳ {observationText.length > 120 ? observationText.slice(0, 120) + '…' : observationText}
+                                  </div>
+                                )}
+                              </div>
+                            );
+                          })}
+                          {allSteps.length === 0 && complete?.reasoning && (
+                            <div style={{
+                              fontSize: '11px', color: '#94a3b8',
+                              padding: '2px 0 2px 8px',
+                              borderLeft: '2px solid rgba(99,102,241,0.3)',
+                            }}>
+                              {complete!.reasoning}
+                            </div>
+                          )}
+                          {(agentThoughts.get(step.index) || []).map((thought, ti) => (
+                            <div key={`thought-${ti}`} style={{
+                              fontSize: '11px', color: '#a78bfa', fontStyle: 'italic',
+                              padding: '2px 0 2px 8px',
+                              borderLeft: '2px solid rgba(167,139,250,0.3)',
+                              marginBottom: 2,
+                            }}>
+                              ☁️ {thought.length > 200 ? thought.slice(0, 200) + '…' : thought}
+                            </div>
+                          ))}
+                        </div>
+                      )}
                     </div>
                   );
                 })()}
-                {/* ── Sub-agent turn card ─────────────────────────────── */}
-                {agentCompletes.has(step.index) && (
-                  <div style={{ marginTop: 6, marginLeft: 28 }}>
-                    <button
-                      onClick={() => setExpandedAgentSteps(prev => {
-                        const n = new Set(prev);
-                        n.has(step.index) ? n.delete(step.index) : n.add(step.index);
-                        return n;
-                      })}
-                      style={{
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: 6,
-                        background: 'none',
-                        border: 'none',
-                        cursor: 'pointer',
-                        padding: '2px 0',
-                        color: '#94a3b8',
-                        fontSize: '11px',
-                      }}
-                    >
-                      <span style={{ fontWeight: 600, color: '#818cf8' }}>
-                        {agentCompletes.get(step.index)!.agentId}
-                      </span>
-                      <span>·</span>
-                      <span>{agentCompletes.get(step.index)!.totalTurns} turn{agentCompletes.get(step.index)!.totalTurns !== 1 ? 's' : ''}</span>
-                      <span>·</span>
-                      <span style={{ color: agentCompletes.get(step.index)!.ok ? '#34d399' : '#f87171' }}>
-                        {agentCompletes.get(step.index)!.ok ? '✓ done' : '✗ failed'}
-                      </span>
-                      <span style={{ fontSize: '9px', marginLeft: 2 }}>
-                        {expandedAgentSteps.has(step.index) ? '▲' : '▼'}
-                      </span>
-                    </button>
-                    {/* ── Agent result summary — shown when collapsed ── */}
-                    {!expandedAgentSteps.has(step.index) && agentCompletes.get(step.index)!.ok && agentCompletes.get(step.index)!.result && (
-                      <div style={{ marginTop: 3, paddingLeft: 2, fontSize: '11px', color: '#94a3b8', lineHeight: '1.45' }}>
-                        {agentCompletes.get(step.index)!.result.length > 160
-                          ? agentCompletes.get(step.index)!.result.slice(0, 160) + '…'
-                          : agentCompletes.get(step.index)!.result}
-                      </div>
-                    )}
-                    {/* ── Learned rule rows — always visible, one per saved rule ── */}
-                    {(learnedRules.get(step.index) || []).map((rule, ri) => (
-                      <div key={ri} style={{
-                        display: 'flex', alignItems: 'flex-start', gap: 5,
-                        marginTop: 4,
-                        padding: '3px 7px',
-                        borderRadius: 4,
-                        borderLeft: '2px solid rgba(245,158,11,0.5)',
-                        backgroundColor: 'rgba(245,158,11,0.05)',
-                      }}>
-                        {/* Memory icon */}
-                        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="#f59e0b" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0, marginTop: 1 }}>
-                          <path d="M9.5 2A2.5 2.5 0 0 1 12 4.5v15a2.5 2.5 0 0 1-4.96-.44 2.5 2.5 0 0 1-2.96-3.08 3 3 0 0 1-.34-5.58 2.5 2.5 0 0 1 1.32-4.24 2.5 2.5 0 0 1 1.44-3.16Z"/>
-                          <path d="M14.5 2A2.5 2.5 0 0 0 12 4.5v15a2.5 2.5 0 0 0 4.96-.44 2.5 2.5 0 0 0 2.96-3.08 3 3 0 0 0 .34-5.58 2.5 2.5 0 0 0-1.32-4.24 2.5 2.5 0 0 0-1.44-3.16Z"/>
-                        </svg>
-                        <span style={{ color: '#fbbf24', fontSize: '10px', fontWeight: 600, flexShrink: 0 }}>Saved to memory</span>
-                        <span title={rule} style={{
-                          color: '#92400e', fontSize: '10px', fontFamily: 'ui-monospace,monospace',
-                          overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 180,
-                        }}>
-                          {rule.length > 110 ? rule.slice(0, 110) + '…' : rule}
-                        </span>
-                      </div>
-                    ))}
-                    {expandedAgentSteps.has(step.index) && (
-                      <div style={{ marginTop: 4 }}>
-                        {(agentTurns.get(step.index) || []).map((t, i) => {
-                          // Only run_cmd and done are real execution steps that can truly fail.
-                          // Exploration/thinking actions (web_search, run_help, web_fetch, etc.)
-                          // are just the agent reasoning — show them dimmed, never red.
-                          const isExecAction = t.action?.action === 'run_cmd' || t.action?.action === 'done';
-                          const isFailed = isExecAction && t.outcome && !t.outcome.ok;
-                          const outcomeText = t.outcome?.result || t.outcome?.error || '';
-                          return (
-                            <div key={i} style={{
-                              fontSize: '11px',
-                              padding: '2px 0 2px 8px',
-                              borderLeft: `2px solid ${isFailed ? 'rgba(248,113,113,0.4)' : 'rgba(99,102,241,0.35)'}`,
-                              marginBottom: 2,
-                            }}>
-                              <span style={{ color: '#6b7280', marginRight: 6 }}>Step {t.turn}/{t.maxTurns}</span>
-                              {t.action?.action && (
-                                <span style={{
-                                  color: isFailed ? '#f87171' : '#a5b4fc',
-                                  marginRight: 4,
-                                  fontFamily: 'ui-monospace,monospace',
-                                  fontSize: '10px',
-                                }}>
-                                  {formatActionLabel(t.action)}
-                                </span>
-                              )}
-                              {t.outcome && (
-                                <span style={{ color: t.outcome.ok ? '#6ee7b7' : '#fca5a5' }}>
-                                  {t.outcome.ok
-                                    ? (t.outcome.result && t.action?.action !== 'snapshot'
-                                        ? `✓ ${t.outcome.result.length > 120 ? t.outcome.result.slice(0, 120) + '…' : t.outcome.result}`
-                                        : '✓')
-                                    : `✗ ${t.outcome.error || ''}`}
-                                </span>
-                              )}
-                            </div>
-                          );
-                        })}
-                        {(agentTurns.get(step.index) || []).length === 0 && agentCompletes.get(step.index)?.reasoning && (
-                          <div style={{
-                            fontSize: '11px',
-                            color: '#94a3b8',
-                            padding: '2px 0 2px 8px',
-                            borderLeft: '2px solid rgba(99,102,241,0.3)',
-                          }}>
-                            {agentCompletes.get(step.index)!.reasoning}
-                          </div>
-                        )}
-                        {(agentThoughts.get(step.index) || []).map((thought, ti) => (
-                          <div key={`thought-${ti}`} style={{
-                            fontSize: '11px',
-                            color: '#a78bfa',
-                            fontStyle: 'italic',
-                            padding: '2px 0 2px 8px',
-                            borderLeft: '2px solid rgba(167,139,250,0.3)',
-                            marginBottom: 2,
-                          }}>
-                            💭 {thought.length > 200 ? thought.slice(0, 200) + '…' : thought}
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                )}
               </div>
             );
           })}
