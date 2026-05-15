@@ -28,6 +28,8 @@ interface Step {
   exitCode?: number;
   savedFilePath?: string;
   guideInstruction?: string; // original instruction text preserved after guide.step completes
+  userAllowlistHint?: boolean;
+  commandName?: string | null;
 }
 
 type AutomationPhase =
@@ -852,7 +854,9 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
           agentStepStartTimes.current.delete(data.stepIndex + stepOffsetRef.current);
           setSteps(prev => prev.map(s =>
             s.index === data.stepIndex + stepOffsetRef.current
-              ? { ...s, status: 'failed', error: data.error, stderr: data.stderr }
+              ? { ...s, status: 'failed', error: data.error, stderr: data.stderr,
+                  userAllowlistHint: data.userAllowlistHint || false,
+                  commandName: data.commandName || null }
               : s
           ));
           break;
@@ -1157,11 +1161,27 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
           // Also backfill savedFilePath onto the step that wrote it so the
           // inline file link appears on the step row (shell.run write steps
           // don't emit savedFilePath in step_done — only synthesize does).
+          //
+          // IMPORTANT: After multiple replan cycles the steps array accumulates
+          // rows from every plan_ready. skillResults only contains the FINAL plan's
+          // results. We match by step index within the final plan's offset window
+          // (stepOffsetRef.current) rather than raw array position so stale rows
+          // from dead replan cycles don't get mismatched results. Any step outside
+          // the final plan's window that is still red (failed) is downgraded to
+          // 'skipped' (grey) so the UI reflects that the task ultimately succeeded.
           if (Array.isArray(data.skillResults)) {
             const filePaths: string[] = Array.isArray(data.savedFilePaths) ? data.savedFilePaths : [];
-            setSteps(prev => prev.map((s, i) => {
-              const r = data.skillResults[i];
-              if (!r) return s;
+            const finalOffset = stepOffsetRef.current;
+            const finalCount = data.skillResults.length;
+            setSteps(prev => prev.map((s) => {
+              // Compute position within the final plan window
+              const posInFinal = s.index - finalOffset;
+              const r = (posInFinal >= 0 && posInFinal < finalCount) ? data.skillResults[posInFinal] : null;
+              if (!r) {
+                // Step is from a prior (abandoned) replan cycle — don't leave it red
+                if (s.status === 'failed') return { ...s, status: 'skipped' as StepStatus };
+                return s;
+              }
               // Find a savedFilePath that this step wrote by matching against its resolved args script
               let stepFilePath = s.savedFilePath;
               if (!stepFilePath && r.skill === 'shell.run' && filePaths.length > 0) {
@@ -2217,6 +2237,20 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
                       <div className="text-xs mt-0.5" style={{ color: '#f87171' }}>
                         {humanizeError(step.error)}
                       </div>
+                    )}
+                    {step.status === 'failed' && step.userAllowlistHint && step.commandName && (
+                      <button
+                        onClick={e => { e.stopPropagation(); handleOptionClick(`Allow "${step.commandName}" and retry`); }}
+                        className="mt-1 flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium transition-colors"
+                        style={{ backgroundColor: 'rgba(217,119,6,0.15)', border: '1px solid rgba(217,119,6,0.4)', color: '#fbbf24', cursor: 'pointer' }}
+                        onMouseEnter={e => (e.currentTarget.style.backgroundColor = 'rgba(217,119,6,0.28)')}
+                        onMouseLeave={e => (e.currentTarget.style.backgroundColor = 'rgba(217,119,6,0.15)')}
+                      >
+                        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                          <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 9.9-1"/>
+                        </svg>
+                        Allow &ldquo;{step.commandName}&rdquo; and retry
+                      </button>
                     )}
                   </div>
                   {/* Inline file link — shown on the step that created the file */}
