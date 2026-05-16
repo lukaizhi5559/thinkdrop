@@ -44,6 +44,7 @@ type AutomationPhase =
   | 'schedule_wait'
   | 'evaluating'
   | 'retrying_with_fix'
+  | 'recovering'
   | 'project_building'
   | 'plan_review';
 
@@ -563,6 +564,8 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
   const [learnedRules, setLearnedRules] = useState<Map<number, string[]>>(new Map());
   // Maps stepIndex → LLM thought strings from browser.agent (plan / replan / repair phases)
   const [agentThoughts, setAgentThoughts] = useState<Map<number, string[]>>(new Map());
+  // Maps stepIndex → current thinking text from shell.run goal resolution
+  const [stepThinking, setStepThinking] = useState<Map<number, string>>(new Map());
   const [projectBuild, setProjectBuild] = useState<{ capability: string; iteration: number; message: string; passed: boolean; failed: boolean; errorMsg: string | null } | null>(null);
   const [projectBuildFiles, setProjectBuildFiles] = useState<string[]>([]);
   const [controlMode, setControlMode] = useState<{ active: boolean; app: string | null }>({ active: false, app: null });
@@ -808,6 +811,8 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
         case 'step_start':
           // Clear any active guide step card when the next step begins
           setGuideStep(null);
+          // If recovery just patched and retried (AUTO_PATCH), clear the orange banner — we're executing again
+          if (phaseRef.current === 'retrying_with_fix') setPhase('executing');
           agentStepStartTimes.current.set(data.stepIndex + stepOffsetRef.current, Date.now());
           setSteps(prev => prev.map(s =>
             s.index === data.stepIndex + stepOffsetRef.current
@@ -821,8 +826,19 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
           }, 60);
           break;
 
+        case 'step_thinking': {
+          const _thinkIdx = (data.stepIndex ?? 0) + stepOffsetRef.current;
+          setStepThinking(prev => {
+            const next = new Map(prev);
+            next.set(_thinkIdx, data.thinking || '');
+            return next;
+          });
+          break;
+        }
+
         case 'step_done':
           agentStepStartTimes.current.delete(data.stepIndex + stepOffsetRef.current);
+          setStepThinking(prev => { const next = new Map(prev); next.delete(data.stepIndex + stepOffsetRef.current); return next; });
           setSteps(prev => prev.map(s =>
             s.index === data.stepIndex + stepOffsetRef.current
               ? { ...s, status: 'done', description: data.description || s.description, stdout: data.stdout, exitCode: data.exitCode, savedFilePath: data.savedFilePath || undefined, guideInstruction: data.instruction || s.guideInstruction }
@@ -852,6 +868,7 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
 
         case 'step_failed':
           agentStepStartTimes.current.delete(data.stepIndex + stepOffsetRef.current);
+          setStepThinking(prev => { const next = new Map(prev); next.delete(data.stepIndex + stepOffsetRef.current); return next; });
           setSteps(prev => prev.map(s =>
             s.index === data.stepIndex + stepOffsetRef.current
               ? { ...s, status: 'failed', error: data.error, stderr: data.stderr,
@@ -1133,6 +1150,14 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
           // Reset steps for the new plan run
           setSteps([]);
           setTotalCount(0);
+          break;
+
+        case 'recovering':
+          setPhase('retrying_with_fix');
+          setRetryMessage(
+            data.description ||
+            `Attempt ${data.attempt || ''}: recovering from ${data.skill || 'step'} failure — analyzing options...`
+          );
           break;
 
         case 'all_done': {
@@ -2228,6 +2253,12 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
                         </div>
                       );
                     })()}
+                    {/* ── shell.run goal-mode thinking — shown while _resolveGoalToCommand runs ── */}
+                    {step.status === 'running' && !!stepThinking.get(step.index) && (
+                      <div style={{ marginTop: 3, fontSize: '11px', color: '#7c6fa0', fontStyle: 'italic', lineHeight: '1.45' }}>
+                        ☁️ {stepThinking.get(step.index)}
+                      </div>
+                    )}
                     {step.status === 'skipped' && !isExpanded && (
                       <div className="text-xs mt-0.5" style={{ color: '#fbbf24', opacity: 0.75 }}>
                         {step.stdout?.replace(/^\[Skipped:\s*/i, '').replace(/\]$/, '') || 'Skipped'}
