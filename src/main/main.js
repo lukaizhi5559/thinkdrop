@@ -1802,6 +1802,21 @@ app.whenReady().then(async () => {
     const trimmedPrompt = prompt?.trim();
     if (!trimmedPrompt) return;
 
+    // ── Intercept: gather answer in flight ────────────────────────────────────
+    // If gatherAnswerCallback is waiting for a response, route this text directly
+    // as the gather answer instead of enqueuing it as a new prompt. This prevents
+    // the gather:pending IPC race where the user types before the renderer receives
+    // the gather:pending:true signal (pendingGatherResolve is set synchronously on
+    // the main-process side so this check is always reliable).
+    if (pendingGatherResolve) {
+      console.log(`[GatherContext] prompt-queue:submit intercepted as gather:answer — "${trimmedPrompt.slice(0, 60)}"`);
+      const resolve = pendingGatherResolve;
+      pendingGatherResolve = null;
+      safeSendUnified('gather:pending', { active: false, question: null });
+      resolve(trimmedPrompt);
+      return;
+    }
+
     if (pendingPlanContext && PLAN_MODE_CANCEL_RE.test(trimmedPrompt)) {
       console.log('[Plan] Plan mode cancelled by prompt text');
       pendingPlanContext = null;
@@ -4403,6 +4418,28 @@ app.whenReady().then(async () => {
     const { shell } = require('electron');
     console.log(`[Shell] Opening URL in default browser: ${url}`);
     shell.openExternal(url).catch(err => console.warn(`[Shell] openExternal failed: ${err}`));
+  });
+
+  // Open a terminal window at the given cwd.
+  // Prefers Warp if installed, falls back to macOS Terminal.
+  ipcMain.on('shell:open-terminal', (_event, opts) => {
+    const { execFile, exec } = require('child_process');
+    const fs = require('fs');
+    const os = require('os');
+    const cwd = (opts && opts.cwd && typeof opts.cwd === 'string') ? opts.cwd : os.homedir();
+    const warpPath = '/Applications/Warp.app';
+    if (fs.existsSync(warpPath)) {
+      console.log(`[Shell] Opening Warp at: ${cwd}`);
+      exec(`open -a Warp "${cwd}"`, (err) => {
+        if (err) console.warn('[Shell] Could not open Warp:', err.message);
+      });
+    } else {
+      console.log(`[Shell] Opening Terminal at: ${cwd}`);
+      const script = `tell application "Terminal" to do script "cd '${cwd.replace(/'/g, "'\\''")}'"\ntell application "Terminal" to activate`;
+      execFile('osascript', ['-e', script], (err) => {
+        if (err) console.warn('[Shell] Could not open Terminal:', err.message);
+      });
+    }
   });
 
   // ─── Skills Manager: list installed skills ────────────────────────────────

@@ -778,6 +778,7 @@ export function UnifiedOverlay() {
         setInstallPrompt(null);
         setIsInstalling(false);
         glowOffTimerRef.current = setTimeout(() => setIsGlowActive(false), 400);
+        setIsSynthesisCollapsed(false);
       }
     };
 
@@ -1537,6 +1538,16 @@ export function UnifiedOverlay() {
       scrollBottomRef.current.scrollIntoView({ behavior: 'smooth' });
     }
   }, [streamingResponse, isStreaming]);
+
+  // --- Auto-expand Summary when synthesis streaming ends ---
+  // Belt-and-suspenders: the all_done IPC handler also calls setIsSynthesisCollapsed(false),
+  // but React 18 automatic batching can merge that update. This effect is declarative and
+  // fires reliably any time isStreaming goes false while content exists in automation mode.
+  useEffect(() => {
+    if (!isStreaming && streamingResponse && isAutomationMode) {
+      setIsSynthesisCollapsed(false);
+    }
+  }, [isStreaming]);
 
   // Window height is driven by AutomationProgress's onHeightChange callback (Fix in AutomationProgress.tsx)
   // which measures the component's own root div — outside the clipped layout chain.

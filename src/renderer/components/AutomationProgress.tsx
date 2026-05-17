@@ -566,6 +566,10 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
   const [agentThoughts, setAgentThoughts] = useState<Map<number, string[]>>(new Map());
   // Maps stepIndex → current thinking text from shell.run goal resolution
   const [stepThinking, setStepThinking] = useState<Map<number, string>>(new Map());
+  // Maps stepIndex → accumulated live stdout/stderr text (streamed during execution)
+  const [stepLiveOutput, setStepLiveOutput] = useState<Map<number, string>>(new Map());
+  // Set of step indices that have triggered a sudo_required warning
+  const [stepSudoWarning, setStepSudoWarning] = useState<Set<number>>(new Set());
   const [projectBuild, setProjectBuild] = useState<{ capability: string; iteration: number; message: string; passed: boolean; failed: boolean; errorMsg: string | null } | null>(null);
   const [projectBuildFiles, setProjectBuildFiles] = useState<string[]>([]);
   const [controlMode, setControlMode] = useState<{ active: boolean; app: string | null }>({ active: false, app: null });
@@ -588,6 +592,7 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
   const [planNameSaved, setPlanNameSaved] = useState(false);
   const [planNameError, setPlanNameError] = useState('');
   const [savedContextRule, setSavedContextRule] = useState<{ ruleText: string; contextKey: string; category: string } | null>(null);
+  const [failureAnswer, setFailureAnswer] = useState<string | null>(null);
   const _planFileRef = useRef<string>('');
   const DOT_NAME_RE = /^[a-z][a-z0-9]*(?:\.[a-z][a-z0-9]*)+$/;
   const isValidDotName = (n: string) => {
@@ -624,6 +629,8 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
   // When plan_ready fires for a second/third sub-intent, new steps are appended
   // at this offset so the user sees a cumulative list instead of a reset view.
   const stepOffsetRef = useRef<number>(0);
+  // Tracks the absolute index of the most recent synthesize step (used for auto-expand)
+  const synthStepIndexRef = useRef<number | null>(null);
   // Tracks when each running step started (for flickering heartbeat status)
   const agentStepStartTimes = useRef<Map<number, number>>(new Map());
   // Tracks live turn progress (agent:turn_live) from the command-service callback
@@ -679,7 +686,9 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
       setGlobalError(null);
       setTotalCount(0);
       setExpandedSteps(new Set());
+      synthStepIndexRef.current = null;
       setSynthesisAnswer('');
+      setFailureAnswer(null);
       setSavedFilePaths([]);
       setAskUserPrompt(null);
       setGuideStep(null);
@@ -702,6 +711,8 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
       setLoginGuidance(null);
       setLearnedRules(new Map());
       setAgentThoughts(new Map());
+      setStepLiveOutput(new Map());
+      setStepSudoWarning(new Set());
       setProjectBuild(null);
       setProjectBuildFiles([]);
       setPlanReview(null);
@@ -752,6 +763,9 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
       if (!active) return;
       switch (data.type) {
         case 'planning':
+          setAskUserPrompt(null);
+          setExpandedSteps(new Set());
+          setFailureAnswer(null);
           setPhase('planning');
           setPlanMessage(data.message || 'Generating skill plan...');
           setSteps([]);
@@ -811,6 +825,11 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
         case 'step_start':
           // Clear any active guide step card when the next step begins
           setGuideStep(null);
+          setAskUserPrompt(null);
+          // Track synthesize step index for auto-expand on all_done
+          if (data.skill === 'synthesize') {
+            synthStepIndexRef.current = data.stepIndex + stepOffsetRef.current;
+          }
           // If recovery just patched and retried (AUTO_PATCH), clear the orange banner — we're executing again
           if (phaseRef.current === 'retrying_with_fix') setPhase('executing');
           agentStepStartTimes.current.set(data.stepIndex + stepOffsetRef.current, Date.now());
@@ -833,6 +852,22 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
             next.set(_thinkIdx, data.thinking || '');
             return next;
           });
+          break;
+        }
+
+        case 'step_output': {
+          const _outIdx = (data.stepIndex ?? 0) + stepOffsetRef.current;
+          setStepLiveOutput(prev => {
+            const next = new Map(prev);
+            next.set(_outIdx, (prev.get(_outIdx) || '') + (data.text || ''));
+            return next;
+          });
+          break;
+        }
+
+        case 'step_sudo_required': {
+          const _sudoIdx = (data.stepIndex ?? 0) + stepOffsetRef.current;
+          setStepSudoWarning(prev => new Set([...prev, _sudoIdx]));
           break;
         }
 
@@ -1077,6 +1112,7 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
           break;
 
         case 'gather_answer_received':
+          setAskUserPrompt(null);
           break;
 
         case 'scout_match':
@@ -1142,6 +1178,8 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
           break;
 
         case 'retrying_with_fix':
+          setExpandedSteps(new Set());
+          setFailureAnswer(null);
           setPhase('retrying_with_fix');
           setRetryMessage(data.message || 'Adjusting approach and retrying...');
           if (data.ruleText) {
@@ -1223,6 +1261,21 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
                 savedFilePath: stepFilePath || s.savedFilePath,
               };
             }));
+          }
+          // Auto-expand synthesize and surface failure explanation on terminal states only.
+          // Uses synthStepIndexRef (set on step_start for synthesize) to avoid calling
+          // setExpandedSteps inside a setSteps updater, which causes React batching races.
+          {
+            const allSuccess = Array.isArray(data.skillResults) && data.skillResults.length > 0 && data.skillResults.every((r: any) => r.ok || r.skipped);
+            const hasAnyFailed = Array.isArray(data.skillResults) && data.skillResults.some((r: any) => !r.ok && !r.skipped);
+            const answerText = typeof data.answer === 'string' ? data.answer.trim() : '';
+            const synthIdx = synthStepIndexRef.current;
+            if (synthIdx !== null && (allSuccess || hasAnyFailed)) {
+              setExpandedSteps(e => { const n = new Set(e); n.add(synthIdx); return n; });
+            }
+            if (hasAnyFailed && answerText) {
+              setFailureAnswer(answerText);
+            }
           }
           // Also keep bottom-level list for any paths not matched to a specific step
           if (Array.isArray(data.savedFilePaths) && data.savedFilePaths.length > 0) {
@@ -2098,6 +2151,17 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
         );
       })()}
 
+      {/* ── Failure explanation card (max-retry exhausted) ──────────────── */}
+      {failureAnswer && (
+        <div className="px-3 py-2.5 rounded-lg text-xs"
+          style={{ backgroundColor: 'rgba(239,68,68,0.07)', borderLeft: '3px solid rgba(239,68,68,0.5)', color: '#fca5a5', lineHeight: 1.55 }}>
+          <div style={{ color: '#f87171', fontWeight: 600, marginBottom: 4, fontSize: '0.7rem', letterSpacing: '0.01em' }}>
+            What happened
+          </div>
+          {failureAnswer}
+        </div>
+      )}
+
       {/* ── Global error ─────────────────────────────────────────────────── */}
       {globalError && (
         <div className="px-3 py-2 rounded-lg text-xs"
@@ -2257,6 +2321,51 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
                     {step.status === 'running' && !!stepThinking.get(step.index) && (
                       <div style={{ marginTop: 3, fontSize: '11px', color: '#7c6fa0', fontStyle: 'italic', lineHeight: '1.45' }}>
                         ☁️ {stepThinking.get(step.index)}
+                      </div>
+                    )}
+                    {/* ── sudo warning — shown when step needs administrator access ── */}
+                    {stepSudoWarning.has(step.index) && (step.status === 'running' || step.status === 'failed') && (
+                      <div style={{ marginTop: 4, display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: '11px', color: '#fbbf24', background: 'rgba(251,191,36,0.08)', border: '1px solid rgba(251,191,36,0.25)', borderRadius: 5, padding: '3px 8px' }}>
+                        <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                          <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/>
+                        </svg>
+                        Requires system password (sudo)
+                      </div>
+                    )}
+                    {/* ── live terminal output — streamed while step is running ── */}
+                    {step.status === 'running' && !!stepLiveOutput.get(step.index) && (
+                      <div style={{ marginTop: 6 }}>
+                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 3 }}>
+                          <span style={{ fontSize: '10px', color: '#6b7280', fontFamily: 'ui-monospace, monospace' }}>terminal output</span>
+                          <button
+                            onClick={e => { e.stopPropagation(); ipcRenderer?.send('shell:open-terminal', { cwd: process.env.HOME }); }}
+                            style={{ fontSize: '10px', color: '#60a5fa', background: 'none', border: '1px solid rgba(96,165,250,0.3)', borderRadius: 4, padding: '1px 6px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 3 }}
+                          >
+                            <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                              <polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/>
+                            </svg>
+                            Open in Terminal
+                          </button>
+                        </div>
+                        <pre
+                          style={{
+                            margin: 0,
+                            padding: '8px 10px',
+                            borderRadius: 6,
+                            backgroundColor: 'rgba(0,0,0,0.55)',
+                            border: '1px solid rgba(255,255,255,0.07)',
+                            color: '#86efac',
+                            fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
+                            fontSize: '10.5px',
+                            lineHeight: '1.5',
+                            maxHeight: '140px',
+                            overflowY: 'auto',
+                            whiteSpace: 'pre-wrap',
+                            wordBreak: 'break-all',
+                          }}
+                        >
+                          {(stepLiveOutput.get(step.index) || '').slice(-4000)}
+                        </pre>
                       </div>
                     )}
                     {step.status === 'skipped' && !isExpanded && (
