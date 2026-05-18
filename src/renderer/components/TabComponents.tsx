@@ -102,6 +102,19 @@ export interface AgentItem {
   faviconUrl?: string;    // cached favicon path
 }
 
+export interface CLIAgentItem {
+  id: string;             // e.g., github.agent
+  type: string;           // 'cli'
+  service: string;        // e.g., github
+  cliTool: string;        // e.g., gh
+  capabilities: string[]; // e.g., ['issue', 'pr', 'repo']
+  status: string;         // healthy | needs_update | broken | not_installed
+  lastValidated?: string; // ISO timestamp
+  authUser?: string;      // authenticated username (from identity resolution)
+  authStatus?: string;    // authenticated | not_authenticated | unknown
+  version?: string;       // CLI version
+}
+
 export type CronStatus = 'active' | 'idle' | 'paused' | 'error';
 export type CronStepStatus = 'pending' | 'running' | 'done' | 'failed';
 export interface CronStep {

@@ -95,6 +95,8 @@ contextBridge.exposeInMainWorld('electron', {
         'agents:test-skill',
         'agents:publish-skill',
         'agents:delete-skill',
+        'agents:refresh-skill',
+        'agents:auto-scan-set',
       ];
       if (validChannels.includes(channel)) {
         ipcRenderer.send(channel, data);
@@ -170,6 +172,7 @@ contextBridge.exposeInMainWorld('electron', {
         'agents:learn-progress',
         'agents:train-progress',
         'agents:skill-test-update',
+        'agents:skill-refresh-update',
       ];
       if (validChannels.includes(channel)) {
         const wrapped = (_event, ...args) => func(...args);
@@ -373,6 +376,13 @@ contextBridge.exposeInMainWorld('electron', {
         'rules:allowedcmds:remove',
         'rules:allowedcmds:reset',
         'capture-screenshot',
+        'agents:auto-scan-get',
+        'cli-agents:list',
+        'cli-agents:query',
+        'cli-agents:validate',
+        'cli-agents:rebuild',
+        'cli-agents:delete',
+        'cli-agents:rules',
       ];
       if (validChannels.includes(channel)) {
         return ipcRenderer.invoke(channel, data);

@@ -6579,6 +6579,105 @@ app.whenReady().then(async () => {
     }
   });
 
+  // ─── CLI Agents: list / query / validate / rebuild / delete ──────────────
+  ipcMain.handle('cli-agents:list', async () => {
+    try {
+      const { cliAgent } = require('../../mcp-services/command-service/src/skills/cli.agent.cjs');
+      const result = await cliAgent({ action: 'list_agents' });
+      return result?.agents || [];
+    } catch (e) {
+      console.error('[CLI-Agents] cli-agents:list failed:', e.message);
+      return [];
+    }
+  });
+
+  ipcMain.handle('cli-agents:query', async (_event, { id }) => {
+    try {
+      const { cliAgent } = require('../../mcp-services/command-service/src/skills/cli.agent.cjs');
+      return await cliAgent({ action: 'query_agent', id });
+    } catch (e) {
+      console.error('[CLI-Agents] cli-agents:query failed:', e.message);
+      return { ok: false, error: e.message };
+    }
+  });
+
+  ipcMain.handle('cli-agents:validate', async (_event, { id }) => {
+    try {
+      const { cliAgent } = require('../../mcp-services/command-service/src/skills/cli.agent.cjs');
+      return await cliAgent({ action: 'validate_agent', id });
+    } catch (e) {
+      console.error('[CLI-Agents] cli-agents:validate failed:', e.message);
+      return { ok: false, error: e.message };
+    }
+  });
+
+  ipcMain.handle('cli-agents:rebuild', async (_event, { service }) => {
+    try {
+      const { cliAgent } = require('../../mcp-services/command-service/src/skills/cli.agent.cjs');
+      return await cliAgent({ action: 'build_agent', service, force: true });
+    } catch (e) {
+      console.error('[CLI-Agents] cli-agents:rebuild failed:', e.message);
+      return { ok: false, error: e.message };
+    }
+  });
+
+  ipcMain.handle('cli-agents:delete', async (_event, { id }) => {
+    try {
+      const path = require('path');
+      const os = require('os');
+      const fs = require('fs');
+      // Delete from DuckDB
+      const { cliAgent } = require('../../mcp-services/command-service/src/skills/cli.agent.cjs');
+      // Use internal DB access — cli.agent doesn't expose a delete action, so we
+      // delete the agent row directly and remove the .md file.
+      const agentsDir = path.join(os.homedir(), '.thinkdrop', 'agents');
+      const mdPath = path.join(agentsDir, `${id}.md`);
+      if (fs.existsSync(mdPath)) fs.unlinkSync(mdPath);
+      // Query first to confirm it exists, then use raw DB access
+      const queryResult = await cliAgent({ action: 'query_agent', id });
+      if (queryResult?.found) {
+        // Use DuckDB to delete — cli.agent exposes getDb indirectly via the module
+        try {
+          const duckdbAsync = require('duckdb-async');
+          const dbPath = path.join(os.homedir(), '.thinkdrop', 'agents.db');
+          const db = await duckdbAsync.Database.create(dbPath);
+          await db.run('DELETE FROM agents WHERE id = ?', id);
+          await db.close();
+        } catch (dbErr) {
+          console.warn('[CLI-Agents] DuckDB delete failed, trying duckdb:', dbErr.message);
+          try {
+            const { Database } = require('duckdb');
+            const dbPath = path.join(os.homedir(), '.thinkdrop', 'agents.db');
+            await new Promise((resolve, reject) => {
+              const db = new Database(dbPath, (err) => {
+                if (err) return reject(err);
+                db.run('DELETE FROM agents WHERE id = ?', id, (e) => {
+                  db.close(() => {});
+                  if (e) reject(e); else resolve();
+                });
+              });
+            });
+          } catch {}
+        }
+      }
+      return { ok: true };
+    } catch (e) {
+      console.error('[CLI-Agents] cli-agents:delete failed:', e.message);
+      return { ok: false, error: e.message };
+    }
+  });
+
+  ipcMain.handle('cli-agents:rules', async (_event, { id }) => {
+    try {
+      const skillDb = require('../../mcp-services/command-service/src/skill-helpers/skill-db.cjs');
+      const rules = await skillDb.getContextRules('cli_agent:' + id);
+      return rules || [];
+    } catch (e) {
+      console.error('[CLI-Agents] cli-agents:rules failed:', e.message);
+      return [];
+    }
+  });
+
   ipcMain.on('skills:refresh', () => {
     ipcMain.emit('skills:list');
   });

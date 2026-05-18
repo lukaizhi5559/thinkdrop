@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import type { AgentItem, AgentSkill } from './TabComponents';
+import type { AgentItem, AgentSkill, CLIAgentItem } from './TabComponents';
 
 const ipcRenderer = (window as any).electron?.ipcRenderer;
 
@@ -1106,6 +1106,16 @@ export function AgentsTab({ items, onRefresh }: AgentsTabProps) {
   // Subtab state: 'browser' | 'cli'
   const [activeSubtab, setActiveSubtab] = useState<'browser' | 'cli'>('browser');
 
+  // CLI Agents state
+  const [cliAgents, setCliAgents] = useState<CLIAgentItem[]>([]);
+  const [cliLoading, setCliLoading] = useState(false);
+  const [cliError, setCliError] = useState<string | null>(null);
+  const [cliValidating, setCliValidating] = useState<Record<string, boolean>>({});
+  const [cliRebuilding, setCliRebuilding] = useState<Record<string, boolean>>({});
+  const [cliDetailAgent, setCliDetailAgent] = useState<CLIAgentItem | null>(null);
+  const [cliDetailData, setCliDetailData] = useState<{ descriptor?: string; rules?: string[]; failureLog?: string } | null>(null);
+  const [cliConfirmDelete, setCliConfirmDelete] = useState<string | null>(null);
+
   // Sync with props
   useEffect(() => {
     setLocalItems(items);
@@ -1298,6 +1308,99 @@ export function AgentsTab({ items, onRefresh }: AgentsTabProps) {
 
   const toggleExpanded = (agentId: string) => {
     setExpandedAgent(expandedAgent === agentId ? null : agentId);
+  };
+
+  // ── CLI Agents handlers ──────────────────────────────────────────────────
+  const loadCliAgents = async () => {
+    if (!ipcRenderer) return;
+    setCliLoading(true);
+    setCliError(null);
+    try {
+      const agents = await ipcRenderer.invoke('cli-agents:list');
+      setCliAgents(Array.isArray(agents) ? agents : []);
+    } catch (e: any) {
+      setCliError(e?.message || 'Failed to load CLI agents');
+    } finally {
+      setCliLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (activeSubtab === 'cli') loadCliAgents();
+  }, [activeSubtab]);
+
+  const handleCliValidate = async (id: string) => {
+    setCliValidating(prev => ({ ...prev, [id]: true }));
+    try {
+      await ipcRenderer?.invoke('cli-agents:validate', { id });
+      await loadCliAgents();
+    } finally {
+      setCliValidating(prev => { const n = { ...prev }; delete n[id]; return n; });
+    }
+  };
+
+  const handleCliRebuild = async (id: string, service: string) => {
+    setCliRebuilding(prev => ({ ...prev, [id]: true }));
+    try {
+      await ipcRenderer?.invoke('cli-agents:rebuild', { service });
+      await loadCliAgents();
+    } finally {
+      setCliRebuilding(prev => { const n = { ...prev }; delete n[id]; return n; });
+    }
+  };
+
+  const handleCliDelete = async (id: string) => {
+    try {
+      await ipcRenderer?.invoke('cli-agents:delete', { id });
+      setCliAgents(prev => prev.filter(a => a.id !== id));
+      setCliConfirmDelete(null);
+      if (cliDetailAgent?.id === id) { setCliDetailAgent(null); setCliDetailData(null); }
+    } catch {}
+  };
+
+  const handleCliDetail = async (agent: CLIAgentItem) => {
+    setCliDetailAgent(agent);
+    setCliDetailData(null);
+    try {
+      const [queryRes, rules] = await Promise.all([
+        ipcRenderer?.invoke('cli-agents:query', { id: agent.id }),
+        ipcRenderer?.invoke('cli-agents:rules', { id: agent.id }),
+      ]);
+      setCliDetailData({
+        descriptor: queryRes?.descriptor || '(no descriptor)',
+        rules: Array.isArray(rules) ? rules : [],
+        failureLog: queryRes?.failureLog || queryRes?.failure_log || '',
+      });
+    } catch {}
+  };
+
+  // CLI agent status colors
+  const cliStatusColor = (status: string) => {
+    switch (status) {
+      case 'healthy': return '#10b981';
+      case 'needs_update': return '#f59e0b';
+      case 'broken': case 'not_installed': return '#ef4444';
+      default: return '#6b7280';
+    }
+  };
+  const cliStatusLabel = (status: string) => {
+    switch (status) {
+      case 'healthy': return 'Healthy';
+      case 'needs_update': return 'Needs update';
+      case 'broken': return 'Broken';
+      case 'not_installed': return 'Not installed';
+      default: return status || 'Unknown';
+    }
+  };
+
+  // Relative time helper
+  const timeAgo = (iso?: string) => {
+    if (!iso) return 'never';
+    const diff = Date.now() - new Date(iso).getTime();
+    if (diff < 60000) return 'just now';
+    if (diff < 3600000) return `${Math.floor(diff / 60000)}m ago`;
+    if (diff < 86400000) return `${Math.floor(diff / 3600000)}h ago`;
+    return `${Math.floor(diff / 86400000)}d ago`;
   };
 
   return (
@@ -1556,24 +1659,211 @@ export function AgentsTab({ items, onRefresh }: AgentsTabProps) {
       </>
       )}
 
-      {/* CLI Agents Tab - Coming Soon */}
+      {/* CLI Agents Tab */}
       {activeSubtab === 'cli' && (
-        <div style={{ marginTop: 16, textAlign: 'center', padding: 40, color: '#6b7280' }}>
-          <div style={{ marginBottom: 16, display: 'flex', justifyContent: 'center' }}>
-            <div style={{ width: 56, height: 56, borderRadius: 12, backgroundColor: 'rgba(16,185,129,0.12)', border: '1px solid rgba(16,185,129,0.25)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-              <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#10b981" strokeWidth="1.6">
-                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
-                <polyline points="14 2 14 8 20 8"/>
-                <line x1="16" y1="13" x2="8" y2="13"/>
-                <line x1="16" y1="17" x2="8" y2="17"/>
-                <polyline points="10 9 9 9 8 9"/>
-              </svg>
+        <div style={{ marginTop: 8 }}>
+          {/* Loading */}
+          {cliLoading && (
+            <div style={{ textAlign: 'center', padding: 30, color: '#6b7280', fontSize: '0.8rem' }}>
+              <span style={{ animation: 'spin 1s linear infinite', display: 'inline-block' }}>
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>
+              </span>
+              {' '}Loading CLI agents...
             </div>
-          </div>
-          <div style={{ fontSize: '1rem', marginBottom: 8, color: '#fff' }}>CLI Agents</div>
-          <div style={{ fontSize: '0.85rem', maxWidth: 300, margin: '0 auto', lineHeight: 1.5 }}>
-            CLI agents are created automatically when you install command-line tools like <code style={{ background: 'rgba(16,185,129,0.2)', padding: '2px 4px', borderRadius: 4 }}>transcribe-anything</code> or <code style={{ background: 'rgba(16,185,129,0.2)', padding: '2px 4px', borderRadius: 4 }}>gh</code>
-          </div>
+          )}
+          {/* Error */}
+          {cliError && (
+            <div style={{ textAlign: 'center', padding: 20, color: '#ef4444', fontSize: '0.8rem' }}>
+              {cliError}
+              <button onClick={loadCliAgents} style={{ marginLeft: 8, padding: '2px 8px', background: 'rgba(239,68,68,0.15)', border: '1px solid rgba(239,68,68,0.3)', borderRadius: 4, color: '#ef4444', fontSize: '0.7rem', cursor: 'pointer' }}>Retry</button>
+            </div>
+          )}
+          {/* Empty state */}
+          {!cliLoading && !cliError && cliAgents.length === 0 && (
+            <div style={{ textAlign: 'center', padding: 50, color: '#6b7280' }}>
+              <div style={{ marginBottom: 16, display: 'flex', justifyContent: 'center' }}>
+                <div style={{ width: 56, height: 56, borderRadius: 12, backgroundColor: 'rgba(16,185,129,0.12)', border: '1px solid rgba(16,185,129,0.25)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                  <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#10b981" strokeWidth="1.6"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg>
+                </div>
+              </div>
+              <div style={{ fontSize: '0.95rem', marginBottom: 6, color: '#fff' }}>No CLI agents yet</div>
+              <div style={{ fontSize: '0.8rem', maxWidth: 320, margin: '0 auto', lineHeight: 1.5 }}>
+                Try <code style={{ background: 'rgba(16,185,129,0.2)', padding: '2px 5px', borderRadius: 4, fontSize: '0.75rem' }}>set up GitHub</code> or <code style={{ background: 'rgba(16,185,129,0.2)', padding: '2px 5px', borderRadius: 4, fontSize: '0.75rem' }}>install the Stripe CLI</code> in the prompt
+              </div>
+            </div>
+          )}
+          {/* Agent cards */}
+          {!cliLoading && cliAgents.length > 0 && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              {cliAgents.map(agent => (
+                <div
+                  key={agent.id}
+                  onClick={() => handleCliDetail(agent)}
+                  style={{
+                    background: 'rgba(255,255,255,0.03)',
+                    border: '1px solid rgba(255,255,255,0.06)',
+                    borderRadius: 10,
+                    padding: '12px 14px',
+                    cursor: 'pointer',
+                    transition: 'border-color 0.15s',
+                  }}
+                  onMouseEnter={e => (e.currentTarget.style.borderColor = 'rgba(16,185,129,0.3)')}
+                  onMouseLeave={e => (e.currentTarget.style.borderColor = 'rgba(255,255,255,0.06)')}
+                >
+                  {/* Top row: icon + name + status */}
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8 }}>
+                    <div style={{ width: 34, height: 34, borderRadius: 8, backgroundColor: 'rgba(16,185,129,0.12)', border: '1px solid rgba(16,185,129,0.2)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#10b981" strokeWidth="1.8"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg>
+                    </div>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                        <span style={{ color: '#fff', fontSize: '0.85rem', fontWeight: 500 }}>{agent.id}</span>
+                        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 3, fontSize: '0.65rem', color: cliStatusColor(agent.status), background: `${cliStatusColor(agent.status)}15`, padding: '1px 6px', borderRadius: 8 }}>
+                          <span style={{ width: 5, height: 5, borderRadius: '50%', backgroundColor: cliStatusColor(agent.status) }} />
+                          {cliStatusLabel(agent.status)}
+                        </span>
+                      </div>
+                      <div style={{ fontSize: '0.7rem', color: '#6b7280', marginTop: 2 }}>
+                        {agent.cliTool && <span>CLI: <code style={{ color: '#10b981', fontSize: '0.68rem' }}>{agent.cliTool}</code></span>}
+                        {agent.service && <span style={{ marginLeft: 8 }}>Service: {agent.service}</span>}
+                        {agent.lastValidated && <span style={{ marginLeft: 8 }}>Validated: {timeAgo(agent.lastValidated)}</span>}
+                      </div>
+                    </div>
+                  </div>
+                  {/* Capabilities */}
+                  {agent.capabilities && agent.capabilities.length > 0 && (
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginBottom: 8 }}>
+                      {agent.capabilities.slice(0, 8).map(cap => (
+                        <span key={cap} style={{ fontSize: '0.6rem', padding: '1px 6px', borderRadius: 6, background: 'rgba(16,185,129,0.1)', color: '#10b981', border: '1px solid rgba(16,185,129,0.2)' }}>{cap}</span>
+                      ))}
+                      {agent.capabilities.length > 8 && (
+                        <span style={{ fontSize: '0.6rem', padding: '1px 6px', color: '#6b7280' }}>+{agent.capabilities.length - 8}</span>
+                      )}
+                    </div>
+                  )}
+                  {/* Action buttons */}
+                  <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }} onClick={e => e.stopPropagation()}>
+                    <button
+                      onClick={() => handleCliValidate(agent.id)}
+                      disabled={!!cliValidating[agent.id]}
+                      style={{ padding: '3px 8px', borderRadius: 5, border: '1px solid rgba(16,185,129,0.25)', background: 'rgba(16,185,129,0.08)', color: '#10b981', fontSize: '0.63rem', cursor: 'pointer', opacity: cliValidating[agent.id] ? 0.5 : 1 }}
+                    >
+                      {cliValidating[agent.id] ? 'Validating...' : 'Validate'}
+                    </button>
+                    <button
+                      onClick={() => handleCliRebuild(agent.id, agent.service)}
+                      disabled={!!cliRebuilding[agent.id]}
+                      style={{ padding: '3px 8px', borderRadius: 5, border: '1px solid rgba(99,102,241,0.25)', background: 'rgba(99,102,241,0.08)', color: '#818cf8', fontSize: '0.63rem', cursor: 'pointer', opacity: cliRebuilding[agent.id] ? 0.5 : 1 }}
+                    >
+                      {cliRebuilding[agent.id] ? 'Rebuilding...' : 'Rebuild'}
+                    </button>
+                    {cliConfirmDelete === agent.id ? (
+                      <button
+                        onClick={() => handleCliDelete(agent.id)}
+                        style={{ padding: '3px 8px', borderRadius: 5, border: '1px solid rgba(239,68,68,0.4)', background: 'rgba(239,68,68,0.15)', color: '#ef4444', fontSize: '0.63rem', cursor: 'pointer' }}
+                      >
+                        Confirm delete?
+                      </button>
+                    ) : (
+                      <button
+                        onClick={() => { setCliConfirmDelete(agent.id); setTimeout(() => setCliConfirmDelete(null), 3000); }}
+                        style={{ padding: '3px 8px', borderRadius: 5, border: '1px solid rgba(255,255,255,0.08)', background: 'transparent', color: '#6b7280', fontSize: '0.63rem', cursor: 'pointer' }}
+                      >
+                        Delete
+                      </button>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+          {/* Detail drawer */}
+          {cliDetailAgent && (
+            <div style={{
+              position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
+              backgroundColor: 'rgba(0,0,0,0.6)', zIndex: 1000,
+              display: 'flex', justifyContent: 'center', alignItems: 'center',
+            }} onClick={() => { setCliDetailAgent(null); setCliDetailData(null); }}>
+              <div
+                onClick={e => e.stopPropagation()}
+                style={{
+                  background: '#1a1a2e', border: '1px solid rgba(255,255,255,0.1)',
+                  borderRadius: 14, padding: 24, width: '90%', maxWidth: 480,
+                  maxHeight: '80vh', overflowY: 'auto', color: '#e5e7eb',
+                }}
+              >
+                {/* Header */}
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
+                  <div>
+                    <div style={{ fontSize: '1rem', fontWeight: 600, color: '#fff' }}>{cliDetailAgent.id}</div>
+                    <div style={{ fontSize: '0.75rem', color: '#6b7280', marginTop: 2 }}>
+                      {cliDetailAgent.cliTool && <span>CLI: <code style={{ color: '#10b981' }}>{cliDetailAgent.cliTool}</code></span>}
+                      {cliDetailAgent.service && <span style={{ marginLeft: 10 }}>Service: {cliDetailAgent.service}</span>}
+                    </div>
+                  </div>
+                  <button onClick={() => { setCliDetailAgent(null); setCliDetailData(null); }} style={{ background: 'none', border: 'none', color: '#6b7280', cursor: 'pointer', fontSize: '1.2rem' }}>x</button>
+                </div>
+                {/* Status */}
+                <div style={{ marginBottom: 14, display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: '0.72rem', color: cliStatusColor(cliDetailAgent.status), background: `${cliStatusColor(cliDetailAgent.status)}15`, padding: '2px 8px', borderRadius: 8 }}>
+                    <span style={{ width: 6, height: 6, borderRadius: '50%', backgroundColor: cliStatusColor(cliDetailAgent.status) }} />
+                    {cliStatusLabel(cliDetailAgent.status)}
+                  </span>
+                  {cliDetailAgent.lastValidated && (
+                    <span style={{ fontSize: '0.7rem', color: '#6b7280' }}>Last validated: {timeAgo(cliDetailAgent.lastValidated)}</span>
+                  )}
+                </div>
+                {/* Capabilities */}
+                {cliDetailAgent.capabilities && cliDetailAgent.capabilities.length > 0 && (
+                  <div style={{ marginBottom: 14 }}>
+                    <div style={{ fontSize: '0.7rem', color: '#9ca3af', marginBottom: 4, fontWeight: 500 }}>Capabilities</div>
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+                      {cliDetailAgent.capabilities.map(cap => (
+                        <span key={cap} style={{ fontSize: '0.63rem', padding: '2px 7px', borderRadius: 6, background: 'rgba(16,185,129,0.1)', color: '#10b981', border: '1px solid rgba(16,185,129,0.2)' }}>{cap}</span>
+                      ))}
+                    </div>
+                  </div>
+                )}
+                {/* Loading detail data */}
+                {!cliDetailData && (
+                  <div style={{ textAlign: 'center', padding: 20, color: '#6b7280', fontSize: '0.75rem' }}>Loading details...</div>
+                )}
+                {cliDetailData && (
+                  <>
+                    {/* Learned Rules */}
+                    {cliDetailData.rules && cliDetailData.rules.length > 0 && (
+                      <div style={{ marginBottom: 14 }}>
+                        <div style={{ fontSize: '0.7rem', color: '#9ca3af', marginBottom: 4, fontWeight: 500 }}>Learned Rules ({cliDetailData.rules.length})</div>
+                        <div style={{ background: 'rgba(0,0,0,0.3)', borderRadius: 8, padding: '8px 10px', maxHeight: 120, overflowY: 'auto' }}>
+                          {cliDetailData.rules.map((rule, i) => (
+                            <div key={i} style={{ fontSize: '0.68rem', color: '#d1d5db', padding: '3px 0', borderBottom: i < cliDetailData.rules!.length - 1 ? '1px solid rgba(255,255,255,0.04)' : 'none' }}>
+                              {rule}
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                    {/* Failure Log */}
+                    {cliDetailData.failureLog && (
+                      <div style={{ marginBottom: 14 }}>
+                        <div style={{ fontSize: '0.7rem', color: '#f87171', marginBottom: 4, fontWeight: 500 }}>Failure Log</div>
+                        <pre style={{ background: 'rgba(239,68,68,0.06)', borderRadius: 8, padding: '8px 10px', fontSize: '0.63rem', color: '#fca5a5', whiteSpace: 'pre-wrap', wordBreak: 'break-all', maxHeight: 150, overflowY: 'auto', margin: 0, border: '1px solid rgba(239,68,68,0.15)' }}>
+                          {cliDetailData.failureLog}
+                        </pre>
+                      </div>
+                    )}
+                    {/* Descriptor */}
+                    <div style={{ marginBottom: 14 }}>
+                      <div style={{ fontSize: '0.7rem', color: '#9ca3af', marginBottom: 4, fontWeight: 500 }}>Descriptor</div>
+                      <pre style={{ background: 'rgba(0,0,0,0.3)', borderRadius: 8, padding: '8px 10px', fontSize: '0.6rem', color: '#d1d5db', whiteSpace: 'pre-wrap', wordBreak: 'break-all', maxHeight: 200, overflowY: 'auto', margin: 0 }}>
+                        {cliDetailData.descriptor}
+                      </pre>
+                    </div>
+                  </>
+                )}
+              </div>
+            </div>
+          )}
         </div>
       )}
 
