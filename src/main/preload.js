@@ -97,6 +97,7 @@ contextBridge.exposeInMainWorld('electron', {
         'agents:delete-skill',
         'agents:refresh-skill',
         'agents:auto-scan-set',
+        'settings:set',
       ];
       if (validChannels.includes(channel)) {
         ipcRenderer.send(channel, data);
@@ -383,6 +384,7 @@ contextBridge.exposeInMainWorld('electron', {
         'cli-agents:rebuild',
         'cli-agents:delete',
         'cli-agents:rules',
+        'settings:get',
       ];
       if (validChannels.includes(channel)) {
         return ipcRenderer.invoke(channel, data);

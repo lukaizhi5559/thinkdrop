@@ -1112,6 +1112,7 @@ export function AgentsTab({ items, onRefresh }: AgentsTabProps) {
   const [cliError, setCliError] = useState<string | null>(null);
   const [cliValidating, setCliValidating] = useState<Record<string, boolean>>({});
   const [cliRebuilding, setCliRebuilding] = useState<Record<string, boolean>>({});
+  const [cliAuthLoading, setCliAuthLoading] = useState<Record<string, boolean>>({});
   const [cliDetailAgent, setCliDetailAgent] = useState<CLIAgentItem | null>(null);
   const [cliDetailData, setCliDetailData] = useState<{ descriptor?: string; rules?: string[]; failureLog?: string } | null>(null);
   const [cliConfirmDelete, setCliConfirmDelete] = useState<string | null>(null);
@@ -1356,6 +1357,15 @@ export function AgentsTab({ items, onRefresh }: AgentsTabProps) {
       setCliConfirmDelete(null);
       if (cliDetailAgent?.id === id) { setCliDetailAgent(null); setCliDetailData(null); }
     } catch {}
+  };
+
+  const handleCliAuth = async (id: string, cliTool: string) => {
+    setCliAuthLoading(prev => ({ ...prev, [id]: true }));
+    try {
+      await ipcRenderer?.invoke('cli-agents:auth-login', { id, cliTool });
+      await loadCliAgents(); // refresh auth status
+    } catch {}
+    setCliAuthLoading(prev => { const n = { ...prev }; delete n[id]; return n; });
   };
 
   const handleCliDetail = async (agent: CLIAgentItem) => {
@@ -1743,6 +1753,15 @@ export function AgentsTab({ items, onRefresh }: AgentsTabProps) {
                   )}
                   {/* Action buttons */}
                   <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }} onClick={e => e.stopPropagation()}>
+                    {agent.authStatus === 'not_authenticated' && (
+                      <button
+                        onClick={() => handleCliAuth(agent.id, agent.cliTool)}
+                        disabled={!!cliAuthLoading[agent.id]}
+                        style={{ padding: '3px 8px', borderRadius: 5, border: '1px solid rgba(251,191,36,0.35)', background: 'rgba(251,191,36,0.1)', color: '#fbbf24', fontSize: '0.63rem', cursor: 'pointer', opacity: cliAuthLoading[agent.id] ? 0.5 : 1, fontWeight: 600 }}
+                      >
+                        {cliAuthLoading[agent.id] ? '🔐 Signing in...' : '🔐 Sign In'}
+                      </button>
+                    )}
                     <button
                       onClick={() => handleCliValidate(agent.id)}
                       disabled={!!cliValidating[agent.id]}

@@ -523,10 +523,10 @@ function startOverlayControlServer() {
       req.on('end', () => {
         try {
           const evt = JSON.parse(body || '{}');
-          if (activeProgressCallback && ['agent:turn_live', 'agent:turn', 'agent:complete', 'agent:thought', 'needs_login'].includes(evt.type)) {
+          if (activeProgressCallback && ['agent:turn_live', 'agent:turn', 'agent:complete', 'agent:thought', 'needs_login', 'task:auth_required', 'task:auth_resolved'].includes(evt.type)) {
             activeProgressCallback(evt);
           }
-          if (activeCronProgressCallback && ['agent:turn_live', 'agent:turn', 'agent:complete', 'agent:thought', 'needs_login'].includes(evt.type)) {
+          if (activeCronProgressCallback && ['agent:turn_live', 'agent:turn', 'agent:complete', 'agent:thought', 'needs_login', 'task:auth_required', 'task:auth_resolved'].includes(evt.type)) {
             activeCronProgressCallback(evt);
           }
           res.writeHead(200).end(JSON.stringify({ ok: true }));
@@ -2362,6 +2362,45 @@ app.whenReady().then(async () => {
     } catch (err) {
       console.warn('[AutoScan] Failed to notify command-service:', err.message);
     }
+  });
+
+  // ─── Generic settings IPC handlers ─────────────────────────────────────────
+  // Read/write arbitrary keys in ~/.thinkdrop/settings.json.
+  // Used by SettingsTab UI and the executeSettings stategraph node.
+
+  function _loadSettings() {
+    try {
+      const fs = require('fs');
+      if (fs.existsSync(AUTO_SCAN_SETTINGS_FILE)) {
+        return JSON.parse(fs.readFileSync(AUTO_SCAN_SETTINGS_FILE, 'utf8'));
+      }
+    } catch (_) {}
+    return {};
+  }
+
+  function _saveSetting(key, value) {
+    try {
+      const fs = require('fs');
+      const data = _loadSettings();
+      data[key] = value;
+      fs.mkdirSync(path.dirname(AUTO_SCAN_SETTINGS_FILE), { recursive: true });
+      fs.writeFileSync(AUTO_SCAN_SETTINGS_FILE, JSON.stringify(data, null, 2), 'utf8');
+      return true;
+    } catch (err) {
+      console.warn(`[Settings] Failed to save ${key}:`, err.message);
+      return false;
+    }
+  }
+
+  ipcMain.handle('settings:get', async (_event, { key } = {}) => {
+    const data = _loadSettings();
+    return { key, value: key ? data[key] : data };
+  });
+
+  ipcMain.on('settings:set', (_event, { key, value } = {}) => {
+    if (!key) return;
+    console.log(`[Settings] Set ${key}=${JSON.stringify(value)}`);
+    _saveSetting(key, value);
   });
 
   // ─── Voice: IPC handlers for voice service integration ───────────────────
@@ -6663,6 +6702,18 @@ app.whenReady().then(async () => {
       return { ok: true };
     } catch (e) {
       console.error('[CLI-Agents] cli-agents:delete failed:', e.message);
+      return { ok: false, error: e.message };
+    }
+  });
+
+  ipcMain.handle('cli-agents:auth-login', async (_event, { id, cliTool }) => {
+    try {
+      const { cliAgent } = require('../../mcp-services/command-service/src/skills/cli.agent.cjs');
+      // Run the CLI agent with an auth task — discoverAuthLoginCmd + auto-run happens inside
+      const result = await cliAgent({ action: 'run', agentId: id, task: `authenticate ${cliTool || id.replace('.agent', '')} — run the login command` });
+      return result || { ok: false, error: 'No result' };
+    } catch (e) {
+      console.error('[CLI-Agents] cli-agents:auth-login failed:', e.message);
       return { ok: false, error: e.message };
     }
   });

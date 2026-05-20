@@ -7,6 +7,14 @@ interface ShortcutItem {
   description: string;
 }
 
+type PlanApprovalMode = 'always' | 'multi_step' | 'auto';
+
+const PLAN_APPROVAL_OPTIONS: { value: PlanApprovalMode; label: string; desc: string }[] = [
+  { value: 'always',     label: 'Always approve',       desc: 'Every plan pauses for your review' },
+  { value: 'multi_step', label: 'Multi-step plans only', desc: '2+ step plans pause; single-step auto-runs' },
+  { value: 'auto',       label: 'Auto-approve all',     desc: 'Plans execute immediately without review' },
+];
+
 export function SettingsTab() {
   const [shortcuts, setShortcuts] = useState<ShortcutItem[]>([
     { key: 'Cmd+Shift+T', description: 'Toggle overlay' },
@@ -14,6 +22,8 @@ export function SettingsTab() {
     { key: 'Enter', description: 'Submit prompt' },
     { key: 'Shift+Enter', description: 'New line in prompt' },
   ]);
+
+  const [planApproval, setPlanApproval] = useState<PlanApprovalMode>('multi_step');
 
   useEffect(() => {
     // Request shortcuts from main process
@@ -27,13 +37,58 @@ export function SettingsTab() {
 
     ipcRenderer?.on('settings:shortcuts', handleShortcuts);
 
+    // Load plan approval setting
+    ipcRenderer?.invoke('settings:get', { key: 'planApprovalMode' }).then((res: any) => {
+      if (res?.value && ['always', 'multi_step', 'auto'].includes(res.value)) {
+        setPlanApproval(res.value);
+      }
+    });
+
     return () => {
       ipcRenderer?.removeListener('settings:shortcuts', handleShortcuts);
     };
   }, []);
 
+  const handlePlanApprovalChange = (mode: PlanApprovalMode) => {
+    setPlanApproval(mode);
+    ipcRenderer?.send('settings:set', { key: 'planApprovalMode', value: mode });
+  };
+
   return (
     <div className="space-y-6">
+      <div>
+        <h3 className="text-sm font-semibold text-gray-300 mb-3">Plan Approval</h3>
+        <p className="text-xs text-gray-500 mb-3">
+          Control when plans require your approval before running.
+        </p>
+        <div className="space-y-2">
+          {PLAN_APPROVAL_OPTIONS.map((opt) => (
+            <label
+              key={opt.value}
+              className="flex items-start gap-3 p-3 rounded-lg cursor-pointer transition-colors"
+              style={{
+                backgroundColor: planApproval === opt.value ? 'rgba(59, 130, 246, 0.12)' : 'rgba(255, 255, 255, 0.03)',
+                border: planApproval === opt.value ? '1px solid rgba(59, 130, 246, 0.35)' : '1px solid transparent',
+              }}
+            >
+              <input
+                type="radio"
+                name="planApproval"
+                value={opt.value}
+                checked={planApproval === opt.value}
+                onChange={() => handlePlanApprovalChange(opt.value)}
+                className="mt-0.5"
+                style={{ accentColor: '#3b82f6' }}
+              />
+              <div>
+                <span className="text-sm text-gray-300 font-medium">{opt.label}</span>
+                <p className="text-xs text-gray-500 mt-0.5">{opt.desc}</p>
+              </div>
+            </label>
+          ))}
+        </div>
+      </div>
+
       <div>
         <h3 className="text-sm font-semibold text-gray-300 mb-3">Keyboard Shortcuts</h3>
         <div className="space-y-2">

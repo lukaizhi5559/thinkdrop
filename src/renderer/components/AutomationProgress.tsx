@@ -30,6 +30,55 @@ interface Step {
   guideInstruction?: string; // original instruction text preserved after guide.step completes
   userAllowlistHint?: boolean;
   commandName?: string | null;
+  runGroup?: string; // parallel group ID (e.g. "g1")
+}
+
+// ── AgentFavicon — shown next to agentId on every agent step ─────────────────
+function agentIdToDomain(agentId: string): string {
+  // Strip .agent suffix, map to domain (e.g. amazon.agent → amazon.com)
+  const base = agentId.replace(/\.agent$/i, '').toLowerCase();
+  const overrides: Record<string, string> = {
+    gmail: 'mail.google.com',
+    google: 'google.com',
+    youtube: 'youtube.com',
+    ebay: 'ebay.com',
+    amazon: 'amazon.com',
+    reddit: 'reddit.com',
+    twitter: 'twitter.com',
+    x: 'x.com',
+    linkedin: 'linkedin.com',
+    slack: 'slack.com',
+    notion: 'notion.so',
+    github: 'github.com',
+    perplexity: 'perplexity.ai',
+    chatgpt: 'chat.openai.com',
+    openai: 'openai.com',
+  };
+  return overrides[base] || `${base}.com`;
+}
+
+function AgentFavicon({ agentId, size = 14 }: { agentId: string; size?: number }) {
+  const [ok, setOk] = useState(true);
+  const domain = agentIdToDomain(agentId);
+  const src = `https://www.google.com/s2/favicons?domain=${encodeURIComponent(domain)}&sz=64`;
+  if (!ok) {
+    return (
+      <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ color: '#6b7280', flexShrink: 0 }}>
+        <circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/>
+        <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/>
+      </svg>
+    );
+  }
+  return (
+    <img
+      src={src}
+      width={size}
+      height={size}
+      alt=""
+      onError={() => setOk(false)}
+      style={{ borderRadius: 2, flexShrink: 0, display: 'block' }}
+    />
+  );
 }
 
 type AutomationPhase =
@@ -555,6 +604,8 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
   const [gatherOAuthConnecting, setGatherOAuthConnecting] = useState(false);
   // Login guidance — shown inline while waitForAuth polls (step stays running)
   const [loginGuidance, setLoginGuidance] = useState<{ stepIndex: number; serviceDisplay: string; loginUrl: string; message: string } | null>(null);
+  // Task auth overlay — prominent lock card shown when login wall detected during task execution
+  const [taskAuthOverlay, setTaskAuthOverlay] = useState<{ stepIndex: number; serviceDisplay: string; loginUrl: string; agentId: string; message: string } | null>(null);
   const [gatherOAuthConnected, setGatherOAuthConnected] = useState<string | null>(null);
   // Maps stepIndex → array of agent turn entries (populated post-hoc from cli.agent / browser.agent runs)
   const [agentTurns, setAgentTurns] = useState<Map<number, AgentTurnEntry[]>>(new Map());
@@ -709,6 +760,7 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
       agentLiveTurns.current.clear();
       setHeartbeatTick(0);
       setLoginGuidance(null);
+      setTaskAuthOverlay(null);
       setLearnedRules(new Map());
       setAgentThoughts(new Map());
       setStepLiveOutput(new Map());
@@ -794,6 +846,7 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
                 skill: s.skill,
                 description: s.description,
                 status: 'pending' as StepStatus,
+                runGroup: s.runGroup || undefined,
               })),
             ]);
           } else {
@@ -812,6 +865,7 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
               skill: s.skill,
               description: s.description,
               status: 'pending' as StepStatus,
+              runGroup: s.runGroup || undefined,
             })));
           }
           break;
@@ -935,6 +989,28 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
             loginUrl: data.loginUrl || '',
             message: data.message || '',
           });
+          break;
+        }
+
+        case 'task:auth_required': {
+          // Login wall detected during task execution — show prominent auth overlay card
+          const stepIdx = steps.findIndex(s => s.status === 'running');
+          const displayIdx = stepIdx >= 0 ? stepIdx : (data.stepIndex ?? 0) + stepOffsetRef.current;
+          setTaskAuthOverlay({
+            stepIndex: displayIdx,
+            serviceDisplay: data.serviceDisplay || '',
+            loginUrl: data.loginUrl || '',
+            agentId: data.agentId || '',
+            message: data.message || '',
+          });
+          // Also clear the simpler loginGuidance if it was showing
+          setLoginGuidance(null);
+          break;
+        }
+
+        case 'task:auth_resolved': {
+          // Auth succeeded — dismiss the overlay
+          setTaskAuthOverlay(null);
           break;
         }
 
@@ -1508,6 +1584,10 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
           100% { background-position: 200% center; }
         }
         @keyframes scanPulse {
+          0%, 100% { opacity: 1; }
+          50% { opacity: 0.5; }
+        }
+        @keyframes pulse {
           0%, 100% { opacity: 1; }
           50% { opacity: 0.5; }
         }
@@ -2227,7 +2307,18 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
       {/* ── Step list ────────────────────────────────────────────────────── */}
       {steps.length > 0 && (
         <div className="space-y-2" style={{ overflowX: 'hidden' }}>
-          {steps.map((step) => {
+          {steps.map((step, stepArrayIdx) => {
+            // ── Parallel group bracket helpers ──────────────────────────────
+            const prevStep = stepArrayIdx > 0 ? steps[stepArrayIdx - 1] : null;
+            const nextStep = stepArrayIdx < steps.length - 1 ? steps[stepArrayIdx + 1] : null;
+            const isInGroup = !!step.runGroup;
+            const isGroupStart = isInGroup && (!prevStep || prevStep.runGroup !== step.runGroup);
+            const isGroupEnd   = isInGroup && (!nextStep || nextStep.runGroup !== step.runGroup);
+            const groupDoneCount = isInGroup ? steps.filter(s => s.runGroup === step.runGroup && (s.status === 'done' || s.status === 'skipped')).length : 0;
+            const groupTotalCount = isInGroup ? steps.filter(s => s.runGroup === step.runGroup).length : 0;
+            const groupAllDone = isInGroup && groupDoneCount === groupTotalCount && groupTotalCount > 0;
+            // Collapse group to summary row for non-start members once all done
+            if (isInGroup && !isGroupStart && groupAllDone) return null;
             const isSynthesize = step.skill === 'synthesize';
             const isNeedsSkill = step.skill === 'needs_skill';
             const isGuideStep = step.skill === 'guide.step';
@@ -2240,6 +2331,36 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
 
             return (
               <div key={step.index} ref={(el) => { if (el) stepRefs.current.set(step.index, el); else stepRefs.current.delete(step.index); }}>
+                {/* ── Parallel group header — shown above first step in group ── */}
+                {isGroupStart && (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 5, marginBottom: 4, paddingLeft: 2 }}>
+                    <svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor" style={{ color: '#818cf8', flexShrink: 0 }}>
+                      <path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/>
+                    </svg>
+                    <span style={{ fontSize: '10px', fontWeight: 600, color: '#6366f1', letterSpacing: '0.05em', textTransform: 'uppercase' }}>Running in parallel</span>
+                  </div>
+                )}
+                {/* Step row — wrapped in bracket container when in group */}
+                <div style={isInGroup ? { display: 'flex', alignItems: 'stretch', gap: 0 } : {}}>
+                  {/* Left bracket bar */}
+                  {isInGroup && (
+                    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', width: 14, flexShrink: 0, marginRight: 4 }}>
+                      <div style={{
+                        width: 1,
+                        backgroundColor: '#4338ca',
+                        flex: 1,
+                        opacity: 0.6,
+                        borderRadius: isGroupStart ? '2px 2px 0 0' : isGroupEnd ? '0 0 2px 2px' : 0,
+                        minHeight: 8,
+                      }} />
+                      {isGroupEnd && (
+                        <svg width="8" height="6" viewBox="0 0 8 6" style={{ flexShrink: 0, color: '#4338ca', opacity: 0.6 }}>
+                          <path d="M0 0 L0 6 L8 6" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
+                        </svg>
+                      )}
+                    </div>
+                  )}
+                  <div style={{ flex: 1, minWidth: 0 }}>
                 {/* Step row */}
                 <div
                   className="flex items-start gap-2.5"
@@ -2275,6 +2396,7 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
                                 onClick={e => { e.stopPropagation(); setExpandedAgentSteps(prev => { const n = new Set(prev); n.has(step.index) ? n.delete(step.index) : n.add(step.index); return n; }); }}
                                 style={{ display: 'inline-flex', alignItems: 'center', gap: 4, background: 'none', border: 'none', cursor: 'pointer', padding: 0, fontSize: '11px', color: '#94a3b8' }}
                               >
+                                <AgentFavicon agentId={complete.agentId} />
                                 <span style={{ fontWeight: 600, color: '#818cf8' }}>{complete.agentId}</span>
                                 <span>·</span>
                                 <span>{complete.totalTurns} step{complete.totalTurns !== 1 ? 's' : ''}</span>
@@ -2289,6 +2411,7 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
                           <>
                             <span style={{ color: '#4b5563', fontSize: '11px' }}>→</span>
                             <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: '11px', color: '#94a3b8' }}>
+                              <AgentFavicon agentId={agentId} />
                               <span style={{ fontWeight: 600, color: '#818cf8' }}>{agentId}</span>
                               {liveTurn && (
                                 <><span style={{ color: '#4b5563' }}>·</span>
@@ -2510,6 +2633,48 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
                     )}
                     <div style={{ fontSize: '10px', color: '#6b7280', marginTop: 4, fontStyle: 'italic' }}>
                       Your request will continue automatically after sign-in.
+                    </div>
+                  </div>
+                )}
+                {/* ── Task auth overlay — prominent lock card when login wall detected during task execution ── */}
+                {step.status === 'running' && taskAuthOverlay?.stepIndex === step.index && (
+                  <div style={{
+                    marginTop: 10, marginLeft: 28, padding: '14px 16px', borderRadius: 10,
+                    background: 'linear-gradient(135deg, rgba(251,191,36,0.12) 0%, rgba(245,158,11,0.08) 100%)',
+                    border: '1px solid rgba(251,191,36,0.35)',
+                    boxShadow: '0 0 16px rgba(251,191,36,0.08)',
+                  }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+                      <span style={{
+                        fontSize: '18px', lineHeight: 1,
+                        animation: 'pulse 2s ease-in-out infinite',
+                      }}>🔐</span>
+                      <span style={{
+                        fontSize: '10px', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em',
+                        color: '#f59e0b', background: 'rgba(245,158,11,0.15)', padding: '2px 8px', borderRadius: 4,
+                      }}>Action Required</span>
+                    </div>
+                    <div style={{ fontSize: '13px', color: '#f9fafb', fontWeight: 600, marginBottom: 6 }}>
+                      Sign in to {taskAuthOverlay.serviceDisplay || 'this service'}
+                    </div>
+                    <div style={{ fontSize: '11px', color: '#d1d5db', lineHeight: 1.6 }}>
+                      A browser window is open and waiting. Sign in with Google, Apple, or email — this panel updates automatically once you're in.
+                    </div>
+                    {taskAuthOverlay.loginUrl && (
+                      <div style={{ fontSize: '10px', color: '#6b7280', marginTop: 6 }}>
+                        {taskAuthOverlay.loginUrl}
+                      </div>
+                    )}
+                    <div style={{
+                      marginTop: 8, display: 'flex', alignItems: 'center', gap: 6,
+                    }}>
+                      <span style={{
+                        width: 6, height: 6, borderRadius: '50%', backgroundColor: '#f59e0b',
+                        animation: 'pulse 1.5s ease-in-out infinite',
+                      }} />
+                      <span style={{ fontSize: '10px', color: '#9ca3af', fontStyle: 'italic' }}>
+                        Waiting for sign-in…
+                      </span>
                     </div>
                   </div>
                 )}
@@ -2766,6 +2931,8 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
                     </div>
                   );
                 })()}
+                  </div>{/* end flex:1 content wrapper */}
+                </div>{/* end isInGroup bracket container */}
               </div>
             );
           })}
