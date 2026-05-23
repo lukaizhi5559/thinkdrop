@@ -733,6 +733,8 @@ let _userHasMovedPanel = false;
 
 // Tracks whether a learn session is active so the overlay can resist macOS panel auto-hide.
 let _learnSessionActive = false;
+// Tracks if user intentionally hid window (via shortcut) vs auto-hide behavior
+let _intentionalHide = false;
 
 // AbortController for the currently running stateGraph.execute — null when idle.
 // Hoisted to module scope so GET /activity (startOverlayControlServer) can read it.
@@ -1186,11 +1188,16 @@ function createUnifiedWindow() {
     unifiedWindow = null;
   });
 
-  // macOS NSPanel auto-hides when another app takes focus. During an active learn session
-  // (headed Chromium opens for auth) we must keep the overlay visible — re-show it immediately
-  // without stealing focus from the browser the user needs to interact with.
+  // macOS NSPanel auto-hides when another app takes focus. We must keep the overlay visible
+  // during learn sessions and when user is viewing search results (clicking links).
   unifiedWindow.on('hide', () => {
-    if (_learnSessionActive && unifiedWindow && !unifiedWindow.isDestroyed()) {
+    // Check if this was an intentional hide (user pressed shortcut)
+    if (_intentionalHide) {
+      _intentionalHide = false;
+      return; // Don't re-show, user wants it hidden
+    }
+    // Auto-hide behavior - re-show the window (don't let macOS panel hide it)
+    if (unifiedWindow && !unifiedWindow.isDestroyed()) {
       unifiedWindow.showInactive();
     }
   });
@@ -3194,6 +3201,61 @@ app.whenReady().then(async () => {
       });
     };
 
+    // parallelLoginCallback: pauses parallel execution when login walls are hit.
+    // Waits for the UI to send per-service decisions via parallel:login:decision IPC.
+    let pendingParallelLoginResolve = null;
+    let parallelLoginProgressInterval = null;
+    const parallelLoginCallback = (services, progressCallback) => {
+      return new Promise((resolve) => {
+        pendingParallelLoginResolve = resolve;
+        console.log(`[ParallelLogin] Waiting for user decisions on ${services.length} service(s): ${services.map(s => s.service).join(', ')}`);
+
+        // 3-minute timeout — auto-skip all if user never responds (was 10 minutes, too long)
+        const TIMEOUT_MS = 3 * 60 * 1000;
+        const startTime = Date.now();
+
+        // Send progress updates every 30 seconds with remaining time
+        if (progressCallback) {
+          progressCallback({ type: 'parallel_login_start', services, timeoutSeconds: 180 });
+          parallelLoginProgressInterval = setInterval(() => {
+            const elapsed = Date.now() - startTime;
+            const remaining = Math.max(0, TIMEOUT_MS - elapsed);
+            progressCallback({ type: 'parallel_login_progress', services, remainingSeconds: Math.ceil(remaining / 1000) });
+          }, 30000); // Every 30 seconds
+        }
+
+        setTimeout(() => {
+          if (parallelLoginProgressInterval) {
+            clearInterval(parallelLoginProgressInterval);
+            parallelLoginProgressInterval = null;
+          }
+          if (pendingParallelLoginResolve === resolve) {
+            console.warn('[ParallelLogin] Timed out after 3 minutes — auto-skipping all login walls');
+            pendingParallelLoginResolve = null;
+            const skipped = {};
+            services.forEach(s => { skipped[s.agentId] = 'skip'; });
+            resolve(skipped);
+          }
+        }, TIMEOUT_MS);
+      });
+    };
+    const handleParallelLoginDecision = (_event, decisions) => {
+      console.log('[ParallelLogin] IPC received: parallel:login:decision', decisions);
+      // Clear progress interval when decision received
+      if (parallelLoginProgressInterval) {
+        clearInterval(parallelLoginProgressInterval);
+        parallelLoginProgressInterval = null;
+      }
+      if (pendingParallelLoginResolve) {
+        const resolve = pendingParallelLoginResolve;
+        pendingParallelLoginResolve = null;
+        resolve(decisions || {});
+      } else {
+        console.warn('[ParallelLogin] Received parallel:login:decision but no pending resolve — ignoring');
+      }
+    };
+    ipcMain.on('parallel:login:decision', handleParallelLoginDecision);
+
     try {
       // If there's a paused automation waiting for user input, resume it
       let initialState;
@@ -3863,6 +3925,7 @@ app.whenReady().then(async () => {
           gatherCredentialCallback,
           keytarCheckCallback,
           gatherOAuthCallback,
+          parallelLoginCallback,
           queueBridge,
           activeBrowserSessionId: shouldPreserveBrowserSession ? currentBrowserSessionId : null,
           activeBrowserUrl: shouldPreserveBrowserSession ? currentBrowserUrl : null,
@@ -4137,8 +4200,10 @@ app.whenReady().then(async () => {
       ipcMain.removeListener('install:confirm', handleInstallConfirm);
       ipcMain.removeListener('guide:continue', handleGuideContinue);
       ipcMain.removeListener('guide:cancel', handleGuideCancel);
+      ipcMain.removeListener('parallel:login:decision', handleParallelLoginDecision);
       pendingInstallResolve = null;
       pendingGuideResolve = null;
+      pendingParallelLoginResolve = null;
       guideCancelled = false;
       // Mark prompt queue item done so the next pending prompt can start
       if (promptQueueId) {
@@ -4268,6 +4333,7 @@ app.whenReady().then(async () => {
   globalShortcut.register('CommandOrControl+Shift+Space', () => {
     if (unifiedWindow) {
       if (unifiedWindow.isVisible()) {
+        _intentionalHide = true; // Flag so hide handler knows this is user-initiated
         unifiedWindow.hide();
         stopClipboardMonitoring();
       } else {
@@ -5457,23 +5523,50 @@ app.whenReady().then(async () => {
   });
 
   // ─── Agents: list / learn / train / create ────────────────────────────────
+  // Unified agent listing: queries command-service HTTP endpoint for all agents
   ipcMain.on('agents:list', async () => {
     try {
-      const fsMod = require('fs');
-      const osMod = require('os');
-      const pathMod = require('path');
-      
-      const agentsDir = pathMod.join(osMod.homedir(), '.thinkdrop', 'agents');
-      if (!fsMod.existsSync(agentsDir)) {
-        if (unifiedWindow && !unifiedWindow.isDestroyed()) {
-          safeSend(unifiedWindow, 'agents:list', []);
-        }
-        return;
-      }
+      console.log('[Agents] Starting agents:list query via HTTP');
 
-      // Pre-scan ~/.thinkdrop/skills/ to build a map of agentId → real skills on disk
+      // Query command-service HTTP endpoint for all agents
+      const http = require('http');
+      const agents = await new Promise((resolve, reject) => {
+        const req = http.get('http://127.0.0.1:3007/agents.list', (res) => {
+          let data = '';
+          res.on('data', chunk => data += chunk);
+          res.on('end', () => {
+            try {
+              const result = JSON.parse(data);
+              if (result.ok && Array.isArray(result.agents)) {
+                resolve(result.agents);
+              } else {
+                console.warn('[Agents] HTTP query returned error:', result.error);
+                resolve([]);
+              }
+            } catch (e) {
+              console.error('[Agents] Failed to parse HTTP response:', e.message);
+              resolve([]);
+            }
+          });
+        });
+        req.on('error', (err) => {
+          console.error('[Agents] HTTP request failed:', err.message);
+          resolve([]);
+        });
+        req.setTimeout(5000, () => {
+          req.destroy();
+          console.error('[Agents] HTTP request timeout');
+          resolve([]);
+        });
+      });
+
+      // Map agents to AgentItem format with skills
+      const fsMod = require('fs');
+      const pathMod = require('path');
+      const osMod = require('os');
       const skillsBaseDir = pathMod.join(osMod.homedir(), '.thinkdrop', 'skills');
       const agentSkillsMap = {};
+      const agentLastScannedMap = {};
       try {
         if (fsMod.existsSync(skillsBaseDir)) {
           const skillDirs = fsMod.readdirSync(skillsBaseDir);
@@ -5481,187 +5574,57 @@ app.whenReady().then(async () => {
             const skillPath = pathMod.join(skillsBaseDir, skillDir);
             const indexPath = pathMod.join(skillPath, 'index.cjs');
             if (!fsMod.existsSync(indexPath)) continue;
-            // Read skill.json to find which agent this skill belongs to
             const metaPath = pathMod.join(skillPath, 'skill.json');
             if (fsMod.existsSync(metaPath)) {
               try {
                 const meta = JSON.parse(fsMod.readFileSync(metaPath, 'utf8'));
-                // Skip composite skills (legacy, no longer supported in UI)
-                if (meta.composite === true) {
-                  console.log(`[Agents] Skipping composite skill: ${skillDir}`);
-                  continue;
-                }
-                // Store raw action + state key — display names are resolved in a
-                // second pass below that deduplicates same-action skills per agent.
+                if (meta.composite === true) continue;
                 const skillEntry = {
                   name: meta.source_action || meta.name || skillDir,
-                  _sourceAction: meta.source_action || '',
-                  _sourceStateKey: meta.source_state_key || '',
-                  _skillDir: skillDir,
                   status: 'published',
                   description: meta.description || '',
                   skillPath: skillPath
                 };
-                // Key by agentId (primary) and domain (secondary lookup) only.
-                // Deduplicate within each key using a Set of skill directory names.
-                if (!agentSkillsMap.__seen__) agentSkillsMap.__seen__ = {};
                 const dedupKeys = [...new Set([meta.agentId, meta.agent_id, meta.domain].filter(Boolean))];
                 for (const key of dedupKeys) {
                   if (!agentSkillsMap[key]) agentSkillsMap[key] = [];
-                  if (!agentSkillsMap.__seen__[key]) agentSkillsMap.__seen__[key] = new Set();
-                  if (!agentSkillsMap.__seen__[key].has(skillDir)) {
-                    agentSkillsMap.__seen__[key].add(skillDir);
-                    agentSkillsMap[key].push(skillEntry);
+                  agentSkillsMap[key].push(skillEntry);
+                  // Track most recent scanned_at per agent key
+                  const scannedAt = meta.scanned_at || meta.created_at;
+                  if (scannedAt && (!agentLastScannedMap[key] || scannedAt > agentLastScannedMap[key])) {
+                    agentLastScannedMap[key] = scannedAt;
                   }
                 }
               } catch (_) {}
             }
           }
         }
-      } catch (skillScanErr) {
-        console.warn('[Agents] Skills dir scan failed:', skillScanErr.message);
-      }
+      } catch (_) {}
 
-      // Second pass: resolve human-readable display names and deduplicate same-action skills.
-      // Within each agent bucket, if multiple skills share the same source_action:
-      //   - skills WITH a source_state_key get a contextual suffix (e.g. "Settings (General)")
-      //   - legacy skills WITHOUT a source_state_key are dropped in favour of the keyed ones
-      // If only one skill has a given source_action it just gets the plain Title Case name.
-      for (const key of Object.keys(agentSkillsMap)) {
-        if (key === '__seen__') continue;
-        const bucket = agentSkillsMap[key];
-        // Group by source_action
-        const byAction = {};
-        for (const entry of bucket) {
-          const act = entry._sourceAction || entry.name;
-          if (!byAction[act]) byAction[act] = [];
-          byAction[act].push(entry);
-        }
-        for (const [act, entries] of Object.entries(byAction)) {
-          const titled = act.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
-          if (entries.length === 1) {
-            entries[0].name = titled;
-          } else {
-            // Multiple skills share the same action — keep only those with a state key,
-            // drop legacy ones that have no state key (old collision-era skills).
-            const withState = entries.filter(e => e._sourceStateKey);
-            const toKeep = withState.length > 0 ? withState : entries;
-            // Mark the ones to drop
-            const toDrop = new Set(entries.filter(e => !toKeep.includes(e)).map(e => e._skillDir));
-            agentSkillsMap[key] = bucket.filter(e => !toDrop.has(e._skillDir));
-            // Assign contextual names to kept entries
-            for (const entry of toKeep) {
-              if (entry._sourceStateKey) {
-                // Build a short readable context from the state key:
-                // "settings_general_logged_in" → remove leading action words and trailing _logged/_in
-                const ctx = entry._sourceStateKey
-                  .replace(/_logged_in$|_logged$/, '')
-                  .replace(/^[^_]+_/, '')   // drop the first segment (usually repeats the action)
-                  .replace(/_/g, ' ')
-                  .replace(/\b\w/g, l => l.toUpperCase())
-                  .trim();
-                entry.name = ctx ? `${titled} (${ctx})` : titled;
-              } else {
-                entry.name = titled;
-              }
-            }
-          }
-        }
-      }
+      // Merge agents with skills
+      const agentsWithSkills = agents.map(agent => {
+        const domain = agent.service ? `${agent.service}.com` : agent.id.replace('.agent', '');
+        const skills = agentSkillsMap[agent.id] || agentSkillsMap[agent.service] || agentSkillsMap[domain] || [];
+        const lastScanned = agentLastScannedMap[agent.id] || agentLastScannedMap[agent.service] || agentLastScannedMap[domain] || null;
+        const category = agent.type === 'cli' || agent.type === 'api_key' ? 'Utility' : 'Social & Communication';
+        return {
+          ...agent,
+          name: agent.service ? agent.service.charAt(0).toUpperCase() + agent.service.slice(1) : agent.id.replace('.agent', '').replace(/\./g, ' ').replace(/\b\w/g, l => l.toUpperCase()),
+          domain,
+          category,
+          skills: skills.length > 0 ? skills : (agent.capabilities || []).map(cap => ({
+            name: cap.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase()),
+            status: 'learned',
+            description: '',
+          })),
+          faviconUrl: `https://www.google.com/s2/favicons?domain=${domain}&sz=128`,
+          ...(lastScanned ? { lastScanned } : {}),
+        };
+      });
 
-      const files = fsMod.readdirSync(agentsDir).filter(f => f.endsWith('.agent.md'));
-      
-      const agents = files.map(file => {
-        try {
-          const filePath = pathMod.join(agentsDir, file);
-          const content = fsMod.readFileSync(filePath, 'utf8');
-          
-          // Parse frontmatter
-          const fmMatch = content.match(/^---\s*\n([\s\S]*?)\n---/);
-          const fm = fmMatch ? fmMatch[1] : '';
-          
-          // Extract scalar fields
-          const getField = (key) => {
-            const m = fm.match(new RegExp(`^${key}\\s*:\\s*(.+)$`, 'm'));
-            return m ? m[1].trim() : undefined;
-          };
-          
-          // Parse YAML array format: "key:\n  - item1\n  - item2"
-          const getYamlArray = (key) => {
-            const regex = new RegExp(`^${key}\\s*:\\s*\\n((?:\\s+-\\s+[^\\n]*\\n?)*)`, 'm');
-            const m = fm.match(regex);
-            if (m && m[1]) {
-              return m[1].split('\n')
-                .map(l => l.replace(/^\s*-\s*/, '').replace(/^["']|["']$/g, '').trim())
-                .filter(Boolean);
-            }
-            return [];
-          };
-          
-          const id = file.replace('.agent.md', '');
-          const service = getField('service');
-          const startUrl = getField('start_url');
-
-          // Build proper full domain from start_url (e.g. https://www.krea.ai/ → krea.ai)
-          let domain = getField('domain');
-          if (!domain && startUrl) {
-            try {
-              domain = new URL(startUrl).hostname.replace(/^www\./, '');
-            } catch (_) {}
-          }
-          if (!domain) domain = service ? `${service}.com` : id.replace('.agent', '');
-
-          const type = getField('type') || 'browser';
-          // Filter learned_states to valid http/https URLs to avoid snapshot text contamination
-          const learnedStates = getYamlArray('learned_states')
-            .filter(s => s.startsWith('http://') || s.startsWith('https://'));
-
-          // Parse user_goals as YAML array (fix: was using scalar parser on array field)
-          const userGoals = getYamlArray('user_goals');
-          
-          // Read capabilities (composite skill names) for goal-skill mapping in UI
-          const capabilities = getYamlArray('capabilities');
-          
-          // Real skills from disk (not capabilities) — strip internal dedup fields before sending
-          const _rawSkills = agentSkillsMap[id] || agentSkillsMap[service] || agentSkillsMap[domain] || [];
-          let skills = _rawSkills.map(({ _sourceAction, _sourceStateKey, _skillDir, ...rest }) => rest);
-          // Fallback: read capabilities from frontmatter when no disk skill files exist yet
-          if (skills.length === 0) {
-            if (capabilities.length > 0) {
-              skills = capabilities.map(cap => ({
-                name: cap.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase()),
-                status: 'learned',
-                description: '',
-              }));
-            }
-          }
-          
-          // Parse status - map to UI status values
-          let status = getField('status') || 'pending';
-          if (status === 'healthy') status = 'learned';
-          
-          return {
-            id,
-            name: service ? service.charAt(0).toUpperCase() + service.slice(1) : id.replace('.agent', '').replace(/\./g, ' ').replace(/\b\w/g, l => l.toUpperCase()),
-            domain,
-            category: type === 'browser' ? 'Social & Communication' : 'Utility',
-            status,
-            created: getField('created'),
-            lastLearned: getField('last_learned'),
-            userGoals,
-            capabilities,
-            learnedStates,
-            skills,
-            faviconUrl: getField('favicon_url') || `https://www.google.com/s2/favicons?domain=${domain}&sz=128`
-          };
-        } catch (fileErr) {
-          console.error(`[Agents] Error parsing ${file}:`, fileErr.message);
-          return null;
-        }
-      }).filter(Boolean); // Remove null entries from failed parses
-      
+      console.log('[Agents] Sending', agentsWithSkills.length, 'agents to renderer');
       if (unifiedWindow && !unifiedWindow.isDestroyed()) {
-        safeSend(unifiedWindow, 'agents:list', agents);
+        safeSend(unifiedWindow, 'agents:list', agentsWithSkills);
       }
     } catch (e) {
       console.error('[Agents] agents:list failed:', e.message);
@@ -6726,6 +6689,385 @@ app.whenReady().then(async () => {
     } catch (e) {
       console.error('[CLI-Agents] cli-agents:rules failed:', e.message);
       return [];
+    }
+  });
+
+  ipcMain.handle('cli-agents:update', async (_event, { id, descriptor }) => {
+    try {
+      const duckdbAsync = require('duckdb-async');
+      const path = require('path');
+      const os = require('os');
+
+      const dbPath = path.join(os.homedir(), '.thinkdrop', 'agents.db');
+      const db = await duckdbAsync.Database.create(dbPath);
+
+      await db.run(
+        "UPDATE agents SET descriptor = ?, last_validated = CURRENT_TIMESTAMP WHERE id = ?",
+        descriptor,
+        id
+      );
+
+      await db.close();
+      return { ok: true };
+    } catch (e) {
+      console.error('[CLI-Agents] cli-agents:update failed:', e.message);
+      return { ok: false, error: e.message };
+    }
+  });
+
+  // ─── CLI Agents: credential storage (safeStorage via user-memory) ───────
+  ipcMain.handle('cli-agents:store-credential', async (_event, { agentId, key, value, service }) => {
+    try {
+      const http = require('http');
+      const memApiKey = process.env.MCP_USER_MEMORY_API_KEY || process.env.USER_MEMORY_API_KEY || process.env.MCP_API_KEY || '';
+
+      const memoryHttpPost = (action, payload) => new Promise((resolve, reject) => {
+        const body = JSON.stringify({
+          version: 'mcp.v1',
+          service: 'user-memory',
+          action,
+          payload,
+          requestId: `cli_${action}_${Date.now()}`,
+        });
+        const req = http.request(
+          {
+            hostname: '127.0.0.1',
+            port: 3001,
+            path: `/${action}`,
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Content-Length': Buffer.byteLength(body),
+              ...(memApiKey ? { 'Authorization': `Bearer ${memApiKey}` } : {}),
+            },
+          },
+          (res) => {
+            let data = '';
+            res.on('data', chunk => data += chunk);
+            res.on('end', () => {
+              try {
+                const result = JSON.parse(data);
+                resolve(result);
+              } catch (e) {
+                resolve(data);
+              }
+            });
+          }
+        );
+        req.on('error', reject);
+        req.setTimeout(5000, () => reject(new Error('Timeout')));
+        req.end(body);
+      });
+
+      // Store via user-memory MCP profile.store_secret (handles encryption automatically)
+      const profileKey = `${service || agentId}_${key}`.toLowerCase();
+      const result = await memoryHttpPost('profile.store_secret', {
+        keytarKey: profileKey,
+        value: value,
+        service: service || agentId,
+        label: `Credential for ${agentId} (${key})`,
+      });
+
+      console.log('[CLI-Agents] store-credential result:', JSON.stringify(result));
+      if (result?.status === 'ok') {
+        console.log(`[CLI-Agents] Stored credential for ${agentId}:${key}`);
+        return { ok: true, key: profileKey };
+      } else {
+        throw new Error(result?.error || result?.message || JSON.stringify(result) || 'Failed to store credential');
+      }
+    } catch (e) {
+      const errorMsg = e?.message || (typeof e === 'object' ? JSON.stringify(e) : String(e));
+      console.error('[CLI-Agents] cli-agents:store-credential failed:', errorMsg);
+      return { ok: false, error: errorMsg };
+    }
+  });
+
+  // ─── CLI Agents: get stored secrets ────────────────────────────────────
+  ipcMain.handle('cli-agents:get-stored-secrets', async (_event, { agentId, service }) => {
+    try {
+      const http = require('http');
+      const memApiKey = process.env.MCP_USER_MEMORY_API_KEY || process.env.USER_MEMORY_API_KEY || process.env.MCP_API_KEY || '';
+
+      const memoryHttpPost = (action, payload) => new Promise((resolve, reject) => {
+        const body = JSON.stringify({
+          version: 'mcp.v1',
+          service: 'user-memory',
+          action,
+          payload,
+          requestId: `cli_${action}_${Date.now()}`,
+        });
+        const req = http.request(
+          {
+            hostname: '127.0.0.1',
+            port: 3001,
+            path: `/${action}`,
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Content-Length': Buffer.byteLength(body),
+              ...(memApiKey ? { 'Authorization': `Bearer ${memApiKey}` } : {}),
+            },
+          },
+          (res) => {
+            let data = '';
+            res.on('data', chunk => data += chunk);
+            res.on('end', () => {
+              try {
+                const result = JSON.parse(data);
+                resolve(result);
+              } catch (e) {
+                resolve(data);
+              }
+            });
+          }
+        );
+        req.on('error', reject);
+        req.setTimeout(5000, () => reject(new Error('Timeout')));
+        req.end(body);
+      });
+
+      // Query user_profile for credentials matching this agent/service
+      const searchService = service ? service.toLowerCase() : agentId.toLowerCase();
+      const result = await memoryHttpPost('profile.list', { service: searchService });
+
+      // Extract keys from profile entries
+      // Note: storeSecret adds '_ref' suffix to the key, so we need to strip it
+      const entries = result?.data?.entries || [];
+      const credentials = entries
+        .filter(e => e.key && e.key.startsWith(`${searchService}_`))
+        .map(e => e.key.replace(`${searchService}_`, '').replace(/_ref$/, ''));
+
+      return credentials;
+    } catch (e) {
+      console.error('[CLI-Agents] cli-agents:get-stored-secrets failed:', e.message);
+      return [];
+    }
+  });
+
+  // ─── CLI Agents: search for setup link via StateGraph ──────────────────
+  ipcMain.handle('cli-agents:search-setup-link', async (_event, { service, cliTool }) => {
+    try {
+      const searchQuery = `how to get API key access token credential setup for ${cliTool || service}`;
+      console.log(`[CLI-Agents] Triggering web search for: ${searchQuery}`);
+
+      // Ensure results window is visible (use showInactive to avoid focus steal)
+      if (resultsWindow && !resultsWindow.isDestroyed()) {
+        if (resultsWindow.isMinimized()) {
+          resultsWindow.restore();
+        }
+        if (!resultsWindow.isVisible()) {
+          resultsWindow.showInactive();
+        }
+        resultsWindow.moveTop();
+      }
+      
+      // Enqueue directly to prompt queue (same as user typing a prompt)
+      // This ensures proper serialization and results display
+      const id = promptQueue.enqueue(searchQuery, { selectedText: '', source: 'cli-agent-search' });
+      console.log(`[CLI-Agents] Enqueued search prompt, id=${id}`);
+      
+      // Notify renderer to switch to results tab
+      safeSendUnified('ui:switch-to-results', {});
+      
+      return { ok: true, id };
+    } catch (e) {
+      console.error('[CLI-Agents] cli-agents:search-setup-link failed:', e.message);
+      return { ok: false, error: e.message };
+    }
+  });
+
+  // ─── CLI Agents: delete credential ──────────────────────────────────────
+  ipcMain.handle('cli-agents:delete-credential', async (_event, { agentId, key, service }) => {
+    try {
+      const http = require('http');
+      const memApiKey = process.env.MCP_USER_MEMORY_API_KEY || process.env.USER_MEMORY_API_KEY || process.env.MCP_API_KEY || '';
+      
+      // Build profile key with _ref suffix (same format as storeSecret creates)
+      // storeSecret creates: {keytarKey}_ref where keytarKey = {service}_{key}
+      const profileKey = `${service || agentId}_${key}_ref`.toLowerCase();
+      
+      const memoryHttpPost = (action, payload) => new Promise((resolve, reject) => {
+        const body = JSON.stringify({
+          version: 'mcp.v1',
+          service: 'user-memory',
+          action,
+          payload,
+          requestId: `cli_${action}_${Date.now()}`,
+        });
+        const req = http.request(
+          {
+            hostname: '127.0.0.1',
+            port: 3001,
+            path: `/${action}`,
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Content-Length': Buffer.byteLength(body),
+              ...(memApiKey ? { 'Authorization': `Bearer ${memApiKey}` } : {}),
+            },
+          },
+          (res) => {
+            let data = '';
+            res.on('data', chunk => data += chunk);
+            res.on('end', () => {
+              try {
+                const result = JSON.parse(data);
+                resolve(result);
+              } catch (e) {
+                resolve(data);
+              }
+            });
+          }
+        );
+        req.on('error', reject);
+        req.setTimeout(5000, () => reject(new Error('Timeout')));
+        req.end(body);
+      });
+      
+      // Delete via user-memory MCP profile.delete
+      const result = await memoryHttpPost('profile.delete', { key: profileKey });
+      
+      if (result?.status === 'ok' || result?.data?.deleted) {
+        console.log(`[CLI-Agents] Deleted credential for ${agentId}:${key}`);
+        return { ok: true, key: profileKey };
+      } else {
+        throw new Error(result?.error || 'Failed to delete credential');
+      }
+    } catch (e) {
+      const errorMsg = e?.message || (typeof e === 'object' ? JSON.stringify(e) : String(e));
+      console.error('[CLI-Agents] cli-agents:delete-credential failed:', errorMsg);
+      return { ok: false, error: errorMsg };
+    }
+  });
+
+  // ─── Browser Agents: list / update (DB-backed like CLI agents) ─────────
+
+  // Migration: Sync legacy .agent.md files to DuckDB on first run
+  async function migrateLegacyBrowserAgents() {
+    try {
+      const fs = require('fs');
+      const path = require('path');
+      const os = require('os');
+      const duckdbAsync = require('duckdb-async');
+
+      const agentsDir = path.join(os.homedir(), '.thinkdrop', 'agents');
+      const dbPath = path.join(os.homedir(), '.thinkdrop', 'agents.db');
+
+      if (!fs.existsSync(agentsDir) || !fs.existsSync(dbPath)) return;
+
+      const db = await duckdbAsync.Database.create(dbPath);
+
+      // Get existing agent IDs from DB
+      const existingRows = await db.all("SELECT id FROM agents WHERE type = 'browser' OR type IS NULL");
+      const existingIds = new Set(existingRows.map(r => r.id));
+
+      // Scan .agent.md files
+      const files = fs.readdirSync(agentsDir).filter(f => f.endsWith('.agent.md'));
+      let migrated = 0;
+
+      for (const file of files) {
+        const id = file.replace('.agent.md', '');
+        if (existingIds.has(id)) continue; // Skip if already in DB
+
+        // Parse frontmatter
+        const content = fs.readFileSync(path.join(agentsDir, file), 'utf8');
+        const fmMatch = content.match(/^---\s*\n([\s\S]*?)\n---/);
+        const fm = fmMatch ? fmMatch[1] : '';
+
+        const getField = (key) => {
+          const m = fm.match(new RegExp(`^${key}\\s*:\\s*(.+)$`, 'm'));
+          return m ? m[1].trim() : undefined;
+        };
+
+        const service = getField('service') || id.replace('.agent', '');
+        const status = getField('status') || 'pending';
+        const domain = getField('domain') || `${service}.com`;
+        const capabilities = getField('capabilities') || '[]';
+
+        // Insert into DB as browser agent
+        try {
+          await db.run(
+            `INSERT OR REPLACE INTO agents (id, type, service, cli_tool, capabilities, descriptor, last_validated, status, created_at)
+             VALUES (?, 'browser', ?, NULL, ?, ?, CURRENT_TIMESTAMP, ?, CURRENT_TIMESTAMP)`,
+            id,
+            service,
+            capabilities,
+            content,
+            status === 'healthy' ? 'learned' : status
+          );
+          migrated++;
+          console.log(`[Migration] Migrated browser agent ${id} to DB`);
+        } catch (err) {
+          console.warn(`[Migration] Failed to migrate ${id}:`, err.message);
+        }
+      }
+
+      await db.close();
+      if (migrated > 0) {
+        console.log(`[Migration] Migrated ${migrated} legacy browser agents to DuckDB`);
+      }
+    } catch (e) {
+      console.error('[Migration] Failed:', e.message);
+    }
+  }
+
+  // Browser agents: list from DB (like cli-agents:list)
+  ipcMain.handle('browser-agents:list', async () => {
+    try {
+      // Run migration first (idempotent)
+      await migrateLegacyBrowserAgents();
+
+      const duckdbAsync = require('duckdb-async');
+      const path = require('path');
+      const os = require('os');
+
+      const dbPath = path.join(os.homedir(), '.thinkdrop', 'agents.db');
+      const db = await duckdbAsync.Database.create(dbPath);
+
+      // Query browser agents (type='browser' or type IS NULL for legacy)
+      const rows = await db.all(
+        "SELECT id, type, service, cli_tool, capabilities, status, last_validated, descriptor FROM agents WHERE type = 'browser' OR type IS NULL OR type = 'api' ORDER BY created_at DESC"
+      );
+
+      await db.close();
+
+      // Parse capabilities JSON
+      return (rows || []).map(r => ({
+        id: r.id,
+        type: r.type || 'browser',
+        service: r.service,
+        cliTool: r.cli_tool,
+        capabilities: r.capabilities ? JSON.parse(r.capabilities) : [],
+        status: r.status || 'pending',
+        lastValidated: r.last_validated,
+        descriptor: r.descriptor,
+      }));
+    } catch (e) {
+      console.error('[Browser-Agents] browser-agents:list failed:', e.message);
+      return [];
+    }
+  });
+
+  ipcMain.handle('browser-agents:update', async (_event, { id, descriptor }) => {
+    try {
+      const duckdbAsync = require('duckdb-async');
+      const path = require('path');
+      const os = require('os');
+
+      const dbPath = path.join(os.homedir(), '.thinkdrop', 'agents.db');
+      const db = await duckdbAsync.Database.create(dbPath);
+
+      await db.run(
+        "UPDATE agents SET descriptor = ?, last_validated = CURRENT_TIMESTAMP WHERE id = ?",
+        descriptor,
+        id
+      );
+
+      await db.close();
+      return { ok: true };
+    } catch (e) {
+      console.error('[Browser-Agents] browser-agents:update failed:', e.message);
+      return { ok: false, error: e.message };
     }
   });
 

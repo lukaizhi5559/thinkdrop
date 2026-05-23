@@ -124,6 +124,15 @@ interface AskUserPrompt {
   options: string[];
 }
 
+interface ParallelLoginService {
+  stepIdx: number;
+  agentId: string;
+  service: string;
+  description: string;
+}
+
+type ParallelLoginDecision = 'login' | 'try_without' | 'skip';
+
 interface AgentTurnEntry {
   turn: number;
   maxTurns: number;
@@ -256,8 +265,28 @@ function estimateEta(steps: Step[]): { lo: number; hi: number } {
 function formatEta(lo: number, hi: number): string {
   const loS = Math.round(lo / 1000);
   const hiS = Math.round(hi / 1000);
-  if (Math.abs(hiS - loS) <= 4) return `~${loS}s`;
-  return `~${loS}–${hiS}s`;
+
+  // Helper to format single duration as Xm Ys or Xh Ym Zs
+  const fmt = (sec: number): string => {
+    if (sec < 60) return `${sec}s`;
+    if (sec < 3600) {
+      const m = Math.floor(sec / 60);
+      const s = sec % 60;
+      return s > 0 ? `${m}m ${s}s` : `${m}m`;
+    }
+    // Hours
+    const h = Math.floor(sec / 3600);
+    const rem = sec % 3600;
+    const m = Math.floor(rem / 60);
+    const s = rem % 60;
+    const parts: string[] = [`${h}h`];
+    if (m > 0) parts.push(`${m}m`);
+    if (s > 0) parts.push(`${s}s`);
+    return parts.join(' ');
+  };
+
+  if (Math.abs(hiS - loS) <= 4) return `~${fmt(loS)}`;
+  return `~${fmt(loS)} – ${fmt(hiS)}`;
 }
 
 function humanizeError(error: string): string {
@@ -644,6 +673,9 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
   const [planNameError, setPlanNameError] = useState('');
   const [savedContextRule, setSavedContextRule] = useState<{ ruleText: string; contextKey: string; category: string } | null>(null);
   const [failureAnswer, setFailureAnswer] = useState<string | null>(null);
+  const [parallelLoginServices, setParallelLoginServices] = useState<ParallelLoginService[] | null>(null);
+  const [parallelLoginDecisions, setParallelLoginDecisions] = useState<Record<string, ParallelLoginDecision>>({});
+  const [parallelLoginCountdown, setParallelLoginCountdown] = useState<number>(180); // 3 minute timeout countdown
   const _planFileRef = useRef<string>('');
   const DOT_NAME_RE = /^[a-z][a-z0-9]*(?:\.[a-z][a-z0-9]*)+$/;
   const isValidDotName = (n: string) => {
@@ -725,6 +757,24 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
     const id = setInterval(() => setHeartbeatTick(t => t + 1), 200);
     return () => clearInterval(id);
   }, [phase]);
+
+  // Parallel login countdown timer
+  useEffect(() => {
+    if (!parallelLoginServices) {
+      setParallelLoginCountdown(180);
+      return;
+    }
+    const id = setInterval(() => {
+      setParallelLoginCountdown(prev => {
+        if (prev <= 1) {
+          clearInterval(id);
+          return 0;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+    return () => clearInterval(id);
+  }, [parallelLoginServices]);
 
   useEffect(() => {
     if (!ipcRenderer) return;
@@ -871,25 +921,31 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
           break;
         }
 
-        case 'plan_error':
+        case 'plan_error': {
           setPhase('failed');
           setGlobalError(data.error || 'Plan generation failed');
           break;
+        }
 
-        case 'step_start':
+        case 'step_start': {
+          const stepIdx = data.stepIndex + stepOffsetRef.current;
+          // Log parallel group steps for debugging
+          if (data.runGroup) {
+            console.log(`[AutomationProgress] step_start: stepIdx=${stepIdx}, runGroup=${data.runGroup}, skill=${data.skill}`);
+          }
           // Clear any active guide step card when the next step begins
           setGuideStep(null);
           setAskUserPrompt(null);
           // Track synthesize step index for auto-expand on all_done
           if (data.skill === 'synthesize') {
-            synthStepIndexRef.current = data.stepIndex + stepOffsetRef.current;
+            synthStepIndexRef.current = stepIdx;
           }
           // If recovery just patched and retried (AUTO_PATCH), clear the orange banner — we're executing again
           if (phaseRef.current === 'retrying_with_fix') setPhase('executing');
-          agentStepStartTimes.current.set(data.stepIndex + stepOffsetRef.current, Date.now());
+          agentStepStartTimes.current.set(stepIdx, Date.now());
           setSteps(prev => prev.map(s =>
-            s.index === data.stepIndex + stepOffsetRef.current
-              ? { ...s, status: 'running', description: data.description || s.description }
+            s.index === stepIdx
+              ? { ...s, status: 'running', description: data.description || s.description, runGroup: data.runGroup || s.runGroup }
               : s
           ));
           // Scroll the active step into view
@@ -898,6 +954,7 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
             if (el) el.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
           }, 60);
           break;
+        }
 
         case 'step_thinking': {
           const _thinkIdx = (data.stepIndex ?? 0) + stepOffsetRef.current;
@@ -925,12 +982,17 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
           break;
         }
 
-        case 'step_done':
-          agentStepStartTimes.current.delete(data.stepIndex + stepOffsetRef.current);
-          setStepThinking(prev => { const next = new Map(prev); next.delete(data.stepIndex + stepOffsetRef.current); return next; });
+        case 'step_done': {
+          const stepIdx = data.stepIndex + stepOffsetRef.current;
+          // Log parallel group steps for debugging
+          if (data.runGroup) {
+            console.log(`[AutomationProgress] step_done: stepIdx=${stepIdx}, runGroup=${data.runGroup}, skill=${data.skill}, ok=true`);
+          }
+          agentStepStartTimes.current.delete(stepIdx);
+          setStepThinking(prev => { const next = new Map(prev); next.delete(stepIdx); return next; });
           setSteps(prev => prev.map(s =>
-            s.index === data.stepIndex + stepOffsetRef.current
-              ? { ...s, status: 'done', description: data.description || s.description, stdout: data.stdout, exitCode: data.exitCode, savedFilePath: data.savedFilePath || undefined, guideInstruction: data.instruction || s.guideInstruction }
+            s.index === stepIdx
+              ? { ...s, status: 'done', description: data.description || s.description, stdout: data.stdout, exitCode: data.exitCode, savedFilePath: data.savedFilePath || undefined, guideInstruction: data.instruction || s.guideInstruction, runGroup: data.runGroup || s.runGroup }
               : s
           ));
           // Auto-dismiss the guide step card when a guide.step completes
@@ -945,6 +1007,7 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
             });
           }
           break;
+        }
 
         case 'step_skipped':
           agentStepStartTimes.current.delete(data.stepIndex + stepOffsetRef.current);
@@ -955,17 +1018,27 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
           ));
           break;
 
-        case 'step_failed':
-          agentStepStartTimes.current.delete(data.stepIndex + stepOffsetRef.current);
-          setStepThinking(prev => { const next = new Map(prev); next.delete(data.stepIndex + stepOffsetRef.current); return next; });
-          setSteps(prev => prev.map(s =>
-            s.index === data.stepIndex + stepOffsetRef.current
-              ? { ...s, status: 'failed', error: data.error, stderr: data.stderr,
-                  userAllowlistHint: data.userAllowlistHint || false,
-                  commandName: data.commandName || null }
-              : s
-          ));
+        case 'step_failed': {
+          const stepIdx = data.stepIndex + stepOffsetRef.current;
+          console.log(`[AutomationProgress] step_failed: stepIdx=${stepIdx}, stepOffset=${stepOffsetRef.current}, data.stepIndex=${data.stepIndex}, runGroup=${data.runGroup || 'none'}, error="${(data.error || '').slice(0, 100)}"`);
+          agentStepStartTimes.current.delete(stepIdx);
+          setStepThinking(prev => { const next = new Map(prev); next.delete(stepIdx); return next; });
+          setSteps(prev => {
+            const stepExists = prev.some(s => s.index === stepIdx);
+            if (!stepExists) {
+              console.warn(`[AutomationProgress] step_failed: step not found at index ${stepIdx}`, prev.map(s => ({ index: s.index, status: s.status, skill: s.skill })));
+            }
+            return prev.map(s =>
+              s.index === stepIdx
+                ? { ...s, status: 'failed', error: data.error, stderr: data.stderr,
+                    userAllowlistHint: data.userAllowlistHint || false,
+                    commandName: data.commandName || null,
+                    runGroup: data.runGroup || s.runGroup }
+                : s
+            );
+          });
           break;
+        }
 
         case 'agent:turns_reset': {
           const stepIdx = (data.stepIndex ?? 0) + stepOffsetRef.current;
@@ -1092,6 +1165,20 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
         case 'ask_user':
           setPhase('ask_user');
           setAskUserPrompt({ question: data.question, options: data.options || [] });
+          break;
+
+        case 'parallel_login_required':
+        case 'parallel_login_start':
+          setParallelLoginServices(data.services || []);
+          setParallelLoginDecisions({});
+          setParallelLoginCountdown(data.timeoutSeconds || 180);
+          break;
+
+        case 'parallel_login_progress':
+          // Update countdown from main process progress callback
+          if (data.remainingSeconds !== undefined) {
+            setParallelLoginCountdown(data.remainingSeconds);
+          }
           break;
 
         case 'guide_step':
@@ -1278,6 +1365,8 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
           // Don't let all_done collapse an active plan review (awaitingPlanApproval path)
           if (phaseRef.current === 'plan_review') break;
           setGuideStep(null);
+          setParallelLoginServices(null);
+          setParallelLoginDecisions({});
           // Record actual elapsed and replace ETA with it
           if (executionStartRef.current) {
             const elapsed = Math.round((Date.now() - executionStartRef.current) / 1000);
@@ -1863,6 +1952,131 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
         )}
       </div>
 
+      {/* ── Parallel login wall card ─────────────────────────────────────── */}
+      {parallelLoginServices && parallelLoginServices.length > 0 && (
+        <div style={{
+          padding: '12px 14px',
+          borderRadius: 10,
+          backgroundColor: '#120e1a',
+          border: '1px solid #7c3aed',
+          display: 'flex',
+          flexDirection: 'column',
+          gap: 10,
+          position: 'sticky',
+          top: 0,
+          zIndex: 10,
+        }}>
+          {/* Header */}
+          <div className="flex items-center gap-2">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#a78bfa" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
+              <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/>
+              <path d="M7 11V7a5 5 0 0 1 10 0v4"/>
+            </svg>
+            <div>
+              <div style={{ color: '#c4b5fd', fontSize: '0.75rem', fontWeight: 700 }}>
+                Login required — {parallelLoginServices.length} service{parallelLoginServices.length > 1 ? 's' : ''}
+              </div>
+              <div style={{ color: '#71717a', fontSize: '0.68rem', marginTop: 1 }}>
+                Auto-skipping in {Math.floor(parallelLoginCountdown / 60)}:{String(parallelLoginCountdown % 60).padStart(2, '0')} — Choose how to handle each service, then click Continue.
+              </div>
+            </div>
+          </div>
+
+          {/* Per-service rows */}
+          {parallelLoginServices.map(svc => {
+            const decision = parallelLoginDecisions[svc.agentId] || null;
+            const serviceName = svc.service.charAt(0).toUpperCase() + svc.service.slice(1).replace(/_/g, ' ');
+            return (
+              <div key={svc.agentId} style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 8,
+                padding: '7px 10px',
+                borderRadius: 8,
+                backgroundColor: 'rgba(124,58,237,0.08)',
+                border: `1px solid ${decision ? 'rgba(124,58,237,0.4)' : 'rgba(124,58,237,0.2)'}`,
+                flexWrap: 'wrap',
+              }}>
+                {/* Service name */}
+                <div style={{ color: '#e2e2e2', fontSize: '0.75rem', fontWeight: 600, minWidth: 80, flex: '1 1 80px' }}>
+                  {serviceName}
+                </div>
+
+                {/* Decision buttons */}
+                <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap' }}>
+                  {(['login', 'try_without', 'skip'] as ParallelLoginDecision[]).map(opt => {
+                    const labels: Record<ParallelLoginDecision, string> = {
+                      login: 'Log in / Create account',
+                      try_without: 'Try without logging in',
+                      skip: 'Skip',
+                    };
+                    const colors: Record<ParallelLoginDecision, { bg: string; border: string; text: string }> = {
+                      login:       { bg: 'rgba(124,58,237,0.25)', border: '#7c3aed', text: '#c4b5fd' },
+                      try_without: { bg: 'rgba(59,130,246,0.15)', border: '#3b82f6', text: '#93c5fd' },
+                      skip:        { bg: 'rgba(113,113,122,0.15)', border: '#52525b', text: '#a1a1aa' },
+                    };
+                    const c = colors[opt];
+                    const isSelected = decision === opt;
+                    return (
+                      <button
+                        key={opt}
+                        onClick={() => setParallelLoginDecisions(prev => ({ ...prev, [svc.agentId]: opt }))}
+                        style={{
+                          fontSize: '0.68rem',
+                          fontWeight: isSelected ? 700 : 500,
+                          padding: '3px 8px',
+                          borderRadius: 5,
+                          border: `1px solid ${isSelected ? c.border : 'rgba(113,113,122,0.3)'}`,
+                          backgroundColor: isSelected ? c.bg : 'transparent',
+                          color: isSelected ? c.text : '#71717a',
+                          cursor: 'pointer',
+                          transition: 'all 0.12s',
+                          outline: 'none',
+                        }}
+                      >
+                        {labels[opt]}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            );
+          })}
+
+          {/* Continue button */}
+          <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+            <button
+              disabled={parallelLoginServices.some(s => !parallelLoginDecisions[s.agentId])}
+              onClick={() => {
+                const decisions = { ...parallelLoginDecisions };
+                // Default any undecided to 'skip'
+                parallelLoginServices.forEach(s => { if (!decisions[s.agentId]) decisions[s.agentId] = 'skip'; });
+                ipcRenderer?.send('parallel:login:decision', decisions);
+                setParallelLoginServices(null);
+                setParallelLoginDecisions({});
+                setParallelLoginCountdown(180);
+              }}
+              style={{
+                fontSize: '0.72rem',
+                fontWeight: 600,
+                padding: '5px 14px',
+                borderRadius: 6,
+                border: '1px solid #7c3aed',
+                backgroundColor: parallelLoginServices.some(s => !parallelLoginDecisions[s.agentId])
+                  ? 'rgba(124,58,237,0.1)' : 'rgba(124,58,237,0.3)',
+                color: parallelLoginServices.some(s => !parallelLoginDecisions[s.agentId])
+                  ? '#6d28d9' : '#c4b5fd',
+                cursor: parallelLoginServices.some(s => !parallelLoginDecisions[s.agentId]) ? 'not-allowed' : 'pointer',
+                transition: 'all 0.12s',
+                outline: 'none',
+              }}
+            >
+              Continue →
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* ── Action required banner (ask_user) ───────────────────────────── */}
       {phase === 'ask_user' && (
         <div style={{ padding: '10px 14px', borderRadius: 10, backgroundColor: '#1a120a', border: '1px solid #d97706', position: 'sticky', top: 0, zIndex: 10 }}>
@@ -2317,8 +2531,7 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
             const groupDoneCount = isInGroup ? steps.filter(s => s.runGroup === step.runGroup && (s.status === 'done' || s.status === 'skipped')).length : 0;
             const groupTotalCount = isInGroup ? steps.filter(s => s.runGroup === step.runGroup).length : 0;
             const groupAllDone = isInGroup && groupDoneCount === groupTotalCount && groupTotalCount > 0;
-            // Collapse group to summary row for non-start members once all done
-            if (isInGroup && !isGroupStart && groupAllDone) return null;
+            // Show all parallel agents after completion (don't collapse)
             const isSynthesize = step.skill === 'synthesize';
             const isNeedsSkill = step.skill === 'needs_skill';
             const isGuideStep = step.skill === 'guide.step';
@@ -2378,9 +2591,12 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
                           : step.status === 'skipped' ? '#fbbf24'
                           : '#e5e7eb'
                       }}>
-                        {step.description}
+                        {step.runGroup
+                          ? `Step ${step.index + 1}: ${step.description?.split(' — ')[0]?.slice(0, 60) || step.description?.slice(0, 60) || step.skill}`
+                          : step.description}
                       </span>
-                      <SkillBadge skill={step.skill} />
+                      {/* Hide browser.agent badge in parallel runs — we show agent name inline instead */}
+                      {!(step.runGroup && step.skill === 'browser.agent') && <SkillBadge skill={step.skill} />}
                       {/* ── Inline agent header — shown right after badge, live and done ── */}
                       {(() => {
                         const liveTurn = agentLiveTurns.current.get(step.index);
@@ -2443,7 +2659,7 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
                     {/* ── shell.run goal-mode thinking — shown while _resolveGoalToCommand runs ── */}
                     {step.status === 'running' && !!stepThinking.get(step.index) && (
                       <div style={{ marginTop: 3, fontSize: '11px', color: '#7c6fa0', fontStyle: 'italic', lineHeight: '1.45' }}>
-                        ☁️ {stepThinking.get(step.index)}
+                        {stepThinking.get(step.index)}
                       </div>
                     )}
                     {/* ── sudo warning — shown when step needs administrator access ── */}
@@ -2720,7 +2936,8 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
                                 {formatActionLabel(t.action)}
                               </span>
                             )}
-                            {t.outcome && (
+                            {/* HIDE OUTCOME VERBOSE TEXT JUST SHOW IN DRILLDOWN BELOW */}
+                            {/* {t.outcome && (
                               <span style={{ color: t.outcome.ok ? '#6ee7b7' : '#fca5a5' }}>
                                 {t.outcome.ok
                                   ? (t.outcome.result && t.action?.action !== 'snapshot'
@@ -2728,7 +2945,7 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
                                       : '✓')
                                   : `✗ ${t.outcome.error || ''}`}
                               </span>
-                            )}
+                            )} */}
                           </div>
                         );
                       })()}

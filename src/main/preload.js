@@ -165,6 +165,7 @@ contextBridge.exposeInMainWorld('electron', {
         'search:sources',
         'window:show',
         'is-streaming',
+        'ui:switch-to-results',
         'agents:list',
         'agents:new',
         'agents:creating',
@@ -249,6 +250,7 @@ contextBridge.exposeInMainWorld('electron', {
         'unified:clear',
         'automation:progress',
         'is-streaming',
+        'ui:switch-to-results',
         'queue:update',
         'queue:item-done',
         'cron:list',
@@ -384,6 +386,10 @@ contextBridge.exposeInMainWorld('electron', {
         'cli-agents:rebuild',
         'cli-agents:delete',
         'cli-agents:rules',
+        'cli-agents:store-credential',
+        'cli-agents:delete-credential',
+        'cli-agents:get-stored-secrets',
+        'cli-agents:search-setup-link',
         'settings:get',
       ];
       if (validChannels.includes(channel)) {

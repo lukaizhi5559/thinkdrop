@@ -1449,8 +1449,20 @@ export function UnifiedOverlay() {
       setIsStreaming(data.isStreaming);
       if (data.isStreaming) {
         setActiveTab('results');
-        setUnreadTabs(prev => ({ ...prev, results: false }));
+        setUnreadTabs(prev => {
+          const next = new Set(prev);
+          next.delete('results');
+          return next;
+        });
       }
+    }, token);
+    ipcRenderer.on('ui:switch-to-results', () => {
+      setActiveTab('results');
+      setUnreadTabs(prev => {
+        const next = new Set(prev);
+        next.delete('results');
+        return next;
+      });
     }, token);
     ipcRenderer.on('queue:update', handleQueueUpdate, token);
     ipcRenderer.on('queue:item-done', handleQueueItemDone, token);
@@ -2149,9 +2161,12 @@ export function UnifiedOverlay() {
 
         {/* Main Content Area - constrained for scroll */}
         <div className="flex-1 overflow-hidden relative">
-          {/* Results Tab */}
-          {activeTab === 'results' && (
-            <div ref={scrollContainerRef} className="h-full overflow-y-auto overflow-x-hidden p-4">
+          {/* Results Tab - Always mounted, hidden with CSS when inactive */}
+          <div 
+            ref={scrollContainerRef} 
+            className="h-full overflow-y-auto overflow-x-hidden p-4"
+            style={{ display: activeTab === 'results' ? 'block' : 'none' }}
+          >
               <div ref={contentRef}>
                 {schedulePending && (
                   <div style={{ marginBottom: 12, padding: '12px 14px', borderRadius: 10, backgroundColor: 'rgba(139,92,246,0.08)', border: '1px solid rgba(139,92,246,0.3)' }}>
@@ -2232,11 +2247,12 @@ export function UnifiedOverlay() {
                 <div ref={scrollBottomRef} />
               </div>
             </div>
-          )}
 
           {/* Queue Tab */}
-          {activeTab === 'queue' && (
-            <div className="h-full overflow-y-auto overflow-x-hidden p-4 flex flex-col gap-2">
+          <div 
+            className="h-full overflow-y-auto overflow-x-hidden p-4 flex flex-col gap-2"
+            style={{ display: activeTab === 'queue' ? 'flex' : 'none' }}
+          >
               {restartAlert && (
                 <div style={{ borderRadius: 9, padding: '10px 14px', backgroundColor: 'rgba(245,158,11,0.07)', border: '1px solid rgba(245,158,11,0.3)', display: 'flex', flexDirection: 'column', gap: 6 }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -2277,11 +2293,12 @@ export function UnifiedOverlay() {
                 onCancel={(item) => ipcRenderer?.send('queue:cancel', { id: item.id })}
               />
             </div>
-          )}
 
           {/* Cron Tab */}
-          {activeTab === 'cron' && (
-            <div className="h-full overflow-y-auto overflow-x-hidden p-4">
+          <div 
+            className="h-full overflow-y-auto overflow-x-hidden p-4"
+            style={{ display: activeTab === 'cron' ? 'block' : 'none' }}
+          >
               <CronTab
                 items={cronItems}
                 onToggle={(item) => ipcRenderer?.send('cron:toggle', { id: item.id })}
@@ -2289,21 +2306,23 @@ export function UnifiedOverlay() {
                 onRerun={(item) => ipcRenderer?.send('cron:run-now', { id: item.id })}
               />
             </div>
-          )}
 
           {/* Agents Tab */}
-          {activeTab === 'agents' && (
-            <div className="h-full overflow-y-auto overflow-x-hidden">
+          <div 
+            className="h-full overflow-y-auto overflow-x-hidden"
+            style={{ display: activeTab === 'agents' ? 'block' : 'none' }}
+          >
               <AgentsTab
                 items={agentItems}
                 onRefresh={() => ipcRenderer?.send('agents:list')}
               />
             </div>
-          )}
 
           {/* Skills Tab */}
-          {activeTab === 'skills' && (
-            <div className="h-full overflow-y-auto overflow-x-hidden p-4">
+          <div 
+            className="h-full overflow-y-auto overflow-x-hidden p-4"
+            style={{ display: activeTab === 'skills' ? 'block' : 'none' }}
+          >
               <SkillsTab
                 items={skillItems}
                 onSaveSecret={(skillName, key, value) => ipcRenderer?.send('skills:save-secret', { skillName, key, value })}
@@ -2315,11 +2334,12 @@ export function UnifiedOverlay() {
                 onDelete={(skillName) => ipcRenderer?.send('skills:delete', { skillName })}
               />
             </div>
-          )}
 
           {/* Connections Tab */}
-          {activeTab === 'connections' && (
-            <div className="h-full overflow-y-auto overflow-x-hidden p-4">
+          <div 
+            className="h-full overflow-y-auto overflow-x-hidden p-4"
+            style={{ display: activeTab === 'connections' ? 'block' : 'none' }}
+          >
               <ConnectionsTab
                 items={connectionItems}
                 onConnect={(provider, tokenKey, scopes) => ipcRenderer?.send('connections:connect', { provider, tokenKey, scopes })}
@@ -2327,28 +2347,30 @@ export function UnifiedOverlay() {
                 onRefresh={() => ipcRenderer?.send('connections:list')}
               />
             </div>
-          )}
 
           {/* Store Tab */}
-          {activeTab === 'store' && (
-            <div className="h-full overflow-y-auto overflow-x-hidden p-4">
+          <div 
+            className="h-full overflow-y-auto overflow-x-hidden p-4"
+            style={{ display: activeTab === 'store' ? 'block' : 'none' }}
+          >
               <StoreTab onBuildSkill={() => setActiveTab('results')} />
             </div>
-          )}
 
           {/* Settings Tab */}
-          {activeTab === 'settings' && (
-            <div className="h-full overflow-y-auto overflow-x-hidden p-4">
+          <div 
+            className="h-full overflow-y-auto overflow-x-hidden p-4"
+            style={{ display: activeTab === 'settings' ? 'block' : 'none' }}
+          >
               <SettingsTab />
             </div>
-          )}
 
           {/* Rules Tab */}
-          {activeTab === 'rules' && (
-            <div className="h-full overflow-y-auto overflow-x-hidden p-4">
+          <div 
+            className="h-full overflow-y-auto overflow-x-hidden p-4"
+            style={{ display: activeTab === 'rules' ? 'block' : 'none' }}
+          >
               <RulesManagementPanel />
             </div>
-          )}
         </div>
 
         {/* Bottom Input Bar */}

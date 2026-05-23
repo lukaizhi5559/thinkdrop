@@ -49,6 +49,7 @@
     "class-variance-authority": "^0.7.0",
     "clsx": "^2.0.0",
     "docx": "9.6.1",
+    "duckdb-async": "^1.2.2",
     "jsonrepair": "^3.13.3",
     "keytar": "^7.9.0",
     "kokoro-js": "^1.2.1",

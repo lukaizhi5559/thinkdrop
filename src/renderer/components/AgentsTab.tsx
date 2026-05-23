@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import type { AgentItem, AgentSkill, CLIAgentItem } from './TabComponents';
+import type { AgentItem, AgentSkill } from './TabComponents';
 
 const ipcRenderer = (window as any).electron?.ipcRenderer;
 
@@ -398,7 +398,12 @@ function AgentCard({
                 marginTop: '2px',
               }}
             >
-              {(agent.skills?.length ?? 0) === 0 ? 'No skills' : `${agent.skills?.length ?? 0} skill${(agent.skills?.length ?? 0) === 1 ? '' : 's'}`}
+              {(agent.skills?.length ?? 0) === 0
+                ? 'No skills'
+                : agent.lastScanned
+                  ? `Auto-scan · ${agent.skills?.length ?? 0} skill${(agent.skills?.length ?? 0) === 1 ? '' : 's'} · ${new Date(agent.lastScanned).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}`
+                  : `${agent.skills?.length ?? 0} skill${(agent.skills?.length ?? 0) === 1 ? '' : 's'}`
+              }
             </span>
           </div>
         </div>
@@ -726,12 +731,6 @@ function EditAgentModal({
     return trimmed.length > 0 && isValidUrl(trimmed);
   });
   
-  // Check if any invalid URLs exist (non-empty but not valid)
-  const hasInvalidUrls = goals.some(g => {
-    const trimmed = g.trim();
-    return trimmed.length > 0 && !isValidUrl(trimmed);
-  });
-
   const hasNoGoalsYet = !agent.userGoals?.length && !agent.userGoal;
   const isNewAgent = (agent.learnedStates?.length ?? 0) === 0 && !agent.lastLearned;
 
@@ -1107,18 +1106,35 @@ export function AgentsTab({ items, onRefresh }: AgentsTabProps) {
   const [activeSubtab, setActiveSubtab] = useState<'browser' | 'cli'>('browser');
 
   // CLI Agents state
-  const [cliAgents, setCliAgents] = useState<CLIAgentItem[]>([]);
-  const [cliLoading, setCliLoading] = useState(false);
-  const [cliError, setCliError] = useState<string | null>(null);
   const [cliValidating, setCliValidating] = useState<Record<string, boolean>>({});
   const [cliRebuilding, setCliRebuilding] = useState<Record<string, boolean>>({});
   const [cliAuthLoading, setCliAuthLoading] = useState<Record<string, boolean>>({});
-  const [cliDetailAgent, setCliDetailAgent] = useState<CLIAgentItem | null>(null);
+  const [cliDetailAgent, setCliDetailAgent] = useState<AgentItem | null>(null);
   const [cliDetailData, setCliDetailData] = useState<{ descriptor?: string; rules?: string[]; failureLog?: string } | null>(null);
   const [cliConfirmDelete, setCliConfirmDelete] = useState<string | null>(null);
+  // Collapsible sections state for CLI agent detail
+  const [expandedSections, setExpandedSections] = useState({
+    learnedRules: true,
+    descriptor: true,
+    config: true,
+  });
+  // Descriptor edit mode
+  const [isEditingDescriptor, setIsEditingDescriptor] = useState(false);
+  const [editedDescriptor, setEditedDescriptor] = useState('');
+  // Config fields from descriptor
+  const [configFields, setConfigFields] = useState<{key: string; value: string; label: string}[]>([]);
+  // Dynamic credential pairs for the editor (key-value with metadata)
+  const [credentialPairs, setCredentialPairs] = useState<Array<{ key: string; value: string; isEditing: boolean; isStored: boolean }>>([]);
+  // Track which credential is pending delete confirmation (stores the key)
+  const [confirmDeleteCredential, setConfirmDeleteCredential] = useState<string | null>(null);
 
-  // Sync with props
+  // Filter agents by type from props (items now includes ALL agents with type field from DB)
+  const browserAgents = items.filter(agent => agent.type === 'browser');
+  const cliAgents = items.filter(agent => agent.type === 'cli' || agent.type === 'api_key');
+
+  // Sync props to localItems (fallback for non-DB flow)
   useEffect(() => {
+    console.log('AGENT ITEMS:', items)
     setLocalItems(items);
   }, [items]);
 
@@ -1273,22 +1289,6 @@ export function AgentsTab({ items, onRefresh }: AgentsTabProps) {
     ));
   };
 
-  const handlePublishSkill = (agentId: string, skillName: string) => {
-    ipcRenderer?.send('agents:publish-skill', { agentId, skillName });
-    
-    // Optimistic update
-    setLocalItems(prev => prev.map(agent => 
-      agent.id === agentId 
-        ? { 
-            ...agent, 
-            skills: agent.skills?.map(s => 
-              s.name === skillName ? { ...s, status: 'published' } : s
-            ) 
-          }
-        : agent
-    ));
-  };
-
   const handleEditSkill = (skillPath: string) => {
     // Open the skill directory in the default file manager
     ipcRenderer?.send('shell:open-path', skillPath);
@@ -1312,29 +1312,11 @@ export function AgentsTab({ items, onRefresh }: AgentsTabProps) {
   };
 
   // ── CLI Agents handlers ──────────────────────────────────────────────────
-  const loadCliAgents = async () => {
-    if (!ipcRenderer) return;
-    setCliLoading(true);
-    setCliError(null);
-    try {
-      const agents = await ipcRenderer.invoke('cli-agents:list');
-      setCliAgents(Array.isArray(agents) ? agents : []);
-    } catch (e: any) {
-      setCliError(e?.message || 'Failed to load CLI agents');
-    } finally {
-      setCliLoading(false);
-    }
-  };
-
-  useEffect(() => {
-    if (activeSubtab === 'cli') loadCliAgents();
-  }, [activeSubtab]);
-
   const handleCliValidate = async (id: string) => {
     setCliValidating(prev => ({ ...prev, [id]: true }));
     try {
       await ipcRenderer?.invoke('cli-agents:validate', { id });
-      await loadCliAgents();
+      onRefresh?.(); // Refresh parent to get updated agents list
     } finally {
       setCliValidating(prev => { const n = { ...prev }; delete n[id]; return n; });
     }
@@ -1344,7 +1326,7 @@ export function AgentsTab({ items, onRefresh }: AgentsTabProps) {
     setCliRebuilding(prev => ({ ...prev, [id]: true }));
     try {
       await ipcRenderer?.invoke('cli-agents:rebuild', { service });
-      await loadCliAgents();
+      onRefresh?.(); // Refresh parent to get updated agents list
     } finally {
       setCliRebuilding(prev => { const n = { ...prev }; delete n[id]; return n; });
     }
@@ -1353,7 +1335,7 @@ export function AgentsTab({ items, onRefresh }: AgentsTabProps) {
   const handleCliDelete = async (id: string) => {
     try {
       await ipcRenderer?.invoke('cli-agents:delete', { id });
-      setCliAgents(prev => prev.filter(a => a.id !== id));
+      onRefresh?.(); // Refresh parent to get updated agents list
       setCliConfirmDelete(null);
       if (cliDetailAgent?.id === id) { setCliDetailAgent(null); setCliDetailData(null); }
     } catch {}
@@ -1363,25 +1345,181 @@ export function AgentsTab({ items, onRefresh }: AgentsTabProps) {
     setCliAuthLoading(prev => ({ ...prev, [id]: true }));
     try {
       await ipcRenderer?.invoke('cli-agents:auth-login', { id, cliTool });
-      await loadCliAgents(); // refresh auth status
+      onRefresh?.(); // Refresh parent to get updated agents list
     } catch {}
     setCliAuthLoading(prev => { const n = { ...prev }; delete n[id]; return n; });
   };
 
-  const handleCliDetail = async (agent: CLIAgentItem) => {
+  // Parse config fields from descriptor frontmatter
+  const parseConfigFields = (descriptor: string): {key: string; value: string; label: string}[] => {
+    const fields: {key: string; value: string; label: string}[] = [];
+    const frontmatterMatch = descriptor.match(/^---\n([\s\S]*?)\n---/);
+    if (frontmatterMatch) {
+      const fm = frontmatterMatch[1];
+      const configPatterns = [
+        { key: 'client_id', label: 'Client ID' },
+        { key: 'client_secret', label: 'Client Secret' },
+        { key: 'api_key', label: 'API Key' },
+        { key: 'api_key_env', label: 'API Key Env Var' },
+        { key: 'token', label: 'Token' },
+        { key: 'auth_url', label: 'Auth URL' },
+        { key: 'oauth_scopes', label: 'OAuth Scopes' },
+      ];
+      for (const pattern of configPatterns) {
+        const match = fm.match(new RegExp(`${pattern.key}[:=]\\s*(.+)`));
+        if (match) {
+          fields.push({ key: pattern.key, value: match[1].trim(), label: pattern.label });
+        }
+      }
+    }
+    return fields;
+  };
+
+  // Load credentials into the dynamic editor
+  const loadCredentials = async (agentId: string, service?: string) => {
+    try {
+      console.log(`[AgentsTab] Loading credentials for ${agentId}, service: ${service}`);
+      const secrets = await ipcRenderer?.invoke('cli-agents:get-stored-secrets', { agentId, service });
+      console.log(`[AgentsTab] Got secrets:`, secrets);
+      // Convert to pairs format - only key names, no actual values for security
+      const pairs = (secrets || []).map((key: string) => ({
+        key,
+        value: '',
+        isEditing: false,
+        isStored: true
+      }));
+      // Add empty row for new entries
+      pairs.push({ key: '', value: '', isEditing: true, isStored: false });
+      console.log(`[AgentsTab] Setting credentialPairs:`, pairs);
+      setCredentialPairs(pairs);
+    } catch (e) {
+      console.error('[AgentsTab] Failed to load credentials:', e);
+      // On error, just show empty editor
+      setCredentialPairs([{ key: '', value: '', isEditing: true, isStored: false }]);
+    }
+  };
+
+  // Store a credential
+  const handleStoreCredential = async (_index: number, key: string, value: string) => {
+    if (!cliDetailAgent || !key || !value) return;
+    try {
+      await ipcRenderer?.invoke('cli-agents:store-credential', {
+        agentId: cliDetailAgent.id,
+        key,
+        value,
+        service: cliDetailAgent.service,
+      });
+      // Refresh the credential pairs list
+      await loadCredentials(cliDetailAgent.id, cliDetailAgent.service);
+    } catch (e) {
+      console.error('Failed to store credential:', e);
+    }
+  };
+
+  // Search for setup link via StateGraph
+  const handleSearchSetupLink = async (service: string, cliTool?: string) => {
+    try {
+      await ipcRenderer?.invoke('cli-agents:search-setup-link', { service, cliTool });
+    } catch (e) {
+      console.error('Failed to search setup link:', e);
+    }
+  };
+
+  // Delete a credential (with confirmation)
+  const handleDeleteCredential = async (_index: number, key: string) => {
+    if (!cliDetailAgent || !key) return;
+    // Check if already confirming this key
+    if (confirmDeleteCredential === key) {
+      // Actually delete
+      try {
+        console.log(`[AgentsTab] Deleting credential ${key} for ${cliDetailAgent.id}`);
+        const result = await ipcRenderer?.invoke('cli-agents:delete-credential', {
+          agentId: cliDetailAgent.id,
+          key,
+          service: cliDetailAgent.service,
+        });
+        console.log(`[AgentsTab] Delete result:`, result);
+        setConfirmDeleteCredential(null);
+        // Clear pairs immediately for visual feedback
+        setCredentialPairs([]);
+        // Small delay to ensure delete propagates
+        await new Promise(r => setTimeout(r, 200));
+        // Refresh the credential pairs list
+        await loadCredentials(cliDetailAgent.id, cliDetailAgent.service);
+      } catch (e) {
+        console.error('Failed to delete credential:', e);
+      }
+    } else {
+      // First click - set confirmation state
+      setConfirmDeleteCredential(key);
+      // Auto-clear confirmation after 3 seconds
+      setTimeout(() => setConfirmDeleteCredential(null), 3000);
+    }
+  };
+
+  // Update credential pair at index
+  const updateCredentialPair = (index: number, field: 'key' | 'value', value: string) => {
+    setCredentialPairs(prev => prev.map((pair, i) => 
+      i === index ? { ...pair, [field]: value } : pair
+    ));
+  };
+
+  // Toggle edit mode for a credential pair
+  const toggleCredentialEdit = (index: number) => {
+    setCredentialPairs(prev => prev.map((pair, i) => 
+      i === index ? { ...pair, isEditing: !pair.isEditing } : pair
+    ));
+  };
+
+  // Add new empty credential row
+  const addCredentialRow = () => {
+    setCredentialPairs(prev => [...prev, { key: '', value: '', isEditing: true, isStored: false }]);
+  };
+
+  const handleCliDetail = async (agent: AgentItem) => {
     setCliDetailAgent(agent);
     setCliDetailData(null);
+    setIsEditingDescriptor(false);
+    setEditedDescriptor('');
+    setCredentialPairs([{ key: '', value: '', isEditing: true, isStored: false }]);
+    setExpandedSections({ learnedRules: true, descriptor: false, config: true });
+    // Load stored credentials for this agent
+    await loadCredentials(agent.id, agent.service);
     try {
       const [queryRes, rules] = await Promise.all([
         ipcRenderer?.invoke('cli-agents:query', { id: agent.id }),
         ipcRenderer?.invoke('cli-agents:rules', { id: agent.id }),
       ]);
+      const descriptor = queryRes?.descriptor || '(no descriptor)';
       setCliDetailData({
-        descriptor: queryRes?.descriptor || '(no descriptor)',
+        descriptor,
         rules: Array.isArray(rules) ? rules : [],
         failureLog: queryRes?.failureLog || queryRes?.failure_log || '',
       });
+      setEditedDescriptor(descriptor);
+      setConfigFields(parseConfigFields(descriptor));
     } catch {}
+  };
+
+  // Save edited descriptor (handles both browser and CLI agents)
+  const handleSaveDescriptor = async () => {
+    if (!cliDetailAgent || !ipcRenderer) return;
+    try {
+      // Determine which update handler to use based on agent type
+      const isBrowserAgent = !cliDetailAgent.type || cliDetailAgent.type === 'browser' || cliDetailAgent.type === 'api';
+      const handler = isBrowserAgent ? 'browser-agents:update' : 'cli-agents:update';
+      await ipcRenderer.invoke(handler, { id: cliDetailAgent.id, descriptor: editedDescriptor });
+      setCliDetailData(prev => prev ? { ...prev, descriptor: editedDescriptor } : prev);
+      setIsEditingDescriptor(false);
+      setConfigFields(parseConfigFields(editedDescriptor));
+    } catch (e) {
+      console.error('Failed to save descriptor:', e);
+    }
+  };
+
+  // Toggle section expansion
+  const toggleSection = (section: keyof typeof expandedSections) => {
+    setExpandedSections(prev => ({ ...prev, [section]: !prev[section] }));
   };
 
   // CLI agent status colors
@@ -1426,8 +1564,9 @@ export function AgentsTab({ items, onRefresh }: AgentsTabProps) {
           Domain-specific automation agents that learn and adapt
         </p>
 
+        {/* COMMENT OUT FOR NOW AS NOT SEEING THE NEED TO ALLOW AGENT CREATION THIS WAY */}
         {/* Action buttons — compact inline row */}
-        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+        {/* <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
           <button
             onClick={onRefresh}
             style={{
@@ -1494,7 +1633,7 @@ export function AgentsTab({ items, onRefresh }: AgentsTabProps) {
               </>
             )}
           </button>
-        </div>
+        </div> */}
 
         {/* Error feedback */}
         {createError && (
@@ -1614,7 +1753,7 @@ export function AgentsTab({ items, onRefresh }: AgentsTabProps) {
       {/* Browser Agents Tab */}
       {activeSubtab === 'browser' && (
       <>
-      {localItems.length === 0 ? (
+      {browserAgents.length === 0 ? (
         <div style={{
           textAlign: 'center',
           padding: 60,
@@ -1646,7 +1785,9 @@ export function AgentsTab({ items, onRefresh }: AgentsTabProps) {
           </div>
         </div>
       ) : (
-        localItems.filter((agent): agent is AgentItem => !!agent && !!agent.id).map((agent) => (
+        browserAgents
+          .filter((agent): agent is AgentItem => !!agent && !!agent.id)
+          .map((agent) => (
           <AgentCard
             key={agent.id}
             agent={agent}
@@ -1672,24 +1813,8 @@ export function AgentsTab({ items, onRefresh }: AgentsTabProps) {
       {/* CLI Agents Tab */}
       {activeSubtab === 'cli' && (
         <div style={{ marginTop: 8 }}>
-          {/* Loading */}
-          {cliLoading && (
-            <div style={{ textAlign: 'center', padding: 30, color: '#6b7280', fontSize: '0.8rem' }}>
-              <span style={{ animation: 'spin 1s linear infinite', display: 'inline-block' }}>
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>
-              </span>
-              {' '}Loading CLI agents...
-            </div>
-          )}
-          {/* Error */}
-          {cliError && (
-            <div style={{ textAlign: 'center', padding: 20, color: '#ef4444', fontSize: '0.8rem' }}>
-              {cliError}
-              <button onClick={loadCliAgents} style={{ marginLeft: 8, padding: '2px 8px', background: 'rgba(239,68,68,0.15)', border: '1px solid rgba(239,68,68,0.3)', borderRadius: 4, color: '#ef4444', fontSize: '0.7rem', cursor: 'pointer' }}>Retry</button>
-            </div>
-          )}
           {/* Empty state */}
-          {!cliLoading && !cliError && cliAgents.length === 0 && (
+          {cliAgents.length === 0 && (
             <div style={{ textAlign: 'center', padding: 50, color: '#6b7280' }}>
               <div style={{ marginBottom: 16, display: 'flex', justifyContent: 'center' }}>
                 <div style={{ width: 56, height: 56, borderRadius: 12, backgroundColor: 'rgba(16,185,129,0.12)', border: '1px solid rgba(16,185,129,0.25)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
@@ -1703,7 +1828,7 @@ export function AgentsTab({ items, onRefresh }: AgentsTabProps) {
             </div>
           )}
           {/* Agent cards */}
-          {!cliLoading && cliAgents.length > 0 && (
+          {cliAgents.length > 0 && (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
               {cliAgents.map(agent => (
                 <div
@@ -1722,40 +1847,48 @@ export function AgentsTab({ items, onRefresh }: AgentsTabProps) {
                 >
                   {/* Top row: icon + name + status */}
                   <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8 }}>
-                    <div style={{ width: 34, height: 34, borderRadius: 8, backgroundColor: 'rgba(16,185,129,0.12)', border: '1px solid rgba(16,185,129,0.2)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#10b981" strokeWidth="1.8"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg>
+                    <div style={{ width: 34, height: 34, borderRadius: 8, backgroundColor: agent.type === 'api_key' ? 'rgba(251,191,36,0.1)' : 'rgba(16,185,129,0.12)', border: `1px solid ${agent.type === 'api_key' ? 'rgba(251,191,36,0.25)' : 'rgba(16,185,129,0.2)'}`, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                      {agent.type === 'api_key'
+                        ? <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#fbbf24" strokeWidth="1.8"><path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4"/></svg>
+                        : <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#10b981" strokeWidth="1.8"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg>
+                      }
                     </div>
                     <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
                         <span style={{ color: '#fff', fontSize: '0.85rem', fontWeight: 500 }}>{agent.id}</span>
                         <span style={{ display: 'inline-flex', alignItems: 'center', gap: 3, fontSize: '0.65rem', color: cliStatusColor(agent.status), background: `${cliStatusColor(agent.status)}15`, padding: '1px 6px', borderRadius: 8 }}>
                           <span style={{ width: 5, height: 5, borderRadius: '50%', backgroundColor: cliStatusColor(agent.status) }} />
                           {cliStatusLabel(agent.status)}
                         </span>
+                        {agent.type === 'api_key' && (
+                          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 3, fontSize: '0.62rem', color: '#fbbf24', background: 'rgba(251,191,36,0.1)', padding: '1px 6px', borderRadius: 8, border: '1px solid rgba(251,191,36,0.25)' }}>
+                            🔑 API Key Required
+                          </span>
+                        )}
+                        {agent.type !== 'api_key' && agent.authStatus === 'not_authenticated' && (
+                          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 3, fontSize: '0.62rem', color: '#fbbf24', background: 'rgba(251,191,36,0.1)', padding: '1px 6px', borderRadius: 8, border: '1px solid rgba(251,191,36,0.25)' }}>
+                            ⚠ Auth Required
+                          </span>
+                        )}
+                        {/* Show credentials badge for agents that may need credentials */}
+                        {agent.apiKeyEnv && (
+                          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 3, fontSize: '0.62rem', color: '#fbbf24', background: 'rgba(251,191,36,0.1)', padding: '1px 6px', borderRadius: 8, border: '1px solid rgba(251,191,36,0.25)' }}>
+                            🔑 Credentials
+                          </span>
+                        )}
                       </div>
                       <div style={{ fontSize: '0.7rem', color: '#6b7280', marginTop: 2 }}>
                         {agent.cliTool && <span>CLI: <code style={{ color: '#10b981', fontSize: '0.68rem' }}>{agent.cliTool}</code></span>}
-                        {agent.service && <span style={{ marginLeft: 8 }}>Service: {agent.service}</span>}
+                        {agent.service && <span style={{ marginLeft: agent.cliTool ? 8 : 0 }}>Service: {agent.service}</span>}
                         {agent.lastValidated && <span style={{ marginLeft: 8 }}>Validated: {timeAgo(agent.lastValidated)}</span>}
                       </div>
                     </div>
                   </div>
-                  {/* Capabilities */}
-                  {agent.capabilities && agent.capabilities.length > 0 && (
-                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginBottom: 8 }}>
-                      {agent.capabilities.slice(0, 8).map(cap => (
-                        <span key={cap} style={{ fontSize: '0.6rem', padding: '1px 6px', borderRadius: 6, background: 'rgba(16,185,129,0.1)', color: '#10b981', border: '1px solid rgba(16,185,129,0.2)' }}>{cap}</span>
-                      ))}
-                      {agent.capabilities.length > 8 && (
-                        <span style={{ fontSize: '0.6rem', padding: '1px 6px', color: '#6b7280' }}>+{agent.capabilities.length - 8}</span>
-                      )}
-                    </div>
-                  )}
                   {/* Action buttons */}
                   <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }} onClick={e => e.stopPropagation()}>
                     {agent.authStatus === 'not_authenticated' && (
                       <button
-                        onClick={() => handleCliAuth(agent.id, agent.cliTool)}
+                        onClick={() => handleCliAuth(agent.id, agent.cliTool!)}
                         disabled={!!cliAuthLoading[agent.id]}
                         style={{ padding: '3px 8px', borderRadius: 5, border: '1px solid rgba(251,191,36,0.35)', background: 'rgba(251,191,36,0.1)', color: '#fbbf24', fontSize: '0.63rem', cursor: 'pointer', opacity: cliAuthLoading[agent.id] ? 0.5 : 1, fontWeight: 600 }}
                       >
@@ -1770,7 +1903,7 @@ export function AgentsTab({ items, onRefresh }: AgentsTabProps) {
                       {cliValidating[agent.id] ? 'Validating...' : 'Validate'}
                     </button>
                     <button
-                      onClick={() => handleCliRebuild(agent.id, agent.service)}
+                      onClick={() => handleCliRebuild(agent.id, agent.service!)}
                       disabled={!!cliRebuilding[agent.id]}
                       style={{ padding: '3px 8px', borderRadius: 5, border: '1px solid rgba(99,102,241,0.25)', background: 'rgba(99,102,241,0.08)', color: '#818cf8', fontSize: '0.63rem', cursor: 'pointer', opacity: cliRebuilding[agent.id] ? 0.5 : 1 }}
                     >
@@ -1832,6 +1965,189 @@ export function AgentsTab({ items, onRefresh }: AgentsTabProps) {
                     <span style={{ fontSize: '0.7rem', color: '#6b7280' }}>Last validated: {timeAgo(cliDetailAgent.lastValidated)}</span>
                   )}
                 </div>
+                {/* Credentials card — dynamic key-value editor */}
+                <div style={{ marginBottom: 16, background: 'rgba(251,191,36,0.08)', border: '1px solid rgba(251,191,36,0.3)', borderRadius: 10, padding: '12px 14px' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 12 }}>
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#fbbf24" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <circle cx="12" cy="12" r="2"/><path d="M14.5 14.5l-2.5-2.5M19 19l-1-1M8 16l-2 2M16 8l-2 2"/>
+                    </svg>
+                    <span style={{ fontSize: '0.78rem', fontWeight: 600, color: '#fbbf24' }}>
+                      {credentialPairs.some(p => p.isStored) ? 'Credentials Stored' : 'Add Credentials'}
+                    </span>
+                    {credentialPairs.filter(p => p.isStored).length > 0 && (
+                      <span style={{ fontSize: '0.65rem', color: '#9ca3af', marginLeft: 'auto' }}>
+                        {credentialPairs.filter(p => p.isStored).length} stored
+                      </span>
+                    )}
+                  </div>
+
+                  {/* Search for setup link button */}
+                  <button
+                    onClick={() => handleSearchSetupLink(cliDetailAgent.service || cliDetailAgent.id, cliDetailAgent.cliTool)}
+                    style={{ display: 'inline-flex', alignItems: 'center', gap: 5, padding: '5px 12px', borderRadius: 6, border: '1px solid rgba(251,191,36,0.4)', background: 'rgba(251,191,36,0.12)', color: '#fbbf24', fontSize: '0.72rem', cursor: 'pointer', fontWeight: 500, marginBottom: 12 }}
+                  >
+                    <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
+                    </svg>
+                    Search for setup instructions
+                  </button>
+
+                  {/* Dynamic credential editor */}
+                  <div style={{ marginTop: 10 }}>
+                    {credentialPairs.map((pair, idx) => (
+                      <div key={idx} style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 8 }}>
+                        {/* Key input */}
+                        <input
+                          type="text"
+                          value={pair.key}
+                          onChange={(e) => updateCredentialPair(idx, 'key', e.target.value)}
+                          placeholder="Key (e.g., API_KEY)"
+                          disabled={pair.isStored && !pair.isEditing}
+                          style={{
+                            width: 90,
+                            padding: '5px 8px',
+                            borderRadius: 5,
+                            border: '1px solid rgba(255,255,255,0.15)',
+                            background: pair.isStored && !pair.isEditing ? 'rgba(0,0,0,0.5)' : 'rgba(0,0,0,0.3)',
+                            color: pair.isStored && !pair.isEditing ? '#9ca3af' : '#fff',
+                            fontSize: '0.7rem',
+                          }}
+                        />
+                        <span style={{ color: '#6b7280', fontSize: '0.75rem' }}>=</span>
+                        {/* Value input */}
+                        <input
+                          type="password"
+                          value={pair.value}
+                          onChange={(e) => updateCredentialPair(idx, 'value', e.target.value)}
+                          placeholder={pair.isStored ? '••••••••' : 'Value...'}
+                          style={{
+                            flex: 1,
+                            minWidth: 60,
+                            padding: '5px 8px',
+                            borderRadius: 5,
+                            border: '1px solid rgba(255,255,255,0.15)',
+                            background: 'rgba(0,0,0,0.3)',
+                            color: '#fff',
+                            fontSize: '0.7rem',
+                          }}
+                        />
+                        {/* Action buttons - icon-only on same row */}
+                        {pair.isStored ? (
+                          <>
+                            {/* Edit button - highlighted when in edit mode */}
+                            <button
+                              onClick={() => toggleCredentialEdit(idx)}
+                              style={{
+                                padding: '2px 4px',
+                                background: pair.isEditing ? 'rgba(59,130,246,0.15)' : 'transparent',
+                                border: pair.isEditing ? '1px solid rgba(59,130,246,0.5)' : '1px solid rgba(59,130,246,0.3)',
+                                borderRadius: 3,
+                                cursor: 'pointer',
+                                color: pair.isEditing ? '#60a5fa' : '#3b82f6',
+                                display: 'flex',
+                                alignItems: 'center',
+                                transition: 'all 0.15s',
+                              }}
+                              title={pair.isEditing ? 'Editing...' : 'Edit'}
+                            >
+                              <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
+                                <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
+                              </svg>
+                            </button>
+                            {/* Delete button with two-click confirm */}
+                            {confirmDeleteCredential === pair.key ? (
+                              <button
+                                onClick={() => handleDeleteCredential(idx, pair.key)}
+                                style={{
+                                  padding: '2px 6px',
+                                  background: 'rgba(239,68,68,0.15)',
+                                  border: '1px solid rgba(239,68,68,0.45)',
+                                  borderRadius: 3,
+                                  cursor: 'pointer',
+                                  color: '#f87171',
+                                  fontSize: '0.58rem',
+                                  fontWeight: 600,
+                                  display: 'flex',
+                                  alignItems: 'center',
+                                  whiteSpace: 'nowrap',
+                                  transition: 'all 0.15s',
+                                }}
+                                title="Click again to confirm"
+                              >
+                                sure?
+                              </button>
+                            ) : (
+                              <button
+                                onClick={() => handleDeleteCredential(idx, pair.key)}
+                                style={{
+                                  padding: '2px 4px',
+                                  background: 'transparent',
+                                  border: '1px solid rgba(239,68,68,0.3)',
+                                  borderRadius: 3,
+                                  cursor: 'pointer',
+                                  color: '#ef4444',
+                                  display: 'flex',
+                                  alignItems: 'center',
+                                }}
+                                title="Delete"
+                              >
+                                <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                  <polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/>
+                                </svg>
+                              </button>
+                            )}
+                          </>
+                        ) : (
+                          <>
+                            {/* Save button for new entries */}
+                            {pair.key && pair.value && (
+                              <button
+                                onClick={() => handleStoreCredential(idx, pair.key, pair.value)}
+                                style={{
+                                  padding: '2px 4px',
+                                  background: 'transparent',
+                                  border: '1px solid rgba(16,185,129,0.3)',
+                                  borderRadius: 3,
+                                  cursor: 'pointer',
+                                  color: '#10b981',
+                                  display: 'flex',
+                                  alignItems: 'center',
+                                }}
+                                title="Save"
+                              >
+                                <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                                  <polyline points="20 6 9 17 4 12"/>
+                                </svg>
+                              </button>
+                            )}
+                            {/* Add button on last row */}
+                            {idx === credentialPairs.length - 1 && (
+                              <button
+                                onClick={addCredentialRow}
+                                style={{
+                                  padding: '2px 4px',
+                                  background: 'transparent',
+                                  border: '1px solid rgba(107,114,128,0.3)',
+                                  borderRadius: 3,
+                                  cursor: 'pointer',
+                                  color: '#6b7280',
+                                  display: 'flex',
+                                  alignItems: 'center',
+                                }}
+                                title="Add new"
+                              >
+                                <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                                  <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
+                                </svg>
+                              </button>
+                            )}
+                          </>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </div>
                 {/* Capabilities */}
                 {cliDetailAgent.capabilities && cliDetailAgent.capabilities.length > 0 && (
                   <div style={{ marginBottom: 14 }}>
@@ -1849,19 +2165,65 @@ export function AgentsTab({ items, onRefresh }: AgentsTabProps) {
                 )}
                 {cliDetailData && (
                   <>
-                    {/* Learned Rules */}
-                    {cliDetailData.rules && cliDetailData.rules.length > 0 && (
-                      <div style={{ marginBottom: 14 }}>
-                        <div style={{ fontSize: '0.7rem', color: '#9ca3af', marginBottom: 4, fontWeight: 500 }}>Learned Rules ({cliDetailData.rules.length})</div>
-                        <div style={{ background: 'rgba(0,0,0,0.3)', borderRadius: 8, padding: '8px 10px', maxHeight: 120, overflowY: 'auto' }}>
-                          {cliDetailData.rules.map((rule, i) => (
-                            <div key={i} style={{ fontSize: '0.68rem', color: '#d1d5db', padding: '3px 0', borderBottom: i < cliDetailData.rules!.length - 1 ? '1px solid rgba(255,255,255,0.04)' : 'none' }}>
-                              {rule}
-                            </div>
-                          ))}
-                        </div>
+                    {/* Config Fields Section */}
+                    {configFields.length > 0 && (
+                      <div style={{ marginBottom: 12 }}>
+                        <button 
+                          onClick={() => toggleSection('config')}
+                          style={{ 
+                            width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                            padding: '8px 0', border: 'none', background: 'none', color: '#9ca3af', 
+                            fontSize: '0.75rem', fontWeight: 500, cursor: 'pointer'
+                          }}
+                        >
+                          <span>Configuration ({configFields.length})</span>
+                          <span>{expandedSections.config ? '▼' : '▶'}</span>
+                        </button>
+                        {expandedSections.config && (
+                          <div style={{ background: 'rgba(0,0,0,0.2)', borderRadius: 8, padding: '10px 12px', marginTop: 4 }}>
+                            {configFields.map((field) => (
+                              <div key={field.key} style={{ marginBottom: 8 }}>
+                                <div style={{ fontSize: '0.65rem', color: '#6b7280', marginBottom: 2 }}>{field.label}</div>
+                                <div style={{ 
+                                  fontSize: '0.7rem', color: '#10b981', fontFamily: 'monospace',
+                                  background: 'rgba(16,185,129,0.08)', padding: '4px 8px', borderRadius: 4,
+                                  border: '1px solid rgba(16,185,129,0.15)', wordBreak: 'break-all'
+                                }}>
+                                  {field.value}
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        )}
                       </div>
                     )}
+
+                    {/* Learned Rules - Collapsible */}
+                    {cliDetailData.rules && cliDetailData.rules.length > 0 && (
+                      <div style={{ marginBottom: 12 }}>
+                        <button 
+                          onClick={() => toggleSection('learnedRules')}
+                          style={{ 
+                            width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                            padding: '8px 0', border: 'none', background: 'none', color: '#9ca3af', 
+                            fontSize: '0.75rem', fontWeight: 500, cursor: 'pointer'
+                          }}
+                        >
+                          <span>Learned Rules ({cliDetailData.rules.length})</span>
+                          <span>{expandedSections.learnedRules ? '▼' : '▶'}</span>
+                        </button>
+                        {expandedSections.learnedRules && (
+                          <div style={{ background: 'rgba(0,0,0,0.3)', borderRadius: 8, padding: '8px 10px', maxHeight: 120, overflowY: 'auto', marginTop: 4 }}>
+                            {cliDetailData.rules.map((rule, i) => (
+                              <div key={i} style={{ fontSize: '0.68rem', color: '#d1d5db', padding: '3px 0', borderBottom: i < cliDetailData.rules!.length - 1 ? '1px solid rgba(255,255,255,0.04)' : 'none' }}>
+                                {rule}
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    )}
+
                     {/* Failure Log */}
                     {cliDetailData.failureLog && (
                       <div style={{ marginBottom: 14 }}>
@@ -1871,12 +2233,74 @@ export function AgentsTab({ items, onRefresh }: AgentsTabProps) {
                         </pre>
                       </div>
                     )}
-                    {/* Descriptor */}
+
+                    {/* Descriptor - Collapsible & Editable */}
                     <div style={{ marginBottom: 14 }}>
-                      <div style={{ fontSize: '0.7rem', color: '#9ca3af', marginBottom: 4, fontWeight: 500 }}>Descriptor</div>
-                      <pre style={{ background: 'rgba(0,0,0,0.3)', borderRadius: 8, padding: '8px 10px', fontSize: '0.6rem', color: '#d1d5db', whiteSpace: 'pre-wrap', wordBreak: 'break-all', maxHeight: 200, overflowY: 'auto', margin: 0 }}>
-                        {cliDetailData.descriptor}
-                      </pre>
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 }}>
+                        <button 
+                          onClick={() => toggleSection('descriptor')}
+                          style={{ 
+                            display: 'flex', alignItems: 'center', gap: 6,
+                            border: 'none', background: 'none', color: '#9ca3af', 
+                            fontSize: '0.75rem', fontWeight: 500, cursor: 'pointer'
+                          }}
+                        >
+                          <span>Descriptor</span>
+                          <span>{expandedSections.descriptor ? '▼' : '▶'}</span>
+                        </button>
+                        {!isEditingDescriptor ? (
+                          <button 
+                            onClick={() => setIsEditingDescriptor(true)}
+                            style={{ 
+                              padding: '3px 8px', borderRadius: 4, border: '1px solid rgba(99,102,241,0.3)', 
+                              background: 'rgba(99,102,241,0.1)', color: '#818cf8', fontSize: '0.65rem',
+                              cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 4
+                            }}
+                          >
+                            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+                            Edit
+                          </button>
+                        ) : (
+                          <div style={{ display: 'flex', gap: 6 }}>
+                            <button 
+                              onClick={handleSaveDescriptor}
+                              style={{ 
+                                padding: '3px 8px', borderRadius: 4, border: '1px solid rgba(16,185,129,0.3)', 
+                                background: 'rgba(16,185,129,0.1)', color: '#10b981', fontSize: '0.65rem', cursor: 'pointer'
+                              }}
+                            >
+                              Save
+                            </button>
+                            <button 
+                              onClick={() => { setIsEditingDescriptor(false); setEditedDescriptor(cliDetailData.descriptor || ''); }}
+                              style={{ 
+                                padding: '3px 8px', borderRadius: 4, border: '1px solid rgba(107,114,128,0.3)', 
+                                background: 'transparent', color: '#6b7280', fontSize: '0.65rem', cursor: 'pointer'
+                              }}
+                            >
+                              Cancel
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                      {expandedSections.descriptor && (
+                        isEditingDescriptor ? (
+                          <textarea 
+                            value={editedDescriptor}
+                            onChange={(e) => setEditedDescriptor(e.target.value)}
+                            style={{ 
+                              width: '100%', minHeight: 200, background: 'rgba(0,0,0,0.4)', 
+                              border: '1px solid rgba(99,102,241,0.3)', borderRadius: 8, 
+                              padding: '10px 12px', fontSize: '0.65rem', color: '#e5e7eb',
+                              fontFamily: 'monospace', resize: 'vertical', lineHeight: 1.4
+                            }}
+                          />
+                        ) : (
+                          <pre style={{ background: 'rgba(0,0,0,0.3)', borderRadius: 8, padding: '8px 10px', fontSize: '0.6rem', color: '#d1d5db', whiteSpace: 'pre-wrap', wordBreak: 'break-all', maxHeight: 200, overflowY: 'auto', margin: 0 }}>
+                            {cliDetailData.descriptor}
+                          </pre>
+                        )
+                      )}
                     </div>
                   </>
                 )}

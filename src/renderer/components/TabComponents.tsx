@@ -92,6 +92,7 @@ export interface AgentItem {
   domain: string;         // e.g., open.spotify.com
   category: string;       // Entertainment & Media, etc.
   status: 'pending' | 'learning' | 'learned' | 'needs_training';
+  type?: 'browser' | 'api' | 'cli' | 'api_key'; // agent type for filtering
   created?: string;       // ISO timestamp
   lastLearned?: string;   // ISO timestamp
   userGoals?: string[];   // what user wants to accomplish (multiple goals)
@@ -100,6 +101,18 @@ export interface AgentItem {
   learnedStates?: string[]; // page states discovered during learning
   skills?: AgentSkill[];  // trained skills (both atomic and composite)
   faviconUrl?: string;    // cached favicon path
+  // CLI-specific fields (optional; only present when type === 'cli')
+  service?: string;       // e.g., github
+  cliTool?: string;       // e.g., gh
+  lastValidated?: string; // ISO timestamp
+  authStatus?: string;    // authenticated | not_authenticated | unknown
+  // API-key / credential fields (present when type === 'api_key' or agent needs token)
+  apiKeyUrl?: string;     // URL where user obtains their API key / token
+  apiKeyEnv?: string;     // env var name to store the key, e.g. GH_API_KEY
+  // Auto-scan provenance
+  lastScanned?: string;   // ISO timestamp of most recent auto-scan
+  // Agent descriptor (frontmatter content from cli.agent descriptor)
+  descriptor?: string;    // full markdown descriptor with --- frontmatter
 }
 
 export interface CLIAgentItem {
