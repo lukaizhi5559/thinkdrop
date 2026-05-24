@@ -98,6 +98,9 @@ contextBridge.exposeInMainWorld('electron', {
         'agents:refresh-skill',
         'agents:auto-scan-set',
         'settings:set',
+        'clipboard:write-text',
+        'terminal:execute',
+        'terminal:analyze-and-fix',
       ];
       if (validChannels.includes(channel)) {
         ipcRenderer.send(channel, data);
@@ -105,6 +108,8 @@ contextBridge.exposeInMainWorld('electron', {
     },
     on: (channel, func, token) => {
       const validChannels = [
+        'terminal:output',
+        'terminal:analysis-result',
         'prompt-capture:show',
         'prompt-capture:capture-screenshot',
         'prompt-capture:screenshot-result',

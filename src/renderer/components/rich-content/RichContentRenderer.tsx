@@ -12,12 +12,11 @@ const CodeBlockWithCopy: React.FC<{ code: string; language: string }> = ({ code,
   const [isCopied, setIsCopied] = useState(false);
 
   const handleCopy = async () => {
-    try {
-      await navigator.clipboard.writeText(code);
+    const ipcRenderer = (window as any).electron?.ipcRenderer;
+    if (ipcRenderer) {
+      ipcRenderer.send('clipboard:write-text', code);
       setIsCopied(true);
       setTimeout(() => setIsCopied(false), 2000);
-    } catch (error) {
-      console.error('Failed to copy code:', error);
     }
   };
 
@@ -127,6 +126,65 @@ const RichContentRenderer: React.FC<RichContentRendererProps> = ({
                 )}
                 {children}
               </a>
+            );
+          },
+          img({ src, alt, title, ...props }: any) {
+            if (!src) return null;
+            
+            // Security validation
+            const isDataUrl = src.startsWith('data:');
+            const isHttpUrl = src.startsWith('http://') || src.startsWith('https://');
+            
+            if (!isDataUrl && !isHttpUrl) {
+              return (
+                <div className="inline-flex items-center gap-2 px-2 py-1 rounded text-xs bg-red-500/20 text-red-400 border border-red-500/30">
+                  <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/>
+                  </svg>
+                  Blocked image: invalid protocol
+                </div>
+              );
+            }
+            
+            return (
+              <div className="my-4 max-w-full">
+                <img
+                  src={src}
+                  alt={alt || ''}
+                  title={title || alt}
+                  className="max-w-full h-auto rounded-lg shadow-lg border border-gray-600/30"
+                  style={{ maxHeight: '400px', objectFit: 'contain' }}
+                  onError={(e) => {
+                    const target = e.target as HTMLImageElement;
+                    target.style.display = 'none';
+                    const errorDiv = document.createElement('div');
+                    errorDiv.className = 'inline-flex items-center gap-2 px-2 py-1 rounded text-xs bg-yellow-500/20 text-yellow-400 border border-yellow-500/30';
+                    errorDiv.innerHTML = `
+                      <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/>
+                      </svg>
+                      Failed to load image
+                    `;
+                    target.parentNode?.insertBefore(errorDiv, target.nextSibling);
+                  }}
+                  onClick={() => {
+                    if (isHttpUrl) {
+                      const ipcRenderer = (window as any).electron?.ipcRenderer;
+                      if (ipcRenderer) {
+                        ipcRenderer.send('shell:open-url', src);
+                      } else {
+                        window.open(src, '_blank');
+                      }
+                    }
+                  }}
+                  {...props}
+                />
+                {(alt || title) && (
+                  <div className="text-xs text-gray-400 mt-1 italic text-center">
+                    {alt || title}
+                  </div>
+                )}
+              </div>
             );
           },
           h1({ node, children, ...props }: any) {

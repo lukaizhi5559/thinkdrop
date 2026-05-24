@@ -742,7 +742,7 @@ let activeAbortController = null;
 
 function initStateGraph() {
   try {
-    mcpClient = new ThinkDropMCPClient({ logger: console, timeoutMs: 60000 });
+    mcpClient = new ThinkDropMCPClient({ logger: console, timeoutMs: 420000 });
     mcpAdapter = new RealMCPAdapter(mcpClient, { logger: console });
 
     llmBackend = new VSCodeLLMBackend({
@@ -2241,6 +2241,10 @@ app.whenReady().then(async () => {
     }
     if (promptCaptureWindow && !promptCaptureWindow.isDestroyed()) {
       safeSend(promptCaptureWindow, 'automation:progress', { type: 'all_done', cancelled: true, completedCount: 0, totalCount: 0 });
+    }
+    // Send to unifiedWindow so cancel button resets to send icon
+    if (unifiedWindow && !unifiedWindow.isDestroyed()) {
+      safeSend(unifiedWindow, 'automation:progress', { type: 'all_done', cancelled: true, completedCount: 0, totalCount: 0 });
     }
   });
 
@@ -4073,6 +4077,12 @@ app.whenReady().then(async () => {
       // Also forward pendingQuestion for web_search/general_knowledge/screen_intelligence when
       // the answer node appended a guide offer (_isGuideOffer).
       const intentType = finalState.intent?.type;
+
+      // Non-streaming intents (memory_store, storeConstraint, liftConstraint, etc.) set state.answer
+      // but never call streamCallback — send the answer as a chunk so the UI doesn't show blank.
+      if (!streamingUsed && intentType !== 'command_automate' && finalState.answer) {
+        safeSendUnified('ws-bridge:message', { type: 'chunk', text: finalState.answer });
+      }
       if (finalState.pendingQuestion?.question) {
         const q = finalState.pendingQuestion;
 
@@ -4105,7 +4115,7 @@ app.whenReady().then(async () => {
               question: q.question,
               options: [],
             });
-            safeSend(resultsWindow, 'automation:progress', {
+            const allDoneEvent = {
               type: 'all_done',
               completedCount: (finalState.skillResults || []).length,
               totalCount: (finalState.skillPlan || []).length,
@@ -4113,7 +4123,10 @@ app.whenReady().then(async () => {
               savedFilePaths: [],
               answer: '',
               planFile: finalState._planFile || null,
-            });
+            };
+            safeSend(resultsWindow, 'automation:progress', allDoneEvent);
+            // Also send to unifiedWindow so cancel button resets to send icon
+            safeSendUnified('automation:progress', allDoneEvent);
           }
         } else {
           // Persist the full state so the next user reply can resume / re-enter
@@ -4151,7 +4164,7 @@ app.whenReady().then(async () => {
         // Skip if paused for ASK_USER — that case sends ask_user above and waits for user reply.
         // Skip if awaiting plan approval — plan:generated is showing the review UI; all_done would override it.
         if (!finalState.pendingQuestion && !finalState.planError && !finalState.awaitingPlanApproval && resultsWindow && !resultsWindow.isDestroyed()) {
-          safeSend(resultsWindow, 'automation:progress', {
+          const allDoneEvent = {
             type: 'all_done',
             completedCount: (finalState.skillResults || []).length,
             totalCount: (finalState.skillPlan || []).length,
@@ -4159,7 +4172,10 @@ app.whenReady().then(async () => {
             savedFilePaths: finalState.savedFilePaths || [],
             answer: finalState.answer || '',
             planFile: finalState._planFile || finalState._skillPlanFile || null,
-          });
+          };
+          safeSend(resultsWindow, 'automation:progress', allDoneEvent);
+          // Also send to unifiedWindow so cancel button resets to send icon
+          safeSendUnified('automation:progress', allDoneEvent);
           // Auto-refresh Skills + Cron tabs whenever a creator skill was just built
           if (finalState.creatorSkillName) {
             ipcMain.emit('skills:list');
@@ -4169,7 +4185,7 @@ app.whenReady().then(async () => {
         // Do NOT send ws-bridge:message for normal completion — AutomationProgress shows it
       }
 
-      // Signal stream end (stops thinking spinner + clears prompt glow)
+      // Signal stream end (stops thinking spinner + clears prompt glow + resets cancel button)
       safeSendUnified('ws-bridge:message', { type: 'done' });
       if (promptCaptureWindow && !promptCaptureWindow.isDestroyed()) {
         safeSend(promptCaptureWindow, 'ws-bridge:message', { type: 'done' });
@@ -4922,6 +4938,11 @@ app.whenReady().then(async () => {
     if (unifiedWindow) {
       unifiedWindow.hide();
     }
+  });
+
+  // Clipboard write from renderer
+  ipcMain.on('clipboard:write-text', (_, text) => {
+    clipboard.writeText(text);
   });
 
   ipcMain.on('window:resize', (_e, { width }) => {
@@ -8831,7 +8852,6 @@ app.whenReady().then(async () => {
           let response = '';
           res.on('data', chunk => { response += chunk; });
           res.on('end', () => {
-            console.log(`[memoryHttpPost] Response for ${path}:`, response.substring(0, 200));
             try { resolve(JSON.parse(response)); }
             catch (e) {
               console.error(`[memoryHttpPost] Failed to parse JSON for ${path}:`, e.message);
@@ -8851,12 +8871,9 @@ app.whenReady().then(async () => {
     // Context rules handlers
     ipcMain.handle('rules:context:list_all', async () => {
       try {
-        console.log('[IPC] rules:context:list_all - calling user-memory on port', MEMORY_PORT);
         const result = await memoryHttpPost('/context_rule.list_all', 'context_rule.list_all', {});
-        console.log('[IPC] rules:context:list_all - result:', result);
         return result;
       } catch (err) {
-        console.error('[IPC] rules:context:list_all failed:', err.message);
         return { error: err.message };
       }
     });
@@ -8865,7 +8882,6 @@ app.whenReady().then(async () => {
       try {
         return await memoryHttpPost('/context_rule.update', 'context_rule.update', { id, updates });
       } catch (err) {
-        console.error('[IPC] rules:context:update failed:', err.message);
         return { error: err.message };
       }
     });
@@ -8874,7 +8890,6 @@ app.whenReady().then(async () => {
       try {
         return await memoryHttpPost('/context_rule.delete_by_id', 'context_rule.delete_by_id', { id });
       } catch (err) {
-        console.error('[IPC] rules:context:delete failed:', err.message);
         return { error: err.message };
       }
     });
@@ -8883,7 +8898,6 @@ app.whenReady().then(async () => {
       try {
         return await memoryHttpPost('/context_rule.analyze_cleanup', 'context_rule.analyze_cleanup', { contextKey });
       } catch (err) {
-        console.error('[IPC] rules:context:cleanup failed:', err.message);
         return { error: err.message };
       }
     });
@@ -8892,7 +8906,6 @@ app.whenReady().then(async () => {
       try {
         return await memoryHttpPost('/context_rule.upsert', 'context_rule.upsert', data);
       } catch (err) {
-        console.error('[IPC] rules:context:create failed:', err.message);
         return { error: err.message };
       }
     });
@@ -8900,12 +8913,9 @@ app.whenReady().then(async () => {
     // Constraint rules handlers
     ipcMain.handle('rules:constraint:list', async () => {
       try {
-        console.log('[IPC] rules:constraint:list - calling user-memory on port', MEMORY_PORT);
         const result = await memoryHttpPost('/constraint.list', 'constraint.list', {});
-        console.log('[IPC] rules:constraint:list - result:', result);
         return result;
       } catch (err) {
-        console.error('[IPC] rules:constraint:list failed:', err.message);
         return { error: err.message };
       }
     });
@@ -9012,6 +9022,55 @@ app.whenReady().then(async () => {
         console.error('[IPC] rules:allowedcmds:reset failed:', err.message);
         return { ok: false, error: err.message };
       }
+    });
+
+    // ─── Terminal Debug IPC handlers ──────────────────────────────────────────
+    // Execute terminal commands from the DebugTerminal component
+    ipcMain.on('terminal:execute', async (event, { sessionId, command }) => {
+      const { exec } = require('child_process');
+      
+      // Security: Only allow playwright-cli commands
+      if (!command.startsWith('playwright-cli')) {
+        event.reply('terminal:response', { 
+          output: '', 
+          error: 'Only playwright-cli commands are allowed' 
+        });
+        return;
+      }
+      
+      // Replace session placeholder if needed
+      const finalCommand = command.includes('-s=') ? command : command.replace(/playwright-cli/, `playwright-cli -s=${sessionId}`);
+      
+      exec(finalCommand, { timeout: 30000 }, (error, stdout, stderr) => {
+        if (error) {
+          event.reply('terminal:response', { 
+            output: stdout || '', 
+            error: error.message 
+          });
+          return;
+        }
+        
+        if (stderr) {
+          event.reply('terminal:response', { 
+            output: stdout || '', 
+            error: stderr 
+          });
+          return;
+        }
+        
+        event.reply('terminal:response', { output: stdout || '' });
+      });
+    });
+
+    // Analyze terminal history and generate fix
+    ipcMain.handle('terminal:analyze-and-fix', async (event, { sessionId, terminalHistory }) => {
+      // This will be implemented in Phase 3 - AI-driven fix generation
+      // For now, return a placeholder response
+      return { 
+        ok: true, 
+        message: 'Terminal history received. AI fix generation will be implemented in Phase 3.',
+        history: terminalHistory 
+      };
     });
 
     // Auto-start on launch

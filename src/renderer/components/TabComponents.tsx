@@ -236,6 +236,16 @@ export function RulesIcon({ active }: { active: boolean }) {
   );
 }
 
+export function SettingsIcon({ active }: { active: boolean }) {
+  return (
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="none"
+      stroke={active ? '#9ca3af' : '#6b7280'} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <circle cx="12" cy="12" r="3"/>
+      <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+    </svg>
+  );
+}
+
 export function AgentsIcon({ active }: { active: boolean }) {
   const c = active ? '#f59e0b' : '#6b7280';
   return (
@@ -275,8 +285,6 @@ export function TabBar({ active, onSelect, queueCount, cronCount, unreadTabs }: 
 }) {
   const tabs: { id: TabId; label: string; icon: React.ReactNode; badge?: number; activeColor: string }[] = [
     { id: 'results',     label: 'Results',  icon: <ResultsIcon     active={active === 'results'}     />, activeColor: '#60a5fa' },
-    { id: 'queue',       label: 'Queue',    icon: <QueueIcon       active={active === 'queue'}       />, badge: queueCount, activeColor: '#a78bfa' },
-    { id: 'cron',        label: 'Cron',     icon: <CronIcon        active={active === 'cron'}        />, badge: cronCount,  activeColor: '#34d399' },
     { id: 'agents',      label: 'Agents',   icon: <AgentsIcon      active={active === 'agents'}      />, activeColor: '#f59e0b' },
   ];
 

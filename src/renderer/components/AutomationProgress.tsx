@@ -31,6 +31,7 @@ interface Step {
   userAllowlistHint?: boolean;
   commandName?: string | null;
   runGroup?: string; // parallel group ID (e.g. "g1")
+  args?: any; // arguments passed to the skill (contains agentId for browser.agent)
 }
 
 // ── AgentFavicon — shown next to agentId on every agent step ─────────────────
@@ -167,6 +168,7 @@ interface AutomationProgressProps {
   onHeightChange?: (height: number) => void;
   onActiveChange?: (active: boolean) => void;
   onOpenRules?: () => void;
+  setIsSubmitting?: (submitting: boolean) => void;
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -608,7 +610,7 @@ function parsePlanStepTitles(content: string): string[] {
   return titles;
 }
 
-export default function AutomationProgress({ onHeightChange, onActiveChange, onOpenRules }: AutomationProgressProps) {
+export default function AutomationProgress({ onHeightChange, onActiveChange, onOpenRules, setIsSubmitting }: AutomationProgressProps) {
   const [phase, setPhase] = useState<AutomationPhase>('idle');
   const [steps, setSteps] = useState<Step[]>([]);
   const [planMessage, setPlanMessage] = useState('Generating skill plan...');
@@ -945,7 +947,14 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
           agentStepStartTimes.current.set(stepIdx, Date.now());
           setSteps(prev => prev.map(s =>
             s.index === stepIdx
-              ? { ...s, status: 'running', description: data.description || s.description, runGroup: data.runGroup || s.runGroup }
+              ? { ...s, 
+                  // CRITICAL FIX: Don't overwrite if already in terminal state
+                  status: (s.status === 'done' || s.status === 'failed' || s.status === 'skipped')
+                    ? s.status  // Keep existing terminal status
+                    : 'running',
+                  description: data.description || s.description, 
+                  runGroup: data.runGroup || s.runGroup 
+                }
               : s
           ));
           // Scroll the active step into view
@@ -984,17 +993,36 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
 
         case 'step_done': {
           const stepIdx = data.stepIndex + stepOffsetRef.current;
-          // Log parallel group steps for debugging
-          if (data.runGroup) {
-            console.log(`[AutomationProgress] step_done: stepIdx=${stepIdx}, runGroup=${data.runGroup}, skill=${data.skill}, ok=true`);
-          }
+          // Log all step_done events for debugging
+          console.log(`[AutomationProgress] step_done: stepIdx=${stepIdx}, data.stepIndex=${data.stepIndex}, stepOffset=${stepOffsetRef.current}, runGroup=${data.runGroup || 'none'}, skill=${data.skill}`);
           agentStepStartTimes.current.delete(stepIdx);
           setStepThinking(prev => { const next = new Map(prev); next.delete(stepIdx); return next; });
-          setSteps(prev => prev.map(s =>
-            s.index === stepIdx
-              ? { ...s, status: 'done', description: data.description || s.description, stdout: data.stdout, exitCode: data.exitCode, savedFilePath: data.savedFilePath || undefined, guideInstruction: data.instruction || s.guideInstruction, runGroup: data.runGroup || s.runGroup }
-              : s
-          ));
+          setSteps(prev => {
+            const updated = prev.map(s =>
+              s.index === stepIdx
+                ? { ...s, 
+                    // CRITICAL FIX: Don't overwrite if already in terminal state
+                    status: (s.status === 'done' || s.status === 'failed' || s.status === 'skipped')
+                      ? s.status  // Keep existing terminal status
+                      : 'done' as const,
+                    description: data.description || s.description, 
+                    stdout: data.stdout, 
+                    exitCode: data.exitCode, 
+                    savedFilePath: data.savedFilePath || undefined, 
+                    guideInstruction: data.instruction || s.guideInstruction, 
+                    runGroup: data.runGroup || s.runGroup 
+                  }
+                : s
+            );
+            // Log the actual status change
+            const updatedStep = updated.find(s => s.index === stepIdx);
+            if (updatedStep) {
+              console.log(`[AutomationProgress] step_done: Updated step ${stepIdx} status to '${updatedStep.status}'`);
+            } else {
+              console.warn(`[AutomationProgress] step_done: Step ${stepIdx} not found in steps array`);
+            }
+            return updated;
+          });
           // Auto-dismiss the guide step card when a guide.step completes
           if (data.skill === 'guide.step') {
             setGuideStep(null);
@@ -1503,7 +1531,14 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
           setSteps(prev => {
             if (prev.some(s => s.index === _psIdx)) {
               return prev.map(s => s.index === _psIdx
-                ? { ...s, status: 'running', skill: data.skill || s.skill, description: data.description || data.title || s.description }
+                ? { ...s, 
+                    // CRITICAL FIX: Don't overwrite if already in terminal state
+                    status: (s.status === 'done' || s.status === 'failed' || s.status === 'skipped')
+                      ? s.status  // Keep existing terminal status
+                      : 'running',
+                    skill: data.skill || s.skill, 
+                    description: data.description || data.title || s.description 
+                  }
                 : s
               );
             }
@@ -1513,7 +1548,14 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
               ? Array.from({ length: total }, (_, i) => prev[i] ?? { index: i, skill: '', description: `Step ${i + 1}`, status: 'pending' as StepStatus })
               : prev;
             return base.map(s => s.index === _psIdx
-              ? { ...s, status: 'running', skill: data.skill || s.skill, description: data.description || data.title || s.description }
+              ? { ...s, 
+                  // CRITICAL FIX: Don't overwrite if already in terminal state
+                  status: (s.status === 'done' || s.status === 'failed' || s.status === 'skipped')
+                    ? s.status  // Keep existing terminal status
+                    : 'running',
+                  skill: data.skill || s.skill, 
+                  description: data.description || data.title || s.description 
+                }
               : s
             );
           });
@@ -1639,6 +1681,8 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
     // Optimistic UI: transition immediately without waiting for plan:approved IPC echo
     setPlanReview(null);
     setPhase('executing');
+    // Set isSubmitting to show cancel button
+    setIsSubmitting?.(true);
   };
 
   const handlePlanCancel = () => {
@@ -2550,7 +2594,14 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
                     <svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor" style={{ color: '#818cf8', flexShrink: 0 }}>
                       <path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/>
                     </svg>
-                    <span style={{ fontSize: '10px', fontWeight: 600, color: '#6366f1', letterSpacing: '0.05em', textTransform: 'uppercase' }}>Running in parallel</span>
+                    <span style={{ fontSize: '10px', fontWeight: 600, color: '#6366f1', letterSpacing: '0.05em', textTransform: 'uppercase' }}>
+                      {(() => {
+                        // Check if all steps in this group have the same agentId (sequential execution)
+                        const groupSteps = steps.filter(s => s.runGroup === step.runGroup);
+                        const agentIds = new Set(groupSteps.map(s => s.skill === 'browser.agent' ? s.args?.agentId || s.skill : s.skill));
+                        return agentIds.size === 1 ? 'Running sequentially' : 'Running in parallel';
+                      })()}
+                    </span>
                   </div>
                 )}
                 {/* Step row — wrapped in bracket container when in group */}

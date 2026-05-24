@@ -1,4 +1,14 @@
-import { type TabId } from './TabComponents';
+import React from 'react';
+import { type TabId, QueueIcon, CronIcon, StoreIcon, SkillsIcon, ConnectionsIcon, RulesIcon, SettingsIcon } from './TabComponents';
+
+function ThinkDropLogo({ size = 20 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none">
+      <circle cx="12" cy="12" r="10" stroke="#60a5fa" strokeWidth="1.5" fill="none"/>
+      <path d="M12 6c0 0-4 4-4 8c0 2.2 1.8 4 4 4s4-1.8 4-4c0-4-4-8-4-8z" fill="#60a5fa"/>
+    </svg>
+  );
+}
 
 interface SlideoutDrawerProps {
   isOpen: boolean;
@@ -8,17 +18,19 @@ interface SlideoutDrawerProps {
 }
 
 type MenuItem =
-  | { type: 'item'; id: TabId | 'settings' | 'rules'; label: string; icon: string }
+  | { type: 'item'; id: TabId | 'settings' | 'rules'; label: string; icon: (active: boolean) => React.ReactNode }
   | { type: 'divider' };
 
 export function SlideoutDrawer({ isOpen, onClose, onNavigate, activeTab }: SlideoutDrawerProps) {
   const menuItems: MenuItem[] = [
-    { type: 'item', id: 'settings', label: 'Settings', icon: '⚙️' },
-    { type: 'item', id: 'rules', label: 'Rules', icon: '📋' },
+    { type: 'item', id: 'queue', label: 'Queue', icon: (active) => <QueueIcon active={active} /> },
+    { type: 'item', id: 'cron', label: 'Cron', icon: (active) => <CronIcon active={active} /> },
+    // { type: 'item', id: 'connections', label: 'Connections', icon: (active) => <ConnectionsIcon active={active} /> },
     { type: 'divider' },
-    { type: 'item', id: 'skills', label: 'Skills', icon: '📦' },
-    { type: 'item', id: 'connections', label: 'Connections', icon: '🔌' },
-    { type: 'item', id: 'store', label: 'Store', icon: '🛒' },
+    { type: 'item', id: 'rules', label: 'Rules', icon: (active) => <RulesIcon active={active} /> },
+    { type: 'item', id: 'skills', label: 'Skills', icon: (active) => <SkillsIcon active={active} /> },
+    { type: 'item', id: 'store', label: 'Store', icon: (active) => <StoreIcon active={active} /> },
+    { type: 'item', id: 'settings', label: 'Settings', icon: (active) => <SettingsIcon active={active} /> },
   ];
 
   return (
@@ -55,6 +67,7 @@ export function SlideoutDrawer({ isOpen, onClose, onNavigate, activeTab }: Slide
               <polyline points="15 18 9 12 15 6" />
             </svg>
           </button>
+          <ThinkDropLogo size={20} />
           <span className="text-sm font-medium text-gray-300">ThinkDrop</span>
         </div>
 
@@ -95,7 +108,7 @@ export function SlideoutDrawer({ isOpen, onClose, onNavigate, activeTab }: Slide
                   }
                 }}
               >
-                <span className="text-lg">{item.icon}</span>
+                <span className="flex items-center justify-center w-5 h-5">{item.icon(isActive)}</span>
                 <span className="text-sm font-medium">{item.label}</span>
                 {isActive && (
                   <svg

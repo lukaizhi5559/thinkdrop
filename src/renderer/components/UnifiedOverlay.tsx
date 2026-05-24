@@ -21,6 +21,7 @@ import { SettingsTab } from './SettingsTab';
 import { RulesManagementPanel } from './RulesManagementPanel';
 import { TrainingBanner } from './TrainingBanner';
 import { TeachMeDialog } from './TeachMeDialog';
+import DebugTerminal from './DebugTerminal';
 
 // --- Types (imported from TabComponents for compatibility) ---
 import type { QueueItem, CronItem, SkillItem, ConnectionItem, AgentItem } from './TabComponents';
@@ -107,6 +108,9 @@ export function UnifiedOverlay() {
   const [installOutput, setInstallOutput] = useState<string[]>([]);
   const [isDropping, setIsDropping] = useState(false);
   const [isDragOver, setIsDragOver] = useState(false);
+  
+  // --- Debug Terminal State ---
+  const [showDebugTerminal, setShowDebugTerminal] = useState(false);
   
   // Force update mechanism to ensure UI refreshes during streaming
   const [, forceUpdate] = useReducer((x: number) => x + 1, 0);
@@ -339,6 +343,7 @@ export function UnifiedOverlay() {
         setIsStreaming(false);
         setIsThinking(true);
         setIsSubmitting(true);
+        setActiveTab('results');
         setIsAutomationMode(false);
         setInstallPrompt(null);
         setActionChips([]);
@@ -411,7 +416,7 @@ export function UnifiedOverlay() {
     });
     console.log('✅ [UNIFIED] Prompt enqueued');
 
-    setIsSubmitting(false);
+    // Note: isSubmitting stays true until task completes (handled in all_done)
   };
 
   const handleHighlightRemove = (index: number) => {
@@ -509,10 +514,28 @@ export function UnifiedOverlay() {
     ipcRenderer?.send('window:hide');
   };
 
+  // --- Click outside handler for sources panel ---
+  useEffect(() => {
+    if (!showSourcesPanel) return;
+    
+    const handleClickOutside = (e: MouseEvent) => {
+      const target = e.target as HTMLElement;
+      const panel = document.querySelector('[data-sources-panel]');
+      const button = document.querySelector('[data-sources-button]');
+      
+      if (panel && !panel.contains(target) && button && !button.contains(target)) {
+        setShowSourcesPanel(false);
+      }
+    };
+    
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, [showSourcesPanel]);
+
   // --- Copy Response ---
   const handleCopy = () => {
     if (streamingResponse) {
-      navigator.clipboard.writeText(streamingResponse);
+      ipcRenderer?.send('clipboard:write-text', streamingResponse);
       setIsCopied(true);
       setTimeout(() => setIsCopied(false), 2000);
     }
@@ -646,6 +669,7 @@ export function UnifiedOverlay() {
       } else if (message.type === 'done' || message.type === 'llm_stream_end') {
         setIsStreaming(false);
         setIsThinking(false);
+        setIsSubmitting(false); // Task complete - reset cancel button
         streamCompletedRef.current = true;
         console.log('✅ [UNIFIED] Streaming complete, final streamingResponse length:', streamingResponse.length);
         glowOffTimerRef.current = setTimeout(() => setIsGlowActive(false), 300);
@@ -681,6 +705,8 @@ export function UnifiedOverlay() {
       setShowSourcesPanel(false);
       setIsStreaming(false);
       setIsThinking(true);
+      setIsSubmitting(true); // Task starting - set submitting state
+      setActiveTab('results'); // Auto-switch to results panel
       setIsAutomationMode(false); // AutomationProgress will self-activate on 'planning' event
       setInstallPrompt(null);
       setActionChips([]);
@@ -775,10 +801,18 @@ export function UnifiedOverlay() {
         markUnreadTab('results');
         setIsThinking(false);
         setIsStreaming(false);
+        setIsSubmitting(false); // Task complete - reset submitting state
         setInstallPrompt(null);
         setIsInstalling(false);
         glowOffTimerRef.current = setTimeout(() => setIsGlowActive(false), 400);
         setIsSynthesisCollapsed(false);
+        // Extra safety: ensure clean state on cancelled tasks
+        if (data?.cancelled) {
+          setIsSubmitting(false);
+          setIsThinking(false);
+          setIsStreaming(false);
+          setIsGlowActive(false);
+        }
       }
     };
 
@@ -1734,6 +1768,7 @@ export function UnifiedOverlay() {
     return (
       <div style={{ position: 'relative', marginBottom: 10 }}>
         <button
+          data-sources-button
           onClick={() => setShowSourcesPanel(prev => !prev)}
           style={{ display: 'flex', alignItems: 'center', gap: 8, background: 'none', border: 'none', padding: 0, cursor: 'pointer', userSelect: 'none' }}
         >
@@ -1769,7 +1804,7 @@ export function UnifiedOverlay() {
           </span>
         </button>
         {showSourcesPanel && (
-          <div style={{ position: 'absolute', top: 'calc(100% + 6px)', left: 0, zIndex: 50, width: 280, maxHeight: 320, overflowY: 'auto', backgroundColor: '#1c1c1e', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 10, boxShadow: '0 8px 32px rgba(0,0,0,0.5)', padding: '6px 0' }}>
+          <div data-sources-panel style={{ position: 'absolute', top: 'calc(100% + 6px)', left: 0, zIndex: 50, width: 280, maxHeight: 320, overflowY: 'auto', backgroundColor: '#1c1c1e', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 10, boxShadow: '0 8px 32px rgba(0,0,0,0.5)', padding: '6px 0' }}>
             <div style={{ padding: '6px 12px 4px', fontSize: '0.65rem', fontWeight: 600, color: '#6b7280', textTransform: 'uppercase', letterSpacing: '0.06em' }}>Sources</div>
             {searchSources.map((src, i) => (
               <div
@@ -1985,6 +2020,25 @@ export function UnifiedOverlay() {
           animation: prompt-border-sweep 1.8s linear infinite;
           opacity: 1;
         }
+        /* Cancel button hover glow - red variant */
+        .cancel-glow-ring {
+          position: absolute;
+          inset: -2px;
+          border-radius: 8px;
+          padding: 2px;
+          background: conic-gradient(from var(--prompt-angle), transparent 60%, #ef4444 78%, #f87171 86%, #ef4444 93%, transparent);
+          animation: prompt-border-sweep 1.4s linear infinite;
+          -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+          -webkit-mask-composite: xor;
+          mask-composite: exclude;
+          pointer-events: none;
+          z-index: 10;
+          opacity: 0;
+          transition: opacity 0.2s ease;
+        }
+        .cancel-glow-ring.active {
+          opacity: 1;
+        }
         .drag-glow-ring {
           position: absolute;
           inset: -1px;
@@ -2104,7 +2158,7 @@ export function UnifiedOverlay() {
             )}
 
             {/* Cancel Button (automation mode) */}
-            {isAutomationMode && (
+            {/* {isAutomationMode && (
               <button
                 onClick={() => ipcRenderer?.send('automation:cancel')}
                 style={{
@@ -2121,7 +2175,7 @@ export function UnifiedOverlay() {
               >
                 Cancel
               </button>
-            )}
+            )} */}
 
             {/* Close Button */}
             <button
@@ -2158,6 +2212,14 @@ export function UnifiedOverlay() {
           onNavigate={handleSlideoutNavigate}
           activeTab={activeTab}
         />
+
+        {/* Debug Terminal - right side slide-out */}
+        {showDebugTerminal && (
+          <DebugTerminal
+            sessionId="default"
+            onClose={() => setShowDebugTerminal(false)}
+          />
+        )}
 
         {/* Main Content Area - constrained for scroll */}
         <div className="flex-1 overflow-hidden relative">
@@ -2205,6 +2267,7 @@ export function UnifiedOverlay() {
                 )}
 
                 <AutomationProgress
+                  setIsSubmitting={setIsSubmitting}
                   onHeightChange={(automationH: number) => {
                     if (shouldSuppressResize()) return; // Don't resize while user is dragging or resizing the panel
                     const HEADER = 105;
@@ -2409,35 +2472,68 @@ export function UnifiedOverlay() {
                   <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48" />
                 </svg>
               </button>
+
+              {/* Terminal Button */}
+              <button
+                onClick={() => setShowDebugTerminal(!showDebugTerminal)}
+                className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium bg-white/5 text-gray-400 border border-white/10 hover:bg-white/10 transition-all"
+                title="Open Debug Terminal"
+              >
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <polyline points="4 17 10 11 4 5" />
+                  <line x1="12" y1="19" x2="20" y2="19" />
+                </svg>
+              </button>
             </div>
 
-            {/* Submit Button - Matching StandalonePromptCapture style */}
+            {/* Submit/Cancel Button - Matching StandalonePromptCapture style */}
             <div
+              className={isSubmitting ? 'relative group' : ''}
               style={{
-                width: '24px',
-                height: '24px',
-                borderRadius: '4px',
+                width: '32px',
+                height: '32px',
+                borderRadius: '6px',
                 backgroundColor: isSubmitting
-                  ? 'rgba(255, 255, 255, 0.07)'
+                  ? 'rgba(239, 68, 68, 0.15)'
                   : (promptText.trim() || highlights.length > 0) ? 'rgba(59, 130, 246, 0.2)' : 'rgba(255, 255, 255, 0.05)',
                 border: '1px solid',
                 borderColor: isSubmitting
-                  ? 'rgba(255, 255, 255, 0.15)'
+                  ? 'rgba(239, 68, 68, 0.3)'
                   : (promptText.trim() || highlights.length > 0) ? 'rgba(59, 130, 246, 0.3)' : 'rgba(255, 255, 255, 0.1)',
                 flexShrink: 0,
-                marginTop: '2px',
+                marginTop: '0px',
                 cursor: (isSubmitting || promptText.trim() || highlights.length > 0) ? 'pointer' : 'default',
                 transition: 'background-color 0.15s, border-color 0.15s',
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'center',
+                position: 'relative',
+              }}
+              onMouseEnter={(e) => {
+                if (isSubmitting) {
+                  e.currentTarget.style.backgroundColor = 'rgba(239, 68, 68, 0.25)';
+                  e.currentTarget.style.borderColor = 'rgba(239, 68, 68, 0.5)';
+                }
+              }}
+              onMouseLeave={(e) => {
+                if (isSubmitting) {
+                  e.currentTarget.style.backgroundColor = 'rgba(239, 68, 68, 0.15)';
+                  e.currentTarget.style.borderColor = 'rgba(239, 68, 68, 0.3)';
+                }
               }}
               title={isSubmitting ? 'Cancel' : 'Send'}
               onClick={isSubmitting ? () => ipcRenderer?.send('automation:cancel') : (promptText.trim() || highlights.length > 0) ? () => { clearInputAndShowThinking(); handleSubmit(); } : undefined}
             >
+              {/* Red glow ring on hover when cancelling */}
+              {isSubmitting && (
+                <div 
+                  className="cancel-glow-ring group-hover:active"
+                  style={{ borderRadius: '8px' }}
+                />
+              )}
               {isSubmitting ? (
                 /* Stop square — like ChatGPT/Windsurf cancel */
-                <svg width="10" height="10" viewBox="0 0 10 10" fill="#9ca3af">
+                <svg width="10" height="10" viewBox="0 0 10 10" className="group-hover:fill-[#ef4444] transition-colors" fill="#9ca3af">
                   <rect x="0" y="0" width="10" height="10" rx="2" />
                 </svg>
               ) : (
