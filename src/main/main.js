@@ -43,6 +43,8 @@ function safeSendUnified(channel, ...args) {
 }
 const screenshot = require('screenshot-desktop');
 const path = require('path');
+const fs = require('fs');
+const os = require('os');
 const WebSocket = require('ws');
 const http = require('http');
 
@@ -4563,6 +4565,96 @@ app.whenReady().then(async () => {
     }
   });
 
+  // ─── Terminal: Execute shell command via command service ────────────────
+  ipcMain.handle('shell:execute', async (_event, { command, timeout = 30000 }) => {
+    const COMMAND_SERVICE_PORT = 3007;
+    const http = require('http');
+    
+    return new Promise((resolve) => {
+      console.log(`[Shell Execute] Running: ${command}`);
+      
+      const body = JSON.stringify({
+        payload: {
+          skill: 'shell.run',
+          args: { cmd: command, timeoutMs: timeout }
+        }
+      });
+      
+      const commandApiKey = process.env.MCP_COMMAND_API_KEY || '';
+      
+      const req = http.request({
+        hostname: '127.0.0.1',
+        port: COMMAND_SERVICE_PORT,
+        path: '/command.automate',
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Content-Length': Buffer.byteLength(body),
+          ...(commandApiKey ? { 'Authorization': `Bearer ${commandApiKey}` } : {})
+        },
+        timeout: 30000
+      }, (res) => {
+        let data = '';
+        res.on('data', (chunk) => { data += chunk; });
+        res.on('end', () => {
+          try {
+            const result = JSON.parse(data);
+            console.log(`[Shell Execute] Result:`, result.success ? 'success' : 'failed');
+            resolve(result);
+          } catch (e) {
+            console.error('[Shell Execute] Error parsing response:', e.message);
+            resolve({ success: false, error: 'Invalid response from command service', data: { error: e.message } });
+          }
+        });
+      });
+      
+      req.on('error', (err) => {
+        console.error('[Shell Execute] Error:', err.message);
+        resolve({ success: false, error: err.message, data: { error: err.message } });
+      });
+      
+      req.on('timeout', () => {
+        console.error('[Shell Execute] Timeout');
+        req.destroy();
+        resolve({ success: false, error: 'Request timeout', data: { error: 'Request timeout' } });
+      });
+      
+      req.write(body);
+      req.end();
+    });
+  });
+
+  // ─── Prompt History: save/load from flat file ─────────────────────────────
+  const promptHistoryPath = path.join(os.homedir(), '.thinkdrop', 'prompt_history.json');
+  
+  ipcMain.handle('prompt-history:save', async (_event, history) => {
+    try {
+      const thinkdropDir = path.join(os.homedir(), '.thinkdrop');
+      if (!fs.existsSync(thinkdropDir)) {
+        fs.mkdirSync(thinkdropDir, { recursive: true });
+      }
+      fs.writeFileSync(promptHistoryPath, JSON.stringify(history, null, 2));
+      return { success: true };
+    } catch (err) {
+      console.error('[Prompt History] Save error:', err);
+      return { success: false, error: err.message };
+    }
+  });
+  
+  ipcMain.handle('prompt-history:load', async () => {
+    try {
+      if (!fs.existsSync(promptHistoryPath)) {
+        return { success: true, history: [] };
+      }
+      const data = fs.readFileSync(promptHistoryPath, 'utf-8');
+      const history = JSON.parse(data);
+      return { success: true, history: Array.isArray(history) ? history : [] };
+    } catch (err) {
+      console.error('[Prompt History] Load error:', err);
+      return { success: false, error: err.message, history: [] };
+    }
+  });
+
   // ─── Skills Manager: list installed skills ────────────────────────────────
   ipcMain.on('skill:list', (event) => {
     const fs = require('fs');
@@ -9024,53 +9116,27 @@ app.whenReady().then(async () => {
       }
     });
 
-    // ─── Terminal Debug IPC handlers ──────────────────────────────────────────
-    // Execute terminal commands from the DebugTerminal component
-    ipcMain.on('terminal:execute', async (event, { sessionId, command }) => {
-      const { exec } = require('child_process');
-      
-      // Security: Only allow playwright-cli commands
-      if (!command.startsWith('playwright-cli')) {
-        event.reply('terminal:response', { 
-          output: '', 
-          error: 'Only playwright-cli commands are allowed' 
-        });
-        return;
+    // ─── Operation Control IPC handlers ─────────────────────────────────────────
+    // Cancel current operation
+    let currentOperationController = null;
+    
+    ipcMain.on('operation:cancel', (event) => {
+      if (currentOperationController) {
+        currentOperationController.abort();
+        currentOperationController = null;
       }
-      
-      // Replace session placeholder if needed
-      const finalCommand = command.includes('-s=') ? command : command.replace(/playwright-cli/, `playwright-cli -s=${sessionId}`);
-      
-      exec(finalCommand, { timeout: 30000 }, (error, stdout, stderr) => {
-        if (error) {
-          event.reply('terminal:response', { 
-            output: stdout || '', 
-            error: error.message 
-          });
-          return;
-        }
-        
-        if (stderr) {
-          event.reply('terminal:response', { 
-            output: stdout || '', 
-            error: stderr 
-          });
-          return;
-        }
-        
-        event.reply('terminal:response', { output: stdout || '' });
+      // Broadcast cancel to all renderer processes
+      BrowserWindow.getAllWindows().forEach(win => {
+        win.webContents.send('operation:status', { message: '⛔ Operation cancelled', type: 'cancel' });
       });
     });
 
-    // Analyze terminal history and generate fix
-    ipcMain.handle('terminal:analyze-and-fix', async (event, { sessionId, terminalHistory }) => {
-      // This will be implemented in Phase 3 - AI-driven fix generation
-      // For now, return a placeholder response
-      return { 
-        ok: true, 
-        message: 'Terminal history received. AI fix generation will be implemented in Phase 3.',
-        history: terminalHistory 
-      };
+    // Operation status broadcast (for AI Activity Panel)
+    ipcMain.on('operation:status', (event, { message, type = 'info' }) => {
+      // Broadcast status to all renderer processes
+      BrowserWindow.getAllWindows().forEach(win => {
+        win.webContents.send('operation:status', { message, type });
+      });
     });
 
     // Auto-start on launch

@@ -33,6 +33,9 @@ contextBridge.exposeInMainWorld('electron', {
         'stategraph:process',
         'shell:open-path',
         'shell:open-url',
+        'shell:execute',
+        'prompt-history:save',
+        'prompt-history:load',
         'install:confirm',
         'guide:continue',
         'guide:cancel',
@@ -99,8 +102,8 @@ contextBridge.exposeInMainWorld('electron', {
         'agents:auto-scan-set',
         'settings:set',
         'clipboard:write-text',
-        'terminal:execute',
-        'terminal:analyze-and-fix',
+        'operation:cancel',
+        'operation:status',
       ];
       if (validChannels.includes(channel)) {
         ipcRenderer.send(channel, data);
@@ -108,8 +111,7 @@ contextBridge.exposeInMainWorld('electron', {
     },
     on: (channel, func, token) => {
       const validChannels = [
-        'terminal:output',
-        'terminal:analysis-result',
+        'operation:status',
         'prompt-capture:show',
         'prompt-capture:capture-screenshot',
         'prompt-capture:screenshot-result',
@@ -396,6 +398,9 @@ contextBridge.exposeInMainWorld('electron', {
         'cli-agents:get-stored-secrets',
         'cli-agents:search-setup-link',
         'settings:get',
+        'shell:execute',
+        'prompt-history:save',
+        'prompt-history:load',
       ];
       if (validChannels.includes(channel)) {
         return ipcRenderer.invoke(channel, data);

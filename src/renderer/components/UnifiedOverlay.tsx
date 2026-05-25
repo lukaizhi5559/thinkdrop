@@ -21,7 +21,8 @@ import { SettingsTab } from './SettingsTab';
 import { RulesManagementPanel } from './RulesManagementPanel';
 import { TrainingBanner } from './TrainingBanner';
 import { TeachMeDialog } from './TeachMeDialog';
-import DebugTerminal from './DebugTerminal';
+import { AIActivityPanel } from './AIActivityPanel';
+import type { AIActivityPanelHandle } from './AIActivityPanel';
 
 // --- Types (imported from TabComponents for compatibility) ---
 import type { QueueItem, CronItem, SkillItem, ConnectionItem, AgentItem } from './TabComponents';
@@ -87,6 +88,10 @@ export function UnifiedOverlay() {
   // Skill panel removed - now in slideout
   const [isSubmitting, setIsSubmitting] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  
+  // --- Prompt History State (for normal mode up/down navigation) ---
+  const [promptHistory, setPromptHistory] = useState<string[]>([]);
+  const [promptHistoryIndex, setPromptHistoryIndex] = useState(-1);
 
   // --- Results State ---
   const [streamingResponse, setStreamingResponse] = useState('');
@@ -110,7 +115,12 @@ export function UnifiedOverlay() {
   const [isDragOver, setIsDragOver] = useState(false);
   
   // --- Debug Terminal State ---
-  const [showDebugTerminal, setShowDebugTerminal] = useState(false);
+  const [isDebugMode, setIsDebugMode] = useState(false);
+  const [terminalHistory, setTerminalHistory] = useState<string[]>([]);
+  const [terminalHistoryIndex, setTerminalHistoryIndex] = useState(-1);
+  
+  // Ref to AIActivityPanel for executing terminal commands
+  const aiActivityPanelRef = useRef<AIActivityPanelHandle>(null);
   
   // Force update mechanism to ensure UI refreshes during streaming
   const [, forceUpdate] = useReducer((x: number) => x + 1, 0);
@@ -121,6 +131,20 @@ export function UnifiedOverlay() {
   const [isGlowActive, setIsGlowActive] = useState(false);
   // Synthesis/streaming response block is collapsed by default; user can expand
   const [isSynthesisCollapsed, setIsSynthesisCollapsed] = useState(true);
+
+  // --- AI Activity Panel Status ---
+  const isRunning = isSubmitting || isStreaming || isThinking || isAutomationMode || isInstalling || gatherPending;
+  const statusText = isThinking
+    ? 'Thinking...'
+    : isStreaming
+      ? 'Generating response...'
+      : isAutomationMode
+        ? 'Running automation...'
+        : isInstalling
+          ? 'Installing tool...'
+          : gatherPending
+            ? 'Gathering context...'
+            : '';
 
   // --- Queue/Cron/Skills/Connections/Agents State ---
   const [queueItems, setQueueItems] = useState<QueueItem[]>([]);
@@ -314,6 +338,74 @@ export function UnifiedOverlay() {
   };
 
   const handleTextareaKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    // Debug mode: handle terminal commands and history
+    if (isDebugMode) {
+      if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault();
+        const command = promptText.trim();
+        if (command) {
+          // Add to history
+          setTerminalHistory(prev => [command, ...prev].slice(0, 50));
+          setTerminalHistoryIndex(-1);
+          // Execute via AIActivityPanel ref
+          aiActivityPanelRef.current?.executeCommand(command);
+          // Clear input
+          setPromptText('');
+        }
+        return;
+      }
+
+      // Command history navigation
+      if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        if (terminalHistoryIndex < terminalHistory.length - 1) {
+          const newIndex = terminalHistoryIndex + 1;
+          setTerminalHistoryIndex(newIndex);
+          setPromptText(terminalHistory[newIndex] || '');
+        }
+        return;
+      }
+
+      if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        if (terminalHistoryIndex > 0) {
+          const newIndex = terminalHistoryIndex - 1;
+          setTerminalHistoryIndex(newIndex);
+          setPromptText(terminalHistory[newIndex] || '');
+        } else if (terminalHistoryIndex === 0) {
+          setTerminalHistoryIndex(-1);
+          setPromptText('');
+        }
+        return;
+      }
+    }
+
+    // Normal mode: Prompt history navigation with Up/Down arrows
+    if (!isDebugMode && promptHistory.length > 0) {
+      if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        if (promptHistoryIndex < promptHistory.length - 1) {
+          const newIndex = promptHistoryIndex + 1;
+          setPromptHistoryIndex(newIndex);
+          setPromptText(promptHistory[newIndex]);
+        }
+        return;
+      }
+      if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        if (promptHistoryIndex > 0) {
+          const newIndex = promptHistoryIndex - 1;
+          setPromptHistoryIndex(newIndex);
+          setPromptText(promptHistory[newIndex]);
+        } else if (promptHistoryIndex === 0) {
+          setPromptHistoryIndex(-1);
+          setPromptText('');
+        }
+        return;
+      }
+    }
+
+    // Normal mode: standard submit
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
       clearInputAndShowThinking();
@@ -366,6 +458,15 @@ export function UnifiedOverlay() {
     if (isSubmitting) {
       setIsThinking(false);
       return;
+    }
+    
+    // Save to prompt history (normal prompts only, not gather flow answers)
+    if (!wasGatherPending && finalPromptText.trim()) {
+      setPromptHistory(prev => {
+        const newHistory = [finalPromptText.trim(), ...prev.filter(p => p !== finalPromptText.trim())].slice(0, 100);
+        return newHistory;
+      });
+      setPromptHistoryIndex(-1);
     }
     
     // Handle gather flow - just send answer (state already reset above)
@@ -670,6 +771,7 @@ export function UnifiedOverlay() {
         setIsStreaming(false);
         setIsThinking(false);
         setIsSubmitting(false); // Task complete - reset cancel button
+        setIsAutomationMode(false); // Clear automation status
         streamCompletedRef.current = true;
         console.log('✅ [UNIFIED] Streaming complete, final streamingResponse length:', streamingResponse.length);
         glowOffTimerRef.current = setTimeout(() => setIsGlowActive(false), 300);
@@ -802,6 +904,7 @@ export function UnifiedOverlay() {
         setIsThinking(false);
         setIsStreaming(false);
         setIsSubmitting(false); // Task complete - reset submitting state
+        setIsAutomationMode(false); // Clear automation status
         setInstallPrompt(null);
         setIsInstalling(false);
         glowOffTimerRef.current = setTimeout(() => setIsGlowActive(false), 400);
@@ -811,6 +914,7 @@ export function UnifiedOverlay() {
           setIsSubmitting(false);
           setIsThinking(false);
           setIsStreaming(false);
+          setIsAutomationMode(false);
           setIsGlowActive(false);
         }
       }
@@ -1866,7 +1970,7 @@ export function UnifiedOverlay() {
             <div className="w-2 h-2 rounded-full bg-blue-500 animate-pulse" style={{ animationDelay: '150ms' }} />
             <div className="w-2 h-2 rounded-full bg-blue-500 animate-pulse" style={{ animationDelay: '300ms' }} />
           </div>
-          <span className="text-gray-400 text-sm">Thinking...</span>
+          {/* <span className="text-gray-400 text-sm">Thinking...</span> */}
         </div>
       );
     }
@@ -2213,14 +2317,6 @@ export function UnifiedOverlay() {
           activeTab={activeTab}
         />
 
-        {/* Debug Terminal - right side slide-out */}
-        {showDebugTerminal && (
-          <DebugTerminal
-            sessionId="default"
-            onClose={() => setShowDebugTerminal(false)}
-          />
-        )}
-
         {/* Main Content Area - constrained for scroll */}
         <div className="flex-1 overflow-hidden relative">
           {/* Results Tab - Always mounted, hidden with CSS when inactive */}
@@ -2436,6 +2532,15 @@ export function UnifiedOverlay() {
             </div>
         </div>
 
+        {/* AI Activity Panel - visible on all tabs */}
+        <AIActivityPanel
+          ref={aiActivityPanelRef}
+          isDebugMode={isDebugMode}
+          activeTab={activeTab}
+          isRunning={isSubmitting || isStreaming || isThinking}
+          currentOperation={statusText}
+        />
+
         {/* Bottom Input Bar */}
         <div
           className="border-t p-4 relative"
@@ -2444,18 +2549,31 @@ export function UnifiedOverlay() {
           {/* Highlights */}
           {renderHighlightChips()}
 
-          {/* Textarea */}
-          <textarea
-            ref={textareaRef}
-            value={promptText}
-            onChange={handleTextareaChange}
-            onKeyDown={handleTextareaKeyDown}
-            onPaste={handlePaste}
-            placeholder={gatherPending && gatherQuestion ? gatherQuestion : "Ask or Drag-Drop anything here"}
-            className="w-full bg-transparent text-white placeholder-gray-500 resize-none outline-none text-sm mb-3"
-            style={{ minHeight: '24px', maxHeight: '200px' }}
-            rows={1}
-          />
+          {/* Textarea with $ prefix in debug mode */}
+          <div className="relative">
+            {isDebugMode && (
+              <span className="absolute left-0 top-0 text-green-400 font-mono text-sm select-none pointer-events-none">
+                $
+              </span>
+            )}
+            <textarea
+              ref={textareaRef}
+              value={promptText}
+              onChange={handleTextareaChange}
+              onKeyDown={handleTextareaKeyDown}
+              onPaste={handlePaste}
+              placeholder={
+                gatherPending && gatherQuestion
+                  ? gatherQuestion
+                  : isDebugMode
+                    ? "Enter command..."
+                    : "Ask or Drag-Drop anything here"
+              }
+              className={`w-full bg-transparent text-white placeholder-gray-500 resize-none outline-none text-sm mb-3 ${isDebugMode ? 'pl-4' : ''}`}
+              style={{ minHeight: '24px', maxHeight: '200px' }}
+              rows={1}
+            />
+          </div>
 
           {/* Action Buttons */}
           <div className="flex items-center justify-between">
@@ -2475,9 +2593,13 @@ export function UnifiedOverlay() {
 
               {/* Terminal Button */}
               <button
-                onClick={() => setShowDebugTerminal(!showDebugTerminal)}
-                className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium bg-white/5 text-gray-400 border border-white/10 hover:bg-white/10 transition-all"
-                title="Open Debug Terminal"
+                onClick={() => setIsDebugMode(!isDebugMode)}
+                className={`flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium border transition-all ${
+                  isDebugMode
+                    ? 'bg-blue-600/20 text-blue-400 border-blue-500/50 hover:bg-blue-600/30'
+                    : 'bg-white/5 text-gray-400 border-white/10 hover:bg-white/10'
+                }`}
+                title={isDebugMode ? 'Exit Debug Mode' : 'Enter Debug Mode'}
               >
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                   <polyline points="4 17 10 11 4 5" />

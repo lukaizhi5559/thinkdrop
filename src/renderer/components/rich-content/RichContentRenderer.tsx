@@ -2,10 +2,26 @@ import React, { useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import remarkBreaks from 'remark-breaks';
+import rehypeRaw from 'rehype-raw';
 import { Prism as SyntaxHighlighterBase } from 'react-syntax-highlighter';
 import { vscDarkPlus } from 'react-syntax-highlighter/dist/esm/styles/prism';
 
 const SyntaxHighlighter = SyntaxHighlighterBase as any;
+
+// Convert bare URLs to markdown links for clickability
+const linkifyContent = (content: string): string => {
+  // Match URLs that are not already inside markdown links or HTML tags
+  // Pattern: http:// or https:// followed by non-whitespace, not preceded by ]( or href=" or >
+  const urlRegex = /(?<![\]\(])(?<![\w-])(?<!["'])\b(https?:\/\/[^\s<>"{}|\\^`\[\]]+)/gi;
+  
+  return content.replace(urlRegex, (url) => {
+    // Clean up trailing punctuation that might be part of the URL context
+    const cleanUrl = url.replace(/[.,;!?]+$/, '');
+    const trailing = url.slice(cleanUrl.length);
+    // Output raw HTML <a> tag for ReactMarkdown to render as clickable link
+    return `<a href="${cleanUrl}" target="_blank" rel="noopener noreferrer">${cleanUrl}</a>${trailing}`;
+  });
+};
 
 // Code block wrapper with copy button
 const CodeBlockWithCopy: React.FC<{ code: string; language: string }> = ({ code, language }) => {
@@ -69,6 +85,9 @@ const RichContentRenderer: React.FC<RichContentRendererProps> = ({
   className = '',
   onFileLinkClick,
 }) => {
+  // Pre-process content to make bare URLs clickable
+  const processedContent = linkifyContent(content);
+
   return (
     <div
       className={`rich-content-container prose prose-invert prose-sm max-w-none ${animated ? 'animate-fade-in' : ''} ${className}`}
@@ -76,6 +95,7 @@ const RichContentRenderer: React.FC<RichContentRendererProps> = ({
     >
       <ReactMarkdown
         remarkPlugins={[remarkGfm, remarkBreaks]}
+        rehypePlugins={[rehypeRaw]}
         components={{
           code({ node, inline, className, children, ...props }: any) {
             const match = /language-(\w+)/.exec(className || '');
@@ -238,7 +258,7 @@ const RichContentRenderer: React.FC<RichContentRendererProps> = ({
           },
         }}
       >
-        {content}
+        {processedContent}
       </ReactMarkdown>
     </div>
   );
