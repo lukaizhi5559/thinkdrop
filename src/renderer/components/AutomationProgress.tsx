@@ -15,7 +15,7 @@ const ipcRenderer = (window as any).electron?.ipcRenderer;
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
-type StepStatus = 'pending' | 'running' | 'done' | 'failed' | 'skipped';
+type StepStatus = 'pending' | 'running' | 'done' | 'failed' | 'skipped' | 'replanning';
 
 interface Step {
   index: number;
@@ -26,6 +26,7 @@ interface Step {
   stderr?: string;
   error?: string;
   exitCode?: number;
+  replanMessage?: string;
   savedFilePath?: string;
   guideInstruction?: string; // original instruction text preserved after guide.step completes
   userAllowlistHint?: boolean;
@@ -211,6 +212,13 @@ function StepIcon({ status }: { status: StepStatus }) {
           <line x1="18" y1="6" x2="6" y2="18" />
         </svg>
       </div>
+    );
+  }
+  if (status === 'replanning') {
+    // Orange/yellow spinner indicating step is being replanned
+    return (
+      <div className="flex-shrink-0 w-4 h-4 rounded-full border-2 animate-spin"
+        style={{ borderColor: '#f59e0b', borderTopColor: 'transparent' }} />
     );
   }
   // pending
@@ -885,8 +893,34 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
           // Exception: recoveryReplan=true means the failed step is being retried with a new plan —
           // reset the view so the old red X is replaced rather than appended below it.
           const isRecoveryReplan = data.recoveryReplan === true;
+          const isSingleStepReplan = data.singleStepReplan === true;
           const hasDoneSteps = !isRecoveryReplan && steps.some(s => s.status === 'done');
-          if (hasDoneSteps) {
+          
+          // Single-step replan: merge new step into existing plan, preserve prior step statuses
+          if (isSingleStepReplan && steps.length > 0) {
+            setSteps(prev => {
+              // Merge new plan with existing steps, preserving statuses for unchanged steps
+              const newSteps = data.steps.map((s: any, i: number) => {
+                const existing = prev.find(es => es.index === i);
+                // If step exists and hasn't changed description/skill, preserve its status
+                // Otherwise use the new step with pending status
+                if (existing && existing.skill === s.skill && existing.description === s.description) {
+                  return existing; // Preserve status (done, failed, etc.)
+                }
+                // New or changed step - use pending status
+                return {
+                  index: i,
+                  skill: s.skill,
+                  description: s.description,
+                  status: 'pending' as StepStatus,
+                  runGroup: s.runGroup || undefined,
+                };
+              });
+              return newSteps;
+            });
+            // Don't reset offset or phase - continue executing with updated plan
+            setTotalCount(data.steps.length);
+          } else if (hasDoneSteps) {
             const newOffset = steps.length;
             stepOffsetRef.current = newOffset;
             setTotalCount(prev => prev + data.steps.length);
@@ -972,6 +1006,30 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
             next.set(_thinkIdx, data.thinking || '');
             return next;
           });
+          break;
+        }
+
+        case 'skill:thinking': {
+          // Universal skill thinking phase - displayed for ALL skills
+          const _thinkIdx = (data.stepIndex ?? 0) + stepOffsetRef.current;
+          setStepThinking(prev => {
+            const next = new Map(prev);
+            next.set(_thinkIdx, data.thinking || '');
+            return next;
+          });
+          setHeartbeatTick(t => t + 1); // Force re-render to show thinking immediately
+          break;
+        }
+
+        case 'step_replanning': {
+          // Single-step replan in progress - show visual feedback
+          const _replanIdx = (data.stepIndex ?? 0) + stepOffsetRef.current;
+          setSteps(prev => prev.map(s =>
+            s.index === _replanIdx
+              ? { ...s, status: 'replanning' as const, replanMessage: data.message || 'Replanning step...' }
+              : s
+          ));
+          setHeartbeatTick(t => t + 1); // Force re-render
           break;
         }
 
@@ -1177,6 +1235,21 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
           break;
         }
 
+        case 'agent:thinking': {
+          // Agent reasoning/thinking phase - displayed in real-time for user insight
+          const stepIdx = (data.stepIndex ?? 0) + stepOffsetRef.current;
+          setAgentThoughts(prev => {
+            const next = new Map(prev);
+            const existing = next.get(stepIdx) || [];
+            // Add the thinking text with a prefix to distinguish it
+            const thoughtText = `[${data.agent || 'Agent'}] ${String(data.thought || data.thoughts || '')}`;
+            next.set(stepIdx, [...existing, thoughtText]);
+            return next;
+          });
+          setHeartbeatTick(t => t + 1); // force re-render so thinking appears immediately
+          break;
+        }
+
         case 'agent:rule_learned': {          const stepIdx = (data.stepIndex ?? 0) + stepOffsetRef.current;
           setLearnedRules(prev => {
             const next = new Map(prev);
@@ -1364,7 +1437,11 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
           break;
 
         case 'evaluating':
-          setPhase('evaluating');
+          // Don't override recovery phase - keep showing retrying_with_fix banner
+          // if we're already in recovery flow. Evaluating happens during recovery.
+          if (phaseRef.current !== 'retrying_with_fix') {
+            setPhase('evaluating');
+          }
           setEvalMessage(data.message || 'Evaluating result quality...');
           break;
 
@@ -1387,6 +1464,30 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
             data.description ||
             `Attempt ${data.attempt || ''}: recovering from ${data.skill || 'step'} failure — analyzing options...`
           );
+          break;
+
+        case 'recovery:analyzing':
+          // Granular recovery event - analyzing the failure
+          if (phaseRef.current !== 'retrying_with_fix') {
+            setPhase('retrying_with_fix');
+          }
+          setRetryMessage(data.message || `Analyzing ${data.skill || 'step'} failure...`);
+          break;
+
+        case 'recovery:category_detected':
+          // Recovery category determined (PATH, TOOL_SUB, EXEC_MODE, etc.)
+          if (phaseRef.current !== 'retrying_with_fix') {
+            setPhase('retrying_with_fix');
+          }
+          setRetryMessage(`Recovery strategy: ${data.category || 'analyzing'} — ${data.message || ''}`);
+          break;
+
+        case 'recovery:mode_switch':
+          // Execution mode switching (bash → python)
+          if (phaseRef.current !== 'retrying_with_fix') {
+            setPhase('retrying_with_fix');
+          }
+          setRetryMessage(`Switching from ${data.fromMode || 'bash'} to ${data.toMode || 'python3'}...`);
           break;
 
         case 'all_done': {

@@ -375,6 +375,7 @@ contextBridge.exposeInMainWorld('electron', {
         'rules:context:list_all',
         'rules:context:update',
         'rules:context:delete',
+        'rules:context:delete_by_key',
         'rules:context:cleanup',
         'rules:context:create',
         'rules:constraint:list',

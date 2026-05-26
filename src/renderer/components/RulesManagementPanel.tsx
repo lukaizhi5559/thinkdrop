@@ -70,6 +70,11 @@ export function RulesManagementPanel() {
   const [editingType, setEditingType] = useState<'context' | 'constraint' | null>(null);
   const [cleanupDomain, setCleanupDomain] = useState<string | null>(null);
   const [cleanupAnalysis, setCleanupAnalysis] = useState<any>(null);
+  const [showClearAllConfirm, setShowClearAllConfirm] = useState(false);
+  const [clearAllStats, setClearAllStats] = useState({ total: 0, domains: 0 });
+  const [showDomainDeleteConfirm, setShowDomainDeleteConfirm] = useState(false);
+  const [domainToDelete, setDomainToDelete] = useState<string | null>(null);
+  const [domainDeleteCount, setDomainDeleteCount] = useState(0);
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [createType, setCreateType] = useState<'context' | 'constraint'>('context');
 
@@ -194,6 +199,46 @@ export function RulesManagementPanel() {
     }
   };
 
+  // Delete ALL context rules across all domains
+  const promptClearAllConfirm = () => {
+    const domainCount = Object.keys(contextRules).length;
+    const totalRules = Object.values(contextRules).reduce((sum, rules) => sum + rules.length, 0);
+    setClearAllStats({ total: totalRules, domains: domainCount });
+    setShowClearAllConfirm(true);
+  };
+
+  const executeClearAll = async () => {
+    if (!ipcRenderer) return;
+    setShowClearAllConfirm(false);
+    setIsLoading(true);
+    try {
+      const domains = Object.keys(contextRules);
+      await Promise.all(domains.map(domain => 
+        ipcRenderer.invoke('rules:context:delete_by_key', { contextKey: domain })
+      ));
+      await loadRules();
+    } catch (error) {
+      console.error('[RulesManagementPanel] Failed to delete all rules:', error);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const executeDomainDelete = async () => {
+    if (!ipcRenderer || !domainToDelete) return;
+    setShowDomainDeleteConfirm(false);
+    setIsLoading(true);
+    try {
+      await ipcRenderer.invoke('rules:context:delete_by_key', { contextKey: domainToDelete });
+      await loadRules();
+    } catch (error) {
+      console.error('[RulesManagementPanel] Failed to delete domain rules:', error);
+    } finally {
+      setIsLoading(false);
+      setDomainToDelete(null);
+    }
+  };
+
   // Filter rules based on search
   const filteredDomains = Object.entries(contextRules).filter(([domain, rules]) => {
     if (!searchQuery) return true;
@@ -309,33 +354,44 @@ export function RulesManagementPanel() {
 
           {/* Context Rules Section */}
           <div>
-            <button
-              onClick={() => toggleSection('contextRules')}
-              className="w-full flex items-center justify-between px-3 py-2 rounded-lg hover:bg-white/5 transition-colors"
-            >
-              <div className="flex items-center gap-2">
-                <span className="text-sm font-medium text-gray-300">
-                  Site Context Rules
-                </span>
-                <span className="text-xs px-2 py-0.5 rounded-full bg-gray-700 text-gray-400">
-                  {Object.keys(contextRules).length} domains
-                </span>
-              </div>
-              <svg
-                width="16"
-                height="16"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                className="text-gray-500 transition-transform"
-                style={{ transform: expandedSections.contextRules ? 'rotate(180deg)' : 'rotate(0deg)' }}
+            <div className="flex items-center justify-between px-3 py-2 rounded-lg hover:bg-white/5 transition-colors">
+              <button
+                onClick={() => toggleSection('contextRules')}
+                className="flex-1 flex items-center justify-between"
               >
-                <polyline points="6 9 12 15 18 9" />
-              </svg>
-            </button>
+                <div className="flex items-center gap-2">
+                  <span className="text-sm font-medium text-gray-300">
+                    Site Context Rules
+                  </span>
+                  <span className="text-xs px-2 py-0.5 rounded-full bg-gray-700 text-gray-400">
+                    {Object.keys(contextRules).length} domains
+                  </span>
+                </div>
+                <svg
+                  width="16"
+                  height="16"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  className="text-gray-500 transition-transform"
+                  style={{ transform: expandedSections.contextRules ? 'rotate(180deg)' : 'rotate(0deg)' }}
+                >
+                  <polyline points="6 9 12 15 18 9" />
+                </svg>
+              </button>
+              {Object.keys(contextRules).length > 0 && (
+                <button
+                  onClick={() => promptClearAllConfirm()}
+                  className="ml-2 px-2 py-1 rounded text-xs font-medium bg-red-600/80 hover:bg-red-500 text-white transition-colors"
+                  title="Delete ALL context rules"
+                >
+                  Clear All
+                </button>
+              )}
+            </div>
 
             {expandedSections.contextRules && (
               <div className="mt-2 space-y-2">
@@ -386,17 +442,32 @@ export function RulesManagementPanel() {
                             <button
                               onClick={(e) => {
                                 e.stopPropagation();
+                                setDomainToDelete(domain);
+                                setDomainDeleteCount(rules.length);
+                                setShowDomainDeleteConfirm(true);
+                              }}
+                              className="p-1.5 rounded hover:bg-white/10 text-gray-500 hover:text-red-400 transition-colors"
+                              title="Delete all rules for this domain"
+                            >
+                              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                <polyline points="3 6 5 6 21 6" />
+                                <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+                              </svg>
+                            </button>
+                            {/* <button
+                              onClick={(e) => {
+                                e.stopPropagation();
                                 analyzeDomain(domain);
                               }}
                               className="p-1.5 rounded hover:bg-white/10 text-gray-500 hover:text-amber-400 transition-colors"
-                              title="Clean up this domain"
+                              title="Analyze this domain"
                             >
                               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                                 <path d="M3 6h18" />
                                 <path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6" />
                                 <path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2" />
                               </svg>
-                            </button>
+                            </button> */}
                           </div>
                         </div>
 
@@ -749,6 +820,33 @@ export function RulesManagementPanel() {
         />
       )}
 
+      {/* Clear All Confirm Modal */}
+      <ConfirmModal
+        isOpen={showClearAllConfirm}
+        title="Clear All Context Rules?"
+        message={`${clearAllStats.total} rules across ${clearAllStats.domains} domains will be permanently removed.\n\nThis cannot be undone.`}
+        confirmText="Delete All"
+        cancelText="Cancel"
+        onConfirm={executeClearAll}
+        onCancel={() => setShowClearAllConfirm(false)}
+        isDanger={true}
+      />
+
+      {/* Domain Delete Confirm Modal */}
+      <ConfirmModal
+        isOpen={showDomainDeleteConfirm}
+        title={`Delete all ${domainDeleteCount} rules?`}
+        message={`All rules for "${domainToDelete || ''}" will be permanently removed.\n\nThis cannot be undone.`}
+        confirmText="Delete"
+        cancelText="Cancel"
+        onConfirm={executeDomainDelete}
+        onCancel={() => {
+          setShowDomainDeleteConfirm(false);
+          setDomainToDelete(null);
+        }}
+        isDanger={true}
+      />
+
       {/* Create Modal */}
       {showCreateModal && (
         <CreateRuleModal
@@ -947,6 +1045,59 @@ function CleanupModal({ domain, analysis, onClose, onApply }: CleanupModalProps)
               className="px-3 py-1.5 rounded text-xs font-medium bg-amber-600 hover:bg-amber-500 text-white transition-colors"
             >
               OK
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// Confirm Modal (reusable confirmation dialog)
+interface ConfirmModalProps {
+  isOpen: boolean;
+  title: string;
+  message: string;
+  confirmText: string;
+  cancelText: string;
+  onConfirm: () => void;
+  onCancel: () => void;
+  isDanger?: boolean;
+}
+
+function ConfirmModal({ isOpen, title, message, confirmText, cancelText, onConfirm, onCancel, isDanger = false }: ConfirmModalProps) {
+  if (!isOpen) return null;
+
+  return (
+    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50" style={{ top: '48px' }}>
+      <div
+        className="w-[420px] rounded-lg p-4"
+        style={{ backgroundColor: 'rgba(36, 36, 38, 0.98)', border: '1px solid rgba(255, 255, 255, 0.1)' }}
+      >
+        <div className="flex items-center justify-between mb-4">
+          <h3 className="text-sm font-medium text-gray-300">{title}</h3>
+          <button onClick={onCancel} className="text-gray-500 hover:text-gray-400">✕</button>
+        </div>
+
+        <div className="space-y-4">
+          <p className="text-sm text-gray-400 whitespace-pre-line">{message}</p>
+
+          <div className="flex justify-end gap-2">
+            <button
+              onClick={onCancel}
+              className="px-3 py-1.5 rounded text-xs font-medium text-gray-400 hover:text-gray-300 transition-colors"
+            >
+              {cancelText}
+            </button>
+            <button
+              onClick={onConfirm}
+              className={`px-3 py-1.5 rounded text-xs font-medium text-white transition-colors ${
+                isDanger 
+                  ? 'bg-red-600 hover:bg-red-500' 
+                  : 'bg-blue-600 hover:bg-blue-500'
+              }`}
+            >
+              {confirmText}
             </button>
           </div>
         </div>

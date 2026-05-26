@@ -525,10 +525,10 @@ function startOverlayControlServer() {
       req.on('end', () => {
         try {
           const evt = JSON.parse(body || '{}');
-          if (activeProgressCallback && ['agent:turn_live', 'agent:turn', 'agent:complete', 'agent:thought', 'needs_login', 'task:auth_required', 'task:auth_resolved'].includes(evt.type)) {
+          if (activeProgressCallback && ['agent:turn_live', 'agent:turn', 'agent:complete', 'agent:thought', 'agent:thinking', 'needs_login', 'task:auth_required', 'task:auth_resolved'].includes(evt.type)) {
             activeProgressCallback(evt);
           }
-          if (activeCronProgressCallback && ['agent:turn_live', 'agent:turn', 'agent:complete', 'agent:thought', 'needs_login', 'task:auth_required', 'task:auth_resolved'].includes(evt.type)) {
+          if (activeCronProgressCallback && ['agent:turn_live', 'agent:turn', 'agent:complete', 'agent:thought', 'agent:thinking', 'needs_login', 'task:auth_required', 'task:auth_resolved'].includes(evt.type)) {
             activeCronProgressCallback(evt);
           }
           res.writeHead(200).end(JSON.stringify({ ok: true }));
@@ -8981,6 +8981,14 @@ app.whenReady().then(async () => {
     ipcMain.handle('rules:context:delete', async (_event, { id }) => {
       try {
         return await memoryHttpPost('/context_rule.delete_by_id', 'context_rule.delete_by_id', { id });
+      } catch (err) {
+        return { error: err.message };
+      }
+    });
+
+    ipcMain.handle('rules:context:delete_by_key', async (_event, { contextKey }) => {
+      try {
+        return await memoryHttpPost('/context_rule.delete_by_key', 'context_rule.delete_by_key', { contextKey });
       } catch (err) {
         return { error: err.message };
       }
