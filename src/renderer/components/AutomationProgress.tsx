@@ -899,24 +899,65 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
           // Single-step replan: merge new step into existing plan, preserve prior step statuses
           if (isSingleStepReplan && steps.length > 0) {
             setSteps(prev => {
-              // Merge new plan with existing steps, preserving statuses for unchanged steps
-              const newSteps = data.steps.map((s: any, i: number) => {
-                const existing = prev.find(es => es.index === i);
-                // If step exists and hasn't changed description/skill, preserve its status
-                // Otherwise use the new step with pending status
-                if (existing && existing.skill === s.skill && existing.description === s.description) {
-                  return existing; // Preserve status (done, failed, etc.)
-                }
-                // New or changed step - use pending status
-                return {
-                  index: i,
-                  skill: s.skill,
-                  description: s.description,
-                  status: 'pending' as StepStatus,
-                  runGroup: s.runGroup || undefined,
-                };
+              // CRITICAL FIX: Build a map of new steps by their index
+              const newStepsByIndex = new Map<number, any>();
+              data.steps.forEach((s: any) => {
+                newStepsByIndex.set(s.index, s);
               });
-              return newSteps;
+              
+              // Build merged array by comparing step CONTENT (not just index)
+              // A step is "replaced" only if its skill or description changed
+              const mergedSteps: Step[] = [];
+              
+              // Process all steps that should exist in the final plan
+              // Get the max index to know the full range
+              const allIndices = new Set<number>();
+              prev.forEach(s => allIndices.add(s.index));
+              data.steps.forEach((s: any) => allIndices.add(s.index));
+              
+              // For each index, decide which version to keep
+              Array.from(allIndices).sort((a, b) => a - b).forEach(index => {
+                const existingStep = prev.find(s => s.index === index);
+                const newStep = newStepsByIndex.get(index);
+                
+                if (existingStep && newStep) {
+                  // Step exists in both old and new plan - check if it changed
+                  const isSameSkill = existingStep.skill === newStep.skill;
+                  const isAlreadyDone = existingStep.status === 'done';
+                  
+                  if (isSameSkill && isAlreadyDone) {
+                    // Same skill type and already completed — preserve done status even if
+                    // description text changed (LLM may reword it slightly on replan).
+                    mergedSteps.push({ ...existingStep, description: newStep.description });
+                  } else if (isSameSkill && existingStep.status !== 'failed') {
+                    // Same skill, not done, not failed — preserve current status
+                    mergedSteps.push(existingStep);
+                  } else {
+                    // Skill changed or step failed — use new version with pending status
+                    mergedSteps.push({
+                      index: newStep.index,
+                      skill: newStep.skill,
+                      description: newStep.description,
+                      status: 'pending' as StepStatus,
+                      runGroup: newStep.runGroup || undefined,
+                    });
+                  }
+                } else if (existingStep && !newStep) {
+                  // Step only in old plan - keep it (might be done)
+                  mergedSteps.push(existingStep);
+                } else if (newStep) {
+                  // Step only in new plan - add as pending
+                  mergedSteps.push({
+                    index: newStep.index,
+                    skill: newStep.skill,
+                    description: newStep.description,
+                    status: 'pending' as StepStatus,
+                    runGroup: newStep.runGroup || undefined,
+                  });
+                }
+              });
+              
+              return mergedSteps;
             });
             // Don't reset offset or phase - continue executing with updated plan
             setTotalCount(data.steps.length);

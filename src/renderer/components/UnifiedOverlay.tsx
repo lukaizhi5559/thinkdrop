@@ -129,8 +129,6 @@ export function UnifiedOverlay() {
   const [gatherPending, setGatherPending] = useState(false);
   const [gatherQuestion, setGatherQuestion] = useState<string | null>(null);
   const [isGlowActive, setIsGlowActive] = useState(false);
-  // Synthesis/streaming response block is collapsed by default; user can expand
-  const [isSynthesisCollapsed, setIsSynthesisCollapsed] = useState(true);
 
   // --- AI Activity Panel Status ---
   const isRunning = isSubmitting || isStreaming || isThinking || isAutomationMode || isInstalling || gatherPending;
@@ -790,7 +788,6 @@ export function UnifiedOverlay() {
       setInstallPrompt(null);
       setActionChips([]);
       setInstallOutput([]);
-      setIsSynthesisCollapsed(true); // Reset synthesis collapsed state
       setGatherPending(false); // Reset gather state
       setGatherQuestion(null);
       setStreamingStartedRef(false); // Reset streaming started flag
@@ -813,7 +810,6 @@ export function UnifiedOverlay() {
       setInstallPrompt(null);
       setActionChips([]);
       setInstallOutput([]);
-      setIsSynthesisCollapsed(true); // Reset synthesis collapsed state
       setGatherPending(false); // Reset gather state
       setGatherQuestion(null);
       setStreamingStartedRef(false); // Reset streaming started flag
@@ -908,7 +904,6 @@ export function UnifiedOverlay() {
         setInstallPrompt(null);
         setIsInstalling(false);
         glowOffTimerRef.current = setTimeout(() => setIsGlowActive(false), 400);
-        setIsSynthesisCollapsed(false);
         // Extra safety: ensure clean state on cancelled tasks
         if (data?.cancelled) {
           setIsSubmitting(false);
@@ -1094,7 +1089,6 @@ export function UnifiedOverlay() {
       console.log('[UNIFIED] Queue enqueued - clearing previous response');
       setStreamingResponse('');
       setIsAutomationMode(false);
-      setIsSynthesisCollapsed(true);
       setActionChips([]);
       setInstallPrompt(null);
       setGatherPending(false);
@@ -1689,33 +1683,8 @@ export function UnifiedOverlay() {
     }
   }, [streamingResponse, isStreaming]);
 
-  // --- Auto-expand Summary when synthesis streaming ends ---
-  // Belt-and-suspenders: the all_done IPC handler also calls setIsSynthesisCollapsed(false),
-  // but React 18 automatic batching can merge that update. This effect is declarative and
-  // fires reliably any time isStreaming goes false while content exists in automation mode.
-  useEffect(() => {
-    if (!isStreaming && streamingResponse && isAutomationMode) {
-      setIsSynthesisCollapsed(false);
-    }
-  }, [isStreaming]);
-
   // Window height is driven by AutomationProgress's onHeightChange callback (Fix in AutomationProgress.tsx)
   // which measures the component's own root div — outside the clipped layout chain.
-
-  // --- Resize window when Summary block is toggled (sibling of AutomationProgress, not observed) ---
-  useEffect(() => {
-    if (!ipcRenderer) return;
-    const t = setTimeout(() => {
-      if (shouldSuppressResize()) return; // Don't resize while user is dragging or resizing the panel
-      const h = contentRef.current?.scrollHeight || 0;
-      const HEADER = 105;
-      const INPUT_AREA = 100;
-      const PADDING = 20;
-      const total = Math.min(Math.max(h + HEADER + INPUT_AREA + PADDING, 400), 900);
-      ipcRenderer.send('unified:resize-window', { height: Math.round(total) });
-    }, 120);
-    return () => clearTimeout(t);
-  }, [isSynthesisCollapsed]);
 
   // --- Resize window as streaming response content grows (non-automation intents) ---
   // AutomationProgress's onHeightChange handles command_automate via ResizeObserver.
@@ -1977,19 +1946,16 @@ export function UnifiedOverlay() {
 
     if (!streamingResponse && !installPrompt && !isInstalling && !actionChips.length) return null;
 
-    // In automation mode the streamingResponse is the synthesize output — show it collapsible.
-    // Outside automation mode (plain LLM answer) always show it expanded.
-    const showCollapsible = isAutomationMode && !!streamingResponse;
-    // Always respect user's collapsed preference — no auto-expand
-    const synthesisExpanded = !isSynthesisCollapsed;
-    // Approximate token count (1 token ≈ 4 chars) for the header badge
+    // Approximate token count (1 token ≈ 4 chars) for the progress indicator
     const synthTokenCount = streamingResponse ? Math.ceil(streamingResponse.length / 4) : 0;
 
     return (
       <div className={`space-y-4${isDropping ? ' drop-animate' : ''}`}>
         {renderInstallCard()}
         {searchSources.length > 0 && renderSourcePill()}
-        {streamingResponse && !showCollapsible && !isAutomationMode && (
+        
+        {/* Non-automation responses (plain LLM answers) */}
+        {streamingResponse && !isAutomationMode && (
           <div className="relative" style={{ overflowX: 'hidden', wordBreak: 'break-word', overflowWrap: 'break-word' }}>
             <RichContentRenderer
               content={streamingResponse}
@@ -2002,55 +1968,85 @@ export function UnifiedOverlay() {
           </div>
         )}
 
-        {showCollapsible && (
-          <div className="rounded-lg overflow-hidden" style={{ border: '1px solid rgba(255,255,255,0.08)', marginTop: '5px', minWidth: 0 }}>
-            {/* Collapsible header */}
-            <button
-              className="w-full flex items-center justify-between px-3 py-2 text-xs font-medium"
-              style={{
-                backgroundColor: 'rgba(59,130,246,0.08)',
-                color: '#93c5fd',
-                cursor: 'pointer',
-                userSelect: 'none',
-              }}
-              onClick={() => setIsSynthesisCollapsed(prev => !prev)}
-              onMouseEnter={e => (e.currentTarget.style.backgroundColor = 'rgba(59,130,246,0.14)')}
-              onMouseLeave={e => (e.currentTarget.style.backgroundColor = 'rgba(59,130,246,0.08)')}
-            >
-              <div className="flex items-center gap-1.5">
-                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/>
-                </svg>
-                <span>Summary</span>
-                {isStreaming && <span className="inline-block w-1.5 h-1.5 rounded-full bg-blue-400 animate-pulse ml-1" />}
-                {synthTokenCount > 0 && (
-                  <span style={{ fontSize: '0.65rem', color: 'rgba(147,197,253,0.6)', marginLeft: '4px', fontWeight: 400 }}>
-                    {synthTokenCount > 999 ? `${(synthTokenCount / 1000).toFixed(1)}k` : synthTokenCount} tokens
-                  </span>
+        {/* Automation mode summary with progress indicator */}
+        {isAutomationMode && (streamingResponse || isStreaming) && (
+          <div style={{ marginTop: '20px' }}>
+            {/* Clean divider */}
+            <div style={{ 
+              height: '1px', 
+              background: 'linear-gradient(to right, transparent, rgba(255,255,255,0.1), transparent)', 
+              margin: '16px 0' 
+            }} />
+            
+            {/* Progress indicator or summary content */}
+            <div className="relative" style={{ overflowX: 'hidden', wordBreak: 'break-word', overflowWrap: 'break-word' }}>
+              {/* Header with progress */}
+              <div className="flex items-center gap-2 mb-3" style={{ color: 'rgba(147,197,253,0.9)', fontSize: '0.875rem', fontWeight: 500 }}>
+                {isStreaming ? (
+                  <>
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="animate-pulse">
+                      <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+                      <polyline points="14 2 14 8 20 8"/>
+                    </svg>
+                    <span>Summarizing...</span>
+                    {synthTokenCount > 0 && (
+                      <span style={{ 
+                        fontSize: '0.75rem', 
+                        color: 'rgba(147,197,253,0.7)', 
+                        marginLeft: '8px',
+                        background: 'rgba(59,130,246,0.15)',
+                        padding: '2px 8px',
+                        borderRadius: '12px',
+                        fontFamily: 'monospace'
+                      }}>
+                        {synthTokenCount > 999 ? `${(synthTokenCount / 1000).toFixed(1)}k` : synthTokenCount} tokens
+                      </span>
+                    )}
+                  </>
+                ) : (
+                  <>
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+                      <polyline points="14 2 14 8 20 8"/>
+                    </svg>
+                    <span>Summary</span>
+                    {synthTokenCount > 0 && (
+                      <span style={{ 
+                        fontSize: '0.75rem', 
+                        color: 'rgba(147,197,253,0.6)', 
+                        marginLeft: '8px',
+                        background: 'rgba(59,130,246,0.1)',
+                        padding: '2px 8px',
+                        borderRadius: '12px',
+                        fontFamily: 'monospace'
+                      }}>
+                        {synthTokenCount > 999 ? `${(synthTokenCount / 1000).toFixed(1)}k` : synthTokenCount} tokens
+                      </span>
+                    )}
+                  </>
                 )}
               </div>
-              <svg
-                width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-                strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
-                style={{ transform: synthesisExpanded ? 'rotate(180deg)' : 'rotate(0deg)', transition: 'transform 0.15s', flexShrink: 0 }}
-              >
-                <polyline points="6 9 12 15 18 9" />
-              </svg>
-            </button>
-
-            {/* Collapsible body */}
-            {synthesisExpanded && (
-              <div className="px-3 py-2.5 relative" style={{ backgroundColor: 'rgba(0,0,0,0.25)', overflowX: 'hidden', wordBreak: 'break-word', overflowWrap: 'break-word' }}>
-                <RichContentRenderer
-                  content={streamingResponse}
-                  animated={!isStreaming}
-                  className="text-sm"
-                />
-                {isStreaming && (
-                  <span className="inline-block w-1.5 h-4 bg-blue-500 animate-pulse ml-1" />
-                )}
-              </div>
-            )}
+              
+              {/* Summary content with smooth streaming */}
+              {streamingResponse && (
+                <div 
+                  className="relative text-sm leading-relaxed" 
+                  style={{ 
+                    animation: isStreaming ? 'fadeIn 0.3s ease-out' : 'none',
+                    lineHeight: '1.6'
+                  }}
+                >
+                  <RichContentRenderer
+                    content={streamingResponse}
+                    animated={!isStreaming}
+                    className="text-sm"
+                  />
+                  {isStreaming && (
+                    <span className="inline-block w-1.5 h-4 bg-blue-500 animate-pulse ml-1" />
+                  )}
+                </div>
+              )}
+            </div>
           </div>
         )}
 
@@ -2086,6 +2082,10 @@ export function UnifiedOverlay() {
           55%  { transform: translateY(3px) scaleY(1.01); }
           75%  { transform: translateY(-1px) scaleY(0.998); }
           100% { transform: translateY(0) scaleY(1); }
+        }
+        @keyframes fadeIn {
+          from { opacity: 0; transform: translateY(4px); }
+          to { opacity: 1; transform: translateY(0); }
         }
         .drop-animate {
           animation: drop-in 0.45s cubic-bezier(0.22, 1, 0.36, 1) forwards;
