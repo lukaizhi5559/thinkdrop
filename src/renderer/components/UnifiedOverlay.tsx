@@ -98,6 +98,7 @@ export function UnifiedOverlay() {
   const [isStreaming, setIsStreaming] = useState(false);
   const [isThinking, setIsThinking] = useState(false);
   const [isAutomationMode, setIsAutomationMode] = useState(false);
+  const [isScheduledRun, setIsScheduledRun] = useState(false);
   const [streamingStartedRef, setStreamingStartedRef] = useState(false);
   const [actionChips, setActionChips] = useState<ActionChip[]>([]);
   const [searchSources, setSearchSources] = useState<SearchSource[]>([]);
@@ -453,7 +454,7 @@ export function UnifiedOverlay() {
       setIsThinking(false);
       return;
     }
-    if (isSubmitting) {
+    if (isSubmitting && !wasGatherPending) {
       setIsThinking(false);
       return;
     }
@@ -841,7 +842,13 @@ export function UnifiedOverlay() {
     };
 
     const handleAutomationProgress = (data: any) => {
-      if (data?.type === 'planning') {
+      if (data?.type === 'reminder_fired') {
+        // Scheduled run starting — suppress AutomationProgress, let AIActivityPanel take over
+        if (data?.triggerIntent === 'execute_steps') {
+          setIsScheduledRun(true);
+        }
+        return; // Don't activate Results tab or automation mode for scheduled runs
+      } else if (data?.type === 'planning') {
         setIsThinking(false);
         setIsAutomationMode(true);
         setActiveTab('results');
@@ -896,6 +903,7 @@ export function UnifiedOverlay() {
           markUnreadTab('skills');
         }, 600);
       } else if (data?.type === 'all_done') {
+        setIsScheduledRun(false); // Clear scheduled run flag on completion
         markUnreadTab('results');
         setIsThinking(false);
         setIsStreaming(false);
@@ -906,6 +914,7 @@ export function UnifiedOverlay() {
         glowOffTimerRef.current = setTimeout(() => setIsGlowActive(false), 400);
         // Extra safety: ensure clean state on cancelled tasks
         if (data?.cancelled) {
+          setIsScheduledRun(false);
           setIsSubmitting(false);
           setIsThinking(false);
           setIsStreaming(false);
@@ -2363,6 +2372,7 @@ export function UnifiedOverlay() {
                 )}
 
                 <AutomationProgress
+                  suppressIfScheduled={isScheduledRun}
                   setIsSubmitting={setIsSubmitting}
                   onHeightChange={(automationH: number) => {
                     if (shouldSuppressResize()) return; // Don't resize while user is dragging or resizing the panel

@@ -297,6 +297,7 @@ contextBridge.exposeInMainWorld('electron', {
         'agents:creating',
         'agents:error',
         'agents:update',
+        'operation:status',
       ];
       if (validChannels.includes(channel)) {
         const chMap = _wiredListeners.get(channel);

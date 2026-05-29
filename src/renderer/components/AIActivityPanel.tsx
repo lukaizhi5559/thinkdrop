@@ -20,6 +20,7 @@ interface LogEntry {
   type: 'command' | 'output' | 'error' | 'status';
   content: string;
   timestamp: number;
+  _agentId?: string;
 }
 
 export const AIActivityPanel = forwardRef<AIActivityPanelHandle, AIActivityPanelProps>(
@@ -30,6 +31,8 @@ export const AIActivityPanel = forwardRef<AIActivityPanelHandle, AIActivityPanel
     const [isCommandRunning, setIsCommandRunning] = useState(false);
     const [commandHistory, setCommandHistory] = useState<string[]>([]);
     const [historyIndex, setHistoryIndex] = useState(-1);
+    const [scheduledRunning, setScheduledRunning] = useState(false);
+    const scheduledRunningRef = useRef(false);
     const scrollRef = useRef<HTMLDivElement>(null);
 
     // Auto-expand when entering debug mode
@@ -41,7 +44,7 @@ export const AIActivityPanel = forwardRef<AIActivityPanelHandle, AIActivityPanel
 
     // Listen for operation status updates
     useEffect(() => {
-      const handleStatus = (_event: any, data: { message: string; type?: string }) => {
+      const handleStatus = (data: { message: string; type?: string }) => {
         setLogs(prev => [...prev, { type: 'status', content: data.message, timestamp: Date.now() }]);
         if (data.type === 'cancel') {
           setIsCommandRunning(false);
@@ -49,11 +52,112 @@ export const AIActivityPanel = forwardRef<AIActivityPanelHandle, AIActivityPanel
         }
       };
 
-      ipcRenderer.on('operation:status', handleStatus);
+      ipcRenderer.on('operation:status', handleStatus, 'AIActivityPanel-status');
       return () => {
-        ipcRenderer.removeListener('operation:status', handleStatus);
+        ipcRenderer.removeListenerByToken('operation:status', 'AIActivityPanel-status');
       };
     }, []);
+
+    // Listen for scheduled automation progress events
+    // Uses a ref for the running flag to avoid stale-closure issues — the handler
+    // is registered once on mount and reads scheduledRunningRef.current directly.
+    useEffect(() => {
+      const handleAutomationProgress = (data: any) => {
+        const { type } = data || {};
+        switch (type) {
+          case 'reminder_fired': {
+            // Scheduled task just fired — take over the panel
+            scheduledRunningRef.current = true;
+            setScheduledRunning(true);
+            setLogs([{ type: 'status', content: `⏰ Reminder fired: "${data.label || data.triggerPrompt || 'scheduled task'}"`, timestamp: Date.now() }]);
+            setIsExpanded(true);
+            break;
+          }
+          case 'plan_ready': {
+            if (!scheduledRunningRef.current) break;
+            const stepCount = data.steps?.length ?? data.totalSteps ?? '?';
+            setLogs(prev => [...prev, { type: 'status', content: `📋 Plan ready — ${stepCount} step${stepCount !== 1 ? 's' : ''}`, timestamp: Date.now() }]);
+            break;
+          }
+          case 'step_start':
+          case 'plan:step_start': {
+            if (!scheduledRunningRef.current) break;
+            const stepDesc = data.description || data.skill || 'step';
+            setLogs(prev => [...prev, { type: 'output', content: `→ ${stepDesc}`, timestamp: Date.now() }]);
+            break;
+          }
+          case 'step_done':
+          case 'plan:step_done': {
+            if (!scheduledRunningRef.current) break;
+            const doneDesc = data.description || data.skill || 'step';
+            setLogs(prev => [...prev, { type: 'status', content: `✓ ${doneDesc}`, timestamp: Date.now() }]);
+            break;
+          }
+          case 'step_failed': {
+            if (!scheduledRunningRef.current) break;
+            const failDesc = data.description || data.skill || 'step';
+            const failErr = data.error ? ` — ${String(data.error).slice(0, 120)}` : '';
+            setLogs(prev => [...prev, { type: 'error', content: `✗ ${failDesc}${failErr}`, timestamp: Date.now() }]);
+            break;
+          }
+          case 'agent:turn_live':
+          case 'agent:turn': {
+            if (!scheduledRunningRef.current) break;
+            const agentId = data.agentId || 'agent';
+            const turn = data.turn ?? '?';
+            const maxTurns = data.maxTurns ?? '?';
+            const actionStr = data.action?.action ? ` — ${data.action.action}` : (data.currentAction ? ` — ${data.currentAction}` : '');
+            // Replace the last agent:turn line for the same agentId to avoid log spam
+            setLogs(prev => {
+              const lastIdx = prev.map(e => e._agentId).lastIndexOf(agentId);
+              const entry = { type: 'output' as const, content: `⟳ [${agentId}] turn ${turn}/${maxTurns}${actionStr}`, timestamp: Date.now(), _agentId: agentId };
+              if (lastIdx >= 0 && prev[lastIdx].content.startsWith('⟳')) {
+                return [...prev.slice(0, lastIdx), entry, ...prev.slice(lastIdx + 1)];
+              }
+              return [...prev, entry];
+            });
+            break;
+          }
+          case 'agent:complete': {
+            if (!scheduledRunningRef.current) break;
+            const completeAgentId = data.agentId || 'agent';
+            const result = data.result ? String(data.result).slice(0, 120) : (data.ok ? 'done' : 'failed');
+            // Replace the last spinner turn line for this agent with the completion line
+            setLogs(prev => {
+              const lastIdx = prev.map(e => e._agentId).lastIndexOf(completeAgentId);
+              const entryType: LogEntry['type'] = data.ok !== false ? 'status' : 'error';
+              const entry = { type: entryType, content: `✓ [${completeAgentId}]: ${result}`, timestamp: Date.now(), _agentId: completeAgentId };
+              if (lastIdx >= 0 && prev[lastIdx].content.startsWith('⟳')) {
+                return [...prev.slice(0, lastIdx), entry, ...prev.slice(lastIdx + 1)];
+              }
+              return [...prev, entry];
+            });
+            break;
+          }
+          case 'agent:thought': {
+            if (!scheduledRunningRef.current) break;
+            if (!data.thoughts) break;
+            const thoughtAgentId = data.agentId || 'agent';
+            setLogs(prev => [...prev, { type: 'output', content: `💭 [${thoughtAgentId}]: ${String(data.thoughts).slice(0, 80)}`, timestamp: Date.now(), _agentId: thoughtAgentId }]);
+            break;
+          }
+          case 'all_done': {
+            if (!scheduledRunningRef.current) break;
+            scheduledRunningRef.current = false;
+            setScheduledRunning(false);
+            setLogs(prev => [...prev, { type: 'status', content: '✅ Done', timestamp: Date.now() }]);
+            break;
+          }
+          default:
+            break;
+        }
+      };
+
+      ipcRenderer.on('automation:progress', handleAutomationProgress, 'AIActivityPanel-automation');
+      return () => {
+        ipcRenderer.removeListenerByToken('automation:progress', 'AIActivityPanel-automation');
+      };
+    }, []); // mount once — reads ref, never stale
 
     // Auto-scroll to bottom when new logs added
     useEffect(() => {
@@ -217,7 +321,7 @@ export const AIActivityPanel = forwardRef<AIActivityPanelHandle, AIActivityPanel
   // Show on all tabs when there's activity - no more hiding
   
   // Always show panel - compute activity state
-  const hasActivity = isRunning || currentOperation || isCommandRunning;
+  const hasActivity = isRunning || currentOperation || isCommandRunning || scheduledRunning;
 
   // Toggle handler for chevron
   const handleToggle = () => {
@@ -250,7 +354,7 @@ export const AIActivityPanel = forwardRef<AIActivityPanelHandle, AIActivityPanel
               <line x1="12" y1="19" x2="20" y2="19" />
             </svg>
           )}
-          <span className="text-xs text-gray-400">{currentOperation || (hasActivity ? 'Working...' : 'Ready')}</span>
+          <span className="text-xs text-gray-400">{scheduledRunning ? 'Running scheduled automation...' : (currentOperation || (hasActivity ? 'Working...' : 'Ready'))}</span>
         </div>
         
         <div className="flex items-center gap-1">

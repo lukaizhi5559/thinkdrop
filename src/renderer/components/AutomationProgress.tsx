@@ -15,7 +15,7 @@ const ipcRenderer = (window as any).electron?.ipcRenderer;
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
-type StepStatus = 'pending' | 'running' | 'done' | 'failed' | 'skipped' | 'replanning';
+type StepStatus = 'pending' | 'running' | 'done' | 'failed' | 'skipped' | 'replanning' | 'deferred';
 
 interface Step {
   index: number;
@@ -170,6 +170,7 @@ interface AutomationProgressProps {
   onActiveChange?: (active: boolean) => void;
   onOpenRules?: () => void;
   setIsSubmitting?: (submitting: boolean) => void;
+  suppressIfScheduled?: boolean;
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -210,6 +211,18 @@ function StepIcon({ status }: { status: StepStatus }) {
         <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="#f59e0b" strokeWidth="2.5"
           strokeLinecap="round" strokeLinejoin="round">
           <line x1="18" y1="6" x2="6" y2="18" />
+        </svg>
+      </div>
+    );
+  }
+  if (status === 'deferred') {
+    return (
+      <div className="flex-shrink-0 w-4 h-4 rounded-full flex items-center justify-center"
+        style={{ backgroundColor: 'rgba(107,114,128,0.12)', border: '1.5px solid #4b5563' }}>
+        <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="#6b7280" strokeWidth="2"
+          strokeLinecap="round" strokeLinejoin="round">
+          <circle cx="12" cy="12" r="10" />
+          <polyline points="12 6 12 12 16 14" />
         </svg>
       </div>
     );
@@ -618,7 +631,7 @@ function parsePlanStepTitles(content: string): string[] {
   return titles;
 }
 
-export default function AutomationProgress({ onHeightChange, onActiveChange, onOpenRules, setIsSubmitting }: AutomationProgressProps) {
+export default function AutomationProgress({ onHeightChange, onActiveChange, onOpenRules, setIsSubmitting, suppressIfScheduled }: AutomationProgressProps) {
   const [phase, setPhase] = useState<AutomationPhase>('idle');
   const [steps, setSteps] = useState<Step[]>([]);
   const [planMessage, setPlanMessage] = useState('Generating skill plan...');
@@ -675,6 +688,8 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
   const [etaLabel, setEtaLabel] = useState<string | null>(null);
   const [elapsedLabel, setElapsedLabel] = useState<string | null>(null);
   const executionStartRef = useRef<number | null>(null);
+  const suppressIfScheduledRef = useRef<boolean>(!!suppressIfScheduled);
+  suppressIfScheduledRef.current = !!suppressIfScheduled;
 
   // Name-a-plan state (Part 5)
   const [showNamePlan, setShowNamePlan] = useState(false);
@@ -872,6 +887,7 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
       setScanDiscovery(data.suggestions);
     };
     const handleProgress = (data: any) => {
+      if (suppressIfScheduledRef.current) return;
       if (!active) return;
       switch (data.type) {
         case 'planning':
@@ -1418,6 +1434,7 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
 
         case 'gather_answer_received':
           setAskUserPrompt(null);
+          setPhase('executing');
           break;
 
         case 'scout_match':
@@ -1487,6 +1504,9 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
           break;
 
         case 'retrying_with_fix':
+          // Don't pull phase back out of 'done' — recovery events that arrive after
+          // all_done (e.g. reviewExecution firing on a schedule result) must not un-resolve the UI.
+          if (phaseRef.current === 'done') break;
           setExpandedSteps(new Set());
           setFailureAnswer(null);
           setPhase('retrying_with_fix');
@@ -1500,6 +1520,8 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
           break;
 
         case 'recovering':
+          // Don't pull phase back out of 'done' — same guard as retrying_with_fix.
+          if (phaseRef.current === 'done') break;
           setPhase('retrying_with_fix');
           setRetryMessage(
             data.description ||
@@ -1509,27 +1531,41 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
 
         case 'recovery:analyzing':
           // Granular recovery event - analyzing the failure
-          if (phaseRef.current !== 'retrying_with_fix') {
+          if (phaseRef.current !== 'retrying_with_fix' && phaseRef.current !== 'done') {
             setPhase('retrying_with_fix');
           }
-          setRetryMessage(data.message || `Analyzing ${data.skill || 'step'} failure...`);
+          if (phaseRef.current !== 'done') setRetryMessage(data.message || `Analyzing ${data.skill || 'step'} failure...`);
           break;
 
         case 'recovery:category_detected':
           // Recovery category determined (PATH, TOOL_SUB, EXEC_MODE, etc.)
-          if (phaseRef.current !== 'retrying_with_fix') {
+          if (phaseRef.current !== 'retrying_with_fix' && phaseRef.current !== 'done') {
             setPhase('retrying_with_fix');
           }
-          setRetryMessage(`Recovery strategy: ${data.category || 'analyzing'} — ${data.message || ''}`);
+          if (phaseRef.current !== 'done') setRetryMessage(`Recovery strategy: ${data.category || 'analyzing'} — ${data.message || ''}`);
           break;
 
         case 'recovery:mode_switch':
           // Execution mode switching (bash → python)
-          if (phaseRef.current !== 'retrying_with_fix') {
+          if (phaseRef.current !== 'retrying_with_fix' && phaseRef.current !== 'done') {
             setPhase('retrying_with_fix');
           }
-          setRetryMessage(`Switching from ${data.fromMode || 'bash'} to ${data.toMode || 'python3'}...`);
+          if (phaseRef.current !== 'done') setRetryMessage(`Switching from ${data.fromMode || 'bash'} to ${data.toMode || 'python3'}...`);
           break;
+
+        case 'schedule_registered': {
+          // Schedule step completed — reminder registered. The all_done event fires
+          // immediately after this and resolves the spinner via phase='done'.
+          // doneCount is derived from steps state (no setter) — no action needed here.
+          break;
+        }
+
+        case 'pipeline:done': {
+          // Marks the end of a single StateGraph execution cycle.
+          // The output contract is available in data.contract for inspection / logging.
+          // UI state transitions are driven by all_done / plan:step_done events — no action here.
+          break;
+        }
 
         case 'all_done': {
           // Don't let all_done collapse an active plan review (awaitingPlanApproval path)
@@ -1571,7 +1607,15 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
             const filePaths: string[] = Array.isArray(data.savedFilePaths) ? data.savedFilePaths : [];
             const finalOffset = stepOffsetRef.current;
             const finalCount = data.skillResults.length;
+            // Steps the backend tagged as deferred (run when reminder fires)
+            const deferredIndices: number[] = Array.isArray(data.deferredStepIndices)
+              ? data.deferredStepIndices.map((i: number) => i + finalOffset)
+              : [];
             setSteps(prev => prev.map((s) => {
+              // Mark deferred steps with their own status
+              if (deferredIndices.includes(s.index) && (s.status === 'pending' || s.status === 'running')) {
+                return { ...s, status: 'deferred' as StepStatus };
+              }
               // Compute position within the final plan window
               const posInFinal = s.index - finalOffset;
               const r = (posInFinal >= 0 && posInFinal < finalCount) ? data.skillResults[posInFinal] : null;
@@ -1845,9 +1889,11 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
 
   const doneCount = steps.filter(s =>
     s.status === 'done' || s.status === 'skipped' ||
-    (s.status !== 'failed' && agentCompletes.get(s.index)?.ok === true)
+    (s.status !== 'failed' && s.status !== 'deferred' && agentCompletes.get(s.index)?.ok === true)
   ).length;
   const shownTotal = totalCount || steps.length;
+
+  if (suppressIfScheduled) return null;
 
   if (phase === 'idle' && !controlMode.active && !maintenanceScan && !scanDiscovery) return null;
 
@@ -2782,7 +2828,10 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
                         color: step.status === 'pending' ? '#6b7280'
                           : step.status === 'failed' ? '#fca5a5'
                           : step.status === 'skipped' ? '#fbbf24'
-                          : '#e5e7eb'
+                          : step.status === 'deferred' ? '#6b7280'
+                          : '#e5e7eb',
+                        textDecoration: step.status === 'deferred' ? 'line-through' : undefined,
+                        opacity: step.status === 'deferred' ? 0.6 : undefined,
                       }}>
                         {step.runGroup
                           ? `Step ${step.index + 1}: ${step.description?.split(' — ')[0]?.slice(0, 60) || step.description?.slice(0, 60) || step.skill}`
@@ -2903,6 +2952,11 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
                     {step.status === 'skipped' && !isExpanded && (
                       <div className="text-xs mt-0.5" style={{ color: '#fbbf24', opacity: 0.75 }}>
                         {step.stdout?.replace(/^\[Skipped:\s*/i, '').replace(/\]$/, '') || 'Skipped'}
+                      </div>
+                    )}
+                    {step.status === 'deferred' && (
+                      <div className="text-xs mt-0.5" style={{ color: '#92400e', opacity: 0.8 }}>
+                        Runs when reminder fires
                       </div>
                     )}
                     {step.status === 'failed' && step.error && !isExpanded && (

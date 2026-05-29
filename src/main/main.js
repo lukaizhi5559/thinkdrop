@@ -349,47 +349,10 @@ function startOverlayControlServer() {
 
           const reminderText = triggerPrompt || label || 'Reminder';
 
-          if (triggerIntent === 'execute_steps' && pendingSteps) {
-            // Execute remaining plan steps directly via command-service — no stategraph re-run.
-            // Re-running the original prompt would cause an infinite loop for time-delay reminders.
-            try {
-              const steps = JSON.parse(pendingSteps);
-              const http = require('http');
-              steps.forEach(step => {
-                const stepPayload = JSON.stringify({ payload: { skill: step.skill, args: step.args || {} } });
-                const stepReq = http.request({
-                  hostname: '127.0.0.1', port: 3007, path: '/command.automate', method: 'POST',
-                  headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(stepPayload) },
-                  timeout: 30000,
-                }, (stepRes) => {
-                  let raw = ''; stepRes.on('data', c => { raw += c; });
-                  stepRes.on('end', () => console.log(`🔔 [Reminder] pendingStep ${step.skill} → ${stepRes.statusCode}`));
-                });
-                stepReq.on('error', (e) => console.warn(`🔔 [Reminder] pendingStep execute failed: ${e.message}`));
-                stepReq.write(stepPayload);
-                stepReq.end();
-              });
-            } catch (e) {
-              console.warn(`🔔 [Reminder] pendingSteps parse/execute error: ${e.message}`);
-            }
-          }
-
-          // 1. Show a modal dialog popup with ThinkDrop logo
-          const { dialog, app, nativeImage } = require('electron');
+          // 1. Play the ThinkDrop sound (afplay is reliable even when window is hidden)
+          const { app, nativeImage } = require('electron');
           const path = require('path');
           const logoPath = path.join(__dirname, '..', 'renderer', 'assets', 'logo.jpg');
-          let logoIcon;
-          try { logoIcon = nativeImage.createFromPath(logoPath); } catch (_) {}
-          dialog.showMessageBox({
-            type: 'info',
-            title: '⏰ ThinkDrop Reminder',
-            message: reminderText,
-            buttons: ['OK'],
-            defaultId: 0,
-            icon: logoIcon || undefined,
-          }).catch(() => {});
-
-          // 2. Play the ThinkDrop sound (afplay is reliable even when window is hidden)
           try {
             const { exec } = require('child_process');
             const soundPath = path.join(__dirname, '..', 'renderer', 'assets', 'water-drip.mp3');
@@ -400,20 +363,56 @@ function startOverlayControlServer() {
             safeSend(resultsWindow, 'reminder:play-sound', {});
           }
 
-          // 3. Bring ResultsWindow to front and show reminder
-          if (resultsWindow && !resultsWindow.isDestroyed()) {
-            if (!resultsWindow.isVisible()) {
-              resultsWindow.showInactive();
+          // 2. Send reminder_fired to the renderer FIRST so AIActivityPanel sets
+          // scheduledRunningRef=true before any stategraph progress events arrive.
+          const reminderFiredPayload = {
+            type: 'reminder_fired',
+            label,
+            triggerIntent,
+            triggerPrompt: reminderText,
+            firedAt,
+            id,
+          };
+          safeSendUnified('automation:progress', reminderFiredPayload);
+
+          // 3. Run deferred steps through the stategraph so progress events flow to AIActivityPanel.
+          if (triggerIntent === 'execute_steps' && pendingSteps) {
+            try {
+              const steps = JSON.parse(pendingSteps);
+              if (stateGraph && Array.isArray(steps) && steps.length > 0) {
+                console.log(`🔔 [Reminder] Running ${steps.length} deferred step(s) via stategraph for "${label}"`);
+                const reminderProgressCallback = (event) => {
+                  safeSendUnified('automation:progress', event);
+                };
+                const reminderInitialState = {
+                  message: triggerPrompt || label,
+                  intent: { type: 'command_automate' },
+                  _skillPlan: steps,
+                  skillCursor: 0,
+                  skillResults: [],
+                  progressCallback: reminderProgressCallback,
+                  mcpAdapter,
+                  activeBrowserSessionId: null,
+                  activeBrowserUrl: null,
+                  context: { userId: 'default_user', source: 'reminder_fired' },
+                };
+                // Set activeProgressCallback so /agent-turn POSTs from browser.agent/cli.agent
+                // are forwarded to AIActivityPanel (same path used by normal interactive runs).
+                activeProgressCallback = reminderProgressCallback;
+                // Use setImmediate to yield one event-loop tick — gives the reminder_fired IPC
+                // message above a chance to reach the renderer and set scheduledRunningRef=true
+                // before the first synchronous stategraph node (planSkills ~3ms) emits plan_ready.
+                setImmediate(() => {
+                  stateGraph.execute(reminderInitialState, null, null)
+                    .catch(err => console.error(`🔔 [Reminder] Deferred stategraph run failed: ${err.message}`))
+                    .finally(() => { activeProgressCallback = null; });
+                });
+              } else {
+                console.warn(`🔔 [Reminder] stateGraph not ready or empty steps — skipping deferred execution`);
+              }
+            } catch (e) {
+              console.warn(`🔔 [Reminder] pendingSteps parse/execute error: ${e.message}`);
             }
-            resultsWindow.moveTop();
-            safeSend(resultsWindow, 'automation:progress', {
-              type: 'reminder_fired',
-              label,
-              triggerIntent,
-              triggerPrompt: reminderText,
-              firedAt,
-              id,
-            });
           }
 
           // 4. Also show macOS notification with logo
@@ -691,6 +690,7 @@ let sessionFileCreations = []; // Track all file creation operations in current 
 // Module-level gather:answer resolver — set per-question, cleared on answer.
 // Registered ONCE (not per stategraph:process run) to avoid listener accumulation.
 let pendingGatherResolve = null;
+let pendingGatherQuestion = null; // Stored so we can re-send gather:pending on window re-activation
 
 // Active schedule countdown — set when a schedule step is running, cleared when done/cancelled
 // Used to warn the user before closing the app mid-countdown
@@ -1707,10 +1707,10 @@ app.whenReady().then(async () => {
           }
         };
         // Inject plan directly into stategraph as command_automate with pre-built skillPlan
-        stateGraph.invoke({
+        const schedulerInitialState = {
           message: pending.prompt || pending.label,
           intent: { type: 'command_automate' },
-          skillPlan: pending.skillPlan,
+          _skillPlan: pending.skillPlan,
           skillCursor: 0,
           skillResults: [],
           progressCallback,
@@ -1718,7 +1718,9 @@ app.whenReady().then(async () => {
           activeBrowserSessionId: null,
           activeBrowserUrl: null,
           context: { userId: 'default_user', source: 'scheduled_task' },
-        }).catch(err => console.error('[Scheduler] Auto-run failed:', err.message));
+        };
+        stateGraph.execute(schedulerInitialState, null, null)
+          .catch(err => console.error('[Scheduler] Auto-run failed:', err.message));
       }, 3000); // wait 3s for stategraph + MCP services to be ready
     } else {
       console.warn('[Scheduler] Launched for schedule but no matching pending record found — starting normally');
@@ -1833,6 +1835,7 @@ app.whenReady().then(async () => {
       console.log(`[GatherContext] prompt-queue:submit intercepted as gather:answer — "${trimmedPrompt.slice(0, 60)}"`);
       const resolve = pendingGatherResolve;
       pendingGatherResolve = null;
+      pendingGatherQuestion = null;
       safeSendUnified('gather:pending', { active: false, question: null });
       resolve(trimmedPrompt);
       return;
@@ -2055,51 +2058,24 @@ app.whenReady().then(async () => {
       }
     }
 
-    // Re-run StateGraph — two paths depending on how the plan was generated:
-    // 1. planSkills approval gate (new): re-enqueue original prompt with _skillPlan array
-    // 2. planGenerator (legacy): re-enqueue as [plan_execute:...] with _planFile
+    // Re-enqueue via promptQueue with _planFile set — planExecutor node handles
+    // step-by-step execution within a single StateGraph run (shared state, dep injection).
     const ctx = pendingPlanContext || {};
-    if (ctx.skillPlanJson) {
-      let _skillPlan = null;
-      try {
-        _skillPlan = JSON.parse(Buffer.from(ctx.skillPlanJson, 'base64').toString('utf8'));
-      } catch (_decodeErr) {
-        console.warn('[Plan] Failed to decode skillPlanJson:', _decodeErr.message);
-      }
-      if (_skillPlan) {
-        promptQueue.enqueue(
-          ctx.prompt,
-          {
-            _skillPlan,
-            _skillPlanFile: ctx.planFile,
-            selectedText:   ctx.selectedText || '',
-            sessionId:      ctx.sessionId || currentSessionId,
-            userId:         ctx.userId || 'default_user',
-          }
-        );
-        console.log(`[Plan:DEBUG] Enqueued _skillPlan re-run for: "${ctx.prompt?.slice(0, 60)}"`);
-        if (resultsWindow && !resultsWindow.isDestroyed()) {
-          safeSend(resultsWindow, 'plan:approved', { planFile: resolvedPlanFile });
-        }
-        return;
-      }
-    }
-    // Legacy path: _planFile re-run via parseIntent plan_execute flow
-    promptQueue.enqueue(
-      `[plan_execute:${require('path').basename(resolvedPlanFile)}]`,
-      {
-        _planFile: resolvedPlanFile,
-        selectedText: ctx.selectedText || '',
-        sessionId: ctx.sessionId || currentSessionId,
-        userId: ctx.userId || 'default_user',
-        _forceDirectExecute: false,
-      }
-    );
-    console.log(`[Plan:DEBUG] Enqueued plan_execute with _planFile: ${resolvedPlanFile}`);
 
     if (resultsWindow && !resultsWindow.isDestroyed()) {
       safeSend(resultsWindow, 'plan:approved', { planFile: resolvedPlanFile });
     }
+
+    promptQueue.enqueue(
+      ctx.prompt || '',
+      {
+        selectedText:  ctx.selectedText || '',
+        sessionId:     ctx.sessionId || currentSessionId,
+        userId:        ctx.userId || 'default_user',
+        _planFile:     resolvedPlanFile,
+      }
+    );
+    pendingPlanContext = null;
   });
 
   // plan:new — user rejected existing plan and wants a freshly generated one
@@ -2761,6 +2737,7 @@ app.whenReady().then(async () => {
     if (pendingGatherResolve) {
       const resolve = pendingGatherResolve;
       pendingGatherResolve = null;
+      pendingGatherQuestion = null;
       safeSendUnified('gather:pending', { active: false, question: null });
       resolve(answer || '');
     } else {
@@ -3100,6 +3077,7 @@ app.whenReady().then(async () => {
     const gatherAnswerCallback = (question) => {
       return new Promise((resolve) => {
         pendingGatherResolve = resolve;
+        pendingGatherQuestion = question || null;
         console.log('[GatherContext] Waiting for user answer…');
         // Tell unified overlay to intercept next submit as gather:answer
         safeSendUnified('gather:pending', { active: true, question: question || null });
@@ -3108,6 +3086,7 @@ app.whenReady().then(async () => {
           if (pendingGatherResolve === resolve) {
             console.warn('[GatherContext] Timed out waiting for answer — skipping question');
             pendingGatherResolve = null;
+            pendingGatherQuestion = null;
             safeSendUnified('gather:pending', { active: false });
             resolve(null);
           }
@@ -3881,6 +3860,11 @@ app.whenReady().then(async () => {
               skillCursor: 0,
               skillResults: [],
               stepRetryCount: 0,
+              // Clear plan file refs so planExecutor passthrough does not fire and
+              // planSkillsV2 uses the injected _skillPlan directly — prevents
+              // build_agent from being re-run on every resume.
+              _planFile: null,
+              _skillPlanFile: null,
               context: { ...paused.context, sessionId: sessionId || currentSessionId }
             };
           } else {
@@ -3944,6 +3928,32 @@ app.whenReady().then(async () => {
           console.log(`[StateGraph] Preserving browser session ${currentBrowserSessionId} for continuation prompt: "${prompt.substring(0, 50)}..."`);
         }
         
+        // ── Semantic session routing ─────────────────────────────────────────
+        // Before building initialState, check if this prompt relates to a past session.
+        // If sessionId was explicitly provided (plan step, resume), skip the search.
+        // Plan execution re-runs also skip (they inherit sessionId from context).
+        let resolvedSessionId = sessionId || currentSessionId;
+        const isPlanRerun = !!(_planFile || _skillPlan);
+        if (!sessionId && !isPlanRerun && mcpAdapter) {
+          try {
+            const semanticResult = await mcpAdapter.callService('conversation', 'session.searchSemantic', {
+              text: prompt,
+              threshold: 0.75,
+            });
+            const matchData = semanticResult?.data || semanticResult;
+            if (matchData?.sessionId) {
+              resolvedSessionId = matchData.sessionId;
+              console.log(`[SessionRouter] Semantic match → session: ${matchData.sessionId} (score: ${matchData.score?.toFixed(3)}, title: "${matchData.title}")`);
+            } else {
+              resolvedSessionId = null; // Force new session via session.route in resolveReferencesV2
+              console.log(`[SessionRouter] No semantic match — will create new session`);
+            }
+          } catch (semErr) {
+            console.warn('[SessionRouter] session.searchSemantic failed:', semErr.message);
+            resolvedSessionId = currentSessionId; // Fallback to current session
+          }
+        }
+
         initialState = {
           message: prompt,
           selectedText,
@@ -3974,7 +3984,7 @@ app.whenReady().then(async () => {
           _skillPlanJson: _skillPlanJson || null,
           _planCorrectionSourcePrompt: _planCorrectionSourcePrompt || null,
           context: {
-            sessionId: sessionId || currentSessionId,
+            sessionId: resolvedSessionId,
             userId,
             source: 'thinkdrop_electron'
           }
@@ -4039,6 +4049,11 @@ app.whenReady().then(async () => {
         intent: finalState?.intent?.type || finalState?.intent || 'unknown',
         summary: finalState?.answer ? finalState.answer.substring(0, 120) : '',
       });
+
+      // Emit pipeline:done with the output contract — notifies renderer of cycle boundary
+      if (finalState._contract) {
+        progressCallback({ type: 'pipeline:done', contract: finalState._contract });
+      }
 
       // Persist resolved session for next prompt
       if (finalState.resolvedSessionId) {
@@ -4411,6 +4426,13 @@ app.whenReady().then(async () => {
 
         startClipboardMonitoring(true);
         console.log('[Unified Window] Activated via global shortcut.');
+
+        // Re-send gather:pending if a gather answer is still in flight — the
+        // previous hide/show cycle would have reset the renderer's gatherPending state.
+        if (pendingGatherResolve) {
+          safeSendUnified('gather:pending', { active: true, question: pendingGatherQuestion });
+          console.log('[GatherContext] Re-sent gather:pending on window re-activation');
+        }
       }
     }
   });
