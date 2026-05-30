@@ -605,8 +605,11 @@ function startOverlayControlServer() {
           res.writeHead(200).end(JSON.stringify({ ok: true }));
 
           // Forward to unified window
+          console.log(`[Training] Forwarding train-progress to unifiedWindow: type=${data.type} agentId=${data.agentId} stepType=${data.stepType || '-'}`);
           if (unifiedWindow && !unifiedWindow.isDestroyed()) {
             safeSend(unifiedWindow, 'agents:train-progress', data);
+          } else {
+            console.log('[Training] WARNING: unifiedWindow not available!');
           }
         } catch (err) {
           res.writeHead(400).end(JSON.stringify({ error: err.message }));
@@ -1082,7 +1085,7 @@ function createUnifiedWindow() {
   const primaryDisplay = screen.getPrimaryDisplay();
   const { width: screenWidth, height: screenHeight } = primaryDisplay.workAreaSize;
   const windowMinWidth = 400;
-  const windowMinHeight = 300;
+  const windowMinHeight = 400;
   const windowMaxHeight = 800;
   const margin = 20;
 
@@ -5724,30 +5727,58 @@ app.whenReady().then(async () => {
           for (const skillDir of skillDirs) {
             const skillPath = pathMod.join(skillsBaseDir, skillDir);
             const indexPath = pathMod.join(skillPath, 'index.cjs');
-            if (!fsMod.existsSync(indexPath)) continue;
-            const metaPath = pathMod.join(skillPath, 'skill.json');
-            if (fsMod.existsSync(metaPath)) {
-              try {
-                const meta = JSON.parse(fsMod.readFileSync(metaPath, 'utf8'));
-                if (meta.composite === true) continue;
-                const skillEntry = {
-                  name: meta.source_action || meta.name || skillDir,
-                  status: 'published',
-                  description: meta.description || '',
-                  skillPath: skillPath
-                };
-                const dedupKeys = [...new Set([meta.agentId, meta.agent_id, meta.domain].filter(Boolean))];
-                for (const key of dedupKeys) {
-                  if (!agentSkillsMap[key]) agentSkillsMap[key] = [];
-                  agentSkillsMap[key].push(skillEntry);
-                  // Track most recent scanned_at per agent key
-                  const scannedAt = meta.scanned_at || meta.created_at;
-                  if (scannedAt && (!agentLastScannedMap[key] || scannedAt > agentLastScannedMap[key])) {
-                    agentLastScannedMap[key] = scannedAt;
+
+            // Check for atomic skills (index.cjs + skill.json)
+            if (fsMod.existsSync(indexPath)) {
+              const metaPath = pathMod.join(skillPath, 'skill.json');
+              if (fsMod.existsSync(metaPath)) {
+                try {
+                  const meta = JSON.parse(fsMod.readFileSync(metaPath, 'utf8'));
+                  if (meta.composite === true) continue;
+                  const skillEntry = {
+                    name: meta.source_action || meta.name || skillDir,
+                    status: 'published',
+                    description: meta.description || '',
+                    skillPath: skillPath
+                  };
+                  const dedupKeys = [...new Set([meta.agentId, meta.agent_id, meta.domain].filter(Boolean))];
+                  for (const key of dedupKeys) {
+                    if (!agentSkillsMap[key]) agentSkillsMap[key] = [];
+                    agentSkillsMap[key].push(skillEntry);
+                    // Track most recent scanned_at per agent key
+                    const scannedAt = meta.scanned_at || meta.created_at;
+                    if (scannedAt && (!agentLastScannedMap[key] || scannedAt > agentLastScannedMap[key])) {
+                      agentLastScannedMap[key] = scannedAt;
+                    }
                   }
-                }
-              } catch (_) {}
+                } catch (_) {}
+              }
+              continue;
             }
+
+            // Check for trained recipe skills (.recipe.json)
+            try {
+              const files = fsMod.readdirSync(skillPath);
+              const recipeFiles = files.filter(f => f.endsWith('.recipe.json'));
+              for (const recipeFile of recipeFiles) {
+                try {
+                  const recipe = JSON.parse(fsMod.readFileSync(pathMod.join(skillPath, recipeFile), 'utf8'));
+                  const skillEntry = {
+                    name: recipe.name || recipeFile.replace('.recipe.json', ''),
+                    status: 'trained',
+                    description: recipe.targetDescription || `Trained recipe (${recipe.waypoints?.length || 0} waypoints)`,
+                    skillPath: skillPath,
+                    type: 'trained_recipe',
+                  };
+                  const agentIdKey = recipe.agentId || skillDir;
+                  const dedupKeys = [...new Set([agentIdKey, agentIdKey + '.agent', recipe.agentId].filter(Boolean))];
+                  for (const key of dedupKeys) {
+                    if (!agentSkillsMap[key]) agentSkillsMap[key] = [];
+                    agentSkillsMap[key].push(skillEntry);
+                  }
+                } catch (_) {}
+              }
+            } catch (_) {}
           }
         }
       } catch (_) {}
@@ -5763,11 +5794,16 @@ app.whenReady().then(async () => {
           name: agent.service ? agent.service.charAt(0).toUpperCase() + agent.service.slice(1) : agent.id.replace('.agent', '').replace(/\./g, ' ').replace(/\b\w/g, l => l.toUpperCase()),
           domain,
           category,
-          skills: skills.length > 0 ? skills : (agent.capabilities || []).map(cap => ({
-            name: cap.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase()),
-            status: 'learned',
-            description: '',
-          })),
+          skills: [
+            // Always include capabilities
+            ...(agent.capabilities || []).map(cap => ({
+              name: cap.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase()),
+              status: 'capability',
+              description: '',
+            })),
+            // Append any real skills (atomic or trained)
+            ...skills,
+          ],
           faviconUrl: `https://www.google.com/s2/favicons?domain=${domain}&sz=128`,
           ...(lastScanned ? { lastScanned } : {}),
         };
@@ -6036,18 +6072,14 @@ app.whenReady().then(async () => {
     }
   });
 
-  // Agent train handler - opens training mode
+  // Agent train handler — starts CDP recording session
   ipcMain.on('agents:train', async (_event, { agentId }) => {
     try {
-      console.log(`[Agents] Starting train mode for ${agentId}`);
-      
-      // Call trainer.agent skill
+      console.log(`[Agents] Starting training (CDP recording) for ${agentId}`);
       const trainerAgent = require('../../mcp-services/command-service/src/skills/trainer.agent.cjs');
-      
       const result = await trainerAgent.actionTrain({ agentId });
-      
       if (result.ok) {
-        console.log(`[Agents] Training started for ${agentId}`);
+        console.log(`[Agents] Training recording started for ${agentId}`);
       } else {
         console.error(`[Agents] Training failed: ${result.error}`);
         if (unifiedWindow && !unifiedWindow.isDestroyed()) {
@@ -6059,49 +6091,57 @@ app.whenReady().then(async () => {
     }
   });
 
-  // Agent train actions
-  ipcMain.on('agents:train-answer', async (_event, { agentId, answer, explanation }) => {
+  // Agent train save — user clicks Save, LLM builds recipe
+  ipcMain.on('agents:train-save', async (_event, { agentId, skillName }) => {
     try {
+      console.log(`[Agents] Saving trained skill "${skillName}" for ${agentId}`);
       const trainerAgent = require('../../mcp-services/command-service/src/skills/trainer.agent.cjs');
-      await trainerAgent.actionAnswerTeachMe({ agentId, answer, explanation });
+      const result = await trainerAgent.actionSaveTraining({ agentId, skillName });
+      if (result.ok) {
+        console.log(`[Agents] Trained skill "${skillName}" saved successfully — refreshing list`);
+        // Refresh agents list so the new trained skill appears in the UI
+        ipcMain.emit('agents:list');
+      } else if (unifiedWindow && !unifiedWindow.isDestroyed()) {
+        safeSend(unifiedWindow, 'agents:train-error', { agentId, error: result.error });
+      }
     } catch (e) {
-      console.error('[Agents] train-answer failed:', e.message);
+      console.error('[Agents] train-save failed:', e.message);
+      if (unifiedWindow && !unifiedWindow.isDestroyed()) {
+        safeSend(unifiedWindow, 'agents:train-error', { agentId, error: e.message });
+      }
     }
   });
 
-  ipcMain.on('agents:train-finish', async (_event, { agentId }) => {
-    try {
-      const trainerAgent = require('../../mcp-services/command-service/src/skills/trainer.agent.cjs');
-      await trainerAgent.actionFinishTraining({ agentId });
-    } catch (e) {
-      console.error('[Agents] train-finish failed:', e.message);
-    }
-  });
-
+  // Agent train cancel — user clicks Cancel
   ipcMain.on('agents:train-cancel', async (_event, { agentId }) => {
     try {
       const trainerAgent = require('../../mcp-services/command-service/src/skills/trainer.agent.cjs');
-      await trainerAgent.actionCancelTraining({ agentId });
+      trainerAgent.actionCancelTraining({ agentId });
     } catch (e) {
       console.error('[Agents] train-cancel failed:', e.message);
     }
   });
 
-  ipcMain.on('agents:train-test', async (_event, { agentId, testValues }) => {
+  // Agent update goals — saves goals for auto-scan to pick up
+  ipcMain.on('agents:update-goals', async (_event, { agentId, goals, options }) => {
     try {
-      const trainerAgent = require('../../mcp-services/command-service/src/skills/trainer.agent.cjs');
-      await trainerAgent.actionRunSelfTest({ agentId, testValues });
+      const fsMod = require('fs');
+      const pathMod = require('path');
+      const osMod = require('os');
+      const agentPath = pathMod.join(osMod.homedir(), '.thinkdrop', 'agents', `${agentId}.agent.md`);
+      if (!fsMod.existsSync(agentPath)) return;
+      let descriptor = fsMod.readFileSync(agentPath, 'utf8');
+      // Update user_goals in frontmatter
+      const goalsYaml = goals.map(g => `  - "${g}"`).join('\n');
+      if (descriptor.match(/^user_goals:/m)) {
+        descriptor = descriptor.replace(/^user_goals:[\s\S]*?(?=^\w|\n---)/m, `user_goals:\n${goalsYaml}\n`);
+      } else {
+        descriptor = descriptor.replace(/^(---\s*\n[\s\S]*?\n---)/, `$1\nuser_goals:\n${goalsYaml}`);
+      }
+      fsMod.writeFileSync(agentPath, descriptor, 'utf8');
+      console.log(`[Agents] Updated goals for ${agentId}: ${goals.length} goals`);
     } catch (e) {
-      console.error('[Agents] train-test failed:', e.message);
-    }
-  });
-
-  ipcMain.on('agents:train-generate', async (_event, { agentId, skillName }) => {
-    try {
-      const trainerAgent = require('../../mcp-services/command-service/src/skills/trainer.agent.cjs');
-      await trainerAgent.actionGenerateSkill({ agentId, skillName });
-    } catch (e) {
-      console.error('[Agents] train-generate failed:', e.message);
+      console.error('[Agents] update-goals failed:', e.message);
     }
   });
 
@@ -6721,11 +6761,14 @@ app.whenReady().then(async () => {
         console.error(`[Agents] Delete failed for ${agentId}: ${result.error}`);
       }
       // Always refresh the agents list so UI is in sync
+      // Small delay to ensure database transaction has committed
+      await new Promise(r => setTimeout(r, 500));
       if (unifiedWindow && !unifiedWindow.isDestroyed()) {
         ipcMain.emit('agents:list');
       }
     } catch (e) {
       console.error('[Agents] agents:delete failed:', e.message);
+      await new Promise(r => setTimeout(r, 500));
       if (unifiedWindow && !unifiedWindow.isDestroyed()) {
         ipcMain.emit('agents:list');
       }

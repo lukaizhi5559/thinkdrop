@@ -19,7 +19,7 @@ import SkillBuildProgress from './SkillBuildProgress';
 import { SlideoutDrawer } from './SlideoutDrawer';
 import { SettingsTab } from './SettingsTab';
 import { RulesManagementPanel } from './RulesManagementPanel';
-import { TrainingBanner } from './TrainingBanner';
+// TrainingBanner removed — training now handled by TrainingPanel in AgentsTab
 import { TeachMeDialog } from './TeachMeDialog';
 import { AIActivityPanel } from './AIActivityPanel';
 import type { AIActivityPanelHandle } from './AIActivityPanel';
@@ -2887,19 +2887,7 @@ export function UnifiedOverlay() {
         </div>
       )}
 
-      {/* Training Mode Banner */}
-      {trainingMode?.active && trainingMode.agentId && trainingMode.hostname && (
-        <TrainingBanner
-          agentId={trainingMode.agentId}
-          hostname={trainingMode.hostname}
-          onDone={() => {
-            ipcRenderer?.send('agents:train-finish', { agentId: trainingMode.agentId });
-          }}
-          onCancel={() => {
-            ipcRenderer?.send('agents:train-cancel', { agentId: trainingMode.agentId });
-          }}
-        />
-      )}
+      {/* Training Mode Banner removed — handled by TrainingPanel slideout in AgentsTab */}
 
       {/* Teach Me Dialog */}
       {trainingMode?.active && trainingMode.phase === 'teach_me' && trainingMode.agentId && (

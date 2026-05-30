@@ -94,6 +94,8 @@ contextBridge.exposeInMainWorld('electron', {
         'agents:learn',
         'agents:learn-cancel',
         'agents:train',
+        'agents:train-save',
+        'agents:train-cancel',
         'agents:delete',
         'agents:test-skill',
         'agents:publish-skill',

@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import type { AgentItem, AgentSkill } from './TabComponents';
+import { TrainingPanel } from './TrainingPanel';
 
 const ipcRenderer = (window as any).electron?.ipcRenderer;
 
@@ -272,7 +273,6 @@ function CompactSkillRow({
 // Individual agent card — matches CronItemCard / SkillItemCard compact style
 function AgentCard({ 
   agent, 
-  onLearn, 
   onTrain, 
   onEdit,
   onDelete,
@@ -287,7 +287,6 @@ function AgentCard({
   onToggle
 }: { 
   agent: AgentItem;
-  onLearn: (agentId: string, options?: { headed?: boolean }) => void;
   onTrain: (agentId: string) => void;
   onEdit: (agentId: string) => void;
   onDelete: (agentId: string) => void;
@@ -305,7 +304,6 @@ function AgentCard({
   const statusColor = statusColors[agent.status] || '#6b7280';
   const isLearning = agent.status === 'learning';
   const [confirmDelete, setConfirmDelete] = useState(false);
-  const [learnExpanded, setLearnExpanded] = useState(false);
 
   return (
     <div style={{
@@ -410,11 +408,11 @@ function AgentCard({
 
         {/* Icon-only action buttons — never overflow */}
         <div style={{ display: 'flex', flexDirection: 'row', gap: 4, flexShrink: 0, alignItems: 'center'}}>
-          {/* Learn — single ▶ expands into headless + headed choice buttons */}
-          {isLearning ? (
+          {/* Scanning indicator (auto-scan when idle) */}
+          {isLearning && (
             <button
               disabled
-              title="Learning in progress…"
+              title="Auto-scanning…"
               style={{
                 padding: '4px 7px', borderRadius: 5, cursor: 'not-allowed',
                 display: 'flex', alignItems: 'center', justifyContent: 'center',
@@ -424,70 +422,6 @@ function AgentCard({
             >
               <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" style={{ animation: 'spin 0.9s linear infinite' }}>
                 <path d="M21 12a9 9 0 1 1-6.219-8.56"/>
-              </svg>
-            </button>
-          ) : learnExpanded ? (
-            <>
-              {/* Headless learn */}
-              <button
-                onClick={(e: React.MouseEvent) => { e.stopPropagation(); onLearn(agent.id, { headed: false }); setLearnExpanded(false); }}
-                title="Learn headless (background)"
-                style={{
-                  padding: '4px 7px', borderRadius: 5, cursor: 'pointer',
-                  display: 'flex', alignItems: 'center', justifyContent: 'center',
-                  background: 'rgba(245,158,11,0.18)', border: '1px solid rgba(245,158,11,0.5)',
-                  color: '#f59e0b',
-                }}
-              >
-                <svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor" stroke="none">
-                  <polygon points="5,3 19,12 5,21"/>
-                </svg>
-              </button>
-              {/* Headed/visible learn */}
-              <button
-                onClick={(e: React.MouseEvent) => { e.stopPropagation(); onLearn(agent.id, { headed: true }); setLearnExpanded(false); }}
-                title="Learn visible (watch the browser)"
-                style={{
-                  padding: '4px 7px', borderRadius: 5, cursor: 'pointer',
-                  display: 'flex', alignItems: 'center', justifyContent: 'center',
-                  background: 'rgba(99,102,241,0.18)', border: '1px solid rgba(99,102,241,0.5)',
-                  color: '#818cf8',
-                }}
-              >
-                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
-                  <circle cx="12" cy="12" r="3"/>
-                </svg>
-              </button>
-              {/* Collapse back */}
-              <button
-                onClick={(e: React.MouseEvent) => { e.stopPropagation(); setLearnExpanded(false); }}
-                title="Cancel"
-                style={{
-                  padding: '4px 6px', borderRadius: 5, cursor: 'pointer',
-                  display: 'flex', alignItems: 'center', justifyContent: 'center',
-                  background: 'rgba(107,114,128,0.12)', border: '1px solid rgba(107,114,128,0.25)',
-                  color: '#6b7280',
-                }}
-              >
-                <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
-                  <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
-                </svg>
-              </button>
-            </>
-          ) : (
-            <button
-              onClick={(e: React.MouseEvent) => { e.stopPropagation(); setLearnExpanded(true); }}
-              title="Learn agent"
-              style={{
-                padding: '4px 7px', borderRadius: 5, cursor: 'pointer',
-                display: 'flex', alignItems: 'center', justifyContent: 'center',
-                background: 'rgba(245,158,11,0.12)', border: '1px solid rgba(245,158,11,0.3)',
-                color: '#f59e0b',
-              }}
-            >
-              <svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor" stroke="none">
-                <polygon points="5,3 19,12 5,21"/>
               </svg>
             </button>
           )}
@@ -1095,6 +1029,8 @@ export function AgentsTab({ items, onRefresh }: AgentsTabProps) {
   const [isCreating, setIsCreating] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
   const [autoScanEnabled, setAutoScanEnabled] = useState<boolean>(false);
+  // Training panel state
+  const [trainingAgentId, setTrainingAgentId] = useState<string | null>(null);
   // testingSkills: key = "agentId::skillName" → true while test is running
   const [testingSkills, setTestingSkills] = useState<Record<string, boolean>>({});
   // refreshingSkills: key = "agentId::skillName" → true while refresh/rescan is running
@@ -1226,30 +1162,22 @@ export function AgentsTab({ items, onRefresh }: AgentsTabProps) {
     return () => { ipcRenderer.removeListener('agents:skill-refresh-update', handleRefreshUpdate); };
   }, []);
 
-  const _fireLearning = (agentId: string, goals: string[], options: { headed?: boolean; includeLandingPage?: boolean } = {}) => {
-    ipcRenderer?.send('agents:learn', { agentId, goals, options });
-    setLocalItems(prev => prev.map(agent =>
-      agent.id === agentId ? { ...agent, status: 'learning' } : agent
-    ));
-  };
-
-  const handleLearn = (agentId: string, options: { headed?: boolean } = {}) => {
-    const agent = localItems.find(a => a.id === agentId);
-    const hasGoals = (agent?.userGoals?.length ?? 0) > 0 || !!agent?.userGoal;
-    // Show goals modal if agent has no goals OR has never been learned.
-    // NOTE: build_agent returns status='needs_validation'|'healthy' — never 'pending'.
-    // Use lastLearned + learnedStates as the "has been learned before" signal instead.
-    const hasLearned = (agent?.learnedStates?.length ?? 0) > 0 || !!agent?.lastLearned;
-    const isNewAgent = !hasLearned;
-    if (!hasGoals || isNewAgent) {
-      setEditModalAgent(agent || null);
-      return;
-    }
-    _fireLearning(agentId, agent?.userGoals || [], options);
-  };
-
   const handleTrain = (agentId: string) => {
+    setTrainingAgentId(agentId);
     ipcRenderer?.send('agents:train', { agentId });
+  };
+
+  const handleTrainSave = (skillName: string) => {
+    if (!trainingAgentId) return;
+    ipcRenderer?.send('agents:train-save', { agentId: trainingAgentId, skillName });
+    setTrainingAgentId(null);
+  };
+
+  const handleTrainCancel = () => {
+    if (trainingAgentId) {
+      ipcRenderer?.send('agents:train-cancel', { agentId: trainingAgentId });
+    }
+    setTrainingAgentId(null);
   };
 
   const handleEdit = (agentId: string) => {
@@ -1261,7 +1189,8 @@ export function AgentsTab({ items, onRefresh }: AgentsTabProps) {
     setLocalItems(prev => prev.map(a =>
       a.id === agentId ? { ...a, userGoals: goals } : a
     ));
-    _fireLearning(agentId, goals, options);
+    // Save goals to backend — auto-scan will pick them up on idle
+    ipcRenderer?.send('agents:update-goals', { agentId, goals, options });
   };
 
   const handleDelete = (agentId: string) => {
@@ -1791,7 +1720,6 @@ export function AgentsTab({ items, onRefresh }: AgentsTabProps) {
           <AgentCard
             key={agent.id}
             agent={agent}
-            onLearn={handleLearn}
             onTrain={handleTrain}
             onEdit={handleEdit}
             onDelete={handleDelete}
@@ -2324,6 +2252,16 @@ export function AgentsTab({ items, onRefresh }: AgentsTabProps) {
         onClose={() => setEditModalAgent(null)}
         onSave={handleEditSave}
       />
+
+      {/* Training Panel — shown when user clicks Train */}
+      {trainingAgentId && (
+        <TrainingPanel
+          agentId={trainingAgentId}
+          hostname={localItems.find(a => a.id === trainingAgentId)?.domain || trainingAgentId}
+          onDone={handleTrainSave}
+          onCancel={handleTrainCancel}
+        />
+      )}
 
       <style>{`
         @keyframes pulse {
