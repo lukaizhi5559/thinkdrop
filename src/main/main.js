@@ -48,6 +48,9 @@ const os = require('os');
 const WebSocket = require('ws');
 const http = require('http');
 
+// Shared database module for short-lived DuckDB connections (prevents lock conflicts)
+const { withDb } = require('@thinkdrop/agents-db');
+
 // ---------------------------------------------------------------------------
 // Overlay control HTTP server (port 3010)
 // Skills in command-service call POST /overlay/hide before screenshotting
@@ -1316,6 +1319,34 @@ app.whenReady().then(async () => {
   startCryptoBridge(safeStorage).catch((err) => {
     console.warn('[App] Crypto bridge failed to start (credential encryption unavailable):', err.message);
   });
+
+  // ── agents.db stale lock cleanup ─────────────────────────────────────────
+  // If a prior Node process crashed while holding agents.db open, DuckDB leaves
+  // an orphaned lock tied to that PID. Kill it silently so DB calls work this session.
+  (async () => {
+    try {
+      await withDb(async () => {}); // no-op: just verifies the lock is available
+    } catch (lockErr) {
+      const lockMsg = lockErr?.message || '';
+      const pidMatch = lockMsg.match(/PID\s+(\d+)/);
+      if (pidMatch) {
+        const stalePid = parseInt(pidMatch[1], 10);
+        try {
+          process.kill(stalePid, 0); // throws if process is dead
+          // Process is alive — kill it (it's a stale zombie from a prior crashed run)
+          process.kill(stalePid, 'SIGKILL');
+          console.log(`[App] Killed stale agents.db lock holder PID ${stalePid}`);
+          // Small delay for OS to release the lock file
+          await new Promise(r => setTimeout(r, 200));
+        } catch (_) {
+          // PID is already dead — lock is orphaned; DuckDB will release on next open
+          console.log(`[App] agents.db orphaned lock (PID ${stalePid} already gone) — will auto-release`);
+        }
+      } else {
+        console.warn(`[App] agents.db lock error (no PID found): ${lockMsg.slice(0, 120)}`);
+      }
+    }
+  })();
 
   // Initialize StateGraph pipeline
   initStateGraph();
@@ -5488,7 +5519,7 @@ app.whenReady().then(async () => {
             linkedin:   /linkedin/i,
             facebook:   /facebook|instagram|meta\b/i,
           };
-          const skillLabel = `${row.name || ''} ${full?.description || row.description || ''}`;
+          const skillLabel = `${row.name || ''} ${row.description || ''}`;
           // First try: name/description hint, but only if that provider has creds in env
           let inferred = null;
           for (const [prov, hint] of Object.entries(PROVIDER_HINTS)) {
@@ -5514,7 +5545,7 @@ app.whenReady().then(async () => {
         }
 
         // Extract description from contractMd body (after frontmatter) or row.description
-        let description = full?.description || row.description || '';
+        let description = row.description || '';
         if (!description && cm) {
           const bodyAfterFm = cm.replace(/^---\s*\n[\s\S]*?\n---\s*\n/, '').trim();
           const firstLine = bodyAfterFm.split('\n').find(l => l.trim() && !l.startsWith('#'));
@@ -5658,7 +5689,7 @@ app.whenReady().then(async () => {
                      : 'ok';
         return {
           name:             row.name || '',
-          filePath:         row.execPath || full?.execPath || '',
+          filePath:         row.execPath || '',
           trigger,
           schedule,
           description:      description || undefined,
@@ -5677,40 +5708,29 @@ app.whenReady().then(async () => {
   });
 
   // ─── Agents: list / learn / train / create ────────────────────────────────
-  // Unified agent listing: queries command-service HTTP endpoint for all agents
+  // Unified agent listing: queries DuckDB directly using withDb (prevents lock conflicts)
   ipcMain.on('agents:list', async () => {
     try {
-      console.log('[Agents] Starting agents:list query via HTTP');
+      console.log('[Agents] Starting agents:list query via withDb');
 
-      // Query command-service HTTP endpoint for all agents
-      const http = require('http');
-      const agents = await new Promise((resolve, reject) => {
-        const req = http.get('http://127.0.0.1:3007/agents.list', (res) => {
-          let data = '';
-          res.on('data', chunk => data += chunk);
-          res.on('end', () => {
-            try {
-              const result = JSON.parse(data);
-              if (result.ok && Array.isArray(result.agents)) {
-                resolve(result.agents);
-              } else {
-                console.warn('[Agents] HTTP query returned error:', result.error);
-                resolve([]);
-              }
-            } catch (e) {
-              console.error('[Agents] Failed to parse HTTP response:', e.message);
-              resolve([]);
-            }
-          });
-        });
-        req.on('error', (err) => {
-          console.error('[Agents] HTTP request failed:', err.message);
-          resolve([]);
-        });
-        req.setTimeout(5000, () => {
-          req.destroy();
-          console.error('[Agents] HTTP request timeout');
-          resolve([]);
+      // Use withDb directly to avoid cross-process lock conflicts
+      const agents = await withDb(async (db) => {
+        const rows = await db.all("SELECT id, type, service, cli_tool, capabilities, status, last_validated, descriptor FROM agents ORDER BY created_at DESC");
+        return (rows || []).map(r => {
+          const apiKeyUrl = r.descriptor?.match(/^api_key_url:\s*(.+)$/m)?.[1]?.trim();
+          const apiKeyEnv = r.descriptor?.match(/^api_key_env:\s*(.+)$/m)?.[1]?.trim();
+          return {
+            id: r.id,
+            type: r.type || 'browser',
+            service: r.service,
+            cliTool: r.cli_tool,
+            capabilities: r.capabilities ? JSON.parse(r.capabilities) : [],
+            status: r.status || 'pending',
+            lastValidated: r.last_validated,
+            descriptor: r.descriptor,
+            ...(apiKeyUrl ? { apiKeyUrl } : {}),
+            ...(apiKeyEnv ? { apiKeyEnv } : {}),
+          };
         });
       });
 
@@ -5771,7 +5791,8 @@ app.whenReady().then(async () => {
                     type: 'trained_recipe',
                   };
                   const agentIdKey = recipe.agentId || skillDir;
-                  const dedupKeys = [...new Set([agentIdKey, agentIdKey + '.agent', recipe.agentId].filter(Boolean))];
+                  const agentIdWithSuffix = agentIdKey.endsWith('.agent') ? agentIdKey : agentIdKey + '.agent';
+                  const dedupKeys = [...new Set([agentIdKey, agentIdWithSuffix].filter(Boolean))];
                   for (const key of dedupKeys) {
                     if (!agentSkillsMap[key]) agentSkillsMap[key] = [];
                     agentSkillsMap[key].push(skillEntry);
@@ -6832,28 +6853,14 @@ app.whenReady().then(async () => {
       // Query first to confirm it exists, then use raw DB access
       const queryResult = await cliAgent({ action: 'query_agent', id });
       if (queryResult?.found) {
-        // Use DuckDB to delete — cli.agent exposes getDb indirectly via the module
+        // Use withDb for short-lived connection (prevents lock conflicts)
         try {
-          const duckdbAsync = require('duckdb-async');
-          const dbPath = path.join(os.homedir(), '.thinkdrop', 'agents.db');
-          const db = await duckdbAsync.Database.create(dbPath);
-          await db.run('DELETE FROM agents WHERE id = ?', id);
-          await db.close();
+          await withDb(async (db) => {
+            await db.run('DELETE FROM agents WHERE id = ?', id);
+          });
         } catch (dbErr) {
-          console.warn('[CLI-Agents] DuckDB delete failed, trying duckdb:', dbErr.message);
-          try {
-            const { Database } = require('duckdb');
-            const dbPath = path.join(os.homedir(), '.thinkdrop', 'agents.db');
-            await new Promise((resolve, reject) => {
-              const db = new Database(dbPath, (err) => {
-                if (err) return reject(err);
-                db.run('DELETE FROM agents WHERE id = ?', id, (e) => {
-                  db.close(() => {});
-                  if (e) reject(e); else resolve();
-                });
-              });
-            });
-          } catch {}
+          console.warn('[CLI-Agents] DuckDB delete warning:', dbErr.message);
+          // Continue — file deletion is what matters
         }
       }
       return { ok: true };
@@ -6888,21 +6895,15 @@ app.whenReady().then(async () => {
 
   ipcMain.handle('cli-agents:update', async (_event, { id, descriptor }) => {
     try {
-      const duckdbAsync = require('duckdb-async');
-      const path = require('path');
-      const os = require('os');
-
-      const dbPath = path.join(os.homedir(), '.thinkdrop', 'agents.db');
-      const db = await duckdbAsync.Database.create(dbPath);
-
-      await db.run(
-        "UPDATE agents SET descriptor = ?, last_validated = CURRENT_TIMESTAMP WHERE id = ?",
-        descriptor,
-        id
-      );
-
-      await db.close();
-      return { ok: true };
+      // Use withDb for short-lived connection (prevents lock conflicts)
+      return await withDb(async (db) => {
+        await db.run(
+          "UPDATE agents SET descriptor = ?, last_validated = CURRENT_TIMESTAMP WHERE id = ?",
+          descriptor,
+          id
+        );
+        return { ok: true };
+      });
     } catch (e) {
       console.error('[CLI-Agents] cli-agents:update failed:', e.message);
       return { ok: false, error: e.message };
@@ -7142,64 +7143,63 @@ app.whenReady().then(async () => {
       const fs = require('fs');
       const path = require('path');
       const os = require('os');
-      const duckdbAsync = require('duckdb-async');
 
       const agentsDir = path.join(os.homedir(), '.thinkdrop', 'agents');
       const dbPath = path.join(os.homedir(), '.thinkdrop', 'agents.db');
 
       if (!fs.existsSync(agentsDir) || !fs.existsSync(dbPath)) return;
 
-      const db = await duckdbAsync.Database.create(dbPath);
+      // Use withDb to ensure connection is closed promptly
+      await withDb(async (db) => {
+        // Get existing agent IDs from DB
+        const existingRows = await db.all("SELECT id FROM agents WHERE type = 'browser' OR type IS NULL");
+        const existingIds = new Set(existingRows.map(r => r.id));
 
-      // Get existing agent IDs from DB
-      const existingRows = await db.all("SELECT id FROM agents WHERE type = 'browser' OR type IS NULL");
-      const existingIds = new Set(existingRows.map(r => r.id));
+        // Scan .agent.md files
+        const files = fs.readdirSync(agentsDir).filter(f => f.endsWith('.agent.md'));
+        let migrated = 0;
 
-      // Scan .agent.md files
-      const files = fs.readdirSync(agentsDir).filter(f => f.endsWith('.agent.md'));
-      let migrated = 0;
+        for (const file of files) {
+          const id = file.replace('.agent.md', '');
+          if (existingIds.has(id)) continue; // Skip if already in DB
 
-      for (const file of files) {
-        const id = file.replace('.agent.md', '');
-        if (existingIds.has(id)) continue; // Skip if already in DB
+          // Parse frontmatter
+          const content = fs.readFileSync(path.join(agentsDir, file), 'utf8');
+          const fmMatch = content.match(/^---\s*\n([\s\S]*?)\n---/);
+          const fm = fmMatch ? fmMatch[1] : '';
 
-        // Parse frontmatter
-        const content = fs.readFileSync(path.join(agentsDir, file), 'utf8');
-        const fmMatch = content.match(/^---\s*\n([\s\S]*?)\n---/);
-        const fm = fmMatch ? fmMatch[1] : '';
+          const getField = (key) => {
+            const m = fm.match(new RegExp(`^${key}\s*:\s*(.+)$`, 'm'));
+            return m ? m[1].trim() : undefined;
+          };
 
-        const getField = (key) => {
-          const m = fm.match(new RegExp(`^${key}\\s*:\\s*(.+)$`, 'm'));
-          return m ? m[1].trim() : undefined;
-        };
+          const service = getField('service') || id.replace('.agent', '');
+          const status = getField('status') || 'pending';
+          const domain = getField('domain') || `${service}.com`;
+          const capabilities = getField('capabilities') || '[]';
 
-        const service = getField('service') || id.replace('.agent', '');
-        const status = getField('status') || 'pending';
-        const domain = getField('domain') || `${service}.com`;
-        const capabilities = getField('capabilities') || '[]';
-
-        // Insert into DB as browser agent
-        try {
-          await db.run(
-            `INSERT OR REPLACE INTO agents (id, type, service, cli_tool, capabilities, descriptor, last_validated, status, created_at)
-             VALUES (?, 'browser', ?, NULL, ?, ?, CURRENT_TIMESTAMP, ?, CURRENT_TIMESTAMP)`,
-            id,
-            service,
-            capabilities,
-            content,
-            status === 'healthy' ? 'learned' : status
-          );
-          migrated++;
-          console.log(`[Migration] Migrated browser agent ${id} to DB`);
-        } catch (err) {
-          console.warn(`[Migration] Failed to migrate ${id}:`, err.message);
+          // Insert into DB as browser agent
+          try {
+            await db.run(
+              `INSERT OR REPLACE INTO agents (id, type, service, cli_tool, capabilities, descriptor, last_validated, status, created_at)
+               VALUES (?, 'browser', ?, NULL, ?, ?, CURRENT_TIMESTAMP, ?, CURRENT_TIMESTAMP)`,
+              id,
+              service,
+              capabilities,
+              content,
+              status === 'healthy' ? 'learned' : status
+            );
+            migrated++;
+            console.log(`[Migration] Migrated browser agent ${id} to DB`);
+          } catch (err) {
+            console.warn(`[Migration] Failed to migrate ${id}:`, err.message);
+          }
         }
-      }
 
-      await db.close();
-      if (migrated > 0) {
-        console.log(`[Migration] Migrated ${migrated} legacy browser agents to DuckDB`);
-      }
+        if (migrated > 0) {
+          console.log(`[Migration] Migrated ${migrated} legacy browser agents to DuckDB`);
+        }
+      });
     } catch (e) {
       console.error('[Migration] Failed:', e.message);
     }
@@ -7211,31 +7211,25 @@ app.whenReady().then(async () => {
       // Run migration first (idempotent)
       await migrateLegacyBrowserAgents();
 
-      const duckdbAsync = require('duckdb-async');
-      const path = require('path');
-      const os = require('os');
+      // Use withDb for short-lived connection
+      return await withDb(async (db) => {
+        // Query browser agents (type='browser' or type IS NULL for legacy)
+        const rows = await db.all(
+          "SELECT id, type, service, cli_tool, capabilities, status, last_validated, descriptor FROM agents WHERE type = 'browser' OR type IS NULL OR type = 'api' ORDER BY created_at DESC"
+        );
 
-      const dbPath = path.join(os.homedir(), '.thinkdrop', 'agents.db');
-      const db = await duckdbAsync.Database.create(dbPath);
-
-      // Query browser agents (type='browser' or type IS NULL for legacy)
-      const rows = await db.all(
-        "SELECT id, type, service, cli_tool, capabilities, status, last_validated, descriptor FROM agents WHERE type = 'browser' OR type IS NULL OR type = 'api' ORDER BY created_at DESC"
-      );
-
-      await db.close();
-
-      // Parse capabilities JSON
-      return (rows || []).map(r => ({
-        id: r.id,
-        type: r.type || 'browser',
-        service: r.service,
-        cliTool: r.cli_tool,
-        capabilities: r.capabilities ? JSON.parse(r.capabilities) : [],
-        status: r.status || 'pending',
-        lastValidated: r.last_validated,
-        descriptor: r.descriptor,
-      }));
+        // Parse capabilities JSON
+        return (rows || []).map(r => ({
+          id: r.id,
+          type: r.type || 'browser',
+          service: r.service,
+          cliTool: r.cli_tool,
+          capabilities: r.capabilities ? JSON.parse(r.capabilities) : [],
+          status: r.status || 'pending',
+          lastValidated: r.last_validated,
+          descriptor: r.descriptor,
+        }));
+      });
     } catch (e) {
       console.error('[Browser-Agents] browser-agents:list failed:', e.message);
       return [];
@@ -7244,21 +7238,15 @@ app.whenReady().then(async () => {
 
   ipcMain.handle('browser-agents:update', async (_event, { id, descriptor }) => {
     try {
-      const duckdbAsync = require('duckdb-async');
-      const path = require('path');
-      const os = require('os');
-
-      const dbPath = path.join(os.homedir(), '.thinkdrop', 'agents.db');
-      const db = await duckdbAsync.Database.create(dbPath);
-
-      await db.run(
-        "UPDATE agents SET descriptor = ?, last_validated = CURRENT_TIMESTAMP WHERE id = ?",
-        descriptor,
-        id
-      );
-
-      await db.close();
-      return { ok: true };
+      // Use withDb for short-lived connection
+      return await withDb(async (db) => {
+        await db.run(
+          "UPDATE agents SET descriptor = ?, last_validated = CURRENT_TIMESTAMP WHERE id = ?",
+          descriptor,
+          id
+        );
+        return { ok: true };
+      });
     } catch (e) {
       console.error('[Browser-Agents] browser-agents:update failed:', e.message);
       return { ok: false, error: e.message };
@@ -7456,6 +7444,15 @@ app.whenReady().then(async () => {
         }
       } catch (_ctxErr) {
         console.warn(`[Skills] Failed to inject context message for deleted skill: ${_ctxErr.message}`);
+      }
+
+      // Clear session plan cache to prevent stale plans referencing deleted skill
+      try {
+        const { _clearSessionCache } = require('../stategraph-module/src/utils/planCacheHelpers');
+        _clearSessionCache();
+        console.log(`[Skills] Session plan cache cleared after deleting skill: ${skillName}`);
+      } catch (cacheErr) {
+        console.warn(`[Skills] Failed to clear session cache: ${cacheErr.message}`);
       }
 
       // Refresh both tabs

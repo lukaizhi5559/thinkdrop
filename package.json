@@ -4,6 +4,9 @@
   "description": "Lightweight Electron app that communicates with VS Code Copilot via extension bridge",
   "main": "src/main/main.js",
   "type": "commonjs",
+  "workspaces": [
+    "shared/agents-db"
+  ],
   "scripts": {
     "dev": "concurrently \"yarn dev:main\" \"yarn dev:renderer\"",
     "dev:full": "yarn start:services && sleep 3 && concurrently \"yarn dev:main\" \"yarn dev:renderer\"",
