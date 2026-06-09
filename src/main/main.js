@@ -48,8 +48,41 @@ const os = require('os');
 const WebSocket = require('ws');
 const http = require('http');
 
-// Shared database module for short-lived DuckDB connections (prevents lock conflicts)
-const { withDb } = require('@thinkdrop/agents-db');
+// Helper: POST to command-service (port 3007) — sole owner of agents.db
+async function _cmdHttp(urlPath, body = {}) {
+  return new Promise((resolve, reject) => {
+    const payload = JSON.stringify(body);
+    const req = http.request(
+      { hostname: '127.0.0.1', port: 3007, path: urlPath, method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(payload) } },
+      (res) => {
+        let data = '';
+        res.on('data', chunk => { data += chunk; });
+        res.on('end', () => { try { resolve(JSON.parse(data)); } catch (_) { resolve({}); } });
+      }
+    );
+    req.on('error', reject);
+    req.setTimeout(8000, () => reject(new Error('cmdHttp timeout')));
+    req.end(payload);
+  });
+}
+
+// Helper: GET from command-service (port 3007)
+async function _cmdGet(urlPath) {
+  return new Promise((resolve, reject) => {
+    const req = http.request(
+      { hostname: '127.0.0.1', port: 3007, path: urlPath, method: 'GET' },
+      (res) => {
+        let data = '';
+        res.on('data', chunk => { data += chunk; });
+        res.on('end', () => { try { resolve(JSON.parse(data)); } catch (_) { resolve({}); } });
+      }
+    );
+    req.on('error', reject);
+    req.setTimeout(8000, () => reject(new Error('cmdGet timeout')));
+    req.end();
+  });
+}
 
 // ---------------------------------------------------------------------------
 // Overlay control HTTP server (port 3010)
@@ -1320,33 +1353,12 @@ app.whenReady().then(async () => {
     console.warn('[App] Crypto bridge failed to start (credential encryption unavailable):', err.message);
   });
 
-  // ── agents.db stale lock cleanup ─────────────────────────────────────────
-  // If a prior Node process crashed while holding agents.db open, DuckDB leaves
-  // an orphaned lock tied to that PID. Kill it silently so DB calls work this session.
-  (async () => {
-    try {
-      await withDb(async () => {}); // no-op: just verifies the lock is available
-    } catch (lockErr) {
-      const lockMsg = lockErr?.message || '';
-      const pidMatch = lockMsg.match(/PID\s+(\d+)/);
-      if (pidMatch) {
-        const stalePid = parseInt(pidMatch[1], 10);
-        try {
-          process.kill(stalePid, 0); // throws if process is dead
-          // Process is alive — kill it (it's a stale zombie from a prior crashed run)
-          process.kill(stalePid, 'SIGKILL');
-          console.log(`[App] Killed stale agents.db lock holder PID ${stalePid}`);
-          // Small delay for OS to release the lock file
-          await new Promise(r => setTimeout(r, 200));
-        } catch (_) {
-          // PID is already dead — lock is orphaned; DuckDB will release on next open
-          console.log(`[App] agents.db orphaned lock (PID ${stalePid} already gone) — will auto-release`);
-        }
-      } else {
-        console.warn(`[App] agents.db lock error (no PID found): ${lockMsg.slice(0, 120)}`);
-      }
-    }
-  })();
+  // Migrate legacy .agent.md files into agents.db (idempotent, runs in command-service)
+  setTimeout(() => {
+    _cmdHttp('/agent.migrate', {}).then(r => {
+      if (r?.migrated > 0) console.log(`[App] Migrated ${r.migrated} legacy agents to DB`);
+    }).catch(() => {});
+  }, 3000);
 
   // Initialize StateGraph pipeline
   initStateGraph();
@@ -4604,9 +4616,10 @@ app.whenReady().then(async () => {
     }
   });
 
-  // Open a file path in its default app, or reveal in Finder if it's a directory
-  ipcMain.on('shell:open-path', async (_event, filePath) => {
-    if (!filePath || typeof filePath !== 'string') return;
+  // Open a file path in its default app, or reveal in Finder if it's a directory.
+  // Registered as handle (invoke) so the renderer can receive error feedback.
+  ipcMain.handle('shell:open-path', async (_event, filePath) => {
+    if (!filePath || typeof filePath !== 'string') return { error: 'Invalid path' };
     const { shell } = require('electron');
     const fs = require('fs');
     const os = require('os');
@@ -4617,16 +4630,33 @@ app.whenReady().then(async () => {
       const stat = fs.statSync(resolvedPath);
       if (stat.isDirectory()) {
         shell.showItemInFolder(resolvedPath);
+        return { ok: true };
       } else {
         const err = await shell.openPath(resolvedPath);
         if (err) {
           console.warn(`[Shell] openPath failed (${err}), falling back to showItemInFolder`);
           shell.showItemInFolder(resolvedPath);
         }
+        return { ok: true };
       }
     } catch (e) {
       console.warn(`[Shell] Path not found: ${resolvedPath}`);
+      return { error: `File not found: ${resolvedPath}` };
     }
+  });
+
+  // Fire-and-forget alias for callers that use ipcRenderer.send (no return value needed)
+  ipcMain.on('shell:open-path', async (_event, filePath) => {
+    if (!filePath || typeof filePath !== 'string') return;
+    const { shell } = require('electron');
+    const fs = require('fs');
+    const os = require('os');
+    const resolvedPath = filePath.startsWith('~/') ? filePath.replace('~', os.homedir()) : filePath;
+    try {
+      const stat = fs.statSync(resolvedPath);
+      if (stat.isDirectory()) { shell.showItemInFolder(resolvedPath); }
+      else { const err = await shell.openPath(resolvedPath); if (err) shell.showItemInFolder(resolvedPath); }
+    } catch (_) { console.warn(`[Shell] Path not found (send): ${resolvedPath}`); }
   });
 
   ipcMain.on('shell:open-url', (_event, url) => {
@@ -5708,30 +5738,27 @@ app.whenReady().then(async () => {
   });
 
   // ─── Agents: list / learn / train / create ────────────────────────────────
-  // Unified agent listing: queries DuckDB directly using withDb (prevents lock conflicts)
   ipcMain.on('agents:list', async () => {
     try {
-      console.log('[Agents] Starting agents:list query via withDb');
 
-      // Use withDb directly to avoid cross-process lock conflicts
-      const agents = await withDb(async (db) => {
-        const rows = await db.all("SELECT id, type, service, cli_tool, capabilities, status, last_validated, descriptor FROM agents ORDER BY created_at DESC");
-        return (rows || []).map(r => {
-          const apiKeyUrl = r.descriptor?.match(/^api_key_url:\s*(.+)$/m)?.[1]?.trim();
-          const apiKeyEnv = r.descriptor?.match(/^api_key_env:\s*(.+)$/m)?.[1]?.trim();
-          return {
-            id: r.id,
-            type: r.type || 'browser',
-            service: r.service,
-            cliTool: r.cli_tool,
-            capabilities: r.capabilities ? JSON.parse(r.capabilities) : [],
-            status: r.status || 'pending',
-            lastValidated: r.last_validated,
-            descriptor: r.descriptor,
-            ...(apiKeyUrl ? { apiKeyUrl } : {}),
-            ...(apiKeyEnv ? { apiKeyEnv } : {}),
-          };
-        });
+      // Proxy to command-service — GET /agents.list returns { ok, agents: [...] }
+      const _listResult = await _cmdGet('/agents.list').catch(() => null);
+      const _rawAgents = _listResult?.agents || [];
+      const agents = _rawAgents.map(r => {
+        const apiKeyUrl = r.descriptor?.match(/^api_key_url:\s*(.+)$/m)?.[1]?.trim();
+        const apiKeyEnv = r.descriptor?.match(/^api_key_env:\s*(.+)$/m)?.[1]?.trim();
+        return {
+          id: r.id,
+          type: r.type || 'browser',
+          service: r.service,
+          cliTool: r.cli_tool || r.cliTool,
+          capabilities: Array.isArray(r.capabilities) ? r.capabilities : (r.capabilities ? JSON.parse(r.capabilities) : []),
+          status: r.status || 'pending',
+          lastValidated: r.last_validated || r.lastValidated,
+          descriptor: r.descriptor,
+          ...(apiKeyUrl ? { apiKeyUrl } : {}),
+          ...(apiKeyEnv ? { apiKeyEnv } : {}),
+        };
       });
 
       // Map agents to AgentItem format with skills
@@ -5842,24 +5869,57 @@ app.whenReady().then(async () => {
     }
   });
 
-  // Agent creation handler - uses browser.agent build_agent for unified creation
+  // Agent creation handler — routes through command-service HTTP so DuckDB lock stays in that process
   ipcMain.on('agents:create', async (_event, { domain, goal, goals, headed }) => {
     try {
-      const pathMod = require('path');
-      
-      // Generate service key from domain
-      const hostname = domain.replace(/^https?:\/\//, '').split('/')[0].replace(/^www\./, '');
-      const serviceKey = hostname.toLowerCase().replace(/[^a-z0-9]/g, '');
-      const agentId = `${serviceKey}.agent`;
+      // Known TLD + ccTLD suffixes to strip from the end of the hostname segments.
+      // Extend as needed; order doesn't matter — all trailing matches are dropped.
+      const KNOWN_TLDS = new Set([
+        'com','org','net','edu','gov','mil','int',
+        'io','ai','app','dev','co','uk','us','ca','au','de','fr','jp','cn',
+        'info','biz','me','tv','gg','ly','sh','fm','pm','cc','vc','to',
+        'nz','br','in','es','it','nl','pl','ru','ch','se','no','dk','fi',
+        'sg','hk','tw','kr','mx','ar','za','ng','ke','gh','tz',
+      ]);
+
+      // Extract the registrable label from any URL/hostname input.
+      // "https://www.w3schools.com/html" → "w3schools"
+      // "perplexity.ai"                  → "perplexity"
+      // "google.co.uk"                   → "google"
+      // "stackoverflow.com"              → "stackoverflow"
+      function _extractServiceKey(input) {
+        let raw = (input || '').trim()
+          .replace(/^https?:\/\//i, '')   // strip scheme
+          .replace(/^www\./i, '')          // strip www.
+          .split(/[/?#]/)[0]              // strip path / query / fragment
+          .toLowerCase();
+        const segments = raw.split('.').filter(Boolean);
+        // Drop trailing TLD segments (handles .co.uk, .com.au, etc.)
+        while (segments.length > 1 && KNOWN_TLDS.has(segments[segments.length - 1])) {
+          segments.pop();
+        }
+        // If multiple segments remain (e.g. "mail.google") keep only the last meaningful one
+        // unless all segments together form the brand (e.g. "huggingface" from hugging.face — rare).
+        // Simplest safe rule: use the last remaining segment as the brand label.
+        const label = segments[segments.length - 1] || raw.replace(/[^a-z0-9]/g, '') || 'agent';
+        // Sanitise: keep only alphanumeric (handles hyphens like "open-ai" → "openai")
+        return label.replace(/[^a-z0-9]/g, '');
+      }
+
+      const serviceKey  = _extractServiceKey(domain);
+      const displayName = serviceKey.charAt(0).toUpperCase() + serviceKey.slice(1);
+      const agentId     = `${serviceKey}.agent`;
+      // Preserve full hostname for startUrl construction (strip scheme/www/path only)
+      const hostname    = domain.replace(/^https?:\/\//i, '').split('/')[0].replace(/^www\./i, '');
 
       // Emit immediately so UI can show a loading state — build_agent is async and can take 10-30s
       if (unifiedWindow && !unifiedWindow.isDestroyed()) {
         safeSend(unifiedWindow, 'agents:creating', { agentId, domain: hostname });
       }
-      
+
       // Normalize goals to array
       const goalsArray = goals || (goal ? [goal] : ['General task automation']);
-      
+
       // Determine category based on goals
       const goalsText = goalsArray.join(' ').toLowerCase();
       let category = 'Utility';
@@ -5868,56 +5928,52 @@ app.whenReady().then(async () => {
       else if (/buy|shop|purchase|order|pay/i.test(goalsText)) category = 'Commerce & Finance';
       else if (/write|create|edit|upload|generate/i.test(goalsText)) category = 'Creation & Contribution';
       else if (/read|browse|search|find|news/i.test(goalsText)) category = 'Consumption & Discovery';
-      
+
       const startUrl = domain.startsWith('http') ? domain : `https://${domain}`;
-      
-      // Call browser.agent build_agent for unified creation
-      const browserAgent = require(pathMod.join(__dirname, '..', '..', 'mcp-services', 'command-service', 'src', 'skills', 'browser.agent.cjs'));
-      const buildResult = await browserAgent({ 
-        action: 'build_agent', 
-        service: serviceKey, 
-        startUrl,
-        goals: goalsArray,
-        force: headed === true, // force rebuild when headed mode requested (debug)
-      });
-      
-      if (!buildResult.ok) {
-        if (buildResult.alreadyExists) {
-          // Agent already exists — still emit agents:new so UI shows it
-          const existingAgent = {
-            id: agentId,
-            name: hostname.replace(/\b\w/g, l => l.toUpperCase()),
-            domain: hostname,
-            category,
-            status: buildResult.status || 'healthy',
-            created: new Date().toISOString(),
-            userGoals: goalsArray,
-            skills: []
-          };
-          if (unifiedWindow && !unifiedWindow.isDestroyed()) {
-            safeSend(unifiedWindow, 'agents:new', existingAgent);
+
+      // Route through command-service HTTP — it owns the DuckDB lock.
+      // build_agent can take 10-30s; use a dedicated request with a longer timeout.
+      const buildResult = await new Promise((resolve, reject) => {
+        const payload = JSON.stringify({ service: serviceKey, startUrl, goals: goalsArray, force: headed === true });
+        const req = require('http').request(
+          { hostname: '127.0.0.1', port: 3007, path: '/agent.build', method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(payload) } },
+          (res) => {
+            let data = '';
+            res.on('data', chunk => { data += chunk; });
+            res.on('end', () => { try { resolve(JSON.parse(data)); } catch (_) { resolve({}); } });
           }
-          return;
-        }
+        );
+        req.on('error', reject);
+        req.setTimeout(60000, () => reject(new Error('agent.build timeout')));
+        req.end(payload);
+      });
+
+      if (!buildResult.ok && !buildResult.alreadyExists) {
         throw new Error(buildResult.error || 'Failed to create agent');
       }
-      
+
       const newAgent = {
         id: agentId,
-        name: hostname.replace(/\b\w/g, l => l.toUpperCase()),
+        name: displayName,
         domain: hostname,
         category,
-        status: buildResult.status || 'pending',
+        status: buildResult.status || (buildResult.alreadyExists ? 'healthy' : 'pending'),
         created: new Date().toISOString(),
         userGoals: goalsArray,
-        skills: []
+        skills: [],
+        type: 'browser',
       };
-      
+
       if (unifiedWindow && !unifiedWindow.isDestroyed()) {
         safeSend(unifiedWindow, 'agents:new', newAgent);
       }
-      
-      console.log(`[Agents] Created agent: ${agentId} via browser.agent`);
+
+      console.log(`[Agents] Created agent: ${agentId} (alreadyExists=${!!buildResult.alreadyExists})`);
+
+      // Refresh full list so the tab syncs with DB state
+      await new Promise(r => setTimeout(r, 400));
+      ipcMain.emit('agents:list');
     } catch (e) {
       console.error('[Agents] agents:create failed:', e.message);
       if (unifiedWindow && !unifiedWindow.isDestroyed()) {
@@ -6574,6 +6630,26 @@ app.whenReady().then(async () => {
         }
       }
 
+      // Recipe file fallback — trained recipe skills are loose .recipe.json files
+      // inside the service dir (no subdirectory, no skill.json).
+      if (!resolvedSkillDir && skillPath && fsMod.existsSync(skillPath)) {
+        try {
+          const files = fsMod.readdirSync(skillPath);
+          for (const f of files) {
+            if (!f.endsWith('.recipe.json')) continue;
+            try {
+              const recipe = JSON.parse(fsMod.readFileSync(pathMod.join(skillPath, f), 'utf8'));
+              if (recipe.name === skillName || f.replace('.recipe.json', '') === skillName) {
+                rawSkillName = recipe.name || f.replace('.recipe.json', '');
+                fsMod.unlinkSync(pathMod.join(skillPath, f));
+                console.log(`[Agents] Recipe file deleted: ${pathMod.join(skillPath, f)}`);
+                break;
+              }
+            } catch (_) {}
+          }
+        } catch (_) {}
+      }
+
       // Derive snake_case key from display name for frontmatter matching
       // (used whether or not a disk dir was found — capability-only entries have no dir)
       const snakeSkillName = rawSkillName
@@ -6661,7 +6737,7 @@ app.whenReady().then(async () => {
       // Refresh agents list so UI reflects removal
       setTimeout(() => {
         if (unifiedWindow && !unifiedWindow.isDestroyed()) {
-          unifiedWindow.webContents.send('agents:list-request');
+          ipcMain.emit('agents:list');
         }
       }, 300);
     } catch (err) {
@@ -6768,28 +6844,27 @@ app.whenReady().then(async () => {
   });
 
   // Agent delete handler — removes all artifacts (descriptor, DuckDB rows, profiles, domain maps)
+  // Routes through command-service HTTP so DuckDB operations run in the correct process
+  // (avoids "Could not set lock" errors from cross-process DuckDB access)
   ipcMain.on('agents:delete', async (_event, { agentId }) => {
     try {
       console.log(`[Agents] Deleting agent ${agentId} and all artifacts`);
-      const { actionDeleteAgent } = require('../../mcp-services/command-service/src/skills/browser.agent.cjs');
-      const result = await actionDeleteAgent({ id: agentId });
+      const result = await _cmdHttp('/agent.delete', { id: agentId });
       if (result.ok) {
-        console.log(`[Agents] Deleted ${result.deleted.length} artifacts for ${agentId}`);
+        console.log(`[Agents] Deleted ${result.deleted?.length ?? 0} artifacts for ${agentId}`);
         if (result.errors && result.errors.length > 0) {
           console.warn(`[Agents] Delete had non-fatal errors:`, result.errors);
         }
       } else {
         console.error(`[Agents] Delete failed for ${agentId}: ${result.error}`);
       }
-      // Always refresh the agents list so UI is in sync
-      // Small delay to ensure database transaction has committed
-      await new Promise(r => setTimeout(r, 500));
+      await new Promise(r => setTimeout(r, 300));
       if (unifiedWindow && !unifiedWindow.isDestroyed()) {
         ipcMain.emit('agents:list');
       }
     } catch (e) {
       console.error('[Agents] agents:delete failed:', e.message);
-      await new Promise(r => setTimeout(r, 500));
+      await new Promise(r => setTimeout(r, 300));
       if (unifiedWindow && !unifiedWindow.isDestroyed()) {
         ipcMain.emit('agents:list');
       }
@@ -6840,32 +6915,54 @@ app.whenReady().then(async () => {
 
   ipcMain.handle('cli-agents:delete', async (_event, { id }) => {
     try {
-      const path = require('path');
-      const os = require('os');
-      const fs = require('fs');
-      // Delete from DuckDB
-      const { cliAgent } = require('../../mcp-services/command-service/src/skills/cli.agent.cjs');
-      // Use internal DB access — cli.agent doesn't expose a delete action, so we
-      // delete the agent row directly and remove the .md file.
-      const agentsDir = path.join(os.homedir(), '.thinkdrop', 'agents');
-      const mdPath = path.join(agentsDir, `${id}.md`);
-      if (fs.existsSync(mdPath)) fs.unlinkSync(mdPath);
-      // Query first to confirm it exists, then use raw DB access
-      const queryResult = await cliAgent({ action: 'query_agent', id });
-      if (queryResult?.found) {
-        // Use withDb for short-lived connection (prevents lock conflicts)
-        try {
-          await withDb(async (db) => {
-            await db.run('DELETE FROM agents WHERE id = ?', id);
-          });
-        } catch (dbErr) {
-          console.warn('[CLI-Agents] DuckDB delete warning:', dbErr.message);
-          // Continue — file deletion is what matters
-        }
-      }
-      return { ok: true };
+      return await _cmdHttp('/agent.delete', { id });
     } catch (e) {
       console.error('[CLI-Agents] cli-agents:delete failed:', e.message);
+      return { ok: false, error: e.message };
+    }
+  });
+
+  ipcMain.handle('cli-agents:create', async (_event, { service, cliTool, credentials }) => {
+    try {
+      if (!service) return { ok: false, error: 'service is required' };
+      const { cliAgent } = require('../../mcp-services/command-service/src/skills/cli.agent.cjs');
+      const buildResult = await cliAgent({
+        action: 'build_agent',
+        service: service.toLowerCase().trim(),
+        cliTool: cliTool ? cliTool.trim() : undefined,
+        force: false,
+      });
+      if (!buildResult?.ok) {
+        return { ok: false, error: buildResult?.error || 'build_agent failed' };
+      }
+      const agentId = buildResult.agentId || `${service.toLowerCase().trim()}.agent`;
+      // Store credentials via user-memory MCP (same as cli-agents:store-credential)
+      if (Array.isArray(credentials) && credentials.length > 0) {
+        const http = require('http');
+        const memApiKey = process.env.MCP_USER_MEMORY_API_KEY || process.env.USER_MEMORY_API_KEY || process.env.MCP_API_KEY || '';
+        const storeReqs = credentials.map(({ key, value }) => new Promise((resolve) => {
+          if (!key || !value) return resolve({ ok: true });
+          const credKey = `credential:${agentId}:${key}`;
+          const body = JSON.stringify({ key: credKey, value });
+          const req = http.request({
+            hostname: '127.0.0.1', port: 3001, path: '/kv.set', method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body), ...(memApiKey ? { 'x-api-key': memApiKey } : {}) },
+          }, (res) => {
+            let d = '';
+            res.on('data', c => { d += c; });
+            res.on('end', () => resolve({ ok: true }));
+          });
+          req.on('error', () => resolve({ ok: false }));
+          req.write(body); req.end();
+        }));
+        await Promise.all(storeReqs).catch(() => {});
+      }
+      console.log(`[CLI-Agents] cli-agents:create: created ${agentId}`);
+      await new Promise(r => setTimeout(r, 300));
+      ipcMain.emit('agents:list');
+      return { ok: true, agentId };
+    } catch (e) {
+      console.error('[CLI-Agents] cli-agents:create failed:', e.message);
       return { ok: false, error: e.message };
     }
   });
@@ -6895,15 +6992,7 @@ app.whenReady().then(async () => {
 
   ipcMain.handle('cli-agents:update', async (_event, { id, descriptor }) => {
     try {
-      // Use withDb for short-lived connection (prevents lock conflicts)
-      return await withDb(async (db) => {
-        await db.run(
-          "UPDATE agents SET descriptor = ?, last_validated = CURRENT_TIMESTAMP WHERE id = ?",
-          descriptor,
-          id
-        );
-        return { ok: true };
-      });
+      return await _cmdHttp('/agent.update', { id, descriptor });
     } catch (e) {
       console.error('[CLI-Agents] cli-agents:update failed:', e.message);
       return { ok: false, error: e.message };
@@ -7149,57 +7238,15 @@ app.whenReady().then(async () => {
 
       if (!fs.existsSync(agentsDir) || !fs.existsSync(dbPath)) return;
 
-      // Use withDb to ensure connection is closed promptly
-      await withDb(async (db) => {
-        // Get existing agent IDs from DB
-        const existingRows = await db.all("SELECT id FROM agents WHERE type = 'browser' OR type IS NULL");
-        const existingIds = new Set(existingRows.map(r => r.id));
-
-        // Scan .agent.md files
-        const files = fs.readdirSync(agentsDir).filter(f => f.endsWith('.agent.md'));
-        let migrated = 0;
-
-        for (const file of files) {
-          const id = file.replace('.agent.md', '');
-          if (existingIds.has(id)) continue; // Skip if already in DB
-
-          // Parse frontmatter
-          const content = fs.readFileSync(path.join(agentsDir, file), 'utf8');
-          const fmMatch = content.match(/^---\s*\n([\s\S]*?)\n---/);
-          const fm = fmMatch ? fmMatch[1] : '';
-
-          const getField = (key) => {
-            const m = fm.match(new RegExp(`^${key}\s*:\s*(.+)$`, 'm'));
-            return m ? m[1].trim() : undefined;
-          };
-
-          const service = getField('service') || id.replace('.agent', '');
-          const status = getField('status') || 'pending';
-          const domain = getField('domain') || `${service}.com`;
-          const capabilities = getField('capabilities') || '[]';
-
-          // Insert into DB as browser agent
-          try {
-            await db.run(
-              `INSERT OR REPLACE INTO agents (id, type, service, cli_tool, capabilities, descriptor, last_validated, status, created_at)
-               VALUES (?, 'browser', ?, NULL, ?, ?, CURRENT_TIMESTAMP, ?, CURRENT_TIMESTAMP)`,
-              id,
-              service,
-              capabilities,
-              content,
-              status === 'healthy' ? 'learned' : status
-            );
-            migrated++;
-            console.log(`[Migration] Migrated browser agent ${id} to DB`);
-          } catch (err) {
-            console.warn(`[Migration] Failed to migrate ${id}:`, err.message);
-          }
+      // Proxy migration to command-service (sole DB owner)
+      try {
+        const migrateResult = await _cmdHttp('/agent.migrate', {});
+        if (migrateResult?.migrated > 0) {
+          console.log(`[Migration] Migrated ${migrateResult.migrated} legacy browser agents to DuckDB via command-service`);
         }
-
-        if (migrated > 0) {
-          console.log(`[Migration] Migrated ${migrated} legacy browser agents to DuckDB`);
-        }
-      });
+      } catch (migrErr) {
+        console.warn('[Migration] agent.migrate proxy failed:', migrErr.message);
+      }
     } catch (e) {
       console.error('[Migration] Failed:', e.message);
     }
@@ -7211,25 +7258,21 @@ app.whenReady().then(async () => {
       // Run migration first (idempotent)
       await migrateLegacyBrowserAgents();
 
-      // Use withDb for short-lived connection
-      return await withDb(async (db) => {
-        // Query browser agents (type='browser' or type IS NULL for legacy)
-        const rows = await db.all(
-          "SELECT id, type, service, cli_tool, capabilities, status, last_validated, descriptor FROM agents WHERE type = 'browser' OR type IS NULL OR type = 'api' ORDER BY created_at DESC"
-        );
-
-        // Parse capabilities JSON
-        return (rows || []).map(r => ({
+      // Proxy to command-service — GET /agents.list returns { ok, agents: [...] }
+      const _bResult = await _cmdGet('/agents.list').catch(() => null);
+      const _bRaw = _bResult?.agents || [];
+      return _bRaw
+        .filter(r => !r.type || r.type === 'browser' || r.type === 'api')
+        .map(r => ({
           id: r.id,
           type: r.type || 'browser',
           service: r.service,
-          cliTool: r.cli_tool,
-          capabilities: r.capabilities ? JSON.parse(r.capabilities) : [],
+          cliTool: r.cli_tool || r.cliTool,
+          capabilities: Array.isArray(r.capabilities) ? r.capabilities : (r.capabilities ? JSON.parse(r.capabilities) : []),
           status: r.status || 'pending',
-          lastValidated: r.last_validated,
+          lastValidated: r.last_validated || r.lastValidated,
           descriptor: r.descriptor,
         }));
-      });
     } catch (e) {
       console.error('[Browser-Agents] browser-agents:list failed:', e.message);
       return [];
@@ -7238,15 +7281,7 @@ app.whenReady().then(async () => {
 
   ipcMain.handle('browser-agents:update', async (_event, { id, descriptor }) => {
     try {
-      // Use withDb for short-lived connection
-      return await withDb(async (db) => {
-        await db.run(
-          "UPDATE agents SET descriptor = ?, last_validated = CURRENT_TIMESTAMP WHERE id = ?",
-          descriptor,
-          id
-        );
-        return { ok: true };
-      });
+      return await _cmdHttp('/agent.update', { id, descriptor });
     } catch (e) {
       console.error('[Browser-Agents] browser-agents:update failed:', e.message);
       return { ok: false, error: e.message };

@@ -23,12 +23,13 @@ interface RecordedStep {
 }
 
 // Dot-name validation: suffix only (agent prefix auto-added)
-const SKILL_SUFFIX_RE = /^[a-z][a-z0-9_]*$/;
+// Allows multi-segment names like editor, html.editor, try.it.editor
+const SKILL_SUFFIX_RE = /^[a-z][a-z0-9_]*(\.([a-z][a-z0-9_]*))*$/;
 
 function validateSkillSuffix(suffix: string): string | null {
   if (!suffix) return 'Skill name is required';
   if (suffix.length < 2) return 'At least 2 characters';
-  if (!SKILL_SUFFIX_RE.test(suffix)) return 'Lowercase letters, numbers, underscores only (e.g. editor, html_editor)';
+  if (!SKILL_SUFFIX_RE.test(suffix)) return 'Lowercase letters, numbers, underscores, dots (e.g. editor, html.editor)';
   return null;
 }
 
@@ -69,6 +70,9 @@ export function TrainingPanel({ agentId, hostname, onDone, onCancel }: TrainingP
   const [skillSuffix, setSkillSuffix] = useState('');
   const [validationError, setValidationError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const [savingMessage, setSavingMessage] = useState<string>('');
+  const [isLaunching, setIsLaunching] = useState(true);
+  const [launchingUrl, setLaunchingUrl] = useState<string>('');
   const stepsEndRef = useRef<HTMLDivElement>(null);
 
   const cleanAgentId = agentId.replace(/\.agent$/, '');
@@ -80,7 +84,14 @@ export function TrainingPanel({ agentId, hostname, onDone, onCancel }: TrainingP
     const handleStep = (data: any) => {
       if (!data || data.agentId !== agentId) return;
 
+      if (data.type === 'training:start') {
+        setIsLaunching(true);
+        setLaunchingUrl(data.startUrl || '');
+        return;
+      }
+
       if (data.type === 'training:step-recorded') {
+        setIsLaunching(false);
         setSteps(prev => [...prev, {
           id: Date.now(),
           type: data.stepType || 'click',
@@ -91,6 +102,25 @@ export function TrainingPanel({ agentId, hostname, onDone, onCancel }: TrainingP
           pageTitle: data.pageTitle,
           timestamp: data.timestamp || Date.now(),
         }]);
+        return;
+      }
+
+      if (data.type === 'training:saving') {
+        setSaving(true);
+        setSavingMessage(data.message || 'Building waypoint recipe…');
+        return;
+      }
+
+      if (data.type === 'training:saved') {
+        setSaving(false);
+        setSavingMessage('');
+        onCancel();
+        return;
+      }
+
+      if (data.type === 'training:error') {
+        setSaving(false);
+        setSavingMessage('');
       }
     };
 
@@ -112,10 +142,11 @@ export function TrainingPanel({ agentId, hostname, onDone, onCancel }: TrainingP
 
   const handleReset = () => {
     setSteps([]);
+    setIsLaunching(false);
   };
 
   const handleSuffixChange = (val: string) => {
-    const cleaned = val.toLowerCase().replace(/[^a-z0-9_]/g, '');
+    const cleaned = val.toLowerCase().replace(/[^a-z0-9_.]/g, '');
     setSkillSuffix(cleaned);
     setValidationError(validateSkillSuffix(cleaned));
   };
@@ -181,24 +212,113 @@ export function TrainingPanel({ agentId, hostname, onDone, onCancel }: TrainingP
           When you reach the page where you want the AI to start working — stop clicking.
         </div>
 
+        {/* Saving overlay — replaces content while LLM builds recipe (~10s) */}
+        {saving && (
+          <div
+            className="flex-1 flex flex-col items-center justify-center text-center"
+            style={{ padding: '40px 24px' }}
+          >
+            <div
+              style={{
+                width: 56, height: 56, borderRadius: '50%',
+                background: 'rgba(16, 185, 129, 0.1)',
+                border: '1px solid rgba(16, 185, 129, 0.3)',
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                marginBottom: 16,
+              }}
+            >
+              <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="#10b981" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M12 2L2 7l10 5 10-5-10-5z"/>
+                <path d="M2 17l10 5 10-5"/>
+                <path d="M2 12l10 5 10-5"/>
+              </svg>
+            </div>
+            <div style={{ fontWeight: 700, fontSize: '0.95rem', color: '#d1fae5', marginBottom: 6 }}>
+              Saving Skill…
+            </div>
+            <div style={{ fontSize: '0.75rem', color: '#6b7280', marginBottom: 24, maxWidth: 260 }}>
+              {savingMessage || 'Building waypoint recipe…'}
+            </div>
+            <div style={{ width: '80%', maxWidth: 240, height: 3, borderRadius: 99, background: 'rgba(16,185,129,0.12)', overflow: 'hidden' }}>
+              <div style={{
+                height: '100%',
+                background: 'linear-gradient(90deg, transparent 0%, #10b981 40%, #34d399 60%, transparent 100%)',
+                backgroundSize: '200% 100%',
+                animation: 'trainShimmer 1.6s ease-in-out infinite',
+              }}/>
+            </div>
+            <div style={{ marginTop: 14, display: 'flex', alignItems: 'center', gap: 6 }}>
+              <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="#10b981" strokeWidth="2.5" strokeLinecap="round" style={{ animation: 'spin 1s linear infinite', flexShrink: 0 }}>
+                <path d="M21 12a9 9 0 1 1-6.219-8.56"/>
+              </svg>
+              <span style={{ fontSize: '0.7rem', color: '#6b7280', fontStyle: 'italic' }}>LLM cleaning &amp; structuring waypoints…</span>
+            </div>
+          </div>
+        )}
+
         {/* Recorded Steps — scrollable area */}
         <div
           className="flex-1 overflow-y-auto mx-4 mt-4 pr-1"
-          style={{ minHeight: 0 }}
+          style={{ minHeight: 0, display: saving ? 'none' : undefined }}
         >
           {steps.length === 0 ? (
-            <div className="flex flex-col items-center justify-center h-full text-center py-12">
-              <div
-                className="w-10 h-10 rounded-full flex items-center justify-center mb-3"
-                style={{ background: 'rgba(255,255,255,0.05)' }}
-              >
-                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#4b5563" strokeWidth="1.5">
-                  <circle cx="12" cy="12" r="10" />
-                  <path d="M12 6v6l4 2" />
-                </svg>
+            isLaunching ? (
+              /* Launch preloader — shown while browser is opening (~10-22s) */
+              <div className="flex flex-col items-center justify-center h-full text-center" style={{ padding: '32px 16px' }}>
+                {/* Animated globe icon */}
+                <div
+                  style={{
+                    width: 52, height: 52, borderRadius: '50%',
+                    background: 'rgba(99,102,241,0.12)',
+                    border: '1px solid rgba(99,102,241,0.3)',
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    marginBottom: 14,
+                    animation: 'pulse 2s ease-in-out infinite',
+                  }}
+                >
+                  <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#818cf8" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+                    <circle cx="12" cy="12" r="10"/>
+                    <line x1="2" y1="12" x2="22" y2="12"/>
+                    <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/>
+                  </svg>
+                </div>
+                <div style={{ fontWeight: 600, fontSize: '0.88rem', color: '#c7d2fe', marginBottom: 5 }}>
+                  Opening browser…
+                </div>
+                <div style={{ fontSize: '0.72rem', color: '#6b7280', marginBottom: 20, fontFamily: 'ui-monospace, monospace', maxWidth: 260, wordBreak: 'break-all' }}>
+                  {launchingUrl || `https://${hostname}`}
+                </div>
+                {/* Shimmer progress bar */}
+                <div style={{ width: '80%', maxWidth: 240, height: 3, borderRadius: 99, background: 'rgba(99,102,241,0.12)', overflow: 'hidden' }}>
+                  <div style={{
+                    height: '100%',
+                    background: 'linear-gradient(90deg, transparent 0%, #818cf8 40%, #a5b4fc 60%, transparent 100%)',
+                    backgroundSize: '200% 100%',
+                    animation: 'trainShimmer 1.6s ease-in-out infinite',
+                  }}/>
+                </div>
+                <div style={{ marginTop: 14, display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="#818cf8" strokeWidth="2.5" strokeLinecap="round" style={{ animation: 'spin 1s linear infinite', flexShrink: 0 }}>
+                    <path d="M21 12a9 9 0 1 1-6.219-8.56"/>
+                  </svg>
+                  <span style={{ fontSize: '0.7rem', color: '#6b7280', fontStyle: 'italic' }}>Launching browser &amp; injecting recorder…</span>
+                </div>
               </div>
-              <span className="text-xs text-gray-500 italic">Waiting for interactions…</span>
-            </div>
+            ) : (
+              /* Default empty state after reset */
+              <div className="flex flex-col items-center justify-center h-full text-center py-12">
+                <div
+                  className="w-10 h-10 rounded-full flex items-center justify-center mb-3"
+                  style={{ background: 'rgba(255,255,255,0.05)' }}
+                >
+                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#4b5563" strokeWidth="1.5">
+                    <circle cx="12" cy="12" r="10" />
+                    <path d="M12 6v6l4 2" />
+                  </svg>
+                </div>
+                <span className="text-xs text-gray-500 italic">Waiting for interactions…</span>
+              </div>
+            )
           ) : (
             <div className="flex flex-col gap-1">
               {steps.map((step, idx) => {
@@ -262,7 +382,7 @@ export function TrainingPanel({ agentId, hostname, onDone, onCancel }: TrainingP
         {/* Bottom section — fixed at bottom */}
         <div
           className="px-4 pb-4 pt-3 flex flex-col gap-3"
-          style={{ borderTop: '1px solid rgba(255, 255, 255, 0.1)' }}
+          style={{ borderTop: '1px solid rgba(255, 255, 255, 0.1)', display: saving ? 'none' : undefined }}
         >
           {/* Target explanation */}
           {steps.length > 0 && (
@@ -360,6 +480,14 @@ export function TrainingPanel({ agentId, hostname, onDone, onCancel }: TrainingP
         @keyframes slideInRight {
           from { transform: translateX(100%); }
           to { transform: translateX(0); }
+        }
+        @keyframes trainShimmer {
+          0% { background-position: 200% 0; }
+          100% { background-position: -200% 0; }
+        }
+        @keyframes spin {
+          from { transform: rotate(0deg); }
+          to { transform: rotate(360deg); }
         }
       `}</style>
     </>

@@ -852,165 +852,242 @@ function EditAgentModal({
   );
 }
 
-// Create agent modal
-function CreateAgentModal({ 
-  isOpen, 
-  onClose, 
-  onCreate 
-}: { 
-  isOpen: boolean; 
+const CRED_TYPE_OPTIONS = [
+  { value: 'api_key',       label: 'API Key',       keyName: 'api_key' },
+  { value: 'token',         label: 'Token',         keyName: 'token' },
+  { value: 'username',      label: 'Username',      keyName: 'username' },
+  { value: 'password',      label: 'Password',      keyName: 'password' },
+  { value: 'client_id',     label: 'Client ID',     keyName: 'client_id' },
+  { value: 'client_secret', label: 'Client Secret', keyName: 'client_secret' },
+  { value: 'custom',        label: 'Custom…',       keyName: '' },
+];
+
+const MODAL_INPUT_STYLE: React.CSSProperties = {
+  width: '100%',
+  padding: '9px 11px',
+  borderRadius: 6,
+  border: '1px solid rgba(255,255,255,0.12)',
+  backgroundColor: 'rgba(255,255,255,0.05)',
+  color: '#fff',
+  fontSize: '0.88rem',
+  boxSizing: 'border-box',
+};
+
+const MODAL_LABEL_STYLE: React.CSSProperties = {
+  display: 'block',
+  fontSize: '0.75rem',
+  color: '#9ca3af',
+  marginBottom: 5,
+};
+
+// Create Browser Agent modal — URL only
+function CreateBrowserAgentModal({
+  isOpen,
+  onClose,
+  onCreate,
+}: {
+  isOpen: boolean;
   onClose: () => void;
-  onCreate: (domain: string, goals: string[]) => void;
+  onCreate: (url: string) => void;
 }) {
-  const [domain, setDomain] = useState('');
-  const [goals, setGoals] = useState<string[]>(['']);
+  const [url, setUrl] = useState('');
 
   if (!isOpen) return null;
 
-  const addGoal = () => setGoals([...goals, '']);
-  const removeGoal = (index: number) => {
-    if (goals.length > 1) {
-      setGoals(goals.filter((_, i) => i !== index));
-    }
+  const isValid = url.trim().length > 0;
+  const handleCreate = () => {
+    if (!isValid) return;
+    onCreate(url.trim());
+    setUrl('');
+    onClose();
   };
-  const updateGoal = (index: number, value: string) => {
-    const newGoals = [...goals];
-    newGoals[index] = value;
-    setGoals(newGoals);
-  };
-
-  const hasValidGoals = goals.some(g => g.trim().length > 0);
-  const validGoals = goals.filter(g => g.trim().length > 0);
 
   return (
-    <div style={{
-      position: 'fixed',
-      top: 0, left: 0, right: 0, bottom: 0,
-      backgroundColor: 'rgba(0,0,0,0.7)',
-      display: 'flex',
-      alignItems: 'center',
-      justifyContent: 'center',
-      zIndex: 1000,
-    }}>
-      <div style={{
-        backgroundColor: '#1f2937',
-        borderRadius: 12,
-        padding: 24,
-        width: 450,
-        maxWidth: '90vw',
-        maxHeight: '80vh',
-        overflowY: 'auto',
-      }}>
-        <h3 style={{ margin: '0 0 16px 0', color: '#fff', fontSize: '1.1rem' }}>Create New Agent</h3>
-        
-        <div style={{ marginBottom: 16 }}>
-          <label style={{ display: 'block', fontSize: '0.8rem', color: '#9ca3af', marginBottom: 6 }}>
-            Website Domain
-          </label>
+    <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.72)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1100 }}>
+      <div style={{ backgroundColor: '#1a2030', borderRadius: 12, padding: 24, width: 420, maxWidth: '90vw', border: '1px solid rgba(99,102,241,0.25)', boxShadow: '0 16px 48px rgba(0,0,0,0.6)' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 18 }}>
+          <div style={{ width: 32, height: 32, borderRadius: 8, backgroundColor: 'rgba(99,102,241,0.18)', border: '1px solid rgba(99,102,241,0.3)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#818cf8" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/>
+              <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/>
+            </svg>
+          </div>
+          <div>
+            <h3 style={{ margin: 0, color: '#fff', fontSize: '0.95rem', fontWeight: 600 }}>Create Browser Agent</h3>
+            <p style={{ margin: 0, color: '#6b7280', fontSize: '0.72rem' }}>ThinkDrop will explore and learn the site</p>
+          </div>
+        </div>
+
+        <div style={{ marginBottom: 18 }}>
+          <label style={MODAL_LABEL_STYLE}>Website URL</label>
           <input
-            type="text"
-            value={domain}
-            onChange={(e) => setDomain(e.target.value)}
-            placeholder="spotify.com, youtube.com, etc."
-            style={{
-              width: '100%',
-              padding: '10px 12px',
-              borderRadius: 6,
-              border: '1px solid rgba(255,255,255,0.1)',
-              backgroundColor: 'rgba(255,255,255,0.05)',
-              color: '#fff',
-              fontSize: '0.9rem',
-            }}
+            type="url"
+            value={url}
+            onChange={(e) => setUrl(e.target.value)}
+            onKeyDown={(e) => e.key === 'Enter' && handleCreate()}
+            placeholder="https://spotify.com"
+            autoFocus
+            style={MODAL_INPUT_STYLE}
           />
+          <p style={{ margin: '5px 0 0 0', fontSize: '0.68rem', color: '#4b5563' }}>
+            The domain will be derived automatically from the URL.
+          </p>
         </div>
 
-        <div style={{ marginBottom: 12 }}>
-          <label style={{ display: 'block', fontSize: '0.8rem', color: '#9ca3af', marginBottom: 6 }}>
-            Which pages should be scanned for skills? (Add multiple goals)
-          </label>
-          {goals.map((goal, index) => (
-            <div key={index} style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
-              <input
-                type="text"
-                value={goal}
-                onChange={(e) => updateGoal(index, e.target.value)}
-                placeholder={`Goal ${index + 1}: e.g., Buy products, Track orders...`}
-                style={{
-                  flex: 1,
-                  padding: '10px 12px',
-                  borderRadius: 6,
-                  border: '1px solid rgba(255,255,255,0.1)',
-                  backgroundColor: 'rgba(255,255,255,0.05)',
-                  color: '#fff',
-                  fontSize: '0.9rem',
-                }}
-              />
-              {goals.length > 1 && (
-                <button
-                  onClick={() => removeGoal(index)}
-                  style={{
-                    padding: '8px 12px',
-                    borderRadius: 6,
-                    border: '1px solid rgba(255,255,255,0.2)',
-                    backgroundColor: 'transparent',
-                    color: '#9ca3af',
-                    cursor: 'pointer',
-                    fontSize: '0.8rem',
-                  }}
-                >
-                  ✕
-                </button>
-              )}
-            </div>
-          ))}
-          <button
-            onClick={addGoal}
-            style={{
-              padding: '6px 12px',
-              borderRadius: 6,
-              border: '1px dashed rgba(255,255,255,0.3)',
-              backgroundColor: 'transparent',
-              color: '#9ca3af',
-              cursor: 'pointer',
-              fontSize: '0.8rem',
-              marginTop: 4,
-            }}
-          >
-            + Add Another URL
-          </button>
-        </div>
-
-        <div style={{ display: 'flex', gap: 12, justifyContent: 'flex-end', marginTop: 20 }}>
-          <button
-            onClick={onClose}
-            style={{
-              padding: '8px 16px',
-              borderRadius: 6,
-              border: '1px solid rgba(255,255,255,0.2)',
-              backgroundColor: 'transparent',
-              color: '#9ca3af',
-              cursor: 'pointer',
-            }}
-          >
+        <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
+          <button onClick={onClose} style={{ padding: '8px 15px', borderRadius: 6, border: '1px solid rgba(255,255,255,0.15)', backgroundColor: 'transparent', color: '#6b7280', cursor: 'pointer', fontSize: '0.83rem' }}>
             Cancel
           </button>
           <button
-            onClick={() => {
-              onCreate(domain, validGoals);
-              setDomain('');
-              setGoals(['']);
-              onClose();
-            }}
-            disabled={!domain || !hasValidGoals}
-            style={{
-              padding: '8px 16px',
-              borderRadius: 6,
-              border: 'none',
-              backgroundColor: '#3b82f6',
-              color: '#fff',
-              cursor: !domain || !hasValidGoals ? 'not-allowed' : 'pointer',
-              opacity: !domain || !hasValidGoals ? 0.6 : 1,
-            }}
+            onClick={handleCreate}
+            disabled={!isValid}
+            style={{ padding: '8px 18px', borderRadius: 6, border: 'none', backgroundColor: isValid ? '#6366f1' : 'rgba(99,102,241,0.35)', color: '#fff', cursor: isValid ? 'pointer' : 'not-allowed', fontSize: '0.83rem', fontWeight: 600 }}
+          >
+            Create Agent
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+interface CliCredRow {
+  type: string;
+  key: string;
+  value: string;
+}
+
+// Create CLI Agent modal — service name + cliTool + dynamic credential rows
+function CreateCliAgentModal({
+  isOpen,
+  onClose,
+  onCreate,
+}: {
+  isOpen: boolean;
+  onClose: () => void;
+  onCreate: (service: string, cliTool: string, credentials: CliCredRow[]) => void;
+}) {
+  const [service, setService] = useState('');
+  const [cliTool, setCliTool] = useState('');
+  const [creds, setCreds] = useState<CliCredRow[]>([{ type: 'api_key', key: 'api_key', value: '' }]);
+
+  if (!isOpen) return null;
+
+  const isValid = service.trim().length > 0;
+
+  const addCred = () => setCreds(prev => [...prev, { type: 'api_key', key: 'api_key', value: '' }]);
+  const removeCred = (i: number) => setCreds(prev => prev.filter((_, idx) => idx !== i));
+  const updateCred = (i: number, field: keyof CliCredRow, val: string) => {
+    setCreds(prev => prev.map((row, idx) => {
+      if (idx !== i) return row;
+      if (field === 'type') {
+        const opt = CRED_TYPE_OPTIONS.find(o => o.value === val);
+        return { ...row, type: val, key: opt?.keyName || row.key };
+      }
+      return { ...row, [field]: val };
+    }));
+  };
+
+  const handleCreate = () => {
+    if (!isValid) return;
+    const filled = creds.filter(c => c.key.trim() && c.value.trim());
+    onCreate(service.trim(), cliTool.trim(), filled);
+    setService(''); setCliTool('');
+    setCreds([{ type: 'api_key', key: 'api_key', value: '' }]);
+    onClose();
+  };
+
+  return (
+    <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.72)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1100 }}>
+      <div style={{ backgroundColor: '#1a2030', borderRadius: 12, padding: 24, width: 480, maxWidth: '92vw', maxHeight: '86vh', overflowY: 'auto', border: '1px solid rgba(16,185,129,0.22)', boxShadow: '0 16px 48px rgba(0,0,0,0.6)' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 18 }}>
+          <div style={{ width: 32, height: 32, borderRadius: 8, backgroundColor: 'rgba(16,185,129,0.15)', border: '1px solid rgba(16,185,129,0.3)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#10b981" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/>
+            </svg>
+          </div>
+          <div>
+            <h3 style={{ margin: 0, color: '#fff', fontSize: '0.95rem', fontWeight: 600 }}>Create CLI Agent</h3>
+            <p style={{ margin: 0, color: '#6b7280', fontSize: '0.72rem' }}>Register an API-backed service agent</p>
+          </div>
+        </div>
+
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 18 }}>
+          <div>
+            <label style={MODAL_LABEL_STYLE}>Service Name <span style={{ color: '#ef4444' }}>*</span></label>
+            <input
+              type="text"
+              value={service}
+              onChange={(e) => setService(e.target.value)}
+              placeholder="stripe, sendgrid, openai…"
+              autoFocus
+              style={MODAL_INPUT_STYLE}
+            />
+          </div>
+          <div>
+            <label style={MODAL_LABEL_STYLE}>CLI Tool <span style={{ color: '#6b7280', fontWeight: 400 }}>(optional)</span></label>
+            <input
+              type="text"
+              value={cliTool}
+              onChange={(e) => setCliTool(e.target.value)}
+              placeholder="stripe, gh, aws…"
+              style={MODAL_INPUT_STYLE}
+            />
+          </div>
+        </div>
+
+        <div style={{ marginBottom: 6 }}>
+          <label style={{ ...MODAL_LABEL_STYLE, marginBottom: 8 }}>Credentials <span style={{ color: '#6b7280', fontWeight: 400 }}>(optional)</span></label>
+          {creds.map((row, i) => (
+            <div key={i} style={{ display: 'grid', gridTemplateColumns: '130px 1fr 1fr 28px', gap: 6, marginBottom: 6, alignItems: 'center' }}>
+              <select
+                value={row.type}
+                onChange={(e) => updateCred(i, 'type', e.target.value)}
+                style={{ ...MODAL_INPUT_STYLE, padding: '8px 8px', fontSize: '0.78rem', cursor: 'pointer', width: '100%' }}
+              >
+                {CRED_TYPE_OPTIONS.map(o => (
+                  <option key={o.value} value={o.value} style={{ backgroundColor: '#1a2030' }}>{o.label}</option>
+                ))}
+              </select>
+              <input
+                type="text"
+                value={row.key}
+                onChange={(e) => updateCred(i, 'key', e.target.value)}
+                placeholder="key name"
+                style={{ ...MODAL_INPUT_STYLE, fontSize: '0.78rem' }}
+              />
+              <input
+                type="password"
+                value={row.value}
+                onChange={(e) => updateCred(i, 'value', e.target.value)}
+                placeholder="value"
+                style={{ ...MODAL_INPUT_STYLE, fontSize: '0.78rem' }}
+              />
+              <button
+                onClick={() => removeCred(i)}
+                disabled={creds.length === 1}
+                style={{ background: 'transparent', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 5, color: '#6b7280', cursor: creds.length === 1 ? 'default' : 'pointer', padding: '4px', display: 'flex', alignItems: 'center', justifyContent: 'center', opacity: creds.length === 1 ? 0.3 : 1 }}
+              >
+                <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+              </button>
+            </div>
+          ))}
+          <button
+            onClick={addCred}
+            style={{ marginTop: 4, padding: '5px 12px', borderRadius: 5, border: '1px dashed rgba(255,255,255,0.2)', backgroundColor: 'transparent', color: '#6b7280', cursor: 'pointer', fontSize: '0.75rem' }}
+          >
+            + Add credential
+          </button>
+        </div>
+
+        <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', marginTop: 20, paddingTop: 16, borderTop: '1px solid rgba(255,255,255,0.06)' }}>
+          <button onClick={onClose} style={{ padding: '8px 15px', borderRadius: 6, border: '1px solid rgba(255,255,255,0.15)', backgroundColor: 'transparent', color: '#6b7280', cursor: 'pointer', fontSize: '0.83rem' }}>
+            Cancel
+          </button>
+          <button
+            onClick={handleCreate}
+            disabled={!isValid}
+            style={{ padding: '8px 18px', borderRadius: 6, border: 'none', backgroundColor: isValid ? '#10b981' : 'rgba(16,185,129,0.3)', color: '#fff', cursor: isValid ? 'pointer' : 'not-allowed', fontSize: '0.83rem', fontWeight: 600 }}
           >
             Create Agent
           </button>
@@ -1023,11 +1100,14 @@ function CreateAgentModal({
 // Main Agents Tab component
 export function AgentsTab({ items, onRefresh }: AgentsTabProps) {
   const [expandedAgent, setExpandedAgent] = useState<string | null>(null);
-  const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
+  const [isCreateBrowserModalOpen, setIsCreateBrowserModalOpen] = useState(false);
+  const [isCreateCliModalOpen, setIsCreateCliModalOpen] = useState(false);
   const [editModalAgent, setEditModalAgent] = useState<AgentItem | null>(null);
   const [localItems, setLocalItems] = useState<AgentItem[]>(items);
   const [isCreating, setIsCreating] = useState(false);
+  const [creatingAgent, setCreatingAgent] = useState<{ agentId: string; domain: string } | null>(null);
   const [createError, setCreateError] = useState<string | null>(null);
+  const [editError, setEditError] = useState<string | null>(null);
   const [autoScanEnabled, setAutoScanEnabled] = useState<boolean>(false);
   // Training panel state
   const [trainingAgentId, setTrainingAgentId] = useState<string | null>(null);
@@ -1085,31 +1165,57 @@ export function AgentsTab({ items, onRefresh }: AgentsTabProps) {
   }, []);
 
   // Listen for create-specific events from main process.
-  // NOTE: agents:update and agents:new are handled centrally in UnifiedOverlay
-  // which passes updated items as props — registering them here again would cause
-  // duplicate listeners with wrong signatures (preload strips the IPC event arg
-  // before calling callbacks, so handlers must accept (data) not (event, data)).
   useEffect(() => {
     if (!ipcRenderer) return;
 
-    const handleCreating = () => {
+    const handleCreating = (data: { agentId?: string; domain?: string }) => {
       setIsCreating(true);
       setCreateError(null);
+      setCreatingAgent({ agentId: data?.agentId || '', domain: data?.domain || '' });
     };
 
     // Preload strips the IPC event arg — callback receives (data) directly
     const handleCreateError = (data: { message: string }) => {
       setIsCreating(false);
+      setCreatingAgent(null);
       setCreateError(data?.message || 'Failed to create agent');
       setTimeout(() => setCreateError(null), 5000);
     };
 
+    // agents:new — emitted right after build_agent succeeds; add immediately to local list
+    const handleAgentNew = (agent: AgentItem) => {
+      setIsCreating(false);
+      setCreatingAgent(null);
+      if (agent?.id) {
+        setLocalItems(prev => {
+          if (prev.some(a => a.id === agent.id)) return prev;
+          return [agent, ...prev];
+        });
+        // Switch to the right subtab so the new agent is visible
+        if (agent.type === 'cli' || agent.type === 'api_key') {
+          setActiveSubtab('cli');
+        } else {
+          setActiveSubtab('browser');
+        }
+      }
+    };
+
+    // agents:list — full list refresh also signals creation is done
+    const handleAgentsList = () => {
+      setIsCreating(false);
+      setCreatingAgent(null);
+    };
+
     ipcRenderer.on('agents:creating', handleCreating);
     ipcRenderer.on('agents:error', handleCreateError);
+    ipcRenderer.on('agents:new', handleAgentNew);
+    ipcRenderer.on('agents:list', handleAgentsList);
 
     return () => {
       ipcRenderer.removeListener('agents:creating', handleCreating);
       ipcRenderer.removeListener('agents:error', handleCreateError);
+      ipcRenderer.removeListener('agents:new', handleAgentNew);
+      ipcRenderer.removeListener('agents:list', handleAgentsList);
     };
   }, []);
 
@@ -1180,9 +1286,20 @@ export function AgentsTab({ items, onRefresh }: AgentsTabProps) {
     setTrainingAgentId(null);
   };
 
-  const handleEdit = (agentId: string) => {
-    const agent = localItems.find(a => a.id === agentId);
-    if (agent) setEditModalAgent(agent);
+  const handleEdit = async (agentId: string) => {
+    const agentFile = agentId.endsWith('.agent') ? `${agentId}.md` : `${agentId}.agent.md`;
+    const home = (window as any).electron?.homedir?.() || '~';
+    const agentMdPath = `${home}/.thinkdrop/agents/${agentFile}`;
+    try {
+      const result = await ipcRenderer?.invoke('shell:open-path', agentMdPath);
+      if (result?.error) {
+        setEditError(`Could not open file: ${result.error}`);
+        setTimeout(() => setEditError(null), 4000);
+      }
+    } catch (_) {
+      setEditError('Could not open agent descriptor file.');
+      setTimeout(() => setEditError(null), 4000);
+    }
   };
 
   const handleEditSave = (agentId: string, goals: string[], options?: { includeLandingPage?: boolean }) => {
@@ -1230,10 +1347,30 @@ export function AgentsTab({ items, onRefresh }: AgentsTabProps) {
     ipcRenderer?.send('agents:refresh-skill', { agentId, skillName, skillPath });
   };
 
-  const handleCreateAgent = (domain: string, goals: string[]) => {
+  const handleCreateBrowserAgent = (url: string) => {
     setIsCreating(true);
     setCreateError(null);
-    ipcRenderer?.send('agents:create', { domain, goals, headed: true });
+    let domain = url;
+    try { domain = new URL(url).hostname.replace(/^www\./, ''); } catch (_) {}
+    ipcRenderer?.send('agents:create', { domain, goals: [], headed: true });
+  };
+
+  const handleCreateCliAgent = async (service: string, cliTool: string, credentials: CliCredRow[]) => {
+    setIsCreating(true);
+    setCreateError(null);
+    try {
+      const result = await ipcRenderer?.invoke('cli-agents:create', { service, cliTool, credentials });
+      if (!result?.ok) {
+        setCreateError(result?.error || 'Failed to create CLI agent');
+        setTimeout(() => setCreateError(null), 5000);
+      }
+    } catch (e: any) {
+      setCreateError(e?.message || 'Failed to create CLI agent');
+      setTimeout(() => setCreateError(null), 5000);
+    } finally {
+      setIsCreating(false);
+      onRefresh?.();
+    }
   };
 
   const toggleExpanded = (agentId: string) => {
@@ -1525,7 +1662,8 @@ export function AgentsTab({ items, onRefresh }: AgentsTabProps) {
             onClick={() => {
               if (!isCreating) {
                 setCreateError(null);
-                setIsCreateModalOpen(true);
+                if (activeSubtab === 'browser') setIsCreateBrowserModalOpen(true);
+                else setIsCreateCliModalOpen(true);
               }
             }}
             disabled={isCreating}
@@ -1677,12 +1815,81 @@ export function AgentsTab({ items, onRefresh }: AgentsTabProps) {
         >
           CLI Agents
         </button>
+
+        {/* Spacer + Create button */}
+        <div style={{ flex: 1 }} />
+        <button
+          onClick={() => {
+            if (activeSubtab === 'browser') setIsCreateBrowserModalOpen(true);
+            else setIsCreateCliModalOpen(true);
+          }}
+          disabled={isCreating}
+          title={activeSubtab === 'browser' ? 'Create Browser Agent' : 'Create CLI Agent'}
+          style={{
+            display: 'inline-flex', alignItems: 'center', gap: 4,
+            padding: '5px 11px',
+            borderRadius: 6,
+            border: `1px solid ${activeSubtab === 'browser' ? 'rgba(99,102,241,0.4)' : 'rgba(16,185,129,0.4)'}`,
+            backgroundColor: activeSubtab === 'browser' ? 'rgba(99,102,241,0.14)' : 'rgba(16,185,129,0.12)',
+            color: activeSubtab === 'browser' ? '#818cf8' : '#10b981',
+            fontSize: '0.75rem',
+            fontWeight: 500,
+            cursor: isCreating ? 'not-allowed' : 'pointer',
+            opacity: isCreating ? 0.5 : 1,
+            transition: 'all 0.15s',
+          }}
+        >
+          <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+          New
+        </button>
       </div>
 
       {/* Browser Agents Tab */}
       {activeSubtab === 'browser' && (
       <>
-      {browserAgents.length === 0 ? (
+      {/* Edit error toast */}
+      {editError && (
+        <div style={{ margin: '0 0 8px', padding: '8px 12px', borderRadius: 7, background: 'rgba(239,68,68,0.12)', border: '1px solid rgba(239,68,68,0.3)', color: '#f87171', fontSize: '0.78rem' }}>
+          {editError}
+        </div>
+      )}
+      {/* Skeleton placeholder card while agent is being built */}
+      {creatingAgent && (
+        <div style={{
+          borderRadius: 10,
+          border: '1px solid rgba(99,102,241,0.35)',
+          background: 'rgba(99,102,241,0.06)',
+          padding: '14px 16px',
+          marginBottom: 10,
+          display: 'flex',
+          alignItems: 'center',
+          gap: 12,
+        }}>
+          <div style={{
+            width: 38, height: 38, borderRadius: 8, flexShrink: 0,
+            background: 'linear-gradient(90deg,rgba(99,102,241,0.15) 25%,rgba(99,102,241,0.3) 50%,rgba(99,102,241,0.15) 75%)',
+            backgroundSize: '200% 100%',
+            animation: 'shimmer 1.4s infinite',
+          }}/>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 5 }}>
+              <span style={{ fontWeight: 600, fontSize: '0.9rem', color: '#c7d2fe' }}>
+                {creatingAgent.domain ? creatingAgent.domain.split('.')[0].replace(/^./, c => c.toUpperCase()) : 'New Agent'}
+              </span>
+              <span style={{ fontSize: '0.72rem', color: '#6b7280' }}>
+                ({creatingAgent.domain || 'building…'})
+              </span>
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="#818cf8" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ animation: 'spin 1s linear infinite', flexShrink: 0 }}>
+                <path d="M21 12a9 9 0 1 1-6.219-8.56"/>
+              </svg>
+              <span style={{ fontSize: '0.75rem', color: '#818cf8' }}>Building agent… this takes ~10–20s</span>
+            </div>
+          </div>
+        </div>
+      )}
+      {browserAgents.length === 0 && !creatingAgent ? (
         <div style={{
           textAlign: 'center',
           padding: 60,
@@ -1713,7 +1920,7 @@ export function AgentsTab({ items, onRefresh }: AgentsTabProps) {
             Create your first agent to start automating websites
           </div>
         </div>
-      ) : (
+      ) : browserAgents.length === 0 && creatingAgent ? null : (
         browserAgents
           .filter((agent): agent is AgentItem => !!agent && !!agent.id)
           .map((agent) => (
@@ -2238,19 +2445,18 @@ export function AgentsTab({ items, onRefresh }: AgentsTabProps) {
         </div>
       )}
 
-      {/* Create modal */}
-      <CreateAgentModal
-        isOpen={isCreateModalOpen}
-        onClose={() => setIsCreateModalOpen(false)}
-        onCreate={handleCreateAgent}
+      {/* Create Browser Agent modal */}
+      <CreateBrowserAgentModal
+        isOpen={isCreateBrowserModalOpen}
+        onClose={() => setIsCreateBrowserModalOpen(false)}
+        onCreate={handleCreateBrowserAgent}
       />
 
-      {/* Edit / goal-gate modal */}
-      <EditAgentModal
-        isOpen={editModalAgent !== null}
-        agent={editModalAgent}
-        onClose={() => setEditModalAgent(null)}
-        onSave={handleEditSave}
+      {/* Create CLI Agent modal */}
+      <CreateCliAgentModal
+        isOpen={isCreateCliModalOpen}
+        onClose={() => setIsCreateCliModalOpen(false)}
+        onCreate={handleCreateCliAgent}
       />
 
       {/* Training Panel — shown when user clicks Train */}
@@ -2271,6 +2477,10 @@ export function AgentsTab({ items, onRefresh }: AgentsTabProps) {
         @keyframes spin {
           from { transform: rotate(0deg); }
           to { transform: rotate(360deg); }
+        }
+        @keyframes shimmer {
+          0% { background-position: 200% 0; }
+          100% { background-position: -200% 0; }
         }
       `}</style>
     </div>

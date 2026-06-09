@@ -11,3 +11,7 @@ oc-mimic-skills/
 .playwright-cli
 .vscode
 dump.rdb
+docs
+.claude
+.windsurf
+.devin
