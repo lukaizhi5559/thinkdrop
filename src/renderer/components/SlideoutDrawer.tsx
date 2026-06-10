@@ -1,7 +1,7 @@
 import React from 'react';
 import { type TabId, QueueIcon, CronIcon, StoreIcon, SkillsIcon, ConnectionsIcon, RulesIcon, SettingsIcon } from './TabComponents';
 
-function ThinkDropLogo({ size = 20 }: { size?: number }) {
+export function ThinkDropLogo({ size = 20 }: { size?: number }) {
   return (
     <svg width={size} height={size} viewBox="0 0 24 24" fill="none">
       <circle cx="12" cy="12" r="10" stroke="#60a5fa" strokeWidth="1.5" fill="none"/>
@@ -67,8 +67,14 @@ export function SlideoutDrawer({ isOpen, onClose, onNavigate, activeTab }: Slide
               <polyline points="15 18 9 12 15 6" />
             </svg>
           </button>
-          <ThinkDropLogo size={20} />
-          <span className="text-sm font-medium text-gray-300">ThinkDrop</span>
+          <button
+            onClick={() => onNavigate('results')}
+            className="flex items-center gap-2 hover:opacity-80 transition-opacity"
+            style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer' }}
+          >
+            <ThinkDropLogo size={20} />
+            <span className="text-sm font-medium text-gray-300">ThinkDrop</span>
+          </button>
         </div>
 
         {/* Menu Items */}

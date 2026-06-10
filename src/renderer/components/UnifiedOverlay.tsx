@@ -17,7 +17,7 @@ import VoiceButton from './VoiceButton';
 import AutomationProgress from './AutomationProgress';
 import { RichContentRenderer } from './rich-content';
 import SkillBuildProgress from './SkillBuildProgress';
-import { SlideoutDrawer } from './SlideoutDrawer';
+import { SlideoutDrawer, ThinkDropLogo } from './SlideoutDrawer';
 import { SettingsTab } from './SettingsTab';
 import { RulesManagementPanel } from './RulesManagementPanel';
 // TrainingBanner removed — training now handled by TrainingPanel in AgentsTab
@@ -2213,8 +2213,8 @@ export function UnifiedOverlay() {
             userSelect: 'none',
           }}
         >
-          {/* Row 1: Hamburger + Action Buttons */}
-          <div className="flex items-center justify-between px-4 py-2">
+          {/* Row 1: Hamburger + Logo (centered) + Action Buttons */}
+          <div className="flex items-center justify-between px-4 py-2 relative">
             {/* Left: Hamburger Menu */}
             <button
               onClick={(e) => {
@@ -2231,6 +2231,11 @@ export function UnifiedOverlay() {
                 <line x1="3" y1="18" x2="21" y2="18" />
               </svg>
             </button>
+
+            {/* Center: ThinkDrop Logo */}
+            <div className="absolute left-1/2 -translate-x-1/2 pointer-events-none">
+              <ThinkDropLogo size={22} />
+            </div>
 
             {/* Right: Action Buttons */}
             <div className="flex items-center gap-2">
