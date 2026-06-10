@@ -1304,6 +1304,31 @@ function checkNodeJs() {
 }
 
 app.whenReady().then(async () => {
+  // ── Register custom protocol for serving cached images ───────────────────────
+  const { protocol } = require('electron');
+  protocol.registerFileProtocol('thinkdrop-image', (request, callback) => {
+    try {
+      console.log('[thinkdrop-image] Request URL:', request.url);
+      const url = new URL(request.url);
+      // For custom protocols, the filename is in the host field, not pathname
+      // thinkdrop-image://filename.jpg -> host=filename.jpg, pathname=''
+      const fileName = decodeURIComponent(url.host || url.pathname.replace(/^\//, ''));
+      console.log('[thinkdrop-image] host:', url.host, 'pathname:', url.pathname, 'Extracted filename:', fileName);
+      // Security: only allow alphanumeric, dash, underscore, and dot in filename
+      if (!fileName || !/^[a-zA-Z0-9._-]+$/.test(fileName)) {
+        console.error('[thinkdrop-image] Invalid filename:', fileName);
+        return callback({ error: -2 });
+      }
+      const filePath = path.join(os.homedir(), '.thinkdrop', 'image-cache', fileName);
+      console.log('[thinkdrop-image] Serving file:', filePath);
+      callback({ path: filePath });
+    } catch (err) {
+      console.error('[thinkdrop-image] Protocol error:', err.message);
+      callback({ error: -2 });
+    }
+  });
+  console.log('[App] Registered thinkdrop-image:// protocol for image cache');
+
   // ── Check Node.js is installed ───────────────────────────────────────────────
   const nodeCheck = checkNodeJs();
   if (!nodeCheck.ok) {
@@ -4662,6 +4687,17 @@ app.whenReady().then(async () => {
   ipcMain.on('shell:open-url', (_event, url) => {
     if (!url || typeof url !== 'string') return;
     const { shell } = require('electron');
+    
+    // Handle thinkdrop-image:// protocol - open with system image viewer
+    if (url.startsWith('thinkdrop-image://')) {
+      const fileName = url.replace('thinkdrop-image://', '');
+      const filePath = path.join(os.homedir(), '.thinkdrop', 'image-cache', fileName);
+      console.log(`[Shell] Opening image with default viewer: ${filePath}`);
+      shell.openPath(filePath).catch(err => console.warn('[Shell] openPath failed:', err));
+      return;
+    }
+    
+    // Default: open URLs in browser
     console.log(`[Shell] Opening URL in default browser: ${url}`);
     shell.openExternal(url).catch(err => console.warn(`[Shell] openExternal failed: ${err}`));
   });

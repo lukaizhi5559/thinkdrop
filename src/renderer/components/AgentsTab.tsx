@@ -1620,8 +1620,8 @@ export function AgentsTab({ items, onRefresh }: AgentsTabProps) {
   return (
     <div style={{
       padding: 16,
-      overflowY: 'auto',
-      height: '100%',
+      overflowY: 'visible',
+      height: 'auto',
     }}>
       {/* Header */}
       <div style={{ marginBottom: 16 }}>

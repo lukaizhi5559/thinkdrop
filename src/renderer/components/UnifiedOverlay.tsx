@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useCallback, useReducer } from 'react';
 import { flushSync } from 'react-dom';
+import { useDynamicHeight } from './utils/useDynamicHeight';
 const ipcRenderer = (window as any).electron?.ipcRenderer;
 import { playThinkDropSound, playDropSound } from '../utils/thinkDropSound';
 import {
@@ -196,6 +197,16 @@ export function UnifiedOverlay() {
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const scrollBottomRef = useRef<HTMLDivElement>(null);
 
+  // --- Tab Content Refs for Dynamic Height ---
+  const queueTabRef = useRef<HTMLDivElement>(null);
+  const cronTabRef = useRef<HTMLDivElement>(null);
+  const agentsTabRef = useRef<HTMLDivElement>(null);
+  const skillsTabRef = useRef<HTMLDivElement>(null);
+  const connectionsTabRef = useRef<HTMLDivElement>(null);
+  const storeTabRef = useRef<HTMLDivElement>(null);
+  const settingsTabRef = useRef<HTMLDivElement>(null);
+  const rulesTabRef = useRef<HTMLDivElement>(null);
+
   // --- Glow Timer Ref ---
   const glowOffTimerRef = useRef<NodeJS.Timeout | null>(null);
 
@@ -295,6 +306,30 @@ export function UnifiedOverlay() {
       ipcRenderer?.send('agents:list');
     }
   }, []);
+
+  // --- Dynamic Height Management ---
+  // Automatically resize overlay based on active tab content
+  useDynamicHeight({
+    activeTab,
+    tabRefs: {
+      results: contentRef,
+      queue: queueTabRef,
+      cron: cronTabRef,
+      agents: agentsTabRef,
+      skills: skillsTabRef,
+      connections: connectionsTabRef,
+      store: storeTabRef,
+      settings: settingsTabRef,
+      rules: rulesTabRef,
+    },
+    headerHeight: 52,
+    inputAreaHeight: 100,
+    padding: 32,
+    minHeight: 350,
+    maxHeight: 900,
+    debounceMs: 100,
+    suppress: shouldSuppressResize,
+  });
 
   // --- Prompt Input Functions ---
   const handleTextareaChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
@@ -1692,26 +1727,10 @@ export function UnifiedOverlay() {
     }
   }, [streamingResponse, isStreaming]);
 
-  // Window height is driven by AutomationProgress's onHeightChange callback (Fix in AutomationProgress.tsx)
+  // Window height is driven by:
+  // 1. useDynamicHeight hook - resizes on tab switches and tab content changes
+  // 2. AutomationProgress's onHeightChange callback - real-time ResizeObserver during automation
   // which measures the component's own root div — outside the clipped layout chain.
-
-  // --- Resize window as streaming response content grows (non-automation intents) ---
-  // AutomationProgress's onHeightChange handles command_automate via ResizeObserver.
-  // For general_knowledge / question / memory_retrieve etc the response renders into
-  // contentRef directly — nothing else triggers a resize IPC as the text grows.
-  useEffect(() => {
-    if (!ipcRenderer) return;
-    if (isAutomationMode) return; // automation mode has its own resize path
-    if (shouldSuppressResize()) return;
-    if (!streamingResponse && !isThinking) return; // nothing visible yet
-
-    const h = contentRef.current?.scrollHeight || 0;
-    const HEADER = 105;
-    const INPUT_AREA = 100;
-    const PADDING = 32;
-    const total = Math.min(Math.max(h + HEADER + INPUT_AREA + PADDING, 400), 900);
-    ipcRenderer.send('unified:resize-window', { height: Math.round(total) });
-  }, [streamingResponse, isThinking, isAutomationMode]);
 
   // --- Render Helpers ---
   const renderHighlightChips = () => {
@@ -1959,7 +1978,7 @@ export function UnifiedOverlay() {
     const synthTokenCount = streamingResponse ? Math.ceil(streamingResponse.length / 4) : 0;
 
     return (
-      <div className={`space-y-4${isDropping ? ' drop-animate' : ''}`}>
+      <div className={`space-y-4${isDropping ? ' drop-animate' : ''} mt-4`}>
         {renderInstallCard()}
         {searchSources.length > 0 && renderSourcePill()}
         
@@ -2419,8 +2438,9 @@ export function UnifiedOverlay() {
 
           {/* Queue Tab */}
           <div 
-            className="h-full overflow-y-auto overflow-x-hidden p-4 flex flex-col gap-2"
-            style={{ display: activeTab === 'queue' ? 'flex' : 'none' }}
+            ref={queueTabRef}
+            className="overflow-y-auto overflow-x-hidden p-4 flex flex-col gap-2"
+            style={{ display: activeTab === 'queue' ? 'flex' : 'none', height: 'auto', maxHeight: '100%' }}
           >
               {restartAlert && (
                 <div style={{ borderRadius: 9, padding: '10px 14px', backgroundColor: 'rgba(245,158,11,0.07)', border: '1px solid rgba(245,158,11,0.3)', display: 'flex', flexDirection: 'column', gap: 6 }}>
@@ -2465,8 +2485,9 @@ export function UnifiedOverlay() {
 
           {/* Cron Tab */}
           <div 
-            className="h-full overflow-y-auto overflow-x-hidden p-4"
-            style={{ display: activeTab === 'cron' ? 'block' : 'none' }}
+            ref={cronTabRef}
+            className="overflow-y-auto overflow-x-hidden p-4"
+            style={{ display: activeTab === 'cron' ? 'block' : 'none', height: 'auto', maxHeight: '100%' }}
           >
               <CronTab
                 items={cronItems}
@@ -2478,8 +2499,9 @@ export function UnifiedOverlay() {
 
           {/* Agents Tab */}
           <div 
-            className="h-full overflow-y-auto overflow-x-hidden"
-            style={{ display: activeTab === 'agents' ? 'block' : 'none' }}
+            ref={agentsTabRef}
+            className="overflow-y-auto overflow-x-hidden"
+            style={{ display: activeTab === 'agents' ? 'block' : 'none', height: 'auto', maxHeight: '100%' }}
           >
               <AgentsTab
                 items={agentItems}
@@ -2489,8 +2511,9 @@ export function UnifiedOverlay() {
 
           {/* Skills Tab */}
           <div 
-            className="h-full overflow-y-auto overflow-x-hidden p-4"
-            style={{ display: activeTab === 'skills' ? 'block' : 'none' }}
+            ref={skillsTabRef}
+            className="overflow-y-auto overflow-x-hidden p-4"
+            style={{ display: activeTab === 'skills' ? 'block' : 'none', height: 'auto', maxHeight: '100%' }}
           >
               <SkillsTab
                 items={skillItems}
@@ -2506,8 +2529,9 @@ export function UnifiedOverlay() {
 
           {/* Connections Tab */}
           <div 
-            className="h-full overflow-y-auto overflow-x-hidden p-4"
-            style={{ display: activeTab === 'connections' ? 'block' : 'none' }}
+            ref={connectionsTabRef}
+            className="overflow-y-auto overflow-x-hidden p-4"
+            style={{ display: activeTab === 'connections' ? 'block' : 'none', height: 'auto', maxHeight: '100%' }}
           >
               <ConnectionsTab
                 items={connectionItems}
@@ -2519,24 +2543,27 @@ export function UnifiedOverlay() {
 
           {/* Store Tab */}
           <div 
-            className="h-full overflow-y-auto overflow-x-hidden p-4"
-            style={{ display: activeTab === 'store' ? 'block' : 'none' }}
+            ref={storeTabRef}
+            className="overflow-y-auto overflow-x-hidden p-4"
+            style={{ display: activeTab === 'store' ? 'block' : 'none', height: 'auto', maxHeight: '100%' }}
           >
               <StoreTab onBuildSkill={() => setActiveTab('results')} />
             </div>
 
           {/* Settings Tab */}
           <div 
-            className="h-full overflow-y-auto overflow-x-hidden p-4"
-            style={{ display: activeTab === 'settings' ? 'block' : 'none' }}
+            ref={settingsTabRef}
+            className="overflow-y-auto overflow-x-hidden p-4"
+            style={{ display: activeTab === 'settings' ? 'block' : 'none', height: 'auto', maxHeight: '100%' }}
           >
               <SettingsTab />
             </div>
 
           {/* Rules Tab */}
           <div 
-            className="h-full overflow-y-auto overflow-x-hidden p-4"
-            style={{ display: activeTab === 'rules' ? 'block' : 'none' }}
+            ref={rulesTabRef}
+            className="overflow-y-auto overflow-x-hidden p-4"
+            style={{ display: activeTab === 'rules' ? 'block' : 'none', height: 'auto', maxHeight: '100%' }}
           >
               <RulesManagementPanel />
             </div>

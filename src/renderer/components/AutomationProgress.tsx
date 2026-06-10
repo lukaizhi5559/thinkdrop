@@ -633,6 +633,7 @@ function parsePlanStepTitles(content: string): string[] {
 
 export default function AutomationProgress({ onHeightChange, onActiveChange, onOpenRules, setIsSubmitting, suppressIfScheduled }: AutomationProgressProps) {
   const [phase, setPhase] = useState<AutomationPhase>('idle');
+  const planReviewRef = useRef<HTMLDivElement>(null);
   const [steps, setSteps] = useState<Step[]>([]);
   const [planMessage, setPlanMessage] = useState('Generating skill plan...');
   const [totalCount, setTotalCount] = useState(0);
@@ -731,6 +732,16 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
   const phaseRef = useRef<AutomationPhase>('idle');
   useEffect(() => { phaseRef.current = phase; }, [phase]);
 
+  // Scroll plan review buttons into view when plan_review phase activates
+  useEffect(() => {
+    if (phase === 'plan_review' && planReviewRef.current) {
+      // Delay to allow DOM to settle
+      setTimeout(() => {
+        planReviewRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
+      }, 150);
+    }
+  }, [phase]);
+
   // Refs for auto-scrolling to the active step
   const stepRefs = useRef<Map<number, HTMLDivElement>>(new Map());
   // Tracks global step index offset across multi-intent queue sub-plans.
@@ -747,8 +758,13 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
 
   // Callback ref for ResizeObserver — useCallback fires when div actually mounts/unmounts.
   // useRef+useEffect([]) misses the mount because the component returns null during idle phase.
+  // STABILIZED: Added height delta threshold (40px) and stabilization timer (150ms) to prevent bouncing.
   const rootObserverRef = useRef<ResizeObserver | null>(null);
   const rootDebounceRef = useRef<NodeJS.Timeout | null>(null);
+  const lastHeightRef = useRef<number>(0);
+  const stableHeightRef = useRef<number>(0);
+  const stabilizeTimerRef = useRef<NodeJS.Timeout | null>(null);
+
   const rootCallbackRef = useCallback((node: HTMLDivElement | null) => {
     if (rootObserverRef.current) {
       rootObserverRef.current.disconnect();
@@ -758,14 +774,40 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
       clearTimeout(rootDebounceRef.current);
       rootDebounceRef.current = null;
     }
+    if (stabilizeTimerRef.current) {
+      clearTimeout(stabilizeTimerRef.current);
+      stabilizeTimerRef.current = null;
+    }
     if (!node) return;
+
     const obs = new ResizeObserver(([entry]) => {
-      if (rootDebounceRef.current) clearTimeout(rootDebounceRef.current);
-      rootDebounceRef.current = setTimeout(() => {
-        console.log('[AutomationProgress] ResizeObserver fired, height:', Math.round(entry.contentRect.height));
-        onHeightChange?.(Math.round(entry.contentRect.height));
-      }, 60);
+      const newHeight = Math.round(entry.contentRect.height);
+
+      // Clear any pending stabilization timer
+      if (stabilizeTimerRef.current) {
+        clearTimeout(stabilizeTimerRef.current);
+        stabilizeTimerRef.current = null;
+      }
+
+      // Check if height change is significant enough (>40px threshold)
+      // This prevents rapid small shifts during planning/replanning
+      const heightDelta = Math.abs(newHeight - lastHeightRef.current);
+      if (heightDelta < 40 && lastHeightRef.current !== 0) {
+        return; // Ignore small jitter
+      }
+
+      // Wait for height to stabilize before reporting (150ms stabilization period)
+      // This prevents the window from bouncing during rapid content updates
+      stableHeightRef.current = newHeight;
+      stabilizeTimerRef.current = setTimeout(() => {
+        if (stableHeightRef.current === newHeight) {
+          lastHeightRef.current = newHeight;
+          console.log('[AutomationProgress] Height stabilized:', newHeight);
+          onHeightChange?.(newHeight);
+        }
+      }, 150);
     });
+
     obs.observe(node);
     rootObserverRef.current = obs;
   }, [onHeightChange]);
@@ -3405,7 +3447,7 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
 
       {/* ── Plan review: existing-plan banner + Approve/Cancel bar ────────── */}
       {phase === 'plan_review' && planReview && (
-        <div style={{ borderTop: '1px solid rgba(255,255,255,0.07)', paddingTop: 10, marginTop: 10}}>          {planReview.isExisting && (
+        <div ref={planReviewRef} style={{ borderTop: '1px solid rgba(255,255,255,0.07)', paddingTop: 10, marginTop: 10}}>          {planReview.isExisting && (
             <div style={{ marginBottom: 8, padding: '7px 10px', borderRadius: 8, backgroundColor: 'rgba(139,92,246,0.08)', border: '1px solid rgba(139,92,246,0.25)', display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
               <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="#a78bfa" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                 <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>

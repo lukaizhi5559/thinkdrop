@@ -4,3 +4,4 @@
  */
 
 export { default as RichContentRenderer } from './RichContentRenderer';
+export { default as ImageCarousel, type ImageItem } from './ImageCarousel';

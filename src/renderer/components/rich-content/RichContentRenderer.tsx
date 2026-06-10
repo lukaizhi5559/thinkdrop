@@ -1,10 +1,11 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import remarkBreaks from 'remark-breaks';
 import rehypeRaw from 'rehype-raw';
 import { Prism as SyntaxHighlighterBase } from 'react-syntax-highlighter';
 import { vscDarkPlus } from 'react-syntax-highlighter/dist/esm/styles/prism';
+import { ImageCarousel } from './ImageCarousel';
 
 const SyntaxHighlighter = SyntaxHighlighterBase as any;
 
@@ -72,21 +73,185 @@ const CodeBlockWithCopy: React.FC<{ code: string; language: string }> = ({ code,
   );
 };
 
+// Search result item type for image metadata
+interface SearchResultItem {
+  url?: string;
+  imageUrl?: string;
+  originalUrl?: string;
+  title?: string;
+  snippet?: string;
+  type?: string;
+}
+
 interface RichContentRendererProps {
   content: string;
   animated?: boolean;
   className?: string;
   onFileLinkClick?: (filePath: string) => void;
+  searchResults?: SearchResultItem[]; // Optional search results for image metadata lookup
 }
+
+// Extract all images from markdown content for carousel detection
+const extractImagesFromMarkdown = (content: string): { src: string; alt: string; title?: string }[] => {
+  const images: { src: string; alt: string; title?: string }[] = [];
+  // Match markdown image syntax: ![alt](url "title") or ![alt](url)
+  const imgRegex = /!\[([^\]]*)\]\(([^\s"]+)(?:\s+"([^"]*)")?\)/g;
+  let match;
+  while ((match = imgRegex.exec(content)) !== null) {
+    images.push({
+      alt: match[1] || '',
+      src: match[2],
+      title: match[3],
+    });
+  }
+  return images;
+};
+
+// Component to render image groups as carousel
+const ImageGroupRenderer: React.FC<{ content: string; maxHeight?: number }> = ({ content, maxHeight = 280 }) => {
+  const images = useMemo(() => extractImagesFromMarkdown(content), [content]);
+  
+  if (images.length === 0) return null;
+  
+  return <ImageCarousel images={images} maxHeight={maxHeight} />;
+};
+
+// Split content by image groups and render with carousel for multiple images
+const renderContentWithCarousels = (content: string, imageUrlToOriginal?: Map<string, string>): React.ReactNode[] => {
+  const parts: React.ReactNode[] = [];
+  let partIndex = 0;
+  
+  // Extract ALL images from content (including those in list items)
+  // This pattern matches markdown images anywhere: ![alt](url "title")
+  const imageRegex = /!?\[([^\]]*)\]\(([^\s")]+)(?:\s+"([^"]*)")?\)/g;
+  const allImages: { alt: string; src: string; title?: string; index: number }[] = [];
+  
+  let imgMatch;
+  while ((imgMatch = imageRegex.exec(content)) !== null) {
+    allImages.push({
+      alt: imgMatch[1] || '',
+      src: imgMatch[2],
+      title: imgMatch[3],
+      index: imgMatch.index
+    });
+  }
+  
+  // If we have 2+ images, extract them and render the rest as text without images
+  if (allImages.length >= 2) {
+    // Sort by index to maintain order
+    allImages.sort((a, b) => a.index - b.index);
+    
+    // Build text content by removing images but keeping the list structure
+    let processedContent = content;
+    // Remove image markdown but keep surrounding context
+    processedContent = processedContent.replace(imageRegex, '');
+    // Clean up empty lines that might result
+    processedContent = processedContent.replace(/\n\s*\n\s*\n/g, '\n\n');
+    
+    // Add the text content (with images removed)
+    if (processedContent.trim()) {
+      parts.push(
+        <ReactMarkdown
+          key={`text-${partIndex++}`}
+          remarkPlugins={[remarkGfm, remarkBreaks]}
+          rehypePlugins={[rehypeRaw]}
+          components={{
+            code({ node, inline, className, children, ...props }: any) {
+              const match = /language-(\w+)/.exec(className || '');
+              const codeString = String(children).replace(/\n$/, '');
+              return !inline && match ? (
+                <CodeBlockWithCopy code={codeString} language={match[1]} />
+              ) : (
+                <code className="bg-gray-800 px-2 py-1 rounded text-sm font-mono text-blue-300" {...props}>
+                  {children}
+                </code>
+              );
+            },
+            p: ({ children }: any) => <p className="mb-3 leading-relaxed text-white/70">{children}</p>,
+          }}
+        >
+          {processedContent}
+        </ReactMarkdown>
+      );
+    }
+    
+    // Add carousel for all extracted images
+    const imageItems = allImages.map(img => ({
+      src: img.src,
+      alt: img.alt,
+      title: img.title,
+      originalUrl: imageUrlToOriginal?.get(img.src) // Look up original URL if available
+    }));
+    parts.push(
+      <ImageCarousel key={`carousel-${partIndex++}`} images={imageItems} maxHeight={280} />
+    );
+    
+    return parts;
+  }
+  
+  // If we only have 0-1 images, render as normal markdown
+  return [
+    <ReactMarkdown
+      key="full-content"
+      remarkPlugins={[remarkGfm, remarkBreaks]}
+      rehypePlugins={[rehypeRaw]}
+      components={{
+        code({ node, inline, className, children, ...props }: any) {
+          const match = /language-(\w+)/.exec(className || '');
+          const codeString = String(children).replace(/\n$/, '');
+          return !inline && match ? (
+            <CodeBlockWithCopy code={codeString} language={match[1]} />
+          ) : (
+            <code className="bg-gray-800 px-2 py-1 rounded text-sm font-mono text-blue-300" {...props}>
+              {children}
+            </code>
+          );
+        },
+        p: ({ children }: any) => <p className="mb-3 leading-relaxed text-white/70">{children}</p>,
+      }}
+    >
+      {content}
+    </ReactMarkdown>
+  ];
+};
 
 const RichContentRenderer: React.FC<RichContentRendererProps> = ({
   content,
   animated = true,
   className = '',
   onFileLinkClick,
+  searchResults,
 }) => {
   // Pre-process content to make bare URLs clickable
   const processedContent = linkifyContent(content);
+  
+  // Build lookup map from image URL to original source URL for click-to-view
+  const imageUrlToOriginal = useMemo(() => {
+    const map = new Map<string, string>();
+    if (searchResults) {
+      searchResults.forEach(result => {
+        if (result.imageUrl && result.originalUrl) {
+          map.set(result.imageUrl, result.originalUrl);
+        }
+      });
+    }
+    return map;
+  }, [searchResults]);
+  
+  // Check if content has multiple consecutive images for carousel
+  const hasImageGroups = /(?:!?\[[^\]]*\]\([^\)]+\)\s*\n?){2,}/.test(content);
+
+  // Use carousel rendering for content with multiple image groups
+  if (hasImageGroups) {
+    return (
+      <div
+        className={`rich-content-container prose prose-invert prose-sm max-w-none ${animated ? 'animate-fade-in' : ''} ${className}`}
+        style={{ overflowWrap: 'break-word', wordBreak: 'break-word', minWidth: 0, ...(animated ? { animation: 'fadeIn 0.3s ease-in-out' } : {}) }}
+      >
+        {renderContentWithCarousels(processedContent, imageUrlToOriginal)}
+      </div>
+    );
+  }
 
   return (
     <div
@@ -167,25 +332,38 @@ const RichContentRenderer: React.FC<RichContentRendererProps> = ({
             }
             
             return (
-              <div className="my-4 max-w-full">
+              <span style={{ display: 'block' }} className="my-4 max-w-full">
                 <img
                   src={src}
                   alt={alt || ''}
                   title={title || alt}
-                  className="max-w-full h-auto rounded-lg shadow-lg border border-gray-600/30"
+                  className="max-w-full h-auto rounded-lg shadow-lg border border-gray-600/30 cursor-pointer hover:border-blue-500/50 transition-colors"
                   style={{ maxHeight: '400px', objectFit: 'contain' }}
+                  referrerPolicy="no-referrer"
+                  crossOrigin="anonymous"
+                  loading="lazy"
                   onError={(e) => {
                     const target = e.target as HTMLImageElement;
-                    target.style.display = 'none';
-                    const errorDiv = document.createElement('div');
-                    errorDiv.className = 'inline-flex items-center gap-2 px-2 py-1 rounded text-xs bg-yellow-500/20 text-yellow-400 border border-yellow-500/30';
-                    errorDiv.innerHTML = `
+                    const errorSpan = document.createElement('span');
+                    errorSpan.style.display = 'block';
+                    errorSpan.className = 'my-2 inline-flex items-center gap-2 px-2 py-1 rounded text-xs bg-yellow-500/20 text-yellow-400 border border-yellow-500/30 cursor-pointer hover:bg-yellow-500/30';
+                    errorSpan.title = src;
+                    errorSpan.onclick = () => {
+                      const ipcRenderer = (window as any).electron?.ipcRenderer;
+                      if (ipcRenderer) {
+                        ipcRenderer.send('shell:open-url', src);
+                      } else {
+                        window.open(src, '_blank');
+                      }
+                    };
+                    errorSpan.innerHTML = `
                       <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                         <circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/>
                       </svg>
-                      Failed to load image
+                      Failed to load - click to open in browser
                     `;
-                    target.parentNode?.insertBefore(errorDiv, target.nextSibling);
+                    target.style.display = 'none';
+                    target.parentNode?.insertBefore(errorSpan, target.nextSibling);
                   }}
                   onClick={() => {
                     if (isHttpUrl) {
@@ -200,11 +378,11 @@ const RichContentRenderer: React.FC<RichContentRendererProps> = ({
                   {...props}
                 />
                 {(alt || title) && (
-                  <div className="text-xs text-gray-400 mt-1 italic text-center">
+                  <span style={{ display: 'block' }} className="text-xs text-gray-400 mt-1 italic text-center">
                     {alt || title}
-                  </div>
+                  </span>
                 )}
-              </div>
+              </span>
             );
           },
           h1({ node, children, ...props }: any) {
