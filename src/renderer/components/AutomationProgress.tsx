@@ -171,6 +171,7 @@ interface AutomationProgressProps {
   onOpenRules?: () => void;
   setIsSubmitting?: (submitting: boolean) => void;
   suppressIfScheduled?: boolean;
+  activeTab?: string;
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -631,7 +632,7 @@ function parsePlanStepTitles(content: string): string[] {
   return titles;
 }
 
-export default function AutomationProgress({ onHeightChange, onActiveChange, onOpenRules, setIsSubmitting, suppressIfScheduled }: AutomationProgressProps) {
+export default function AutomationProgress({ onHeightChange, onActiveChange, onOpenRules, setIsSubmitting, suppressIfScheduled, activeTab }: AutomationProgressProps) {
   const [phase, setPhase] = useState<AutomationPhase>('idle');
   const planReviewRef = useRef<HTMLDivElement>(null);
   const [steps, setSteps] = useState<Step[]>([]);
@@ -803,14 +804,17 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
         if (stableHeightRef.current === newHeight) {
           lastHeightRef.current = newHeight;
           console.log('[AutomationProgress] Height stabilized:', newHeight);
-          onHeightChange?.(newHeight);
+          // Only send height changes when on results tab - prevents fighting with useDynamicHeight
+          if (activeTab === 'results') {
+            onHeightChange?.(newHeight);
+          }
         }
       }, 150);
     });
 
     obs.observe(node);
     rootObserverRef.current = obs;
-  }, [onHeightChange]);
+  }, [onHeightChange, activeTab]);
 
   // Notify parent when we become active/inactive
   // Only active during planning/executing — done/failed/idle should NOT keep the glow on
@@ -2802,9 +2806,9 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
             const isInGroup = !!step.runGroup;
             const isGroupStart = isInGroup && (!prevStep || prevStep.runGroup !== step.runGroup);
             const isGroupEnd   = isInGroup && (!nextStep || nextStep.runGroup !== step.runGroup);
-            const groupDoneCount = isInGroup ? steps.filter(s => s.runGroup === step.runGroup && (s.status === 'done' || s.status === 'skipped')).length : 0;
-            const groupTotalCount = isInGroup ? steps.filter(s => s.runGroup === step.runGroup).length : 0;
-            const groupAllDone = isInGroup && groupDoneCount === groupTotalCount && groupTotalCount > 0;
+            // const groupDoneCount = isInGroup ? steps.filter(s => s.runGroup === step.runGroup && (s.status === 'done' || s.status === 'skipped')).length : 0;
+            // const groupTotalCount = isInGroup ? steps.filter(s => s.runGroup === step.runGroup).length : 0;
+            // const groupAllDone = isInGroup && groupDoneCount === groupTotalCount && groupTotalCount > 0;
             // Show all parallel agents after completion (don't collapse)
             const isSynthesize = step.skill === 'synthesize';
             const isNeedsSkill = step.skill === 'needs_skill';

@@ -106,6 +106,7 @@ contextBridge.exposeInMainWorld('electron', {
         'clipboard:write-text',
         'operation:cancel',
         'operation:status',
+        'app-agent:highlight',
       ];
       if (validChannels.includes(channel)) {
         ipcRenderer.send(channel, data);
@@ -184,6 +185,7 @@ contextBridge.exposeInMainWorld('electron', {
         'agents:train-progress',
         'agents:skill-test-update',
         'agents:skill-refresh-update',
+        'app-agent:highlight',
       ];
       if (validChannels.includes(channel)) {
         const wrapped = (_event, ...args) => func(...args);

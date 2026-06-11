@@ -1,5 +1,6 @@
 import VoiceCompanion from './components/VoiceCompanion';
 import { UnifiedOverlay } from './components/UnifiedOverlay';
+import { GhostLayer } from './components/GhostLayer';
 
 function App() {
   const params = new URLSearchParams(window.location.search);
@@ -13,6 +14,10 @@ function App() {
     return <VoiceCompanion />;
   }
 
+  if (mode === 'ghostlayer') {
+    return <GhostLayer />;
+  }
+
   if (mode === 'testoverlay') {
     return (
       <div className="w-full h-full flex items-center justify-center bg-purple-900 text-white">
@@ -23,7 +28,7 @@ function App() {
 
   return (
     <div className="w-full h-full flex items-center justify-center bg-gray-900 text-white">
-      <p>Invalid mode. Use ?mode=promptcapture or ?mode=results</p>
+      <p>Invalid mode. Use ?mode=unified or ?mode=ghostlayer</p>
     </div>
   );
 }

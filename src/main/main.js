@@ -656,9 +656,46 @@ function startOverlayControlServer() {
 
     const hide = req.url === '/overlay/hide';
     const show = req.url === '/overlay/show';
+    const highlight = req.url === '/overlay/highlight';
 
-    if (!hide && !show) {
+    if (!hide && !show && !highlight) {
       res.writeHead(404).end(JSON.stringify({ error: 'Not Found' }));
+      return;
+    }
+
+    // Handle highlight endpoint for app.agent
+    if (highlight) {
+      console.log('[Overlay] /overlay/highlight endpoint hit');
+      let body = '';
+      req.on('data', chunk => { body += chunk; });
+      req.on('end', () => {
+        try {
+          const data = JSON.parse(body || '{}');
+          console.log('[Overlay] Highlight data received:', data.type, data.elements?.length, 'elements');
+          if (data.type === 'highlight' && data.elements && data.elements.length > 0) {
+            showGhostLayer();
+            if (ghostLayerWindow && !ghostLayerWindow.isDestroyed()) {
+              console.log('[Overlay] Sending IPC to GhostLayer');
+              ghostLayerWindow.webContents.send('app-agent:highlight', data);
+            } else {
+              console.log('[Overlay] ERROR: GhostLayer window not available');
+            }
+            res.writeHead(200).end(JSON.stringify({ ok: true, highlighted: data.elements.length }));
+          } else if (data.type === 'clear') {
+            // Send clear message to GhostLayer for state cleanup
+            if (ghostLayerWindow && !ghostLayerWindow.isDestroyed()) {
+              ghostLayerWindow.webContents.send('app-agent:highlight', { type: 'clear', elements: [] });
+            }
+            hideGhostLayer();
+            res.writeHead(200).end(JSON.stringify({ ok: true, action: 'cleared' }));
+          } else {
+            res.writeHead(400).end(JSON.stringify({ ok: false, error: 'Invalid highlight data' }));
+          }
+        } catch (err) {
+          console.log('[Overlay] Error:', err.message);
+          res.writeHead(400).end(JSON.stringify({ error: err.message }));
+        }
+      });
       return;
     }
 
@@ -1246,6 +1283,100 @@ function createUnifiedWindow() {
   return unifiedWindow;
 }
 
+// ---------------------------------------------------------------------------
+// GhostLayer Window - Visual UI element highlighting for app.agent
+// ---------------------------------------------------------------------------
+let ghostLayerWindow = null;
+
+function createGhostLayerWindow() {
+  const primaryDisplay = screen.getPrimaryDisplay();
+  const { width: screenWidth, height: screenHeight } = primaryDisplay.workAreaSize;
+
+  ghostLayerWindow = new BrowserWindow({
+    width: screenWidth,
+    height: screenHeight,
+    x: 0,
+    y: 0,
+    transparent: true,
+    frame: false,
+    alwaysOnTop: true,
+    skipTaskbar: true,
+    resizable: false,
+    movable: false,
+    minimizable: false,
+    maximizable: false,
+    closable: false,
+    hasShadow: false,
+    show: false,
+    focusable: false,
+    ...(process.platform === 'darwin' ? { type: 'panel' } : {}),
+    webPreferences: {
+      nodeIntegration: false,
+      contextIsolation: true,
+      preload: path.join(__dirname, 'preload.js'),
+      backgroundThrottling: false,
+    },
+  });
+
+  if (process.platform === 'darwin') {
+    ghostLayerWindow.setWindowButtonVisibility(false);
+    ghostLayerWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+    ghostLayerWindow.setAlwaysOnTop(true, 'floating', 6); // Higher than unifiedWindow
+    ghostLayerWindow.setIgnoreMouseEvents(true); // Click-through
+  }
+
+  const isDev = process.env.NODE_ENV === 'development';
+  if (isDev) {
+    ghostLayerWindow.loadURL('http://localhost:5173/index.html?mode=ghostlayer&cacheBust=' + Date.now());
+  } else {
+    ghostLayerWindow.loadFile(path.join(__dirname, '../../dist-renderer/index.html'),
+      { query: { mode: 'ghostlayer' } });
+  }
+
+  ghostLayerWindow.on('closed', () => {
+    console.log('[GhostLayer] Window closed.');
+    ghostLayerWindow = null;
+  });
+
+  // Open DevTools for debugging GhostLayer
+  ghostLayerWindow.webContents.openDevTools({ mode: 'detach' });
+  console.log('[GhostLayer] DevTools opened for debugging');
+
+  return ghostLayerWindow;
+}
+
+function showGhostLayer() {
+  console.log('[GhostLayer] showGhostLayer called');
+  if (!ghostLayerWindow || ghostLayerWindow.isDestroyed()) {
+    console.log('[GhostLayer] Creating new window...');
+    createGhostLayerWindow();
+  }
+  if (ghostLayerWindow) {
+    console.log('[GhostLayer] Showing window...');
+    ghostLayerWindow.showInactive();
+    ghostLayerWindow.setOpacity(1);
+    console.log('[GhostLayer] Window should be visible now');
+  }
+}
+
+function hideGhostLayer() {
+  if (ghostLayerWindow && !ghostLayerWindow.isDestroyed()) {
+    ghostLayerWindow.hide();
+  }
+}
+
+// IPC handler for app-agent highlight events
+ipcMain.on('app-agent:highlight', (event, data) => {
+  if (data.type === 'highlight' && data.elements && data.elements.length > 0) {
+    showGhostLayer();
+    if (ghostLayerWindow && !ghostLayerWindow.isDestroyed()) {
+      ghostLayerWindow.webContents.send('app-agent:highlight', data);
+    }
+  } else if (data.type === 'clear') {
+    hideGhostLayer();
+  }
+});
+
 // Clipboard monitoring functionality
 function startClipboardMonitoring(checkInitial = false) {
   // Polling disabled — tagging is now explicit via Shift+Cmd+C shortcut
@@ -1368,6 +1499,10 @@ app.whenReady().then(async () => {
 
   // Create unified window (combines prompt capture and results)
   createUnifiedWindow();
+
+  // Create GhostLayer window for app.agent visual highlighting (hidden until needed)
+  createGhostLayerWindow();
+  console.log('[GhostLayer] Window created on startup (hidden)');
 
   // Start overlay control HTTP server so command-service skills can hide/show windows before screenshotting
   startOverlayControlServer();

@@ -85,7 +85,7 @@ export function UnifiedOverlay() {
   // --- Prompt Input State ---
   const [promptText, setPromptText] = useState('');
   const [highlights, setHighlights] = useState<string[]>([]);
-  const [isRecording, setIsRecording] = useState(false);
+  const [_isRecording, setIsRecording] = useState(false);
   // Skill panel removed - now in slideout
   const [isSubmitting, setIsSubmitting] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -121,6 +121,11 @@ export function UnifiedOverlay() {
   const [terminalHistory, setTerminalHistory] = useState<string[]>([]);
   const [terminalHistoryIndex, setTerminalHistoryIndex] = useState(-1);
   
+  // --- Highlight Debug State ---
+  const [showHighlightDebug, setShowHighlightDebug] = useState(false);
+  const [highlightQuery, setHighlightQuery] = useState('');
+  const [activeHighlight, setActiveHighlight] = useState<string | null>(null);
+  
   // Ref to AIActivityPanel for executing terminal commands
   const aiActivityPanelRef = useRef<AIActivityPanelHandle>(null);
   
@@ -133,7 +138,7 @@ export function UnifiedOverlay() {
   const [isGlowActive, setIsGlowActive] = useState(false);
 
   // --- AI Activity Panel Status ---
-  const isRunning = isSubmitting || isStreaming || isThinking || isAutomationMode || isInstalling || gatherPending;
+  // const isRunning = isSubmitting || isStreaming || isThinking || isAutomationMode || isInstalling || gatherPending;
   const statusText = isThinking
     ? 'Thinking...'
     : isStreaming
@@ -192,7 +197,7 @@ export function UnifiedOverlay() {
   const [schedulePending, setSchedulePending] = useState<{ id: string; label: string; targetTime: string } | null>(null);
   const [bridgeStatus, setBridgeStatus] = useState<BridgeStatus | null>(null);
   const [isCopied, setIsCopied] = useState(false);
-  const [, setPromptTextHeader] = useState('');
+  // const [, setPromptTextHeader] = useState('');
   const contentRef = useRef<HTMLDivElement>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const scrollBottomRef = useRef<HTMLDivElement>(null);
@@ -631,13 +636,13 @@ export function UnifiedOverlay() {
   };
 
   // --- Voice Recording ---
-  const toggleRecording = () => {
-    if (isRecording) {
-      ipcRenderer?.send('voice:stop-recording');
-    } else {
-      ipcRenderer?.send('voice:start-recording');
-    }
-  };
+  // const toggleRecording = () => {
+  //   if (isRecording) {
+  //     ipcRenderer?.send('voice:stop-recording');
+  //   } else {
+  //     ipcRenderer?.send('voice:start-recording');
+  //   }
+  // };
 
   // --- File Attach ---
   const handleAttachClick = () => {
@@ -2398,6 +2403,7 @@ export function UnifiedOverlay() {
                 <AutomationProgress
                   suppressIfScheduled={isScheduledRun}
                   setIsSubmitting={setIsSubmitting}
+                  activeTab={activeTab}
                   onHeightChange={(automationH: number) => {
                     if (shouldSuppressResize()) return; // Don't resize while user is dragging or resizing the panel
                     const HEADER = 105;
@@ -2942,6 +2948,132 @@ export function UnifiedOverlay() {
             });
           }}
         />
+      )}
+
+      {/* Highlight Debug Button (Dev Mode Only) */}
+      {process.env.NODE_ENV === 'development' && (
+        <>
+          <button
+            onClick={() => {
+              if (activeHighlight) {
+                // Clear highlights
+                fetch('http://localhost:3007/app.agent', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ action: 'clear_highlights' })
+                });
+                setActiveHighlight(null);
+                setShowHighlightDebug(false);
+              } else {
+                setShowHighlightDebug(true);
+              }
+            }}
+            title={activeHighlight ? 'Clear Highlights' : 'Highlight Debug Mode'}
+            style={{
+              position: 'absolute',
+              bottom: 65,
+              left: '50%',
+              transform: 'translateX(-50%)',
+              width: 28,
+              height: 28,
+              borderRadius: 6,
+              border: '1px solid rgba(255,255,255,0.2)',
+              backgroundColor: 'rgba(30,30,30,0.9)',
+              color: '#fff',
+              fontSize: '14px',
+              cursor: 'pointer',
+              zIndex: 1000,
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+            }}
+          >
+            🔍
+          </button>
+
+          {/* Highlight Debug Dialog */}
+          {showHighlightDebug && (
+            <div
+              style={{
+                position: 'absolute',
+                bottom: 105,
+                left: '50%',
+                transform: 'translateX(-50%)',
+                width: 280,
+                padding: 16,
+                borderRadius: 10,
+                backgroundColor: 'rgba(23,23,23,0.98)',
+                border: '1px solid rgba(255,255,255,0.15)',
+                boxShadow: '0 4px 20px rgba(0,0,0,0.5)',
+                zIndex: 1001,
+              }}
+            >
+              <div style={{ fontSize: '0.85rem', color: '#9ca3af', marginBottom: 10 }}>
+                Highlight Debug Mode
+              </div>
+              <input
+                value={highlightQuery}
+                onChange={(e) => setHighlightQuery(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    // Execute highlight
+                    let action, searchText;
+                    if (highlightQuery === 'all') {
+                      action = 'highlight_all';
+                    } else if (highlightQuery === 'boundaries') {
+                      action = 'highlight_boundaries';
+                    } else if (highlightQuery === 'assets') {
+                      action = 'highlight_assets';
+                    } else {
+                      action = 'highlight_search';
+                      searchText = highlightQuery;
+                    }
+
+                    fetch('http://localhost:3007/app.agent', {
+                      method: 'POST',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({ action, searchText, duration: 0 }) // 0 = persistent
+                    });
+
+                    setShowHighlightDebug(false);
+                    setHighlightQuery('');
+                    setActiveHighlight(action);
+                  }
+                  if (e.key === 'Escape') {
+                    setShowHighlightDebug(false);
+                    setHighlightQuery('');
+                    // Also clear highlights on Escape
+                    fetch('http://localhost:3007/app.agent', {
+                      method: 'POST',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({ action: 'clear_highlights' })
+                    });
+                    setActiveHighlight(null);
+                  }
+                }}
+                placeholder="Type: all | boundaries | assets | search"
+                style={{
+                  width: '100%',
+                  padding: '8px 12px',
+                  borderRadius: 6,
+                  border: '1px solid rgba(255,255,255,0.15)',
+                  backgroundColor: 'rgba(0,0,0,0.3)',
+                  color: '#fff',
+                  fontSize: '0.85rem',
+                  marginBottom: 10,
+                  outline: 'none',
+                }}
+                autoFocus
+              />
+              <div style={{ display: 'flex', gap: 8, fontSize: '0.75rem', color: '#6b7280' }}>
+                <span style={{ color: '#4ade80' }}>● all</span>
+                <span style={{ color: '#3b82f6' }}>● boundaries</span>
+                <span style={{ color: '#facc15' }}>● assets</span>
+                <span>or type to search</span>
+              </div>
+            </div>
+          )}
+        </>
       )}
     </div>
   );
