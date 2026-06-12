@@ -1,4 +1,5 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
+import { ThinkDropLogo } from './SlideoutDrawer';
 
 const ipcRenderer = (window as any).electron?.ipcRenderer;
 
@@ -12,7 +13,7 @@ interface HighlightElement {
 }
 
 interface HighlightData {
-  type: 'highlight' | 'clear';
+  type: 'highlight' | 'clear' | 'scanning_start' | 'scanning_complete';
   elements?: HighlightElement[];
   duration?: number;
 }
@@ -32,6 +33,10 @@ interface HighlightData {
 export function GhostLayer() {
   const [highlights, setHighlights] = useState<HighlightElement[]>([]);
   const [isVisible, setIsVisible] = useState(false);
+  const [isScanning, setIsScanning] = useState(false);
+  const [scanTimer, setScanTimer] = useState(0);
+  const scanStartTime = useRef<number | null>(null);
+  const timerInterval = useRef<NodeJS.Timeout | null>(null);
 
   // Listen for highlight events from main process
   useEffect(() => {
@@ -45,10 +50,33 @@ export function GhostLayer() {
 
     const handleHighlight = (data: HighlightData) => {
       console.log('[GhostLayer] IPC event received:', data.type, data.elements?.length, 'elements');
-      if (data.type === 'highlight' && data.elements) {
+      if (data.type === 'scanning_start') {
+        setIsScanning(true);
+        setIsVisible(true);
+        scanStartTime.current = Date.now();
+        
+        // Start timer
+        timerInterval.current = setInterval(() => {
+          if (scanStartTime.current) {
+            const elapsed = (Date.now() - scanStartTime.current) / 1000;
+            setScanTimer(elapsed);
+          }
+        }, 100);
+      } else if (data.type === 'scanning_complete') {
+        setIsScanning(false);
+        if (timerInterval.current) {
+          clearInterval(timerInterval.current);
+          timerInterval.current = null;
+        }
+      } else if (data.type === 'highlight' && data.elements) {
         console.log('[GhostLayer] Setting highlights:', data.elements.length);
         setHighlights(data.elements);
         setIsVisible(true);
+        setIsScanning(false); // Stop scanning when highlights arrive
+        if (timerInterval.current) {
+          clearInterval(timerInterval.current);
+          timerInterval.current = null;
+        }
         console.log('[GhostLayer] isVisible set to true');
 
         // Auto-clear after duration
@@ -61,6 +89,11 @@ export function GhostLayer() {
       } else if (data.type === 'clear') {
         setHighlights([]);
         setIsVisible(false);
+        setIsScanning(false);
+        if (timerInterval.current) {
+          clearInterval(timerInterval.current);
+          timerInterval.current = null;
+        }
       }
     };
 
@@ -69,6 +102,9 @@ export function GhostLayer() {
 
     return () => {
       ipcRenderer.removeListener('app-agent:highlight', handleHighlight);
+      if (timerInterval.current) {
+        clearInterval(timerInterval.current);
+      }
     };
   }, []);
 
@@ -82,10 +118,20 @@ export function GhostLayer() {
     };
 
     window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+      if (timerInterval.current) {
+        clearInterval(timerInterval.current);
+      }
+    };
   }, []);
 
-  console.log('[GhostLayer] Render - isVisible:', isVisible, 'highlights:', highlights.length);
+  console.log('[GhostLayer] Render - isVisible:', isVisible, 'isScanning:', isScanning, 'highlights:', highlights.length);
+
+  // Show scanning overlay with dark background
+  if (isScanning) {
+    return <ScanningOverlay timer={scanTimer} />;
+  }
 
   if (!isVisible || highlights.length === 0) {
     console.log('[GhostLayer] Returning null (not visible or no highlights)');
@@ -207,6 +253,84 @@ function CornerMarker({ x, y, color }: { x: number; y: number; color: string }) 
   );
 }
 
+/**
+ * Scanning overlay with wave animation and timer
+ */
+function ScanningOverlay({ timer }: { timer: number }) {
+  return (
+    <div
+      style={{
+        position: 'fixed',
+        top: 0,
+        left: 0,
+        width: '100vw',
+        height: '100vh',
+        backgroundColor: 'rgba(0, 0, 0, 0.4)',
+        backdropFilter: 'blur(2px)',
+        pointerEvents: 'none',
+        zIndex: 99999,
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        overflow: 'hidden',
+      }}
+    >
+      {/* Wave Scan Animation */}
+      <div
+        style={{
+          position: 'absolute',
+          left: 0,
+          right: 0,
+          height: '4px',
+          background: 'linear-gradient(90deg, transparent, #60a5fa, #3b82f6, #60a5fa, transparent)',
+          boxShadow: '0 0 20px #3b82f6, 0 0 40px #60a5fa',
+          animation: 'scan-wave 2.5s ease-in-out infinite',
+        }}
+      />
+      
+      {/* Timer - Upper Left */}
+      <div
+        style={{
+          position: 'absolute',
+          top: '20px',
+          left: '20px',
+          color: '#60a5fa',
+          fontFamily: 'system-ui, -apple-system, sans-serif',
+          fontSize: '14px',
+          fontWeight: 500,
+          display: 'flex',
+          alignItems: 'center',
+          gap: '8px',
+          textShadow: '0 0 10px rgba(96, 165, 250, 0.5)',
+          background: '#000'
+        }}
+      >
+        <span
+          style={{
+            width: '8px',
+            height: '8px',
+            borderRadius: '50%',
+            backgroundColor: '#60a5fa',
+            animation: 'pulse-dot 1s ease-in-out infinite',
+          }}
+        />
+        Scanning... {timer.toFixed(1)}s
+      </div>
+      
+      {/* Center Logo */}
+      <div
+        style={{
+          opacity: 0.3,
+          animation: 'logo-pulse 2s ease-in-out infinite',
+          filter: 'drop-shadow(0 0 30px rgba(96, 165, 250, 0.6))',
+        }}
+      >
+        <ThinkDropLogo size={120} />
+      </div>
+    </div>
+  );
+}
+
 // CSS animation for fade-in
 const style = document.createElement('style');
 style.textContent = `
@@ -218,6 +342,45 @@ style.textContent = `
     to {
       opacity: 1;
       transform: scale(1);
+    }
+  }
+  
+  @keyframes scan-wave {
+    0% {
+      top: -4px;
+      opacity: 0;
+    }
+    10% {
+      opacity: 1;
+    }
+    90% {
+      opacity: 1;
+    }
+    100% {
+      top: 100vh;
+      opacity: 0;
+    }
+  }
+  
+  @keyframes pulse-dot {
+    0%, 100% {
+      transform: scale(1);
+      opacity: 1;
+    }
+    50% {
+      transform: scale(0.6);
+      opacity: 0.6;
+    }
+  }
+  
+  @keyframes logo-pulse {
+    0%, 100% {
+      transform: scale(1);
+      opacity: 0.3;
+    }
+    50% {
+      transform: scale(1.05);
+      opacity: 0.4;
     }
   }
 `;

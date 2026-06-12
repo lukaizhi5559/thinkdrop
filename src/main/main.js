@@ -672,6 +672,33 @@ function startOverlayControlServer() {
         try {
           const data = JSON.parse(body || '{}');
           console.log('[Overlay] Highlight data received:', data.type, data.elements?.length, 'elements');
+          
+          // Handle scanning animation events
+          if (data.type === 'scanning_start') {
+            showGhostLayer();
+            if (ghostLayerWindow && !ghostLayerWindow.isDestroyed()) {
+              console.log('[Overlay] Sending scanning_start to GhostLayer');
+              ghostLayerWindow.webContents.send('app-agent:highlight', { 
+                type: 'scanning_start',
+                duration: 0 
+              });
+            }
+            res.writeHead(200).end(JSON.stringify({ ok: true, action: 'scanning_started' }));
+            return;
+          }
+          
+          if (data.type === 'scanning_complete') {
+            if (ghostLayerWindow && !ghostLayerWindow.isDestroyed()) {
+              console.log('[Overlay] Sending scanning_complete to GhostLayer');
+              ghostLayerWindow.webContents.send('app-agent:highlight', { 
+                type: 'scanning_complete',
+                duration: 0 
+              });
+            }
+            res.writeHead(200).end(JSON.stringify({ ok: true, action: 'scanning_complete' }));
+            return;
+          }
+          
           if (data.type === 'highlight' && data.elements && data.elements.length > 0) {
             showGhostLayer();
             if (ghostLayerWindow && !ghostLayerWindow.isDestroyed()) {
@@ -1322,8 +1349,10 @@ function createGhostLayerWindow() {
     ghostLayerWindow.setWindowButtonVisibility(false);
     ghostLayerWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
     ghostLayerWindow.setAlwaysOnTop(true, 'floating', 6); // Higher than unifiedWindow
-    ghostLayerWindow.setIgnoreMouseEvents(true); // Click-through
   }
+  
+  // Enable click-through for all platforms (user can interact with app during scan)
+  ghostLayerWindow.setIgnoreMouseEvents(true);
 
   const isDev = process.env.NODE_ENV === 'development';
   if (isDev) {
@@ -1345,17 +1374,24 @@ function createGhostLayerWindow() {
   return ghostLayerWindow;
 }
 
-function showGhostLayer() {
-  console.log('[GhostLayer] showGhostLayer called');
+function showGhostLayer(scanningMode = false) {
+  console.log('[GhostLayer] showGhostLayer called, scanningMode:', scanningMode);
   if (!ghostLayerWindow || ghostLayerWindow.isDestroyed()) {
     console.log('[GhostLayer] Creating new window...');
     createGhostLayerWindow();
   }
   if (ghostLayerWindow) {
-    console.log('[GhostLayer] Showing window...');
-    ghostLayerWindow.showInactive();
-    ghostLayerWindow.setOpacity(1);
-    console.log('[GhostLayer] Window should be visible now');
+    if (scanningMode) {
+      // During scanning: hide window so user can interact with app
+      console.log('[GhostLayer] Scanning mode - hiding window');
+      ghostLayerWindow.hide();
+    } else {
+      // Normal mode: show window with highlights
+      console.log('[GhostLayer] Showing window...');
+      ghostLayerWindow.showInactive();
+      ghostLayerWindow.setOpacity(1);
+      console.log('[GhostLayer] Window should be visible now');
+    }
   }
 }
 
@@ -1367,13 +1403,21 @@ function hideGhostLayer() {
 
 // IPC handler for app-agent highlight events
 ipcMain.on('app-agent:highlight', (event, data) => {
-  if (data.type === 'highlight' && data.elements && data.elements.length > 0) {
-    showGhostLayer();
-    if (ghostLayerWindow && !ghostLayerWindow.isDestroyed()) {
-      ghostLayerWindow.webContents.send('app-agent:highlight', data);
-    }
-  } else if (data.type === 'clear') {
+  console.log('[Main] app-agent:highlight received:', data.type);
+  
+  if (data.type === 'scanning_start') {
+    // Hide window during scanning (click-through still works via setIgnoreMouseEvents)
+    showGhostLayer(true); // scanningMode = true
+  } else if (data.type === 'highlight' && data.elements && data.elements.length > 0) {
+    // Show window when highlights arrive
+    showGhostLayer(false); // scanningMode = false
+  } else if (data.type === 'clear' || data.type === 'scanning_complete') {
     hideGhostLayer();
+  }
+  
+  // Forward to renderer regardless of window visibility
+  if (ghostLayerWindow && !ghostLayerWindow.isDestroyed()) {
+    ghostLayerWindow.webContents.send('app-agent:highlight', data);
   }
 });
 
