@@ -675,6 +675,12 @@ function startOverlayControlServer() {
           
           // Handle scanning animation events
           if (data.type === 'scanning_start') {
+            // Hide UnifiedOverlay during scan so it doesn't appear in screenshots
+            if (unifiedWindow && !unifiedWindow.isDestroyed() && unifiedWindow.isVisible()) {
+              console.log('[Overlay] Hiding unifiedWindow during scanning');
+              unifiedWindow.hide();
+            }
+            
             showGhostLayer();
             if (ghostLayerWindow && !ghostLayerWindow.isDestroyed()) {
               console.log('[Overlay] Sending scanning_start to GhostLayer');
@@ -688,6 +694,12 @@ function startOverlayControlServer() {
           }
           
           if (data.type === 'scanning_complete') {
+            // Restore UnifiedOverlay after scanning
+            if (unifiedWindow && !unifiedWindow.isDestroyed() && !unifiedWindow.isVisible()) {
+              console.log('[Overlay] Restoring unifiedWindow after scanning');
+              unifiedWindow.showInactive();
+            }
+            
             if (ghostLayerWindow && !ghostLayerWindow.isDestroyed()) {
               console.log('[Overlay] Sending scanning_complete to GhostLayer');
               ghostLayerWindow.webContents.send('app-agent:highlight', { 
@@ -700,6 +712,12 @@ function startOverlayControlServer() {
           }
           
           if (data.type === 'highlight' && data.elements && data.elements.length > 0) {
+            // Restore UnifiedOverlay when showing results
+            if (unifiedWindow && !unifiedWindow.isDestroyed() && !unifiedWindow.isVisible()) {
+              console.log('[Overlay] Restoring unifiedWindow for highlight results');
+              unifiedWindow.showInactive();
+            }
+            
             showGhostLayer();
             if (ghostLayerWindow && !ghostLayerWindow.isDestroyed()) {
               console.log('[Overlay] Sending IPC to GhostLayer');
@@ -1317,7 +1335,10 @@ let ghostLayerWindow = null;
 
 function createGhostLayerWindow() {
   const primaryDisplay = screen.getPrimaryDisplay();
-  const { width: screenWidth, height: screenHeight } = primaryDisplay.workAreaSize;
+  // Use bounds for full screen coverage including menu bar area
+  const { width: screenWidth, height: screenHeight } = primaryDisplay.bounds;
+  
+  console.log(`[GhostLayer] Creating window: ${screenWidth}x${screenHeight}`);
 
   ghostLayerWindow = new BrowserWindow({
     width: screenWidth,
@@ -1336,7 +1357,6 @@ function createGhostLayerWindow() {
     hasShadow: false,
     show: false,
     focusable: false,
-    ...(process.platform === 'darwin' ? { type: 'panel' } : {}),
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,
@@ -1345,10 +1365,21 @@ function createGhostLayerWindow() {
     },
   });
 
+  // Ensure window covers full screen including menu bar
+  ghostLayerWindow.setBounds({
+    x: 0,
+    y: 0,
+    width: screenWidth,
+    height: screenHeight
+  });
+  console.log(`[GhostLayer] Window bounds set: ${screenWidth}x${screenHeight} at (0,0)`);
+
   if (process.platform === 'darwin') {
     ghostLayerWindow.setWindowButtonVisibility(false);
     ghostLayerWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
-    ghostLayerWindow.setAlwaysOnTop(true, 'floating', 6); // Higher than unifiedWindow
+    // Use simple fullscreen to cover menu bar and notch area
+    ghostLayerWindow.setSimpleFullScreen(true);
+    console.log('[GhostLayer] macOS simple fullscreen enabled for full coverage');
   }
   
   // Enable click-through for all platforms (user can interact with app during scan)
@@ -1381,6 +1412,27 @@ function showGhostLayer(scanningMode = false) {
     createGhostLayerWindow();
   }
   if (ghostLayerWindow) {
+    // Always ensure window matches current screen size
+    const primaryDisplay = screen.getPrimaryDisplay();
+    console.log('[GhostLayer] Display info:', {
+      bounds: primaryDisplay.bounds,
+      workArea: primaryDisplay.workArea,
+      size: primaryDisplay.size
+    });
+    const { width: screenWidth, height: screenHeight } = primaryDisplay.bounds;
+    const currentBounds = ghostLayerWindow.getBounds();
+    
+    // Resize if dimensions don't match
+    if (currentBounds.width !== screenWidth || currentBounds.height !== screenHeight) {
+      console.log(`[GhostLayer] Resizing window: ${currentBounds.width}x${currentBounds.height} → ${screenWidth}x${screenHeight}`);
+      ghostLayerWindow.setBounds({
+        x: 0,
+        y: 0,
+        width: screenWidth,
+        height: screenHeight
+      });
+    }
+    
     if (scanningMode) {
       // During scanning: hide window so user can interact with app
       console.log('[GhostLayer] Scanning mode - hiding window');
@@ -1406,12 +1458,22 @@ ipcMain.on('app-agent:highlight', (event, data) => {
   console.log('[Main] app-agent:highlight received:', data.type);
   
   if (data.type === 'scanning_start') {
-    // Hide window during scanning (click-through still works via setIgnoreMouseEvents)
-    showGhostLayer(true); // scanningMode = true
+    // Hide UnifiedOverlay during scanning so it doesn't appear in screenshots
+    if (unifiedWindow && !unifiedWindow.isDestroyed() && unifiedWindow.isVisible()) {
+      unifiedWindow.hide();
+    }
+    showGhostLayer();
   } else if (data.type === 'highlight' && data.elements && data.elements.length > 0) {
-    // Show window when highlights arrive
-    showGhostLayer(false); // scanningMode = false
+    // Restore UnifiedOverlay when showing results
+    if (unifiedWindow && !unifiedWindow.isDestroyed() && !unifiedWindow.isVisible()) {
+      unifiedWindow.showInactive();
+    }
+    showGhostLayer();
   } else if (data.type === 'clear' || data.type === 'scanning_complete') {
+    // Restore UnifiedOverlay
+    if (unifiedWindow && !unifiedWindow.isDestroyed() && !unifiedWindow.isVisible()) {
+      unifiedWindow.showInactive();
+    }
     hideGhostLayer();
   }
   

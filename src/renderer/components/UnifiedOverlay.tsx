@@ -2965,13 +2965,13 @@ export function UnifiedOverlay() {
                 setActiveHighlight(null);
                 setShowHighlightDebug(false);
               } else {
-                setShowHighlightDebug(true);
+                setShowHighlightDebug(preHighlightDebug => !preHighlightDebug);
               }
             }}
             title={activeHighlight ? 'Clear Highlights' : 'Highlight Debug Mode'}
             style={{
               position: 'absolute',
-              bottom: 65,
+              bottom: 15,
               left: '50%',
               transform: 'translateX(-50%)',
               width: 28,

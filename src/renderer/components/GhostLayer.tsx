@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { ThinkDropLogo } from './SlideoutDrawer';
 
 const ipcRenderer = (window as any).electron?.ipcRenderer;
@@ -30,13 +30,16 @@ interface HighlightData {
  * - Auto-clear after duration
  * - IPC communication with main process
  */
-export function GhostLayer() {
+function GhostLayer() {
   const [highlights, setHighlights] = useState<HighlightElement[]>([]);
   const [isVisible, setIsVisible] = useState(false);
   const [isScanning, setIsScanning] = useState(false);
   const [scanTimer, setScanTimer] = useState(0);
   const scanStartTime = useRef<number | null>(null);
   const timerInterval = useRef<NodeJS.Timeout | null>(null);
+
+  // Track previous state for conditional logging
+  const prevState = useRef({ highlights: 0, isVisible: false, isScanning: false });
 
   // Listen for highlight events from main process
   useEffect(() => {
@@ -126,7 +129,18 @@ export function GhostLayer() {
     };
   }, []);
 
-  console.log('[GhostLayer] Render - isVisible:', isVisible, 'isScanning:', isScanning, 'highlights:', highlights.length);
+  // Only log when state meaningfully changes
+  useEffect(() => {
+    const stateChanged = 
+      highlights.length !== prevState.current.highlights ||
+      isVisible !== prevState.current.isVisible ||
+      isScanning !== prevState.current.isScanning;
+    
+    if (stateChanged) {
+      console.log('[GhostLayer] State change - isVisible:', isVisible, 'isScanning:', isScanning, 'highlights:', highlights.length);
+      prevState.current = { highlights: highlights.length, isVisible, isScanning };
+    }
+  }, [isVisible, isScanning, highlights.length]);
 
   // Show scanning overlay with dark background
   if (isScanning) {
@@ -134,11 +148,8 @@ export function GhostLayer() {
   }
 
   if (!isVisible || highlights.length === 0) {
-    console.log('[GhostLayer] Returning null (not visible or no highlights)');
     return null;
   }
-
-  console.log('[GhostLayer] Rendering', highlights.length, 'bounding boxes');
 
   return (
     <div
@@ -294,6 +305,7 @@ function ScanningOverlay({ timer }: { timer: number }) {
           position: 'absolute',
           top: '20px',
           left: '20px',
+          padding: '10px',
           color: '#60a5fa',
           fontFamily: 'system-ui, -apple-system, sans-serif',
           fontSize: '14px',
@@ -302,7 +314,8 @@ function ScanningOverlay({ timer }: { timer: number }) {
           alignItems: 'center',
           gap: '8px',
           textShadow: '0 0 10px rgba(96, 165, 250, 0.5)',
-          background: '#000'
+          background: '#000',
+          borderRadius: '10px',
         }}
       >
         <span
@@ -331,59 +344,64 @@ function ScanningOverlay({ timer }: { timer: number }) {
   );
 }
 
-// CSS animation for fade-in
-const style = document.createElement('style');
-style.textContent = `
-  @keyframes ghostlayer-fade-in {
-    from {
-      opacity: 0;
-      transform: scale(0.98);
+// CSS animation for fade-in - wrapped to prevent duplicates on HMR
+if (!document.getElementById('ghostlayer-styles')) {
+  const style = document.createElement('style');
+  style.id = 'ghostlayer-styles';
+  style.textContent = `
+    @keyframes ghostlayer-fade-in {
+      from {
+        opacity: 0;
+        transform: scale(0.98);
+      }
+      to {
+        opacity: 1;
+        transform: scale(1);
+      }
     }
-    to {
-      opacity: 1;
-      transform: scale(1);
+    
+    @keyframes scan-wave {
+      0% {
+        top: -4px;
+        opacity: 0;
+      }
+      10% {
+        opacity: 1;
+      }
+      90% {
+        opacity: 1;
+      }
+      100% {
+        top: 100vh;
+        opacity: 0;
+      }
     }
-  }
-  
-  @keyframes scan-wave {
-    0% {
-      top: -4px;
-      opacity: 0;
+    
+    @keyframes pulse-dot {
+      0%, 100% {
+        transform: scale(1);
+        opacity: 1;
+      }
+      50% {
+        transform: scale(0.6);
+        opacity: 0.6;
+      }
     }
-    10% {
-      opacity: 1;
+    
+    @keyframes logo-pulse {
+      0%, 100% {
+        transform: scale(1);
+        opacity: 0.3;
+      }
+      50% {
+        transform: scale(1.05);
+        opacity: 0.4;
+      }
     }
-    90% {
-      opacity: 1;
-    }
-    100% {
-      top: 100vh;
-      opacity: 0;
-    }
-  }
-  
-  @keyframes pulse-dot {
-    0%, 100% {
-      transform: scale(1);
-      opacity: 1;
-    }
-    50% {
-      transform: scale(0.6);
-      opacity: 0.6;
-    }
-  }
-  
-  @keyframes logo-pulse {
-    0%, 100% {
-      transform: scale(1);
-      opacity: 0.3;
-    }
-    50% {
-      transform: scale(1.05);
-      opacity: 0.4;
-    }
-  }
-`;
-document.head.appendChild(style);
+  `;
+  document.head.appendChild(style);
+}
 
-export default GhostLayer;
+const GhostLayerMemo = React.memo(GhostLayer);
+export default GhostLayerMemo;
+export { GhostLayerMemo as GhostLayer };
