@@ -3,6 +3,9 @@ import { ThinkDropLogo } from './SlideoutDrawer';
 
 const ipcRenderer = (window as any).electron?.ipcRenderer;
 
+type AnimState = 'enter' | 'pulse' | 'active' | 'exit';
+type HighlightRole = 'panel' | 'scroll_active';
+
 interface HighlightElement {
   x: number;
   y: number;
@@ -10,13 +13,21 @@ interface HighlightElement {
   height: number;
   label?: string;
   color?: string;
+  role?: HighlightRole;
+  animState?: AnimState;
+  id?: number;
 }
 
 interface HighlightData {
-  type: 'highlight' | 'clear' | 'scanning_start' | 'scanning_complete';
+  type: 'highlight' | 'clear' | 'scanning_start' | 'scanning_complete' | 'highlight_update';
   elements?: HighlightElement[];
   duration?: number;
+  cx?: number;
+  cy?: number;
+  role?: HighlightRole;
 }
+
+let _highlightIdCounter = 0;
 
 /**
  * GhostLayer - Transparent overlay for visual UI element highlighting
@@ -40,6 +51,17 @@ function GhostLayer() {
 
   // Track previous state for conditional logging
   const prevState = useRef({ highlights: 0, isVisible: false, isScanning: false });
+
+  // Auto-clear when all highlights have exited
+  useEffect(() => {
+    if (highlights.length > 0 && highlights.every(h => h.animState === 'exit')) {
+      const t = setTimeout(() => {
+        setHighlights([]);
+        setIsVisible(false);
+      }, 800);
+      return () => clearTimeout(t);
+    }
+  }, [highlights]);
 
   // Listen for highlight events from main process
   useEffect(() => {
@@ -73,22 +95,34 @@ function GhostLayer() {
         }
       } else if (data.type === 'highlight' && data.elements) {
         console.log('[GhostLayer] Setting highlights:', data.elements.length);
-        setHighlights(data.elements);
+        const stamped = data.elements.map(el => ({
+          ...el,
+          id: ++_highlightIdCounter,
+          role: (el.role || 'panel') as HighlightRole,
+          animState: 'enter' as AnimState,
+        }));
+        setHighlights(stamped);
         setIsVisible(true);
-        setIsScanning(false); // Stop scanning when highlights arrive
+        setIsScanning(false);
         if (timerInterval.current) {
           clearInterval(timerInterval.current);
           timerInterval.current = null;
         }
         console.log('[GhostLayer] isVisible set to true');
-
-        // Auto-clear after duration
-        if (data.duration && data.duration > 0) {
-          setTimeout(() => {
-            setHighlights([]);
-            setIsVisible(false);
-          }, data.duration);
-        }
+      } else if (data.type === 'highlight_update' && data.cx != null && data.cy != null) {
+        // Confirmed scroll region: turn green + active; dismiss others
+        setHighlights(prev => prev.map(h => {
+          const centerX = h.x + h.width / 2;
+          const centerY = h.y + h.height / 2;
+          const dist = Math.hypot(centerX - data.cx!, centerY - data.cy!);
+          const isMatch = dist < Math.max(h.width, h.height) / 2 + 20;
+          return {
+            ...h,
+            role: isMatch ? ('scroll_active' as HighlightRole) : h.role,
+            color: isMatch ? '#00ff00' : h.color,
+            animState: isMatch ? ('active' as AnimState) : ('exit' as AnimState),
+          };
+        }));
       } else if (data.type === 'clear') {
         setHighlights([]);
         setIsVisible(false);
@@ -166,9 +200,14 @@ function GhostLayer() {
     >
       {highlights.map((element, index) => (
         <BoundingBox
-          key={index}
+          key={element.id ?? index}
           element={element}
           index={index}
+          onExited={() => {
+            setHighlights(prev => prev.map(h =>
+              h.id === element.id ? { ...h, animState: 'exit' as AnimState } : h
+            ));
+          }}
         />
       ))}
     </div>
@@ -176,10 +215,41 @@ function GhostLayer() {
 }
 
 /**
- * Individual bounding box with label
+ * Individual bounding box with label and lifecycle animation
  */
-function BoundingBox({ element, index }: { element: HighlightElement; index: number }) {
-  const { x, y, width, height, label, color = '#00ff00' } = element;
+function BoundingBox({ element, index, onExited }: { element: HighlightElement; index: number; onExited: () => void }) {
+  const { x, y, width, height, label, color = '#00aaff', role = 'panel', animState = 'enter' } = element;
+  const [localAnim, setLocalAnim] = useState<AnimState>(animState);
+  const timerRef = useRef<NodeJS.Timeout | null>(null);
+
+  useEffect(() => {
+    setLocalAnim(animState);
+  }, [animState]);
+
+  useEffect(() => {
+    if (timerRef.current) clearTimeout(timerRef.current);
+    if (localAnim === 'enter') {
+      // After enter animation, transition to pulse
+      timerRef.current = setTimeout(() => setLocalAnim('pulse'), 300);
+    } else if (localAnim === 'pulse' && role === 'panel') {
+      // Non-scroll panels: pulse longer so user can see boundaries, then fade out after ~7s
+      timerRef.current = setTimeout(() => setLocalAnim('exit'), 7000);
+    } else if (localAnim === 'active') {
+      // Confirmed scroll region: pulse green for 12s then exit
+      timerRef.current = setTimeout(() => setLocalAnim('exit'), 12000);
+    } else if (localAnim === 'exit') {
+      // After exit animation completes, notify parent
+      timerRef.current = setTimeout(() => onExited(), 700);
+    }
+    return () => { if (timerRef.current) clearTimeout(timerRef.current); };
+  }, [localAnim, role]);
+
+  const animation = localAnim === 'enter' ? 'ghostlayer-fade-in 0.3s ease-out forwards'
+    : localAnim === 'pulse' ? 'ghostlayer-pulse 1.5s ease-in-out 3'
+    : localAnim === 'active' ? 'ghostlayer-pulse-active 1.5s ease-in-out infinite'
+    : 'ghostlayer-fade-out 0.7s ease-in forwards';
+
+  const opacity = localAnim === 'exit' ? 0 : 1;
 
   return (
     <div
@@ -193,7 +263,8 @@ function BoundingBox({ element, index }: { element: HighlightElement; index: num
         borderRadius: '2px',
         boxShadow: `0 0 4px ${color}`,
         pointerEvents: 'none',
-        animation: 'ghostlayer-fade-in 0.2s ease-out',
+        animation,
+        opacity,
       }}
     >
       {/* Label */}
@@ -344,7 +415,7 @@ function ScanningOverlay({ timer }: { timer: number }) {
   );
 }
 
-// CSS animation for fade-in - wrapped to prevent duplicates on HMR
+// CSS animations - wrapped to prevent duplicates on HMR
 if (!document.getElementById('ghostlayer-styles')) {
   const style = document.createElement('style');
   style.id = 'ghostlayer-styles';
@@ -358,6 +429,21 @@ if (!document.getElementById('ghostlayer-styles')) {
         opacity: 1;
         transform: scale(1);
       }
+    }
+
+    @keyframes ghostlayer-fade-out {
+      from { opacity: 1; transform: scale(1); }
+      to   { opacity: 0; transform: scale(0.97); }
+    }
+
+    @keyframes ghostlayer-pulse {
+      0%, 100% { opacity: 1;   box-shadow: 0 0 4px currentColor; }
+      50%       { opacity: 0.5; box-shadow: 0 0 12px currentColor; }
+    }
+
+    @keyframes ghostlayer-pulse-active {
+      0%, 100% { opacity: 1;   box-shadow: 0 0 8px #00ff00, 0 0 20px rgba(0,255,0,0.4); }
+      50%       { opacity: 0.8; box-shadow: 0 0 16px #00ff00, 0 0 40px rgba(0,255,0,0.6); }
     }
     
     @keyframes scan-wave {

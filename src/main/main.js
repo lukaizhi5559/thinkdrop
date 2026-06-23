@@ -726,6 +726,12 @@ function startOverlayControlServer() {
               console.log('[Overlay] ERROR: GhostLayer window not available');
             }
             res.writeHead(200).end(JSON.stringify({ ok: true, highlighted: data.elements.length }));
+          } else if (data.type === 'highlight_update') {
+            // Notify GhostLayer which region is the confirmed scroll target
+            if (ghostLayerWindow && !ghostLayerWindow.isDestroyed()) {
+              ghostLayerWindow.webContents.send('app-agent:highlight', data);
+            }
+            res.writeHead(200).end(JSON.stringify({ ok: true, action: 'highlight_update' }));
           } else if (data.type === 'clear') {
             // Send clear message to GhostLayer for state cleanup
             if (ghostLayerWindow && !ghostLayerWindow.isDestroyed()) {
@@ -744,7 +750,7 @@ function startOverlayControlServer() {
       return;
     }
 
-    const windows = [promptCaptureWindow, resultsWindow];
+    const windows = [unifiedWindow];
 
     if (hide) {
       // Save visibility state BEFORE hiding
