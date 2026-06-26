@@ -19,12 +19,26 @@ interface HighlightElement {
 }
 
 interface HighlightData {
-  type: 'highlight' | 'clear' | 'scanning_start' | 'scanning_complete' | 'highlight_update';
+  type: 'highlight' | 'clear' | 'scanning_start' | 'scanning_complete' | 'highlight_update'
+    | 'progress_drop' | 'capture_begin' | 'capture_end' | 'progress_clear'
+    | 'boundary_set' | 'boundary_clear';
   elements?: HighlightElement[];
   duration?: number;
   cx?: number;
   cy?: number;
   role?: HighlightRole;
+  // progress_drop fields
+  label?: string;
+  stepNum?: number | null;
+  totalSteps?: number | null;
+  // boundary_set fields (persistent app-window border for the whole plan)
+  element?: HighlightElement;
+}
+
+interface ProgressDropState {
+  label: string;
+  stepNum?: number | null;
+  totalSteps?: number | null;
 }
 
 let _highlightIdCounter = 0;
@@ -48,6 +62,19 @@ function GhostLayer() {
   const [scanTimer, setScanTimer] = useState(0);
   const scanStartTime = useRef<number | null>(null);
   const timerInterval = useRef<NodeJS.Timeout | null>(null);
+
+  // Progress "drop" — a ThinkDrop-styled bubble shown during capture-heavy
+  // app.agent steps in place of the (OCR-tainting) main panel. It fades out
+  // during each screenshot (capture_begin) and back in afterwards (capture_end).
+  const [drop, setDrop] = useState<ProgressDropState | null>(null);
+  const [dropVisible, setDropVisible] = useState(false);
+  const captureReadyTimer = useRef<NodeJS.Timeout | null>(null);
+
+  // Persistent app-window boundary owned by the drop session (main.js). Unlike
+  // BoundingBox highlights (which auto-exit after ~7s), this border stays up for
+  // the entire plan and only dims during each screenshot (capture_begin) so it
+  // never taints OCR, then restores (capture_end). Cleared on the terminal event.
+  const [boundary, setBoundary] = useState<HighlightElement | null>(null);
 
   // Track previous state for conditional logging
   const prevState = useRef({ highlights: 0, isVisible: false, isScanning: false });
@@ -123,6 +150,45 @@ function GhostLayer() {
             animState: isMatch ? ('active' as AnimState) : ('exit' as AnimState),
           };
         }));
+      } else if (data.type === 'progress_drop') {
+        // Show / update the ThinkDrop progress drop for a capture-heavy step.
+        setDrop({
+          label: data.label || 'Working…',
+          stepNum: data.stepNum ?? null,
+          totalSteps: data.totalSteps ?? null,
+        });
+        setDropVisible(true);
+      } else if (data.type === 'capture_begin') {
+        // Fade the drop out, then signal the main process that the screenshot
+        // can fire (the drop is now invisible → clean OCR). The opacity
+        // transition is 0.4s; we send ready just after it completes. The main
+        // process also has its own timeout fallback.
+        setDropVisible(false);
+        if (captureReadyTimer.current) clearTimeout(captureReadyTimer.current);
+        captureReadyTimer.current = setTimeout(() => {
+          ipcRenderer?.send('ghostlayer:capture-ready');
+        }, 420);
+      } else if (data.type === 'capture_end') {
+        // Screenshot done — fade the drop back in.
+        if (captureReadyTimer.current) {
+          clearTimeout(captureReadyTimer.current);
+          captureReadyTimer.current = null;
+        }
+        setDropVisible(true);
+      } else if (data.type === 'boundary_set' && data.element) {
+        // Persistent app-window border for the whole plan (drop-session owned).
+        setBoundary(data.element);
+        setDropVisible(true);
+      } else if (data.type === 'boundary_clear') {
+        setBoundary(null);
+      } else if (data.type === 'progress_clear') {
+        if (captureReadyTimer.current) {
+          clearTimeout(captureReadyTimer.current);
+          captureReadyTimer.current = null;
+        }
+        setDrop(null);
+        setDropVisible(false);
+        setBoundary(null);
       } else if (data.type === 'clear') {
         setHighlights([]);
         setIsVisible(false);
@@ -181,8 +247,16 @@ function GhostLayer() {
     return <ScanningOverlay timer={scanTimer} />;
   }
 
+  // The progress drop renders independently of bounding-box highlights — it is
+  // shown during capture-heavy app.agent steps (monitoring, etc.) where there
+  // are no element highlights, only step progress.
+  const dropNode = drop ? <ProgressDrop drop={drop} visible={dropVisible} /> : null;
+  // Persistent session boundary — fades with the drop (dropVisible) so it dims
+  // during each screenshot and never taints OCR, then restores.
+  const boundaryNode = boundary ? <PersistentBoundary element={boundary} visible={dropVisible} /> : null;
+
   if (!isVisible || highlights.length === 0) {
-    return null;
+    return (dropNode || boundaryNode) ? <>{boundaryNode}{dropNode}</> : null;
   }
 
   return (
@@ -198,6 +272,8 @@ function GhostLayer() {
         backgroundColor: 'transparent',
       }}
     >
+      {boundaryNode}
+      {dropNode}
       {highlights.map((element, index) => (
         <BoundingBox
           key={element.id ?? index}
@@ -332,6 +408,131 @@ function CornerMarker({ x, y, color }: { x: number; y: number; color: string }) 
         borderRadius: '1px',
       }}
     />
+  );
+}
+
+/**
+ * ProgressDrop — a ThinkDrop-styled progress bubble shown during capture-heavy
+ * app.agent steps in place of the main panel. Fades via an opacity transition;
+ * `visible=false` (set on capture_begin) drives it to opacity 0 so the
+ * screenshot is taken with nothing of ours on screen.
+ */
+function ProgressDrop({ drop, visible }: { drop: ProgressDropState; visible: boolean }) {
+  const stepText = drop.stepNum && drop.totalSteps ? `${drop.stepNum}/${drop.totalSteps}` : null;
+  return (
+    <div
+      style={{
+        position: 'fixed',
+        top: 24,
+        left: '50%',
+        transform: 'translateX(-50%)',
+        zIndex: 100000,
+        pointerEvents: 'none',
+        display: 'flex',
+        alignItems: 'center',
+        gap: 10,
+        padding: '9px 16px',
+        borderRadius: 9999,
+        background: 'rgba(10,14,22,0.82)',
+        backdropFilter: 'blur(8px)',
+        WebkitBackdropFilter: 'blur(8px)',
+        border: '1px solid rgba(96,165,250,0.35)',
+        boxShadow: '0 6px 24px rgba(0,0,0,0.35), 0 0 16px rgba(96,165,250,0.22)',
+        color: '#e5e7eb',
+        fontFamily: 'system-ui, -apple-system, sans-serif',
+        opacity: visible ? 1 : 0,
+        transition: 'opacity 0.4s ease',
+      }}
+    >
+      <span style={{ display: 'flex', animation: 'td-drop-bob 2.4s ease-in-out infinite' }}>
+        <ThinkDropLogo size={20} />
+      </span>
+      {stepText && (
+        <span style={{ fontSize: 11, fontWeight: 700, color: '#93c5fd', opacity: 0.85 }}>
+          {stepText}
+        </span>
+      )}
+      <span
+        style={{
+          fontSize: 13,
+          fontWeight: 600,
+          maxWidth: 360,
+          whiteSpace: 'nowrap',
+          overflow: 'hidden',
+          textOverflow: 'ellipsis',
+        }}
+      >
+        {drop.label}
+      </span>
+      <span
+        style={{
+          width: 14,
+          height: 14,
+          flexShrink: 0,
+          borderRadius: '50%',
+          border: '2px solid #3b82f6',
+          borderTopColor: 'transparent',
+          animation: 'td-drop-spin 0.8s linear infinite',
+        }}
+      />
+    </div>
+  );
+}
+
+/**
+ * PersistentBoundary — a session-owned border drawn around the target app window
+ * for the entire app.agent plan. Unlike BoundingBox (auto-exits ~7s), this stays
+ * until the terminal event clears it. Its opacity follows `visible` so it dims
+ * during each screenshot (capture_begin → visible=false) and never taints OCR,
+ * then restores afterwards (capture_end → visible=true).
+ */
+function PersistentBoundary({ element, visible }: { element: HighlightElement; visible: boolean }) {
+  const { x, y, width, height, label, color = '#ffaa00' } = element;
+  return (
+    <div
+      style={{
+        position: 'fixed',
+        left: x,
+        top: y,
+        width,
+        height,
+        border: `2px solid ${color}`,
+        borderRadius: '4px',
+        boxShadow: `0 0 6px ${color}`,
+        pointerEvents: 'none',
+        zIndex: 99998,
+        opacity: visible ? 1 : 0,
+        transition: 'opacity 0.4s ease',
+      }}
+    >
+      {label && (
+        <div
+          style={{
+            position: 'absolute',
+            top: -20,
+            left: 0,
+            backgroundColor: color,
+            color: '#000',
+            padding: '2px 6px',
+            borderRadius: '2px',
+            fontSize: '11px',
+            fontFamily: 'system-ui, -apple-system, sans-serif',
+            fontWeight: 600,
+            whiteSpace: 'nowrap',
+            overflow: 'hidden',
+            textOverflow: 'ellipsis',
+            maxWidth: '240px',
+            boxShadow: '0 1px 2px rgba(0,0,0,0.3)',
+          }}
+        >
+          {label}
+        </div>
+      )}
+      <CornerMarker x={0} y={0} color={color} />
+      <CornerMarker x={width - 6} y={0} color={color} />
+      <CornerMarker x={0} y={height - 6} color={color} />
+      <CornerMarker x={width - 6} y={height - 6} color={color} />
+    </div>
   );
 }
 
@@ -483,6 +684,15 @@ if (!document.getElementById('ghostlayer-styles')) {
         transform: scale(1.05);
         opacity: 0.4;
       }
+    }
+
+    @keyframes td-drop-spin {
+      to { transform: rotate(360deg); }
+    }
+
+    @keyframes td-drop-bob {
+      0%, 100% { transform: translateY(0); }
+      50%       { transform: translateY(-2px); }
     }
   `;
   document.head.appendChild(style);

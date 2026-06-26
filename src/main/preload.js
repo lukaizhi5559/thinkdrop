@@ -107,6 +107,7 @@ contextBridge.exposeInMainWorld('electron', {
         'operation:cancel',
         'operation:status',
         'app-agent:highlight',
+        'ghostlayer:capture-ready',
       ];
       if (validChannels.includes(channel)) {
         ipcRenderer.send(channel, data);

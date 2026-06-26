@@ -40,6 +40,114 @@ function safeSendUnified(channel, ...args) {
   if (unifiedWindow && !unifiedWindow.isDestroyed()) {
     try { unifiedWindow.webContents.send(channel, ...args); } catch (_) {}
   }
+  // Drive the GhostLayer progress "drop" + panel lifecycle off the same events.
+  if (channel === 'automation:progress') {
+    try { driveProgressDrop(args[0]); } catch (_) {}
+  }
+}
+
+// ---------------------------------------------------------------------------
+// GhostLayer progress "drop" lifecycle
+// During capture-heavy app.agent steps the main panel (unifiedWindow) is hidden
+// — it taints OCR — and a lightweight ThinkDrop "drop" is shown in the
+// transparent GhostLayer instead. Screenshots fire during the drop's invisible
+// fade-out window (see the capture handshake on the overlay control server).
+// ---------------------------------------------------------------------------
+
+// Resolver for the in-flight /overlay/capture-begin handshake (set while a
+// screenshot is being prepared, resolved by the 'ghostlayer:capture-ready' IPC).
+let pendingCaptureReady = null;
+
+// True while a capture-heavy app.agent step owns the screen. While active, the
+// panel (unifiedWindow) stays hidden and the GhostLayer stays shown — the
+// legacy /overlay/show + app-agent:highlight {clear} paths must NOT re-show the
+// panel or tear down the drop, or screenshots get tainted (app:"Electron").
+let dropSessionActive = false;
+
+// Monotonic token — each new drop session bumps it so a late get_active_bounds
+// response from a prior session can't draw a stale boundary into a new one.
+let _dropBoundaryToken = 0;
+
+function _sendGhost(data) {
+  if (ghostLayerWindow && !ghostLayerWindow.isDestroyed()) {
+    try { ghostLayerWindow.webContents.send('app-agent:highlight', data); } catch (_) {}
+  }
+}
+
+function _restorePanelFromDrop() {
+  dropSessionActive = false;
+  _dropBoundaryToken++; // invalidate any in-flight session boundary draw
+  _sendGhost({ type: 'progress_clear' });
+  try { if (typeof hideGhostLayer === 'function') hideGhostLayer(); } catch (_) {}
+  if (unifiedWindow && !unifiedWindow.isDestroyed() && unifiedWindow._dropHidden) {
+    unifiedWindow._dropHidden = false;
+    try { unifiedWindow.showInactive(); } catch (_) {}
+  }
+}
+
+function _hidePanelForDrop() {
+  if (unifiedWindow && !unifiedWindow.isDestroyed() && unifiedWindow.isVisible()) {
+    unifiedWindow._dropHidden = true;
+    try { unifiedWindow.hide(); } catch (_) {}
+  }
+}
+
+// Draw a persistent app-window boundary for the current drop session. Sources
+// bounds via the screenshot-free app.agent get_active_bounds (get-windows), so
+// it never taints OCR. The boundary fades during each capture and is cleared by
+// _restorePanelFromDrop (progress_clear). Best-effort — silently skips on error.
+async function _drawSessionBoundary(label) {
+  const token = _dropBoundaryToken;
+  // Brief delay so focus has settled on the target app before we read bounds
+  // (the panel just hid; the app.agent step is bringing the app forward).
+  await new Promise(r => setTimeout(r, 1200));
+  if (!dropSessionActive || token !== _dropBoundaryToken) return;
+  try {
+    const resp = await _cmdHttp('/command.automate', {
+      payload: { skill: 'app.agent', args: { action: 'get_active_bounds' } },
+    });
+    const bounds = resp?.data?.bounds;
+    if (!dropSessionActive || token !== _dropBoundaryToken) return;
+    if (bounds && bounds.width > 0 && bounds.height > 0) {
+      _sendGhost({
+        type: 'boundary_set',
+        element: {
+          x: bounds.x, y: bounds.y, width: bounds.width, height: bounds.height,
+          label: bounds.appName || label || 'Working…', color: '#ffaa00',
+        },
+      });
+    }
+  } catch (_) { /* non-fatal — boundary is cosmetic */ }
+}
+
+function driveProgressDrop(evt) {
+  if (!evt || typeof evt !== 'object') return;
+  const t = evt.type;
+  if (t === 'plan:step_start' || t === 'step_start') {
+    if (evt.skill === 'app.agent') {
+      // Capture-heavy desktop-automation step → arm the session, show the drop,
+      // hide the panel. The session keeps the panel hidden until a terminal event.
+      const wasActive = dropSessionActive;
+      dropSessionActive = true;
+      const label = evt.description || 'Working…';
+      const stepNum = evt.stepNum ?? (typeof evt.stepIndex === 'number' ? evt.stepIndex + 1 : null);
+      const totalSteps = evt.totalSteps ?? null;
+      try { if (typeof showGhostLayer === 'function') showGhostLayer(); } catch (_) {}
+      _sendGhost({ type: 'progress_drop', label, stepNum, totalSteps });
+      _hidePanelForDrop();
+      // Draw the persistent app boundary once per session (first app.agent step).
+      if (!wasActive) {
+        _dropBoundaryToken++;
+        _drawSessionBoundary(label);
+      }
+    } else {
+      // A non-app.agent step is running — restore the normal panel.
+      _restorePanelFromDrop();
+    }
+  } else if (t === 'all_done' || t === 'failed' || t === 'ask_user' || t === 'plan:complete' || t === 'error') {
+    // Any terminal / user-input event → clear the drop and bring the panel back.
+    _restorePanelFromDrop();
+  }
 }
 const screenshot = require('screenshot-desktop');
 const path = require('path');
@@ -654,6 +762,43 @@ function startOverlayControlServer() {
       return;
     }
 
+    // ── Capture handshake — graceful animated alternative to hard hide/show ──
+    // command-service POSTs /overlay/capture-begin before a screenshot. We fade
+    // the GhostLayer drop out and hide the panel, then resolve once the renderer
+    // signals 'ghostlayer:capture-ready' (or after a timeout fallback) so the
+    // screenshot fires with nothing of ours on screen → clean OCR.
+    if (req.url === '/overlay/capture-begin') {
+      // Defensive guard: the capture handshake is only meaningful inside a drop
+      // session (the panel stays hidden until the terminal event). A stray
+      // capture-begin with no active session — e.g. a leftover monitor loop after
+      // ask_user — would call _hidePanelForDrop(), and the NSPanel 'hide' handler
+      // would instantly auto-reshow it, producing the visible flicker. With the
+      // single-flight + server-side cancellation in place there should be no such
+      // strays; if one slips through, skip the hide entirely (no churn).
+      if (!dropSessionActive) {
+        try { res.writeHead(200).end(JSON.stringify({ ok: true, action: 'capture-begin', skipped: 'no-session' })); } catch (_) {}
+        return;
+      }
+      _hidePanelForDrop();
+      _sendGhost({ type: 'capture_begin' });
+      let settled = false;
+      const finish = () => {
+        if (settled) return;
+        settled = true;
+        if (pendingCaptureReady === finish) pendingCaptureReady = null;
+        try { res.writeHead(200).end(JSON.stringify({ ok: true, action: 'capture-begin' })); } catch (_) {}
+      };
+      pendingCaptureReady = finish;
+      setTimeout(finish, 700); // fallback: never block a capture on a missing renderer
+      return;
+    }
+
+    if (req.url === '/overlay/capture-end') {
+      _sendGhost({ type: 'capture_end' });
+      res.writeHead(200).end(JSON.stringify({ ok: true, action: 'capture-end' }));
+      return;
+    }
+
     const hide = req.url === '/overlay/hide';
     const show = req.url === '/overlay/show';
     const highlight = req.url === '/overlay/highlight';
@@ -737,7 +882,10 @@ function startOverlayControlServer() {
             if (ghostLayerWindow && !ghostLayerWindow.isDestroyed()) {
               ghostLayerWindow.webContents.send('app-agent:highlight', { type: 'clear', elements: [] });
             }
-            hideGhostLayer();
+            // Keep the GhostLayer alive during a drop session — hiding it here
+            // would tear down the progress drop mid-step (e.g. the boundary
+            // clear after the submit shortcut). Only hide it when idle.
+            if (!dropSessionActive) hideGhostLayer();
             res.writeHead(200).end(JSON.stringify({ ok: true, action: 'cleared' }));
           } else {
             res.writeHead(400).end(JSON.stringify({ ok: false, error: 'Invalid highlight data' }));
@@ -760,9 +908,12 @@ function startOverlayControlServer() {
         win.hide();
       }
     } else {
-      // Restore windows that were visible before hide
+      // Restore windows that were visible before hide — UNLESS a drop session
+      // owns the screen, in which case the panel must stay hidden (re-showing it
+      // here is exactly what tainted monitor captures with app:"Electron").
       for (const win of windows) {
         if (!win || win.isDestroyed()) continue;
+        if (win === unifiedWindow && dropSessionActive) continue;
         if (win._overlayWasVisible) win.showInactive();
       }
     }
@@ -1325,6 +1476,12 @@ function createUnifiedWindow() {
       _intentionalHide = false;
       return; // Don't re-show, user wants it hidden
     }
+    // A capture-heavy app.agent drop session owns the screen — the panel MUST
+    // stay hidden so it doesn't taint screenshots (app:"Electron"). Without this
+    // guard the NSPanel auto-reshow below instantly undoes _hidePanelForDrop().
+    if (dropSessionActive) {
+      return;
+    }
     // Auto-hide behavior - re-show the window (don't let macOS panel hide it)
     if (unifiedWindow && !unifiedWindow.isDestroyed()) {
       unifiedWindow.showInactive();
@@ -1470,22 +1627,37 @@ ipcMain.on('app-agent:highlight', (event, data) => {
     }
     showGhostLayer();
   } else if (data.type === 'highlight' && data.elements && data.elements.length > 0) {
-    // Restore UnifiedOverlay when showing results
-    if (unifiedWindow && !unifiedWindow.isDestroyed() && !unifiedWindow.isVisible()) {
+    // Restore UnifiedOverlay when showing results — but not during a drop
+    // session, where the panel must stay hidden for clean captures.
+    if (!dropSessionActive && unifiedWindow && !unifiedWindow.isDestroyed() && !unifiedWindow.isVisible()) {
       unifiedWindow.showInactive();
     }
     showGhostLayer();
   } else if (data.type === 'clear' || data.type === 'scanning_complete') {
-    // Restore UnifiedOverlay
-    if (unifiedWindow && !unifiedWindow.isDestroyed() && !unifiedWindow.isVisible()) {
-      unifiedWindow.showInactive();
+    // Restore UnifiedOverlay + hide the GhostLayer when idle. During a drop
+    // session both are suppressed: the panel stays hidden and the drop window
+    // stays up (the session's terminal event is the sole owner of restore).
+    if (!dropSessionActive) {
+      if (unifiedWindow && !unifiedWindow.isDestroyed() && !unifiedWindow.isVisible()) {
+        unifiedWindow.showInactive();
+      }
+      hideGhostLayer();
     }
-    hideGhostLayer();
   }
   
   // Forward to renderer regardless of window visibility
   if (ghostLayerWindow && !ghostLayerWindow.isDestroyed()) {
     ghostLayerWindow.webContents.send('app-agent:highlight', data);
+  }
+});
+
+// Capture handshake — GhostLayer signals it has faded the progress drop out and
+// the screenshot can now be taken. Resolves the pending /overlay/capture-begin.
+ipcMain.on('ghostlayer:capture-ready', () => {
+  if (typeof pendingCaptureReady === 'function') {
+    const fn = pendingCaptureReady;
+    pendingCaptureReady = null;
+    try { fn(); } catch (_) {}
   }
 });
 
@@ -2557,6 +2729,10 @@ app.whenReady().then(async () => {
       activeAbortController.abort();
       activeAbortController = null;
     }
+    // Safety: a cancel may interrupt a capture-heavy app.agent step mid-session,
+    // so tear down the drop session and bring the panel back explicitly (the
+    // cancel all_done below uses safeSend, which bypasses the drop driver).
+    _restorePanelFromDrop();
     if (resultsWindow && !resultsWindow.isDestroyed()) {
       safeSend(resultsWindow, 'automation:progress', { type: 'all_done', cancelled: true, completedCount: 0, totalCount: 0 });
     }
