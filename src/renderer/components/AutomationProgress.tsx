@@ -169,6 +169,7 @@ interface AutomationProgressProps {
   onHeightChange?: (height: number) => void;
   onActiveChange?: (active: boolean) => void;
   onOpenRules?: () => void;
+  onAskUserShown?: () => void;
   setIsSubmitting?: (submitting: boolean) => void;
   suppressIfScheduled?: boolean;
   activeTab?: string;
@@ -632,7 +633,7 @@ function parsePlanStepTitles(content: string): string[] {
   return titles;
 }
 
-export default function AutomationProgress({ onHeightChange, onActiveChange, onOpenRules, setIsSubmitting, suppressIfScheduled, activeTab }: AutomationProgressProps) {
+export default function AutomationProgress({ onHeightChange, onActiveChange, onOpenRules, onAskUserShown, setIsSubmitting, suppressIfScheduled, activeTab }: AutomationProgressProps) {
   const [phase, setPhase] = useState<AutomationPhase>('idle');
   const planReviewRef = useRef<HTMLDivElement>(null);
   const [steps, setSteps] = useState<Step[]>([]);
@@ -1369,6 +1370,9 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
         case 'ask_user':
           setPhase('ask_user');
           setAskUserPrompt({ question: data.question, options: data.options || [] });
+          // Stop any still-running step spinners; the step failed to complete automatically.
+          setSteps(prev => prev.map(s => s.status === 'running' ? { ...s, status: 'failed' } : s));
+          onAskUserShown?.();
           break;
 
         case 'parallel_login_required':
