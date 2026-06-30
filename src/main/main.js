@@ -1085,8 +1085,18 @@ function connectToSocket() {
     return;
   }
 
-  const wsUrl = new URL(process.env.WEBSOCKET_URL);
-  wsUrl.searchParams.set('apiKey', process.env.BASE_URL || '');
+  const wsUrlString = process.env.WEBSOCKET_URL || 'ws://localhost:4000/ws/stream';
+  if (!wsUrlString) {
+    console.warn('[VS Code Bridge] No WebSocket URL configured (WEBSOCKET_URL); skipping bridge connection.');
+    return;
+  }
+  const wsUrl = new URL(wsUrlString);
+  const wsApiKey = process.env.BASE_API_KEY || process.env.WEBSOCKET_API_KEY || '';
+  if (!wsApiKey) {
+    console.warn('[VS Code Bridge] No API key configured (BASE_API_KEY or WEBSOCKET_API_KEY); skipping bridge connection.');
+    return;
+  }
+  wsUrl.searchParams.set('apiKey', wsApiKey);
   wsUrl.searchParams.set('userId', 'thinkdrop_electron');
   wsUrl.searchParams.set('clientId', `thinkdrop_${Date.now()}`);
 
@@ -3383,8 +3393,10 @@ app.whenReady().then(async () => {
       }
 
       // _skillPlan approval-gate path never emits plan:complete (only planExecutor.js does).
-      // Clear pendingPlanContext on all_done so the next prompt isn't routed as _planCorrectionMode.
-      if (event.type === 'all_done') {
+      // Clear pendingPlanContext on all_done OR pipeline:done so the next prompt isn't
+      // routed as _planCorrectionMode. pipeline:done fires when planSkills exits at the
+      // plan-approval gate; without this, every subsequent prompt gets forced to command_automate.
+      if (event.type === 'all_done' || event.type === 'pipeline:done') {
         pendingPlanContext = null;
       }
 
