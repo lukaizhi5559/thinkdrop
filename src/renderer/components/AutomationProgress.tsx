@@ -112,7 +112,7 @@ interface PreflightAgent {
 interface PreflightAuthRequired {
   agentId: string;
   serviceName: string;
-  authType: 'cli_token' | 'browser_oauth' | 'app_intro' | 'cli_install' | 'api_key';
+  authType: 'cli_token' | 'browser_oauth' | 'app_intro' | 'cli_install' | 'api_key' | 'cli_update_needed' | 'browser_reauth';
   iconUrl: string;
   message: string;
 }
@@ -752,6 +752,8 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
   const [preflightAgents, setPreflightAgents] = useState<PreflightAgent[]>([]);
   const [preflightAuthRequired, setPreflightAuthRequired] = useState<PreflightAuthRequired | null>(null);
   const [preflightMessage, setPreflightMessage] = useState('Preparing agents...');
+  const [preflightWarnings, setPreflightWarnings] = useState<{ type: string; message: string }[]>([]);
+  const [vetScriptReview, setVetScriptReview] = useState<{ scriptContent: string; scriptUrl: string; message: string } | null>(null);
 
   // Ref to track current phase — avoids stale closure issues in the IPC listener useEffect
   const phaseRef = useRef<AutomationPhase>('idle');
@@ -883,6 +885,8 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
       setTotalCount(0);
       setPreflightAgents([]);
       setPreflightAuthRequired(null);
+      setPreflightWarnings([]);
+      setVetScriptReview(null);
       setExpandedSteps(new Set());
       synthStepIndexRef.current = null;
       setSynthesisAnswer('');
@@ -966,6 +970,8 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
           setPhase('preflight');
           setPreflightAgents([]);
           setPreflightAuthRequired(null);
+          setPreflightWarnings([]);
+          setVetScriptReview(null);
           setPreflightMessage(data.message || 'Preparing agents...');
           break;
 
@@ -1013,6 +1019,9 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
               iconUrl: a.iconUrl,
             })));
           }
+          if (Array.isArray(data.warnings)) {
+            setPreflightWarnings(data.warnings);
+          }
           // Transition to planning after a brief delay so user sees the final state
           setTimeout(() => {
             setPreflightAuthRequired(null);
@@ -1027,6 +1036,8 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
           setFailureAnswer(null);
           setPreflightAgents([]);
           setPreflightAuthRequired(null);
+          setPreflightWarnings([]);
+          setVetScriptReview(null);
           setPhase('planning');
           setPlanMessage(data.message || 'Generating skill plan...');
           setSteps([]);
@@ -1617,6 +1628,14 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
           setProjectBuild(prev => prev ? { ...prev, failed: true, passed: false, errorMsg: data.error || 'Build failed after max retries', message: 'Build failed' } : prev);
           setPhase('failed');
           setGlobalError(data.error || 'Could not build project after max retries.');
+          break;
+
+        case 'preflight:vet_script_review':
+          setVetScriptReview({
+            scriptContent: data.scriptContent || '',
+            scriptUrl: data.scriptUrl || '',
+            message: data.message || 'Please review the install script.',
+          });
           break;
 
         case 'skill_build_confirm':
@@ -3782,8 +3801,12 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
             <div className="text-xs" style={{ color: '#92400e' }}>
               {preflightAuthRequired.authType === 'browser_oauth'
                 ? 'Browser login required — open the Agents tab to sign in.'
+                : preflightAuthRequired.authType === 'browser_reauth'
+                ? 'Browser session may have expired — re-login recommended.'
                 : preflightAuthRequired.authType === 'cli_install'
                 ? 'CLI install required — open the Agents tab to install.'
+                : preflightAuthRequired.authType === 'cli_update_needed'
+                ? 'CLI version drift detected — update recommended. Open the Agents tab to update.'
                 : preflightAuthRequired.authType === 'api_key'
                 ? 'API key required — open the Agents tab to add credentials.'
                 : 'Authentication required — open the Agents tab to add credentials.'
@@ -3805,6 +3828,85 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
           >
             Open Agents Tab →
           </button>
+        </div>
+      )}
+
+      {/* ── vet CLI script review card ────────────────────────────────────── */}
+      {vetScriptReview && phase === 'preflight' && (
+        <div style={{ padding: '12px 14px', borderRadius: 10, backgroundColor: 'rgba(139,92,246,0.07)', border: '1px solid rgba(139,92,246,0.35)' }}>
+          <div className="flex items-start gap-2" style={{ marginBottom: 8 }}>
+            <div style={{ fontSize: '0.95rem', lineHeight: 1, marginTop: 1, flexShrink: 0 }}>🔐</div>
+            <div>
+              <div style={{ color: '#c4b5fd', fontSize: '0.76rem', fontWeight: 600, marginBottom: 3 }}>
+                vet CLI Installation Review
+              </div>
+              <div style={{ color: '#9ca3af', fontSize: '0.69rem', lineHeight: 1.4 }}>
+                Source: <span style={{ color: '#e5e7eb', fontFamily: 'ui-monospace,monospace', fontSize: '0.68rem' }}>{vetScriptReview.scriptUrl}</span>
+              </div>
+            </div>
+          </div>
+          <div style={{ color: '#d1d5db', fontSize: '0.71rem', lineHeight: 1.5, marginBottom: 8, paddingLeft: 22 }}>
+            {vetScriptReview.message}
+          </div>
+          <pre style={{
+            paddingLeft: 22, marginBottom: 10,
+            maxHeight: 280, overflow: 'auto',
+            padding: '8px 10px', borderRadius: 6,
+            background: 'rgba(0,0,0,0.3)',
+            color: '#a5b6c2',
+            fontFamily: 'ui-monospace,monospace',
+            fontSize: '0.65rem', lineHeight: 1.45,
+            whiteSpace: 'pre-wrap', wordBreak: 'break-word',
+            border: '1px solid rgba(255,255,255,0.08)',
+          }}>
+            {vetScriptReview.scriptContent}
+          </pre>
+          <div style={{ display: 'flex', gap: 6, paddingLeft: 22 }}>
+            <button
+              onClick={() => {
+                setVetScriptReview(null);
+                ipcRenderer?.send('install:confirm', { confirmed: true });
+              }}
+              style={{
+                padding: '5px 12px', borderRadius: 6, fontSize: '0.7rem', fontWeight: 600,
+                cursor: 'pointer', background: 'rgba(139,92,246,0.2)',
+                border: '1px solid rgba(139,92,246,0.5)', color: '#c4b5fd',
+                display: 'flex', alignItems: 'center', gap: 4,
+              }}
+            >
+              <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M20 6L9 17l-5-5"/>
+              </svg>
+              Approve &amp; Install
+            </button>
+            <button
+              onClick={() => {
+                setVetScriptReview(null);
+                ipcRenderer?.send('install:confirm', { confirmed: false });
+              }}
+              style={{
+                padding: '5px 12px', borderRadius: 6, fontSize: '0.7rem', fontWeight: 600,
+                cursor: 'pointer', background: 'rgba(107,114,128,0.1)',
+                border: '1px solid rgba(107,114,128,0.3)', color: '#9ca3af',
+              }}
+            >
+              Skip
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* ── Preflight warnings banner ─────────────────────────────────────── */}
+      {preflightWarnings.length > 0 && (phase === 'preflight' || phase === 'planning') && (
+        <div className="rounded-lg" style={{ padding: '8px 14px', backgroundColor: 'rgba(234,179,8,0.06)', border: '1px solid rgba(234,179,8,0.2)', display: 'flex', flexDirection: 'column', gap: 4 }}>
+          {preflightWarnings.map((w, i) => (
+            <div key={i} className="flex items-center gap-2">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ color: '#eab308', flexShrink: 0 }}>
+                <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/>
+              </svg>
+              <span className="text-xs" style={{ color: '#a16207' }}>{w.message}</span>
+            </div>
+          ))}
         </div>
       )}
 
