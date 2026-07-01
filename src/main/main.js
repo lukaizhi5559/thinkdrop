@@ -2481,7 +2481,7 @@ app.whenReady().then(async () => {
     console.log(`[Skills] Registered cron for skill: ${skillName} @ ${schedule}`);
   });
 
-  // Paused automation state — set when recoverSkill returns ASK_USER, cleared on resume or abort
+  // Paused automation state — set when thin recovery handler returns ASK_USER, cleared on resume or abort
   let pausedAutomationState = null;
   let pausedSkillBuildState = null; // set when installSkill pauses for ASK_USER (secrets)
   // activeAbortController is declared at module scope (above startOverlayControlServer)
@@ -3797,7 +3797,7 @@ app.whenReady().then(async () => {
         // When the paused question presented discrete choices and the user's reply
         // matches one of them verbatim, it is ALWAYS a resume answer — never a fresh task.
         // Skips the voice-service semantic check entirely to avoid false-positive fresh classification.
-        // e.g. recoverSkill offered ["Set up access via browser", "Install Google API client"]
+        // e.g. recovery handler offered ["Set up access via browser", "Install Google API client"]
         // and user replies "Install Google API client" — must be treated as a resume, not new command.
         const _pausedOpts = paused.pendingQuestion?.options;
         const _isOfferedOptionMatch = !isFreshPrompt &&
@@ -4567,7 +4567,7 @@ app.whenReady().then(async () => {
       }
 
       // Persist active browser session so follow-up prompts reuse the same Playwright tab.
-      // If recoverSkill cleared it (browser was closed), reset so next prompt starts fresh.
+      // If recovery handler cleared it (browser was closed), reset so next prompt starts fresh.
       if (finalState.activeBrowserSessionId) {
         currentBrowserSessionId = finalState.activeBrowserSessionId;
         currentBrowserUrl = finalState.activeBrowserUrl || currentBrowserUrl;
@@ -4598,7 +4598,7 @@ app.whenReady().then(async () => {
       }
 
       // Auto-trigger OAuth scope repair when a skill fails due to missing/wrong token.
-      // recoverSkill sets triggerOAuthRepair: { skillName } — fire the IPC handler which
+      // Thin recovery handler sets triggerOAuthRepair: { skillName } — fire the IPC handler which
       // re-scans index.cjs, patches contractMd, and refreshes the Skills tab.
       if (finalState.triggerOAuthRepair?.skillName) {
         const _repairSkill = finalState.triggerOAuthRepair.skillName;
@@ -6208,6 +6208,12 @@ app.whenReady().then(async () => {
     }
   });
 
+  // ─── Preflight: open agents tab for auth ───────────────────────────────────
+  ipcMain.on('preflight:open-agents-tab', (_event, { agentId } = {}) => {
+    // Forward to UnifiedOverlay so it can switch to the agents tab
+    safeSendUnified('preflight:open-agents-tab', { agentId });
+  });
+
   // ─── Agents: list / learn / train / create ────────────────────────────────
   ipcMain.on('agents:list', async () => {
     try {
@@ -7755,6 +7761,21 @@ app.whenReady().then(async () => {
       return await _cmdHttp('/agent.update', { id, descriptor });
     } catch (e) {
       console.error('[Browser-Agents] browser-agents:update failed:', e.message);
+      return { ok: false, error: e.message };
+    }
+  });
+
+  // Browser agent login — triggers OAuth/browser auth by running browser.agent with a login task
+  ipcMain.handle('browser-agents:login', async (_event, { id }) => {
+    try {
+      const result = await _cmdHttp('/mcp/call', {
+        service: 'command-service',
+        tool: 'browser.agent',
+        args: { action: 'run', agentId: id, task: 'Sign in to this service — navigate to the login page and complete authentication.' },
+      });
+      return result || { ok: true };
+    } catch (e) {
+      console.error('[Browser-Agents] browser-agents:login failed:', e.message);
       return { ok: false, error: e.message };
     }
   });

@@ -92,7 +92,7 @@ export interface AgentItem {
   domain: string;         // e.g., open.spotify.com
   category: string;       // Entertainment & Media, etc.
   status: 'pending' | 'learning' | 'learned' | 'needs_training';
-  type?: 'browser' | 'api' | 'cli' | 'api_key'; // agent type for filtering
+  type?: 'browser' | 'api' | 'cli' | 'api_key' | 'app'; // agent type for filtering
   created?: string;       // ISO timestamp
   lastLearned?: string;   // ISO timestamp
   userGoals?: string[];   // what user wants to accomplish (multiple goals)

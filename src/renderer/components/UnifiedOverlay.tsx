@@ -1648,6 +1648,20 @@ export function UnifiedOverlay() {
         return next;
       });
     }, token);
+    // Preflight auth routing: switch to agents tab when user clicks "Open Agents Tab"
+    ipcRenderer.on('preflight:open-agents-tab', (data: any) => {
+      setActiveTab('agents');
+      setUnreadTabs(prev => {
+        const next = new Set(prev);
+        next.delete('agents');
+        return next;
+      });
+      // Forward agentId to AgentsTab for highlighting (handled via agents:new or direct state)
+      if (data?.agentId) {
+        // Store the agentId so AgentsTab can pick it up for highlighting
+        try { sessionStorage.setItem('preflight:highlight-agent', data.agentId); } catch (_) {}
+      }
+    }, token);
     ipcRenderer.on('queue:update', handleQueueUpdate, token);
     ipcRenderer.on('queue:item-done', handleQueueItemDone, token);
     ipcRenderer.on('cron:list', handleCronList, token);

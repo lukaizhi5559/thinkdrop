@@ -284,7 +284,17 @@ function AgentCard({
   refreshingSkills,
   failedSkills,
   expanded,
-  onToggle
+  onToggle,
+  highlighted,
+  onLogin,
+  loginLoading,
+  editingStartUrl,
+  startUrlValue,
+  setStartUrlValue,
+  onSaveStartUrl,
+  onStartUrlEdit,
+  setEditingStartUrl,
+  startUrlSaving,
 }: { 
   agent: AgentItem;
   onTrain: (agentId: string) => void;
@@ -299,6 +309,16 @@ function AgentCard({
   failedSkills: Record<string, { reason: string; ts: number }>;
   expanded: boolean;
   onToggle: () => void;
+  highlighted?: boolean;
+  onLogin?: (id: string) => void;
+  loginLoading?: boolean;
+  editingStartUrl?: string | null;
+  startUrlValue?: string;
+  setStartUrlValue?: (v: string) => void;
+  onSaveStartUrl?: (agentId: string) => void;
+  onStartUrlEdit?: (agentId: string, currentUrl: string) => void;
+  setEditingStartUrl?: (v: string | null) => void;
+  startUrlSaving?: boolean;
 }) {
   const categoryColor = categoryColors[agent.category] || '#6b7280';
   const statusColor = statusColors[agent.status] || '#6b7280';
@@ -310,8 +330,10 @@ function AgentCard({
       borderRadius: 9,
       padding: '10px 12px',
       marginBottom: 6,
-      backgroundColor: 'rgba(255,255,255,0.025)',
-      border: '1px solid rgba(255,255,255,0.07)',
+      backgroundColor: highlighted ? 'rgba(245,158,11,0.06)' : 'rgba(255,255,255,0.025)',
+      border: highlighted ? '2px solid rgba(245,158,11,0.5)' : '1px solid rgba(255,255,255,0.07)',
+      boxShadow: highlighted ? '0 0 12px rgba(245,158,11,0.15)' : 'none',
+      transition: 'border 0.3s, box-shadow 0.3s, background-color 0.3s',
     }}>
       {/* Main row: icon · info · actions */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 9 }}>
@@ -497,6 +519,35 @@ function AgentCard({
             {confirmDelete && <span style={{ fontSize: '0.58rem', fontWeight: 600, whiteSpace: 'nowrap' }}>sure?</span>}
           </button>
 
+          {/* Login — key icon, amber (browser agents only) */}
+          {onLogin && (
+            <button
+              onClick={(e: React.MouseEvent) => { e.stopPropagation(); onLogin(agent.id); }}
+              disabled={loginLoading}
+              title={loginLoading ? 'Opening browser for login…' : 'Sign in to this service'}
+              style={{
+                padding: '4px 7px',
+                borderRadius: 5,
+                cursor: loginLoading ? 'not-allowed' : 'pointer',
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                background: loginLoading ? 'rgba(245,158,11,0.06)' : 'rgba(245,158,11,0.12)',
+                border: '1px solid rgba(245,158,11,0.3)',
+                color: '#f59e0b',
+                opacity: loginLoading ? 0.5 : 1,
+              }}
+            >
+              {loginLoading ? (
+                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" style={{ animation: 'spin 0.9s linear infinite' }}>
+                  <path d="M21 12a9 9 0 1 1-6.219-8.56"/>
+                </svg>
+              ) : (
+                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 5.5m0 0l3 3L22 7l-3-3"/>
+                </svg>
+              )}
+            </button>
+          )}
+
           {/* Expand chevron */}
           <button
             onClick={(e: React.MouseEvent) => { e.stopPropagation(); onToggle(); }}
@@ -550,6 +601,91 @@ function AgentCard({
               </div>
             );
           })()}
+
+          {/* Start URL editing — browser agents only */}
+          {onStartUrlEdit && (
+            <div style={{ marginBottom: 8 }}>
+              <div style={{ fontSize: '0.62rem', color: '#4b5563', marginBottom: 4, textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+                Start URL
+              </div>
+              {editingStartUrl === agent.id ? (
+                <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
+                  <input
+                    type="text"
+                    value={startUrlValue || ''}
+                    onChange={(e) => setStartUrlValue?.(e.target.value)}
+                    placeholder="https://example.com"
+                    autoFocus
+                    onKeyDown={(e) => { if (e.key === 'Enter') onSaveStartUrl?.(agent.id); if (e.key === 'Escape') setEditingStartUrl?.(null); }}
+                    style={{
+                      flex: 1,
+                      fontSize: '0.62rem',
+                      fontFamily: 'ui-monospace,monospace',
+                      padding: '3px 6px',
+                      borderRadius: 4,
+                      border: '1px solid rgba(99,102,241,0.4)',
+                      backgroundColor: 'rgba(99,102,241,0.06)',
+                      color: '#e5e7eb',
+                      outline: 'none',
+                    }}
+                  />
+                  <button
+                    onClick={() => onSaveStartUrl?.(agent.id)}
+                    disabled={startUrlSaving}
+                    style={{
+                      padding: '3px 8px', borderRadius: 4, fontSize: '0.58rem', fontWeight: 500,
+                      backgroundColor: 'rgba(16,185,129,0.15)', border: '1px solid rgba(16,185,129,0.3)',
+                      color: '#10b981', cursor: startUrlSaving ? 'not-allowed' : 'pointer',
+                    }}
+                  >
+                    {startUrlSaving ? 'Saving…' : 'Save'}
+                  </button>
+                  <button
+                    onClick={() => setEditingStartUrl?.(null)}
+                    style={{
+                      padding: '3px 8px', borderRadius: 4, fontSize: '0.58rem',
+                      backgroundColor: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.1)',
+                      color: '#6b7280', cursor: 'pointer',
+                    }}
+                  >
+                    Cancel
+                  </button>
+                </div>
+              ) : (
+                <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
+                  <span style={{
+                    fontSize: '0.62rem',
+                    color: '#6b7280',
+                    fontFamily: 'ui-monospace,monospace',
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis',
+                    whiteSpace: 'nowrap',
+                    flex: 1,
+                  }}>
+                    {(() => {
+                      const fm = agent.descriptor?.match(/^---\n([\s\S]*?)\n---/);
+                      const startUrl = fm?.[1]?.match(/^start_url\s*[:=]\s*(.+)/m)?.[1]?.trim();
+                      return startUrl || agent.domain ? `https://${agent.domain}` : 'Not set';
+                    })()}
+                  </span>
+                  <button
+                    onClick={() => {
+                      const fm = agent.descriptor?.match(/^---\n([\s\S]*?)\n---/);
+                      const current = fm?.[1]?.match(/^start_url\s*[:=]\s*(.+)/m)?.[1]?.trim() || (agent.domain ? `https://${agent.domain}` : '');
+                      onStartUrlEdit(agent.id, current);
+                    }}
+                    style={{
+                      padding: '2px 6px', borderRadius: 3, fontSize: '0.58rem',
+                      backgroundColor: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.1)',
+                      color: '#6b7280', cursor: 'pointer',
+                    }}
+                  >
+                    Edit
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
 
           {/* Learned States */}
           {agent.learnedStates && agent.learnedStates.length > 0 && (
@@ -1118,8 +1254,8 @@ export function AgentsTab({ items, onRefresh }: AgentsTabProps) {
   // failedSkills: key = "agentId::skillName" → { reason, ts } — auto-clears after 30s
   const [failedSkills, setFailedSkills] = useState<Record<string, { reason: string; ts: number }>>({});
 
-  // Subtab state: 'browser' | 'cli'
-  const [activeSubtab, setActiveSubtab] = useState<'browser' | 'cli'>('browser');
+  // Subtab state: 'browser' | 'cli' | 'app'
+  const [activeSubtab, setActiveSubtab] = useState<'browser' | 'cli' | 'app'>('browser');
 
   // CLI Agents state
   const [cliValidating, setCliValidating] = useState<Record<string, boolean>>({});
@@ -1143,15 +1279,42 @@ export function AgentsTab({ items, onRefresh }: AgentsTabProps) {
   const [credentialPairs, setCredentialPairs] = useState<Array<{ key: string; value: string; isEditing: boolean; isStored: boolean }>>([]);
   // Track which credential is pending delete confirmation (stores the key)
   const [confirmDeleteCredential, setConfirmDeleteCredential] = useState<string | null>(null);
+  // Preflight highlight: agentId that needs auth, highlighted when user clicks "Open Agents Tab"
+  const [preflightHighlightAgent, setPreflightHighlightAgent] = useState<string | null>(null);
+  // Browser login loading state
+  const [browserLoginLoading, setBrowserLoginLoading] = useState<Record<string, boolean>>({});
+  // Start URL editing state
+  const [editingStartUrl, setEditingStartUrl] = useState<string | null>(null);
+  const [startUrlValue, setStartUrlValue] = useState('');
+  const [startUrlSaving, setStartUrlSaving] = useState(false);
 
   // Filter agents by type from props (items now includes ALL agents with type field from DB)
   const browserAgents = items.filter(agent => agent.type === 'browser');
   const cliAgents = items.filter(agent => agent.type === 'cli' || agent.type === 'api_key');
+  const appAgents = items.filter(agent => agent.type === 'app');
 
   // Sync props to localItems (fallback for non-DB flow)
   useEffect(() => {
     console.log('AGENT ITEMS:', items)
     setLocalItems(items);
+  }, [items]);
+
+  // Preflight highlight: check sessionStorage for agent to highlight (set by UnifiedOverlay when user clicks "Open Agents Tab")
+  useEffect(() => {
+    try {
+      const highlightAgentId = sessionStorage.getItem('preflight:highlight-agent');
+      if (highlightAgentId) {
+        sessionStorage.removeItem('preflight:highlight-agent');
+        setPreflightHighlightAgent(highlightAgentId);
+        // Auto-expand the agent card and switch to the right subtab
+        setExpandedAgent(highlightAgentId);
+        const isCli = cliAgents.some(a => a.id === highlightAgentId);
+        const isApp = appAgents.some(a => a.id === highlightAgentId);
+        setActiveSubtab(isCli ? 'cli' : isApp ? 'app' : 'browser');
+        // Auto-clear highlight after 10s
+        setTimeout(() => setPreflightHighlightAgent(null), 10000);
+      }
+    } catch (_) {}
   }, [items]);
 
   // Request auto-scan setting on mount
@@ -1194,6 +1357,8 @@ export function AgentsTab({ items, onRefresh }: AgentsTabProps) {
         // Switch to the right subtab so the new agent is visible
         if (agent.type === 'cli' || agent.type === 'api_key') {
           setActiveSubtab('cli');
+        } else if (agent.type === 'app') {
+          setActiveSubtab('app');
         } else {
           setActiveSubtab('browser');
         }
@@ -1414,6 +1579,35 @@ export function AgentsTab({ items, onRefresh }: AgentsTabProps) {
       onRefresh?.(); // Refresh parent to get updated agents list
     } catch {}
     setCliAuthLoading(prev => { const n = { ...prev }; delete n[id]; return n; });
+  };
+
+  const handleBrowserLogin = async (id: string) => {
+    setBrowserLoginLoading(prev => ({ ...prev, [id]: true }));
+    try {
+      await ipcRenderer?.invoke('browser-agents:login', { id });
+      onRefresh?.();
+    } catch {}
+    setBrowserLoginLoading(prev => { const n = { ...prev }; delete n[id]; return n; });
+  };
+
+  const handleSaveStartUrl = async (agentId: string) => {
+    if (!startUrlValue.trim()) return;
+    setStartUrlSaving(true);
+    try {
+      const agent = browserAgents.find(a => a.id === agentId);
+      const descriptor = agent?.descriptor || '';
+      // Update or add start_url in frontmatter
+      let updated = descriptor;
+      if (/^start_url\s*[:=]/m.test(descriptor)) {
+        updated = descriptor.replace(/^start_url\s*[:=]\s*.*/m, `start_url: ${startUrlValue.trim()}`);
+      } else if (/^---\n/m.test(descriptor)) {
+        updated = descriptor.replace(/^---\n/, `---\nstart_url: ${startUrlValue.trim()}\n`);
+      }
+      await ipcRenderer?.invoke('browser-agents:update', { id: agentId, descriptor: updated });
+      onRefresh?.();
+      setEditingStartUrl(null);
+    } catch {}
+    setStartUrlSaving(false);
   };
 
   // Parse config fields from descriptor frontmatter
@@ -1815,9 +2009,26 @@ export function AgentsTab({ items, onRefresh }: AgentsTabProps) {
         >
           CLI Agents
         </button>
+        <button
+          onClick={() => setActiveSubtab('app')}
+          style={{
+            padding: '6px 14px',
+            borderRadius: 6,
+            border: 'none',
+            backgroundColor: activeSubtab === 'app' ? 'rgba(236,72,153,0.25)' : 'transparent',
+            color: activeSubtab === 'app' ? '#ec4899' : '#6b7280',
+            fontSize: '0.8rem',
+            cursor: 'pointer',
+            fontWeight: activeSubtab === 'app' ? 500 : 400,
+            transition: 'all 0.15s',
+          }}
+        >
+          App Agents {appAgents.length > 0 && `(${appAgents.length})`}
+        </button>
 
         {/* Spacer + Create button */}
         <div style={{ flex: 1 }} />
+        {activeSubtab !== 'app' && (
         <button
           onClick={() => {
             if (activeSubtab === 'browser') setIsCreateBrowserModalOpen(true);
@@ -1842,6 +2053,7 @@ export function AgentsTab({ items, onRefresh }: AgentsTabProps) {
           <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
           New
         </button>
+        )}
       </div>
 
       {/* Browser Agents Tab */}
@@ -1939,6 +2151,16 @@ export function AgentsTab({ items, onRefresh }: AgentsTabProps) {
             failedSkills={failedSkills}
             expanded={expandedAgent === agent.id}
             onToggle={() => toggleExpanded(agent.id)}
+            highlighted={preflightHighlightAgent === agent.id}
+            onLogin={handleBrowserLogin}
+            loginLoading={browserLoginLoading[agent.id] === true}
+            editingStartUrl={editingStartUrl}
+            startUrlValue={startUrlValue}
+            setStartUrlValue={setStartUrlValue}
+            onSaveStartUrl={handleSaveStartUrl}
+            onStartUrlEdit={(agentId, currentUrl) => { setEditingStartUrl(agentId); setStartUrlValue(currentUrl); }}
+            setEditingStartUrl={setEditingStartUrl}
+            startUrlSaving={startUrlSaving}
           />
         ))
       )}
@@ -1970,15 +2192,16 @@ export function AgentsTab({ items, onRefresh }: AgentsTabProps) {
                   key={agent.id}
                   onClick={() => handleCliDetail(agent)}
                   style={{
-                    background: 'rgba(255,255,255,0.03)',
-                    border: '1px solid rgba(255,255,255,0.06)',
+                    background: preflightHighlightAgent === agent.id ? 'rgba(245,158,11,0.06)' : 'rgba(255,255,255,0.03)',
+                    border: preflightHighlightAgent === agent.id ? '2px solid rgba(245,158,11,0.5)' : '1px solid rgba(255,255,255,0.06)',
+                    boxShadow: preflightHighlightAgent === agent.id ? '0 0 12px rgba(245,158,11,0.15)' : 'none',
                     borderRadius: 10,
                     padding: '12px 14px',
                     cursor: 'pointer',
-                    transition: 'border-color 0.15s',
+                    transition: 'border-color 0.15s, box-shadow 0.3s',
                   }}
                   onMouseEnter={e => (e.currentTarget.style.borderColor = 'rgba(16,185,129,0.3)')}
-                  onMouseLeave={e => (e.currentTarget.style.borderColor = 'rgba(255,255,255,0.06)')}
+                  onMouseLeave={e => (e.currentTarget.style.borderColor = preflightHighlightAgent === agent.id ? 'rgba(245,158,11,0.5)' : 'rgba(255,255,255,0.06)')}
                 >
                   {/* Top row: icon + name + status */}
                   <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8 }}>
@@ -2440,6 +2663,91 @@ export function AgentsTab({ items, onRefresh }: AgentsTabProps) {
                   </>
                 )}
               </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* App Agents Tab */}
+      {activeSubtab === 'app' && (
+        <div style={{ marginTop: 8 }}>
+          {/* Empty state */}
+          {appAgents.length === 0 && (
+            <div style={{ textAlign: 'center', padding: 50, color: '#6b7280' }}>
+              <div style={{ marginBottom: 16, display: 'flex', justifyContent: 'center' }}>
+                <div style={{ width: 56, height: 56, borderRadius: 12, backgroundColor: 'rgba(236,72,153,0.12)', border: '1px solid rgba(236,72,153,0.25)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                  <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#ec4899" strokeWidth="1.6"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="9" y1="9" x2="15" y2="9"/><line x1="9" y1="13" x2="15" y2="13"/><line x1="9" y1="17" x2="13" y2="17"/></svg>
+                </div>
+              </div>
+              <div style={{ fontSize: '0.95rem', marginBottom: 6, color: '#fff' }}>No app agents yet</div>
+              <div style={{ fontSize: '0.8rem', maxWidth: 320, margin: '0 auto', lineHeight: 1.5 }}>
+                App agents are created automatically when you ask ThinkDrop to use a desktop app's AI assistant (e.g., "use Cursor's AI to refactor this file").
+              </div>
+            </div>
+          )}
+          {/* App agent cards */}
+          {appAgents.length > 0 && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              {appAgents.map(agent => (
+                <div
+                  key={agent.id}
+                  style={{
+                    background: preflightHighlightAgent === agent.id ? 'rgba(245,158,11,0.06)' : 'rgba(255,255,255,0.03)',
+                    border: preflightHighlightAgent === agent.id ? '2px solid rgba(245,158,11,0.5)' : '1px solid rgba(255,255,255,0.06)',
+                    boxShadow: preflightHighlightAgent === agent.id ? '0 0 12px rgba(245,158,11,0.15)' : 'none',
+                    borderRadius: 10,
+                    padding: '12px 14px',
+                    transition: 'border-color 0.15s, box-shadow 0.3s',
+                  }}
+                >
+                  {/* Top row: icon + name + status */}
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8 }}>
+                    <div style={{
+                      width: 32, height: 32, borderRadius: 8,
+                      backgroundColor: 'rgba(236,72,153,0.12)',
+                      border: '1px solid rgba(236,72,153,0.25)',
+                      display: 'flex', alignItems: 'center', justifyContent: 'center',
+                      flexShrink: 0,
+                    }}>
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#ec4899" strokeWidth="1.8">
+                        <rect x="3" y="3" width="18" height="18" rx="2"/>
+                        <line x1="9" y1="9" x2="15" y2="9"/>
+                        <line x1="9" y1="13" x2="15" y2="13"/>
+                        <line x1="9" y1="17" x2="13" y2="17"/>
+                      </svg>
+                    </div>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontSize: '0.78rem', fontWeight: 600, color: '#e5e7eb' }}>
+                        {agent.name || agent.id.replace(/\.agent$/i, '')}
+                      </div>
+                      <div style={{ fontSize: '0.62rem', color: '#6b7280' }}>
+                        {agent.id} · {agent.status}
+                      </div>
+                    </div>
+                    <span style={{
+                      fontSize: '0.58rem', padding: '2px 7px', borderRadius: 4,
+                      backgroundColor: 'rgba(236,72,153,0.12)', border: '1px solid rgba(236,72,153,0.25)',
+                      color: '#ec4899', whiteSpace: 'nowrap',
+                    }}>
+                      App
+                    </span>
+                  </div>
+                  {/* Capabilities */}
+                  {agent.capabilities && agent.capabilities.length > 0 && (
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginTop: 4 }}>
+                      {agent.capabilities.map(cap => (
+                        <span key={cap} style={{
+                          fontSize: '0.58rem', padding: '2px 7px', borderRadius: 4,
+                          backgroundColor: 'rgba(236,72,153,0.08)', border: '1px solid rgba(236,72,153,0.15)',
+                          color: '#db2777',
+                        }}>
+                          {cap.replace(/_/g, ' ')}
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              ))}
             </div>
           )}
         </div>

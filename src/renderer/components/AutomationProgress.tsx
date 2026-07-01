@@ -86,6 +86,7 @@ function AgentFavicon({ agentId, size = 14 }: { agentId: string; size?: number }
 type AutomationPhase =
   | 'idle'
   | 'gathering'
+  | 'preflight'
   | 'planning'
   | 'executing'
   | 'done'
@@ -98,6 +99,23 @@ type AutomationPhase =
   | 'recovering'
   | 'project_building'
   | 'plan_review';
+
+interface PreflightAgent {
+  type: 'cli' | 'browser' | 'app';
+  agentId: string;
+  ready: boolean;
+  authed: boolean;
+  iconUrl: string | null;
+  message?: string;
+}
+
+interface PreflightAuthRequired {
+  agentId: string;
+  serviceName: string;
+  authType: 'cli_token' | 'browser_oauth' | 'app_intro' | 'cli_install' | 'api_key';
+  iconUrl: string;
+  message: string;
+}
 
 interface GatherCredential {
   credentialKey: string;
@@ -730,6 +748,11 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
   } | null>(null);
   const [scanDiscovery, setScanDiscovery] = useState<{ hostname: string; visits: number }[] | null>(null);
 
+  // Preflight state
+  const [preflightAgents, setPreflightAgents] = useState<PreflightAgent[]>([]);
+  const [preflightAuthRequired, setPreflightAuthRequired] = useState<PreflightAuthRequired | null>(null);
+  const [preflightMessage, setPreflightMessage] = useState('Preparing agents...');
+
   // Ref to track current phase — avoids stale closure issues in the IPC listener useEffect
   const phaseRef = useRef<AutomationPhase>('idle');
   useEffect(() => { phaseRef.current = phase; }, [phase]);
@@ -858,6 +881,8 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
       setSteps([]);
       setGlobalError(null);
       setTotalCount(0);
+      setPreflightAgents([]);
+      setPreflightAuthRequired(null);
       setExpandedSteps(new Set());
       synthStepIndexRef.current = null;
       setSynthesisAnswer('');
@@ -937,10 +962,71 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
       if (suppressIfScheduledRef.current) return;
       if (!active) return;
       switch (data.type) {
+        case 'preflight:start':
+          setPhase('preflight');
+          setPreflightAgents([]);
+          setPreflightAuthRequired(null);
+          setPreflightMessage(data.message || 'Preparing agents...');
+          break;
+
+        case 'preflight:building_agent': {
+          setPhase('preflight');
+          setPreflightAuthRequired(null);
+          const buildingAgent: PreflightAgent = {
+            type: data.agentType || 'browser',
+            agentId: data.agentId || '',
+            ready: false,
+            authed: false,
+            iconUrl: data.iconUrl || null,
+            message: data.message || `Checking ${data.agentId || 'agent'}...`,
+          };
+          setPreflightAgents(prev => {
+            const existing = prev.findIndex(a => a.agentId === buildingAgent.agentId);
+            if (existing >= 0) {
+              const next = [...prev];
+              next[existing] = buildingAgent;
+              return next;
+            }
+            return [...prev, buildingAgent];
+          });
+          if (data.message) setPreflightMessage(data.message);
+          break;
+        }
+
+        case 'preflight:auth_required':
+          setPreflightAuthRequired({
+            agentId: data.agentId,
+            serviceName: data.serviceName,
+            authType: data.authType,
+            iconUrl: data.iconUrl,
+            message: data.message,
+          });
+          break;
+
+        case 'preflight:complete':
+          if (Array.isArray(data.agents)) {
+            setPreflightAgents(data.agents.map((a: any) => ({
+              type: a.type,
+              agentId: a.agentId,
+              ready: a.ready,
+              authed: a.authed,
+              iconUrl: a.iconUrl,
+            })));
+          }
+          // Transition to planning after a brief delay so user sees the final state
+          setTimeout(() => {
+            setPreflightAuthRequired(null);
+            setPhase('planning');
+            setPlanMessage('Generating skill plan...');
+          }, 500);
+          break;
+
         case 'planning':
           setAskUserPrompt(null);
           setExpandedSteps(new Set());
           setFailureAnswer(null);
+          setPreflightAgents([]);
+          setPreflightAuthRequired(null);
           setPhase('planning');
           setPlanMessage(data.message || 'Generating skill plan...');
           setSteps([]);
@@ -1945,7 +2031,7 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
 
   if (suppressIfScheduled) return null;
 
-  if (phase === 'idle' && !controlMode.active && !maintenanceScan && !scanDiscovery) return null;
+  if (phase === 'idle' && !controlMode.active && !maintenanceScan && !scanDiscovery && !preflightAuthRequired) return null;
 
   return (
     <div ref={rootCallbackRef} className="space-y-3">
@@ -2092,6 +2178,15 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
               style={{ borderColor: '#a78bfa', borderTopColor: 'transparent' }} />
             <span className="text-sm font-medium" style={{ color: '#a78bfa' }}>
               Gathering requirements…
+            </span>
+          </>
+        )}
+        {phase === 'preflight' && (
+          <>
+            <div className="w-3.5 h-3.5 rounded-full border-2 animate-spin flex-shrink-0"
+              style={{ borderColor: '#22d3ee', borderTopColor: 'transparent' }} />
+            <span className="text-sm font-medium" style={{ color: '#22d3ee' }}>
+              {preflightMessage}
             </span>
           </>
         )}
@@ -3610,6 +3705,106 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
               </button>
             );
           })}
+        </div>
+      )}
+
+      {/* ── Preflight agent list with favicons ─────────────────────────────── */}
+      {phase === 'preflight' && preflightAgents.length > 0 && (
+        <div className="flex flex-wrap gap-2" style={{ padding: '4px 0' }}>
+          {preflightAgents.map((agent, i) => (
+            <div key={`${agent.agentId}-${i}`}
+              className="flex items-center gap-1.5 rounded-md"
+              style={{
+                padding: '4px 8px',
+                backgroundColor: agent.ready ? 'rgba(34,197,94,0.08)' : 'rgba(59,130,246,0.08)',
+                border: `1px solid ${agent.ready ? 'rgba(34,197,94,0.2)' : 'rgba(59,130,246,0.2)'}`,
+              }}
+            >
+              {agent.iconUrl ? (
+                <img
+                  src={agent.iconUrl}
+                  width={16}
+                  height={16}
+                  alt={agent.agentId}
+                  style={{ borderRadius: 2, flexShrink: 0 }}
+                  onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }}
+                />
+              ) : (
+                <svg width={16} height={16} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ color: '#6b7280', flexShrink: 0 }}>
+                  <circle cx="12" cy="12" r="10" /><line x1="2" y1="12" x2="22" y2="12" />
+                  <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z" />
+                </svg>
+              )}
+              <span className="text-xs font-medium" style={{ color: agent.ready ? '#22c55e' : '#60a5fa' }}>
+                {agent.agentId.replace(/\.agent$/i, '')}
+              </span>
+              {agent.ready ? (
+                <svg width={10} height={10} viewBox="0 0 24 24" fill="none" stroke="#22c55e" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+                  <polyline points="20 6 9 17 4 12" />
+                </svg>
+              ) : (
+                <div className="w-2 h-2 rounded-full border animate-spin" style={{ borderColor: '#60a5fa', borderTopColor: 'transparent' }} />
+              )}
+              {!agent.authed && agent.ready && (
+                <span className="text-xs" style={{ color: '#f59e0b' }}>⚠</span>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* ── Preflight auth-required banner ─────────────────────────────────── */}
+      {preflightAuthRequired && (
+        <div className="rounded-lg"
+          style={{
+            padding: '10px 14px',
+            backgroundColor: 'rgba(245,158,11,0.08)',
+            border: '1px solid rgba(245,158,11,0.3)',
+            display: 'flex',
+            alignItems: 'center',
+            gap: 10,
+          }}
+        >
+          {preflightAuthRequired.iconUrl && (
+            <img
+              src={preflightAuthRequired.iconUrl}
+              width={24}
+              height={24}
+              alt={preflightAuthRequired.agentId}
+              style={{ borderRadius: 4, flexShrink: 0 }}
+              onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }}
+            />
+          )}
+          <div className="flex-1">
+            <div className="text-sm font-medium" style={{ color: '#f59e0b' }}>
+              {preflightAuthRequired.message}
+            </div>
+            <div className="text-xs" style={{ color: '#92400e' }}>
+              {preflightAuthRequired.authType === 'browser_oauth'
+                ? 'Browser login required — open the Agents tab to sign in.'
+                : preflightAuthRequired.authType === 'cli_install'
+                ? 'CLI install required — open the Agents tab to install.'
+                : preflightAuthRequired.authType === 'api_key'
+                ? 'API key required — open the Agents tab to add credentials.'
+                : 'Authentication required — open the Agents tab to add credentials.'
+              }
+            </div>
+          </div>
+          <button
+            onClick={() => {
+              ipcRenderer?.send('preflight:open-agents-tab', { agentId: preflightAuthRequired.agentId });
+            }}
+            className="text-xs font-medium rounded-md transition-colors"
+            style={{
+              padding: '6px 12px',
+              backgroundColor: 'rgba(245,158,11,0.15)',
+              border: '1px solid rgba(245,158,11,0.4)',
+              color: '#f59e0b',
+              cursor: 'pointer',
+            }}
+          >
+            Open Agents Tab →
+          </button>
         </div>
       )}
 
