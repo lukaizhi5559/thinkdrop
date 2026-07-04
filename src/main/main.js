@@ -6214,6 +6214,47 @@ app.whenReady().then(async () => {
     safeSendUnified('preflight:open-agents-tab', { agentId });
   });
 
+  // ─── Gather: browser.agent:auth — kick off headed Playwright sign-in ───────
+  // Triggered by the gather_auth_action card "Sign in with browser" button.
+  // Fire-and-forget: immediately emits browser:auth_opened so the card transforms
+  // to the confirmation step ("I've signed in — continue"). The pipeline's
+  // gatherAnswerCallback stays pending until the user clicks that button.
+  ipcMain.on('browser.agent:auth', (_event, { agentId } = {}) => {
+    if (!agentId) return;
+    // Normalize: browser.agent DB keys always have .agent suffix; preflight may omit it
+    const normalizedAgentId = agentId.endsWith('.agent') ? agentId : `${agentId}.agent`;
+    console.log(`[GatherAuth] Opening browser sign-in for ${normalizedAgentId} (fire-and-forget)`);
+
+    // Immediately tell the renderer the browser is open so the card changes state
+    safeSendUnified('automation:progress', { type: 'browser:auth_opened', agentId: normalizedAgentId });
+
+    // Fire browser.agent in the background with a long timeout — we don't await it.
+    // The pipeline stays pending; the user manually confirms via "I've signed in" button.
+    const payload = JSON.stringify({
+      payload: {
+        skill: 'browser.agent',
+        args: { action: 'run', agentId: normalizedAgentId, task: 'navigate to the sign-in page and wait for the user to authenticate' },
+      },
+    });
+    const req = http.request(
+      { hostname: '127.0.0.1', port: 3007, path: '/command.automate', method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(payload) } },
+      (res) => {
+        let data = '';
+        res.on('data', chunk => { data += chunk; });
+        res.on('end', () => {
+          try {
+            const result = JSON.parse(data);
+            console.log(`[GatherAuth] browser.agent background run done for ${normalizedAgentId}: ok=${result?.data?.ok}`);
+          } catch (_) {}
+        });
+      }
+    );
+    req.on('error', err => console.warn(`[GatherAuth] browser.agent background error for ${normalizedAgentId}:`, err.message));
+    req.setTimeout(5 * 60 * 1000); // 5-minute timeout — user has time to sign in
+    req.end(payload);
+  });
+
   // ─── Agents: list / learn / train / create ────────────────────────────────
   ipcMain.on('agents:list', async () => {
     try {

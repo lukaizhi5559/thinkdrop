@@ -108,6 +108,8 @@ contextBridge.exposeInMainWorld('electron', {
         'operation:status',
         'app-agent:highlight',
         'ghostlayer:capture-ready',
+        'preflight:open-agents-tab',
+        'browser.agent:auth',
       ];
       if (validChannels.includes(channel)) {
         ipcRenderer.send(channel, data);

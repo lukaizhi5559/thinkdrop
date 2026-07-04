@@ -139,6 +139,22 @@ interface GatherOAuth {
   skillName: string;
 }
 
+interface GatherAuthActionItem {
+  label: string;
+  value: string;
+  primary: boolean;
+}
+
+interface GatherAuthAction {
+  question: string;
+  agentId: string;
+  agentType: 'browser' | 'cli';
+  authType: 'browser_oauth' | 'browser_reauth' | 'cli_token' | 'api_key';
+  iconUrl: string | null;
+  startUrl: string | null;
+  actions: GatherAuthActionItem[];
+}
+
 interface AskUserPrompt {
   question: string;
   options: string[];
@@ -675,6 +691,9 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
   const [gatherCredentialStored, setGatherCredentialStored] = useState<string | null>(null);
   const [gatherOAuth, setGatherOAuth] = useState<GatherOAuth | null>(null);
   const [gatherOAuthConnecting, setGatherOAuthConnecting] = useState(false);
+  const [gatherAuthAction, setGatherAuthAction] = useState<GatherAuthAction | null>(null);
+  const [gatherAuthConnecting, setGatherAuthConnecting] = useState(false);
+  const [gatherAuthBrowserOpened, setGatherAuthBrowserOpened] = useState(false);
   // Login guidance — shown inline while waitForAuth polls (step stays running)
   const [loginGuidance, setLoginGuidance] = useState<{ stepIndex: number; serviceDisplay: string; loginUrl: string; message: string } | null>(null);
   // Task auth overlay — prominent lock card shown when login wall detected during task execution
@@ -893,6 +912,9 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
       setFailureAnswer(null);
       setSavedFilePaths([]);
       setAskUserPrompt(null);
+      setGatherAuthAction(null);
+      setGatherAuthConnecting(false);
+      setGatherAuthBrowserOpened(false);
       setGuideStep(null);
       setIntentType(null);
       setScheduleCountdown(null);
@@ -1507,12 +1529,36 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
           setScheduleCountdown(prev => prev ? { ...prev, remainingMs: data.remainingMs, label: data.description || prev.label } : prev);
           break;
 
+        case 'gather_auth_action':
+          setPhase('gathering');
+          setGatherAuthAction({
+            question: data.question || '',
+            agentId: data.agentId || '',
+            agentType: data.agentType || 'browser',
+            authType: data.authType || 'browser_oauth',
+            iconUrl: data.iconUrl || null,
+            startUrl: data.startUrl || null,
+            actions: data.actions || [],
+          });
+          setGatherAuthConnecting(false);
+          setGatherAuthBrowserOpened(false);
+          break;
+
+        case 'browser:auth_opened':
+          // Browser opened for sign-in — swap card to confirmation phase
+          setGatherAuthConnecting(false);
+          setGatherAuthBrowserOpened(true);
+          break;
+
         case 'gather_start':
           setPhase('gathering');
           setGatherCredential(null);
           setGatherConfirm(null);
           setGatherOAuth(null);
           setGatherOAuthConnecting(false);
+          setGatherAuthAction(null);
+          setGatherAuthConnecting(false);
+          setGatherAuthBrowserOpened(false);
           break;
 
         case 'gather_credential':
@@ -1580,6 +1626,9 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
           break;
 
         case 'gather_answer_received':
+          setGatherAuthAction(null);
+          setGatherAuthConnecting(false);
+          setGatherAuthBrowserOpened(false);
           setAskUserPrompt(null);
           setPhase('executing');
           break;
@@ -1968,6 +2017,25 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
       else next.add(index);
       return next;
     });
+  };
+
+  const handleGatherAuthAction = (actionValue: string, agentId: string, agentType: string) => {
+    if (actionValue === 'auth_browser') {
+      setGatherAuthConnecting(true);
+      ipcRenderer?.send('browser.agent:auth', { agentId });
+    } else if (actionValue === 'open_agents_tab') {
+      ipcRenderer?.send('preflight:open-agents-tab', { agentId });
+      // Keep card visible — user will complete auth in agents tab then confirm
+    } else if (actionValue === 'agents_tab_done') {
+      setGatherAuthAction(null);
+      setGatherAuthConnecting(false);
+      ipcRenderer?.send('gather:answer', { answer: 'authenticated' });
+    } else {
+      // 'use_api' or any other answer
+      setGatherAuthAction(null);
+      setGatherAuthConnecting(false);
+      ipcRenderer?.send('gather:answer', { answer: actionValue });
+    }
   };
 
   const handleOptionClick = (option: string) => {
@@ -2736,6 +2804,139 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
                 >
                   Skip
                 </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Gather: Auth action card (browser sign-in / CLI agents tab) ────── */}
+      {gatherAuthAction && (
+        <div style={{ padding: '14px 16px', borderRadius: 10, backgroundColor: 'rgba(245,158,11,0.06)', border: '1px solid rgba(245,158,11,0.35)' }}>
+          <div className="flex items-start gap-3">
+            {gatherAuthAction.iconUrl ? (
+              <img
+                src={gatherAuthAction.iconUrl}
+                width={28}
+                height={28}
+                alt={gatherAuthAction.agentId}
+                style={{ borderRadius: 6, flexShrink: 0, marginTop: 1 }}
+                onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }}
+              />
+            ) : (
+              <div style={{ width: 28, height: 28, borderRadius: 6, backgroundColor: 'rgba(245,158,11,0.15)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, marginTop: 1, fontSize: '0.9rem' }}>
+                🔐
+              </div>
+            )}
+            <div style={{ flex: 1 }}>
+              <div style={{ color: '#fbbf24', fontSize: '0.76rem', fontWeight: 600, marginBottom: 4 }}>
+                Sign-in required
+              </div>
+              <div style={{ color: '#d1d5db', fontSize: '0.82rem', lineHeight: 1.4, marginBottom: 12 }}>
+                {gatherAuthAction.question}
+              </div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                {gatherAuthAction.agentType === 'browser' ? (
+                  // ── Browser agent: two-phase UI ──────────────────────────────
+                  gatherAuthBrowserOpened ? (
+                    // Phase 2: browser is open — show confirmation + escape hatch
+                    <>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
+                        <div className="w-2 h-2 rounded-full animate-pulse flex-shrink-0"
+                          style={{ backgroundColor: '#4ade80' }} />
+                        <span style={{ color: '#86efac', fontSize: '0.69rem' }}>
+                          Browser opened — sign in, then click below
+                        </span>
+                      </div>
+                      <button
+                        onClick={() => handleGatherAuthAction('agents_tab_done', gatherAuthAction.agentId, gatherAuthAction.agentType)}
+                        style={{
+                          padding: '7px 16px', borderRadius: 6, fontSize: '0.74rem', fontWeight: 600, cursor: 'pointer',
+                          backgroundColor: 'rgba(34,197,94,0.12)', border: '1px solid rgba(34,197,94,0.4)', color: '#4ade80',
+                          alignSelf: 'flex-start',
+                        }}
+                      >
+                        ✓ I've signed in — continue
+                      </button>
+                      <button
+                        onClick={() => handleGatherAuthAction('use_api', gatherAuthAction.agentId, gatherAuthAction.agentType)}
+                        style={{
+                          padding: '5px 12px', borderRadius: 6, fontSize: '0.68rem', fontWeight: 400, cursor: 'pointer',
+                          backgroundColor: 'transparent', border: '1px solid rgba(107,114,128,0.25)', color: '#6b7280',
+                          alignSelf: 'flex-start',
+                        }}
+                      >
+                        Use a different service
+                      </button>
+                    </>
+                  ) : (
+                    // Phase 1: not yet opened — show "Sign in" + escape hatch
+                    <>
+                      <button
+                        onClick={() => handleGatherAuthAction('auth_browser', gatherAuthAction.agentId, gatherAuthAction.agentType)}
+                        disabled={gatherAuthConnecting}
+                        style={{
+                          padding: '7px 14px', borderRadius: 6, fontSize: '0.72rem', fontWeight: 600,
+                          cursor: gatherAuthConnecting ? 'wait' : 'pointer',
+                          backgroundColor: gatherAuthConnecting ? 'rgba(245,158,11,0.05)' : 'rgba(245,158,11,0.15)',
+                          border: '1px solid rgba(245,158,11,0.45)',
+                          color: gatherAuthConnecting ? '#78716c' : '#fbbf24',
+                          alignSelf: 'flex-start',
+                        }}
+                      >
+                        {gatherAuthConnecting ? 'Opening browser…' : `Sign in to ${gatherAuthAction.agentId.replace('.agent', '')}`}
+                      </button>
+                      <button
+                        onClick={() => handleGatherAuthAction('use_api', gatherAuthAction.agentId, gatherAuthAction.agentType)}
+                        style={{
+                          padding: '5px 12px', borderRadius: 6, fontSize: '0.68rem', fontWeight: 400, cursor: 'pointer',
+                          backgroundColor: 'transparent', border: '1px solid rgba(107,114,128,0.25)', color: '#6b7280',
+                          alignSelf: 'flex-start',
+                        }}
+                      >
+                        Use a different service
+                      </button>
+                    </>
+                  )
+                ) : (
+                  // ── CLI / API-key agent: show Open Agents tab + Done ──────────
+                  gatherAuthAction.actions.map((action, i) => (
+                    action.value === 'open_agents_tab' ? (
+                      <div key={i} style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                        <button
+                          onClick={() => handleGatherAuthAction('open_agents_tab', gatherAuthAction.agentId, gatherAuthAction.agentType)}
+                          style={{
+                            padding: '6px 14px', borderRadius: 6, fontSize: '0.72rem', fontWeight: 600, cursor: 'pointer',
+                            backgroundColor: 'rgba(245,158,11,0.15)', border: '1px solid rgba(245,158,11,0.45)', color: '#fbbf24',
+                          }}
+                        >
+                          {action.label}
+                        </button>
+                        <button
+                          onClick={() => handleGatherAuthAction('agents_tab_done', gatherAuthAction.agentId, gatherAuthAction.agentType)}
+                          style={{
+                            padding: '6px 14px', borderRadius: 6, fontSize: '0.72rem', fontWeight: 500, cursor: 'pointer',
+                            backgroundColor: 'rgba(34,197,94,0.08)', border: '1px solid rgba(34,197,94,0.3)', color: '#86efac',
+                          }}
+                        >
+                          Done — credentials added
+                        </button>
+                      </div>
+                    ) : (
+                      <button
+                        key={i}
+                        onClick={() => handleGatherAuthAction(action.value, gatherAuthAction.agentId, gatherAuthAction.agentType)}
+                        style={{
+                          padding: '6px 12px', borderRadius: 6, fontSize: '0.68rem', fontWeight: 400, cursor: 'pointer',
+                          backgroundColor: 'transparent', border: '1px solid rgba(107,114,128,0.25)', color: '#6b7280',
+                          alignSelf: 'flex-start',
+                        }}
+                      >
+                        {action.label}
+                      </button>
+                    )
+                  ))
+                )}
               </div>
             </div>
           </div>
