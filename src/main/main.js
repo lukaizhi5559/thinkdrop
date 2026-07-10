@@ -3600,7 +3600,14 @@ app.whenReady().then(async () => {
       });
     };
 
-    // gatherCredentialCallback: prompts the user for a sensitive value, stores it in keytar,
+    // Normalizes a credential key to the canonical `credential:<agent>:<field>` form.
+    // Callers may already include the `credential:` prefix; this avoids double-prefixing.
+    const _normalizeCredentialKey = (credentialKey) => {
+      const k = String(credentialKey || '').toLowerCase();
+      return k.startsWith('credential:') ? k : `credential:${k}`;
+    };
+
+    // gatherCredentialCallback: prompts the user for a sensitive value, stores it securely,
     // and resolves with { stored: true, value }.
     // value is returned so callers (e.g. ask_user handler) can propagate it to _gatheredVars
     // for the following profile.store_secret step.  It must NOT be logged or persisted to disk.
@@ -3614,17 +3621,21 @@ app.whenReady().then(async () => {
           ipcMain.off('gather:credential', handleCredSubmit);
           if (!value) { pendingCredResolve({ stored: false, value: null }); return; }
           try {
+            const normalizedKey = _normalizeCredentialKey(credentialKey);
             if (safeStorage.isEncryptionAvailable()) {
               const encrypted = safeStorage.encryptString(String(value));
               await mcpAdapter.callService('user-memory', 'profile.set', {
-                key: `credential:${credentialKey.toLowerCase()}`,
+                key: normalizedKey,
                 valueRef: `SAFE:${encrypted.toString('base64')}`,
               }, { timeoutMs: 4000 }).catch(() => {});
             } else {
               const { spawnSync } = require('child_process');
-              spawnSync('security', ['add-generic-password', '-s', 'thinkdrop', '-a', credentialKey, '-w', String(value), '-U'], { encoding: 'utf8' });
+              spawnSync('security', ['add-generic-password', '-s', 'thinkdrop', '-a', normalizedKey, '-w', String(value), '-U'], { encoding: 'utf8' });
             }
-            console.log(`[GatherContext] Stored credential: ${credentialKey}`);
+            console.log(`[GatherContext] Stored credential: ${credentialKey} (key=${normalizedKey})`);
+            if (typeof progressCallback === 'function') {
+              progressCallback({ type: 'gather_credential_stored', credentialKey });
+            }
             pendingCredResolve({ stored: true, value });
           } catch (e) {
             console.error(`[GatherContext] credential store failed for ${credentialKey}:`, e.message);
@@ -3647,13 +3658,14 @@ app.whenReady().then(async () => {
     const keytarCheckCallback = async (credentialKey) => {
       try {
         // Check user_profile table first (new SAFE: entries)
+        const normalizedKey = _normalizeCredentialKey(credentialKey);
         const profileResult = await mcpAdapter.callService('user-memory', 'profile.get', {
-          key: `credential:${credentialKey.toLowerCase()}`,
+          key: normalizedKey,
         }, { timeoutMs: 3000 }).catch(() => null);
         if (profileResult?.data?.valueRef) return { found: true };
         // Fallback: legacy keychain check
         const { spawnSync } = require('child_process');
-        const proc = spawnSync('security', ['find-generic-password', '-s', 'thinkdrop', '-a', credentialKey, '-w'], { encoding: 'utf8' });
+        const proc = spawnSync('security', ['find-generic-password', '-s', 'thinkdrop', '-a', normalizedKey, '-w'], { encoding: 'utf8' });
         return { found: proc.status === 0 && !!proc.stdout?.trim() };
       } catch (_) {
         return { found: false };

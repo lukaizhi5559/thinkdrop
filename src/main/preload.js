@@ -179,6 +179,7 @@ contextBridge.exposeInMainWorld('electron', {
         'window:show',
         'is-streaming',
         'ui:switch-to-results',
+        'preflight:open-agents-tab',
         'agents:list',
         'agents:new',
         'agents:creating',
@@ -251,6 +252,7 @@ contextBridge.exposeInMainWorld('electron', {
         'plan:approved',
         'plan:rescanned',
         'plan:error',
+        'preflight:open-agents-tab',
       ];
       if (validChannels.includes(channel)) {
         ipcRenderer.removeAllListeners(channel);

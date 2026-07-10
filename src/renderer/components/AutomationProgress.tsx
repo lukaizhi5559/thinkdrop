@@ -101,7 +101,7 @@ type AutomationPhase =
   | 'plan_review';
 
 interface PreflightAgent {
-  type: 'cli' | 'browser' | 'app';
+  type: 'cli' | 'browser' | 'app' | 'api_key' | 'bearer' | 'basic';
   agentId: string;
   ready: boolean;
   authed: boolean;
@@ -112,7 +112,7 @@ interface PreflightAgent {
 interface PreflightAuthRequired {
   agentId: string;
   serviceName: string;
-  authType: 'cli_token' | 'browser_oauth' | 'app_intro' | 'cli_install' | 'api_key' | 'cli_update_needed' | 'browser_reauth';
+  authType: 'cli_token' | 'browser_oauth' | 'app_intro' | 'cli_install' | 'api_key' | 'bearer' | 'basic' | 'cli_update_needed' | 'browser_reauth';
   iconUrl: string;
   message: string;
 }
@@ -1029,6 +1029,28 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
             iconUrl: data.iconUrl,
             message: data.message,
           });
+          break;
+
+        case 'preflight:agent_ready':
+          setPreflightAgents(prev => prev.map(a =>
+            a.agentId === data.agentId
+              ? { ...a, ready: true, authed: true, message: data.message || `${data.agentId} ready` }
+              : a
+          ));
+          if (data.message) setPreflightMessage(data.message);
+          break;
+
+        case 'preflight:auth_failed':
+          setPreflightAgents(prev => prev.map(a =>
+            a.agentId === data.agentId
+              ? { ...a, ready: false, authed: false, message: data.message || `${data.agentId} auth failed` }
+              : a
+          ));
+          setPreflightWarnings(prev => [
+            ...prev,
+            { type: 'preflight_auth_failed', message: data.message || `${data.agentId} authentication failed` },
+          ]);
+          if (data.message) setPreflightMessage(data.message);
           break;
 
         case 'preflight:complete':
@@ -2019,7 +2041,7 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
     });
   };
 
-  const handleGatherAuthAction = (actionValue: string, agentId: string, agentType: string) => {
+  const handleGatherAuthAction = (actionValue: string, agentId: string, _agentType: string) => {
     if (actionValue === 'auth_browser') {
       setGatherAuthConnecting(true);
       ipcRenderer?.send('browser.agent:auth', { agentId });
@@ -3975,6 +3997,9 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
 
       {/* ── Preflight auth-required banner ─────────────────────────────────── */}
       {preflightAuthRequired && (
+        (() => {
+          const isBrowserAuth = preflightAuthRequired.authType === 'browser_oauth' || preflightAuthRequired.authType === 'browser_reauth';
+          return (
         <div className="rounded-lg"
           style={{
             padding: '10px 14px',
@@ -4000,10 +4025,8 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
               {preflightAuthRequired.message}
             </div>
             <div className="text-xs" style={{ color: '#92400e' }}>
-              {preflightAuthRequired.authType === 'browser_oauth'
-                ? 'Browser login required — open the Agents tab to sign in.'
-                : preflightAuthRequired.authType === 'browser_reauth'
-                ? 'Browser session may have expired — re-login recommended.'
+              {isBrowserAuth
+                ? 'Browser login required — use Sign in first, or open the Agents tab as a fallback.'
                 : preflightAuthRequired.authType === 'cli_install'
                 ? 'CLI install required — open the Agents tab to install.'
                 : preflightAuthRequired.authType === 'cli_update_needed'
@@ -4014,22 +4037,43 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
               }
             </div>
           </div>
-          <button
-            onClick={() => {
-              ipcRenderer?.send('preflight:open-agents-tab', { agentId: preflightAuthRequired.agentId });
-            }}
-            className="text-xs font-medium rounded-md transition-colors"
-            style={{
-              padding: '6px 12px',
-              backgroundColor: 'rgba(245,158,11,0.15)',
-              border: '1px solid rgba(245,158,11,0.4)',
-              color: '#f59e0b',
-              cursor: 'pointer',
-            }}
-          >
-            Open Agents Tab →
-          </button>
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+            {isBrowserAuth ? (
+              <button
+                onClick={() => {
+                  ipcRenderer?.send('browser.agent:auth', { agentId: preflightAuthRequired.agentId });
+                }}
+                className="text-xs font-medium rounded-md transition-colors"
+                style={{
+                  padding: '6px 12px',
+                  backgroundColor: 'rgba(245,158,11,0.15)',
+                  border: '1px solid rgba(245,158,11,0.4)',
+                  color: '#f59e0b',
+                  cursor: 'pointer',
+                }}
+              >
+                Sign in to {preflightAuthRequired.agentId.replace('.agent', '')} →
+              </button>
+            ) : null}
+            <button
+              onClick={() => {
+                ipcRenderer?.send('preflight:open-agents-tab', { agentId: preflightAuthRequired.agentId });
+              }}
+              className="text-xs font-medium rounded-md transition-colors"
+              style={{
+                padding: '6px 12px',
+                backgroundColor: 'rgba(245,158,11,0.15)',
+                border: '1px solid rgba(245,158,11,0.4)',
+                color: '#f59e0b',
+                cursor: 'pointer',
+              }}
+            >
+              Open Agents Tab →
+            </button>
+          </div>
         </div>
+          );
+        })()
       )}
 
       {/* ── vet CLI script review card ────────────────────────────────────── */}
