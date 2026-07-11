@@ -1037,6 +1037,7 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
               ? { ...a, ready: true, authed: true, message: data.message || `${data.agentId} ready` }
               : a
           ));
+          setPreflightAuthRequired(prev => (prev?.agentId === data.agentId ? null : prev));
           if (data.message) setPreflightMessage(data.message);
           break;
 
@@ -1046,6 +1047,7 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
               ? { ...a, ready: false, authed: false, message: data.message || `${data.agentId} auth failed` }
               : a
           ));
+          setPreflightAuthRequired(prev => (prev?.agentId === data.agentId ? null : prev));
           setPreflightWarnings(prev => [
             ...prev,
             { type: 'preflight_auth_failed', message: data.message || `${data.agentId} authentication failed` },
@@ -4026,7 +4028,7 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
             </div>
             <div className="text-xs" style={{ color: '#92400e' }}>
               {isBrowserAuth
-                ? 'Browser login required — use Sign in first, or open the Agents tab as a fallback.'
+                ? 'Browser login required — click Sign in to continue.'
                 : preflightAuthRequired.authType === 'cli_install'
                 ? 'CLI install required — open the Agents tab to install.'
                 : preflightAuthRequired.authType === 'cli_update_needed'
@@ -4054,22 +4056,23 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
               >
                 Sign in to {preflightAuthRequired.agentId.replace('.agent', '')} →
               </button>
-            ) : null}
-            <button
-              onClick={() => {
-                ipcRenderer?.send('preflight:open-agents-tab', { agentId: preflightAuthRequired.agentId });
-              }}
-              className="text-xs font-medium rounded-md transition-colors"
-              style={{
-                padding: '6px 12px',
-                backgroundColor: 'rgba(245,158,11,0.15)',
-                border: '1px solid rgba(245,158,11,0.4)',
-                color: '#f59e0b',
-                cursor: 'pointer',
-              }}
-            >
-              Open Agents Tab →
-            </button>
+            ) : (
+              <button
+                onClick={() => {
+                  ipcRenderer?.send('preflight:open-agents-tab', { agentId: preflightAuthRequired.agentId });
+                }}
+                className="text-xs font-medium rounded-md transition-colors"
+                style={{
+                  padding: '6px 12px',
+                  backgroundColor: 'rgba(245,158,11,0.15)',
+                  border: '1px solid rgba(245,158,11,0.4)',
+                  color: '#f59e0b',
+                  cursor: 'pointer',
+                }}
+              >
+                Open Agents Tab →
+              </button>
+            )}
           </div>
         </div>
           );

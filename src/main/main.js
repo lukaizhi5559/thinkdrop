@@ -6245,7 +6245,13 @@ app.whenReady().then(async () => {
     const payload = JSON.stringify({
       payload: {
         skill: 'browser.agent',
-        args: { action: 'run', agentId: normalizedAgentId, task: 'navigate to the sign-in page and wait for the user to authenticate' },
+        args: {
+          action: 'authenticate',
+          agentId: normalizedAgentId,
+          task: 'navigate to the sign-in page and wait for the user to authenticate',
+          // UI sign-in should open auth page only; do not auto-fill credentials.
+          manualLogin: true,
+        },
       },
     });
     const req = http.request(
