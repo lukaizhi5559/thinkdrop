@@ -88,6 +88,9 @@ export function UnifiedOverlay() {
   const [_isRecording, setIsRecording] = useState(false);
   // Skill panel removed - now in slideout
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [preflightAuthPending, setPreflightAuthPending] = useState(false);
+  const preflightAuthPendingRef = useRef(false);
+  useEffect(() => { preflightAuthPendingRef.current = preflightAuthPending; }, [preflightAuthPending]);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   
   // --- Prompt History State (for normal mode up/down navigation) ---
@@ -366,6 +369,7 @@ export function UnifiedOverlay() {
       setSearchSources([]);
       setIsStreaming(false);
       setIsThinking(true);
+      setIsSubmitting(true); // Show cancel/stop button during preflight and automation
       setIsAutomationMode(false);
       setInstallPrompt(null);
       setActionChips([]);
@@ -493,6 +497,7 @@ export function UnifiedOverlay() {
     if (!finalPromptText.trim() && finalHighlights.length === 0) {
       console.log('⚠️ [UNIFIED] No text or highlights, skipping submit');
       setIsThinking(false);
+      setIsSubmitting(false);
       return;
     }
     if (isSubmitting && !wasGatherPending) {
@@ -810,7 +815,9 @@ export function UnifiedOverlay() {
       } else if (message.type === 'done' || message.type === 'llm_stream_end') {
         setIsStreaming(false);
         setIsThinking(false);
-        setIsSubmitting(false); // Task complete - reset cancel button
+        if (!preflightAuthPendingRef.current) {
+          setIsSubmitting(false); // Task complete - reset cancel button
+        }
         setIsAutomationMode(false); // Clear automation status
         streamCompletedRef.current = true;
         console.log('✅ [UNIFIED] Streaming complete, final streamingResponse length:', streamingResponse.length);
@@ -950,20 +957,24 @@ export function UnifiedOverlay() {
         markUnreadTab('results');
         setIsThinking(false);
         setIsStreaming(false);
-        setIsSubmitting(false); // Task complete - reset submitting state
-        setIsAutomationMode(false); // Clear automation status
-        setInstallPrompt(null);
-        setIsInstalling(false);
-        glowOffTimerRef.current = setTimeout(() => setIsGlowActive(false), 400);
-        // Extra safety: ensure clean state on cancelled tasks
         if (data?.cancelled) {
-          setIsScheduledRun(false);
+          // Extra safety: ensure clean state on cancelled tasks
+          setPreflightAuthPending(false);
           setIsSubmitting(false);
           setIsThinking(false);
           setIsStreaming(false);
           setIsAutomationMode(false);
           setIsGlowActive(false);
+        } else if (preflightAuthPendingRef.current) {
+          // Auth banner/browser login is still active; keep cancel button visible
+          setIsSubmitting(true);
+        } else {
+          setIsSubmitting(false); // Task complete - reset submitting state
         }
+        setIsAutomationMode(false); // Clear automation status
+        setInstallPrompt(null);
+        setIsInstalling(false);
+        glowOffTimerRef.current = setTimeout(() => setIsGlowActive(false), 400);
       }
     };
 
@@ -2441,6 +2452,7 @@ export function UnifiedOverlay() {
                 <AutomationProgress
                   suppressIfScheduled={isScheduledRun}
                   setIsSubmitting={setIsSubmitting}
+                  onAuthPending={setPreflightAuthPending}
                   activeTab={activeTab}
                   onHeightChange={(automationH: number) => {
                     if (shouldSuppressResize()) return; // Don't resize while user is dragging or resizing the panel

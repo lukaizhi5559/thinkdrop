@@ -962,6 +962,9 @@ let llmBackend = null;
 let currentSessionId = null; // Persists across prompts for conversation continuity
 let currentBrowserSessionId = null; // Persists active Playwright session across prompts
 let currentBrowserUrl = null;        // Last known URL in the active Playwright session
+let _activeBrowserAgentSessionId = null; // Tracks browser session opened during preflight auth (for cancel cleanup)
+let _gatherAuthSessionId = null; // Tracks browser session opened by GatherAuth sign-in (survives stategraph completion)
+let _pendingPreflightPrompt = null; // { prompt, selectedText, responseLanguage, sessionId } — stored when preflight auth required, re-enqueued after auth succeeds
 let currentLastOpenedFilePath = null; // Persists last opened file path so "close it" knows the target
 let sessionFileCreations = []; // Track all file creation operations in current session for "newly created" references
 
@@ -2739,6 +2742,30 @@ app.whenReady().then(async () => {
       activeAbortController.abort();
       activeAbortController = null;
     }
+    // Close any active browser session opened by preflight auth or plan execution.
+    // playwright-cli daemon keeps Chrome alive independently — must explicitly close it.
+    const sessionsToClose = new Set();
+    if (_activeBrowserAgentSessionId) sessionsToClose.add(_activeBrowserAgentSessionId);
+    if (_gatherAuthSessionId && _gatherAuthSessionId !== _activeBrowserAgentSessionId) sessionsToClose.add(_gatherAuthSessionId);
+    if (currentBrowserSessionId && currentBrowserSessionId !== _activeBrowserAgentSessionId && currentBrowserSessionId !== _gatherAuthSessionId) sessionsToClose.add(currentBrowserSessionId);
+    for (const sid of sessionsToClose) {
+      console.log(`🛑 [Automation] Closing browser session: ${sid}`);
+      const closeBody = JSON.stringify({ payload: { skill: 'browser.act', args: { action: 'close', sessionId: sid } } });
+      const closeReq = http.request({
+        hostname: '127.0.0.1', port: 3007, path: '/command.automate', method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(closeBody) },
+        timeout: 5000,
+      }, (res) => { res.resume(); });
+      closeReq.on('error', () => {});
+      closeReq.on('timeout', () => { closeReq.destroy(); });
+      closeReq.write(closeBody);
+      closeReq.end();
+    }
+    _activeBrowserAgentSessionId = null;
+    _gatherAuthSessionId = null;
+    _pendingPreflightPrompt = null;
+    currentBrowserSessionId = null;
+    currentBrowserUrl = null;
     // Safety: a cancel may interrupt a capture-heavy app.agent step mid-session,
     // so tear down the drop session and bring the panel back explicitly (the
     // cancel all_done below uses safeSend, which bypasses the drop driver).
@@ -3322,6 +3349,13 @@ app.whenReady().then(async () => {
         activeScheduleCountdown = null;
       } else if (event.type === 'all_done') {
         activeScheduleCountdown = null;
+      }
+      // Track active browser agent session for cancel cleanup
+      if (event.type === 'preflight:auth_starting' && event.agentId) {
+        _activeBrowserAgentSessionId = event.agentId.replace('.agent', '').replace(/[^a-z0-9_]/gi, '_') + '_agent';
+      }
+      if (event.type === 'step_started' && (event.skill === 'browser.agent' || event.skill === 'browser.act') && event.agentId) {
+        _activeBrowserAgentSessionId = event.agentId.replace('.agent', '').replace(/[^a-z0-9_]/gi, '_') + '_agent';
       }
       // Forward all automation:progress events (including 'planning') to ResultsWindow.
       // Results tab owns inline automation display — do NOT auto-switch to Queue tab.
@@ -4561,6 +4595,7 @@ app.whenReady().then(async () => {
       const finalState = await stateGraph.execute(initialState, _journalOnProgress, activeAbortController.signal);
       activeAbortController = null;
       activeProgressCallback = null;
+      _activeBrowserAgentSessionId = null;
 
       // Voice Journal: report completion
       voiceJournal.graphDone({
@@ -4716,6 +4751,15 @@ app.whenReady().then(async () => {
         }
         // Plan error not caught by progressCallback (e.g. no skillPlan at all)
         if (finalState.planError && !finalState.skillPlan && !finalState.pendingQuestion) {
+          if (finalState.preflightAuthRequired) {
+            _pendingPreflightPrompt = {
+              prompt,
+              selectedText: selectedText || '',
+              responseLanguage: responseLanguage || null,
+              sessionId: currentSessionId,
+            };
+            console.log(`[PreflightAuth] Stored pending prompt for re-enqueue after auth: "${prompt.slice(0, 60)}"`);
+          }
           if (resultsWindow && !resultsWindow.isDestroyed()) {
             safeSend(resultsWindow, 'automation:progress', { type: 'plan_error', error: finalState.planError });
           }
@@ -6236,6 +6280,7 @@ app.whenReady().then(async () => {
     // Normalize: browser.agent DB keys always have .agent suffix; preflight may omit it
     const normalizedAgentId = agentId.endsWith('.agent') ? agentId : `${agentId}.agent`;
     console.log(`[GatherAuth] Opening browser sign-in for ${normalizedAgentId} (fire-and-forget)`);
+    _gatherAuthSessionId = normalizedAgentId.replace('.agent', '').replace(/[^a-z0-9_]/gi, '_') + '_agent';
 
     // Immediately tell the renderer the browser is open so the card changes state
     safeSendUnified('automation:progress', { type: 'browser:auth_opened', agentId: normalizedAgentId });
@@ -6264,6 +6309,16 @@ app.whenReady().then(async () => {
           try {
             const result = JSON.parse(data);
             console.log(`[GatherAuth] browser.agent background run done for ${normalizedAgentId}: ok=${result?.data?.ok}`);
+            if (result?.data?.ok && _pendingPreflightPrompt) {
+              const pp = _pendingPreflightPrompt;
+              _pendingPreflightPrompt = null;
+              console.log(`[GatherAuth] Auth succeeded — re-enqueuing prompt: "${pp.prompt.slice(0, 60)}"`);
+              promptQueue.enqueue(pp.prompt, {
+                selectedText: pp.selectedText,
+                responseLanguage: pp.responseLanguage,
+                sessionId: pp.sessionId,
+              });
+            }
           } catch (_) {}
         });
       }
@@ -7391,6 +7446,12 @@ app.whenReady().then(async () => {
         if (result.errors && result.errors.length > 0) {
           console.warn(`[Agents] Delete had non-fatal errors:`, result.errors);
         }
+        // Clear preflight in-memory auth cache so next run re-checks auth
+        try {
+          const { clearAuthCache } = require('../../stategraph-module/src/nodes/preflightAgents');
+          clearAuthCache(agentId);
+          console.log(`[Agents] Cleared preflight auth cache for ${agentId}`);
+        } catch (_) {}
       } else {
         console.error(`[Agents] Delete failed for ${agentId}: ${result.error}`);
       }

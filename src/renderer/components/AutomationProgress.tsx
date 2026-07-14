@@ -205,6 +205,7 @@ interface AutomationProgressProps {
   onOpenRules?: () => void;
   onAskUserShown?: () => void;
   setIsSubmitting?: (submitting: boolean) => void;
+  onAuthPending?: (pending: boolean) => void;
   suppressIfScheduled?: boolean;
   activeTab?: string;
 }
@@ -667,7 +668,7 @@ function parsePlanStepTitles(content: string): string[] {
   return titles;
 }
 
-export default function AutomationProgress({ onHeightChange, onActiveChange, onOpenRules, onAskUserShown, setIsSubmitting, suppressIfScheduled, activeTab }: AutomationProgressProps) {
+export default function AutomationProgress({ onHeightChange, onActiveChange, onOpenRules, onAskUserShown, setIsSubmitting, onAuthPending, suppressIfScheduled, activeTab }: AutomationProgressProps) {
   const [phase, setPhase] = useState<AutomationPhase>('idle');
   const planReviewRef = useRef<HTMLDivElement>(null);
   const [steps, setSteps] = useState<Step[]>([]);
@@ -770,6 +771,8 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
   // Preflight state
   const [preflightAgents, setPreflightAgents] = useState<PreflightAgent[]>([]);
   const [preflightAuthRequired, setPreflightAuthRequired] = useState<PreflightAuthRequired | null>(null);
+  const preflightAuthRequiredRef = useRef<PreflightAuthRequired | null>(null);
+  useEffect(() => { preflightAuthRequiredRef.current = preflightAuthRequired; }, [preflightAuthRequired]);
   const [preflightMessage, setPreflightMessage] = useState('Preparing agents...');
   const [preflightWarnings, setPreflightWarnings] = useState<{ type: string; message: string }[]>([]);
   const [vetScriptReview, setVetScriptReview] = useState<{ scriptContent: string; scriptUrl: string; message: string } | null>(null);
@@ -1029,6 +1032,7 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
             iconUrl: data.iconUrl,
             message: data.message,
           });
+          onAuthPending?.(true);
           break;
 
         case 'preflight:agent_ready':
@@ -1038,6 +1042,9 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
               : a
           ));
           setPreflightAuthRequired(prev => (prev?.agentId === data.agentId ? null : prev));
+          if (preflightAuthRequiredRef.current?.agentId === data.agentId) {
+            onAuthPending?.(false);
+          }
           if (data.message) setPreflightMessage(data.message);
           break;
 
@@ -1048,6 +1055,9 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
               : a
           ));
           setPreflightAuthRequired(prev => (prev?.agentId === data.agentId ? null : prev));
+          if (preflightAuthRequiredRef.current?.agentId === data.agentId) {
+            onAuthPending?.(false);
+          }
           setPreflightWarnings(prev => [
             ...prev,
             { type: 'preflight_auth_failed', message: data.message || `${data.agentId} authentication failed` },
@@ -1798,6 +1808,9 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
         case 'all_done': {
           // Don't let all_done collapse an active plan review (awaitingPlanApproval path)
           if (phaseRef.current === 'plan_review') break;
+          if (data.cancelled) {
+            setPreflightAuthRequired(null);
+          }
           setGuideStep(null);
           setParallelLoginServices(null);
           setParallelLoginDecisions({});
