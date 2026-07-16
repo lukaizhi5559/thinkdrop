@@ -6308,8 +6308,8 @@ app.whenReady().then(async () => {
         res.on('end', () => {
           try {
             const result = JSON.parse(data);
-            console.log(`[GatherAuth] browser.agent background run done for ${normalizedAgentId}: ok=${result?.data?.ok}`);
-            if (result?.data?.ok && _pendingPreflightPrompt) {
+            console.log(`[GatherAuth] browser.agent background run done for ${normalizedAgentId}: ok=${result?.data?.ok} authVerified=${result?.data?.authVerified}`);
+            if (result?.data?.ok && result?.data?.authVerified === true && _pendingPreflightPrompt) {
               const pp = _pendingPreflightPrompt;
               _pendingPreflightPrompt = null;
               console.log(`[GatherAuth] Auth succeeded — re-enqueuing prompt: "${pp.prompt.slice(0, 60)}"`);

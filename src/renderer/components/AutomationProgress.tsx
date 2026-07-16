@@ -117,6 +117,24 @@ interface PreflightAuthRequired {
   message: string;
 }
 
+interface RouteChoiceOption {
+  route: 'cli_api' | 'browser' | 'app';
+  label: string;
+  recommended: boolean;
+  description: string;
+  agentId: string;
+  authType: string;
+  requiresSetup: boolean;
+  appInstalled?: boolean;
+  downloadUrl?: string | null;
+}
+
+interface RouteChoice {
+  serviceName: string;
+  iconUrl: string;
+  options: RouteChoiceOption[];
+}
+
 interface GatherCredential {
   credentialKey: string;
   question: string;
@@ -773,6 +791,7 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
   const [preflightAuthRequired, setPreflightAuthRequired] = useState<PreflightAuthRequired | null>(null);
   const preflightAuthRequiredRef = useRef<PreflightAuthRequired | null>(null);
   useEffect(() => { preflightAuthRequiredRef.current = preflightAuthRequired; }, [preflightAuthRequired]);
+  const [preflightRouteChoice, setPreflightRouteChoice] = useState<RouteChoice | null>(null);
   const [preflightMessage, setPreflightMessage] = useState('Preparing agents...');
   const [preflightWarnings, setPreflightWarnings] = useState<{ type: string; message: string }[]>([]);
   const [vetScriptReview, setVetScriptReview] = useState<{ scriptContent: string; scriptUrl: string; message: string } | null>(null);
@@ -907,6 +926,7 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
       setTotalCount(0);
       setPreflightAgents([]);
       setPreflightAuthRequired(null);
+      setPreflightRouteChoice(null);
       setPreflightWarnings([]);
       setVetScriptReview(null);
       setExpandedSteps(new Set());
@@ -995,6 +1015,7 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
           setPhase('preflight');
           setPreflightAgents([]);
           setPreflightAuthRequired(null);
+          setPreflightRouteChoice(null);
           setPreflightWarnings([]);
           setVetScriptReview(null);
           setPreflightMessage(data.message || 'Preparing agents...');
@@ -1023,6 +1044,16 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
           if (data.message) setPreflightMessage(data.message);
           break;
         }
+
+        case 'preflight:route_choice':
+          setPhase('preflight');
+          setPreflightRouteChoice({
+            serviceName: data.serviceName,
+            iconUrl: data.iconUrl,
+            options: data.options || [],
+          });
+          onAuthPending?.(true);
+          break;
 
         case 'preflight:auth_required':
           setPreflightAuthRequired({
@@ -1081,6 +1112,7 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
           // Transition to planning after a brief delay so user sees the final state
           setTimeout(() => {
             setPreflightAuthRequired(null);
+            setPreflightRouteChoice(null);
             setPhase('planning');
             setPlanMessage('Generating skill plan...');
           }, 500);
@@ -1092,6 +1124,7 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
           setFailureAnswer(null);
           setPreflightAgents([]);
           setPreflightAuthRequired(null);
+          setPreflightRouteChoice(null);
           setPreflightWarnings([]);
           setVetScriptReview(null);
           setPhase('planning');
@@ -1810,6 +1843,7 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
           if (phaseRef.current === 'plan_review') break;
           if (data.cancelled) {
             setPreflightAuthRequired(null);
+            setPreflightRouteChoice(null);
           }
           setGuideStep(null);
           setParallelLoginServices(null);
@@ -4007,6 +4041,66 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
               )}
             </div>
           ))}
+        </div>
+      )}
+
+      {/* ── Preflight route choice card ─────────────────────────────────────── */}
+      {preflightRouteChoice && (
+        <div className="rounded-lg"
+          style={{
+            padding: '12px 14px',
+            backgroundColor: 'rgba(99,102,241,0.08)',
+            border: '1px solid rgba(99,102,241,0.3)',
+          }}
+        >
+          <div className="flex items-center gap-2" style={{ marginBottom: 10 }}>
+            {preflightRouteChoice.iconUrl && (
+              <img
+                src={preflightRouteChoice.iconUrl}
+                width={20}
+                height={20}
+                alt={preflightRouteChoice.serviceName}
+                style={{ borderRadius: 4, flexShrink: 0 }}
+                onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }}
+              />
+            )}
+            <div className="text-sm font-medium" style={{ color: '#a5b4fc' }}>
+              Choose execution route for {preflightRouteChoice.serviceName}
+            </div>
+          </div>
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+            {preflightRouteChoice.options.map((opt) => (
+              <button
+                key={opt.route}
+                onClick={() => {
+                  setPreflightRouteChoice(null);
+                  onAuthPending?.(false);
+                  ipcRenderer?.send('gather:answer', { answer: opt.route });
+                }}
+                className="text-xs font-medium rounded-md transition-colors"
+                style={{
+                  padding: '8px 14px',
+                  backgroundColor: opt.recommended ? 'rgba(99,102,241,0.15)' : 'transparent',
+                  border: `1px solid ${opt.recommended ? 'rgba(99,102,241,0.4)' : 'rgba(107,114,128,0.25)'}`,
+                  color: opt.recommended ? '#a5b4fc' : '#9ca3af',
+                  cursor: 'pointer',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  alignItems: 'flex-start',
+                  gap: 2,
+                }}
+              >
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                  {opt.recommended && <span style={{ fontSize: '0.6rem' }}>★</span>}
+                  {opt.label}
+                  {opt.recommended && <span style={{ fontSize: '0.6rem', opacity: 0.7 }}>(recommended)</span>}
+                </div>
+                <div style={{ fontSize: '0.6rem', opacity: 0.6, fontWeight: 400 }}>
+                  {opt.description}
+                </div>
+              </button>
+            ))}
+          </div>
         </div>
       )}
 
