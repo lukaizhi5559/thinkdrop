@@ -175,7 +175,8 @@ interface GatherAuthAction {
 
 interface AskUserPrompt {
   question: string;
-  options: string[];
+  options: (string | { label?: string; value?: string })[];
+  agentId?: string | null;
 }
 
 interface ParallelLoginService {
@@ -1555,7 +1556,7 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
 
         case 'ask_user':
           setPhase('ask_user');
-          setAskUserPrompt({ question: data.question, options: data.options || [] });
+          setAskUserPrompt({ question: data.question, options: data.options || [], agentId: data.agentId || null });
           // Stop any still-running step spinners; the step failed to complete automatically.
           setSteps(prev => prev.map(s => s.status === 'running' ? { ...s, status: 'failed' } : s));
           onAskUserShown?.();
@@ -2109,9 +2110,23 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
     }
   };
 
-  const handleOptionClick = (option: string) => {
+  const handleOptionClick = (option: string | { label?: string; value?: string }) => {
+    const _label = typeof option === 'string' ? option : (option?.label || String(option));
+    const _value = typeof option === 'string' ? option : (option?.value || _label);
     setAskUserPrompt(null);
-    ipcRenderer?.send('prompt-queue:submit', { prompt: option, selectedText: '' });
+    if (_value === 'open_agents_training') {
+      const _agentId = askUserPrompt?.agentId || null;
+      ipcRenderer?.send('agents:open-training', { agentId: _agentId });
+      return;
+    }
+    ipcRenderer?.send('prompt-queue:submit', { prompt: _value, selectedText: '' });
+  };
+
+  const handleTakeOver = () => {
+    const _agentId = askUserPrompt?.agentId || null;
+    setAskUserPrompt(null);
+    setPhase('idle');
+    ipcRenderer?.send('browser:take_over', { agentId: _agentId });
   };
 
   const handleGuideContinue = () => {
@@ -2414,6 +2429,27 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
             </>
           );
         })()}
+        {phase === 'executing' && (
+          <button
+            onClick={handleTakeOver}
+            className="ml-auto text-xs px-2 py-0.5 rounded-full transition-colors flex items-center gap-1"
+            style={{
+              backgroundColor: 'rgba(168,85,247,0.06)',
+              border: '1px solid rgba(168,85,247,0.15)',
+              color: '#a78bfa',
+              cursor: 'pointer',
+              opacity: 0.7,
+            }}
+            onMouseEnter={e => { e.currentTarget.style.opacity = '1'; e.currentTarget.style.backgroundColor = 'rgba(168,85,247,0.12)'; }}
+            onMouseLeave={e => { e.currentTarget.style.opacity = '0.7'; e.currentTarget.style.backgroundColor = 'rgba(168,85,247,0.06)'; }}
+            title="Cancel automation and demonstrate the correct action manually"
+          >
+            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/>
+            </svg>
+            Something wrong?
+          </button>
+        )}
         {phase === 'plan_review' && (
           <div>
             <div style={{ marginBottom: 10, padding: '7px 10px', borderRadius: 8, backgroundColor: 'rgba(251,191,36,0.08)', border: '1px solid rgba(251,191,36,0.28)', display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -4115,7 +4151,8 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
             backgroundColor: 'rgba(245,158,11,0.08)',
             border: '1px solid rgba(245,158,11,0.3)',
             display: 'flex',
-            alignItems: 'center',
+            alignItems: 'flex-start',
+            flexWrap: 'wrap',
             gap: 10,
           }}
         >
@@ -4129,8 +4166,8 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
               onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }}
             />
           )}
-          <div className="flex-1">
-            <div className="text-sm font-medium" style={{ color: '#f59e0b' }}>
+          <div className="flex-1" style={{ minWidth: 0 }}>
+            <div className="text-sm font-medium" style={{ color: '#f59e0b', overflowWrap: 'anywhere' }}>
               {preflightAuthRequired.message}
             </div>
             <div className="text-xs" style={{ color: '#92400e' }}>
@@ -4146,7 +4183,7 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
               }
             </div>
           </div>
-          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+          <div style={{ display: 'flex', width: '100%', gap: 8, flexWrap: 'wrap', alignItems: 'center', justifyContent: 'flex-end' }}>
             {isBrowserAuth ? (
               <button
                 onClick={() => {
@@ -4355,7 +4392,9 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
           </div>
           {askUserPrompt.options.length > 0 && (
             <div className="flex flex-col gap-1.5 mt-2">
-              {askUserPrompt.options.map((option, i) => (
+              {askUserPrompt.options.map((option, i) => {
+                const _label = typeof option === 'string' ? option : (option?.label || String(option));
+                return (
                 <button
                   key={i}
                   onClick={() => handleOptionClick(option)}
@@ -4369,11 +4408,30 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
                   onMouseEnter={e => (e.currentTarget.style.backgroundColor = 'rgba(59,130,246,0.18)')}
                   onMouseLeave={e => (e.currentTarget.style.backgroundColor = 'rgba(59,130,246,0.08)')}
                 >
-                  {option}
+                  {_label}
                 </button>
-              ))}
+                );
+              })}
             </div>
           )}
+          <button
+            onClick={handleTakeOver}
+            className="text-left px-3 py-2 rounded-lg text-sm transition-colors flex items-center gap-2"
+            style={{
+              backgroundColor: 'rgba(168,85,247,0.08)',
+              border: '1px solid rgba(168,85,247,0.25)',
+              color: '#c4b5fd',
+              cursor: 'pointer',
+              marginTop: 4,
+            }}
+            onMouseEnter={e => (e.currentTarget.style.backgroundColor = 'rgba(168,85,247,0.18)')}
+            onMouseLeave={e => (e.currentTarget.style.backgroundColor = 'rgba(168,85,247,0.08)')}
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
+              <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/>
+            </svg>
+            Take over and train
+          </button>
         </div>
       )}
     </div>

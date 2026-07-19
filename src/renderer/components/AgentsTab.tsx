@@ -1314,6 +1314,17 @@ export function AgentsTab({ items, onRefresh }: AgentsTabProps) {
         // Auto-clear highlight after 10s
         setTimeout(() => setPreflightHighlightAgent(null), 10000);
       }
+      // Training handoff: auto-start the CDP recorder for the requested agent
+      const trainAgentId = sessionStorage.getItem('takeover:train-agent');
+      if (trainAgentId) {
+        sessionStorage.removeItem('takeover:train-agent');
+        setExpandedAgent(trainAgentId);
+        const isCli = cliAgents.some(a => a.id === trainAgentId);
+        const isApp = appAgents.some(a => a.id === trainAgentId);
+        setActiveSubtab(isCli ? 'cli' : isApp ? 'app' : 'browser');
+        // Call handleTrain after a short delay to ensure the card is rendered
+        setTimeout(() => handleTrain(trainAgentId), 300);
+      }
     } catch (_) {}
   }, [items]);
 

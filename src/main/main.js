@@ -965,6 +965,8 @@ let currentBrowserUrl = null;        // Last known URL in the active Playwright 
 let _activeBrowserAgentSessionId = null; // Tracks browser session opened during preflight auth (for cancel cleanup)
 let _gatherAuthSessionId = null; // Tracks browser session opened by GatherAuth sign-in (survives stategraph completion)
 let _pendingPreflightPrompt = null; // { prompt, selectedText, responseLanguage, sessionId } — stored when preflight auth required, re-enqueued after auth succeeds
+let _takeOverContext = null; // Phase 10: { agentId, task, pageType, service } — set when user takes over, used for distillHumanCorrection
+let _currentAutomationPrompt = null; // Phase 10: tracks the active prompt for take-over context
 let currentLastOpenedFilePath = null; // Persists last opened file path so "close it" knows the target
 let sessionFileCreations = []; // Track all file creation operations in current session for "newly created" references
 
@@ -2782,6 +2784,52 @@ app.whenReady().then(async () => {
     }
   });
 
+  // ─── Phase 9: Browser Take Over — human-in-the-loop escalation ──────────
+  // User clicks "Take over and train" or "Something wrong?" in AutomationProgress.
+  // Cancels the automation abort but KEEPS the browser session open so the user
+  // can manually demonstrate the correct action. Routes to agents training tab.
+  ipcMain.on('browser:take_over', (_event, { agentId } = {}) => {
+    console.log(`🎯 [TakeOver] User taking over${agentId ? ` for ${agentId}` : ''}`);
+
+    // Phase 10: Store context for distillHumanCorrection after training save
+    _takeOverContext = {
+      agentId: agentId || null,
+      task: _currentAutomationPrompt || null,
+    };
+
+    // Abort the active automation run
+    if (activeAbortController) {
+      activeAbortController.abort();
+      activeAbortController = null;
+    }
+
+    // Do NOT close the browser session — the user needs it to demonstrate actions.
+    // Just clear the active session tracking so it's not force-closed on cancel.
+    const _takeOverSessionId = _activeBrowserAgentSessionId || currentBrowserSessionId;
+    _activeBrowserAgentSessionId = null;
+    _gatherAuthSessionId = null;
+    _pendingPreflightPrompt = null;
+
+    // Notify UI that automation was cancelled (but browser stays open)
+    if (resultsWindow && !resultsWindow.isDestroyed()) {
+      safeSend(resultsWindow, 'automation:progress', { type: 'all_done', cancelled: true, takeOver: true, completedCount: 0, totalCount: 0 });
+    }
+    if (unifiedWindow && !unifiedWindow.isDestroyed()) {
+      safeSend(unifiedWindow, 'automation:progress', { type: 'all_done', cancelled: true, takeOver: true, completedCount: 0, totalCount: 0 });
+    }
+    if (promptCaptureWindow && !promptCaptureWindow.isDestroyed()) {
+      safeSend(promptCaptureWindow, 'automation:progress', { type: 'all_done', cancelled: true, takeOver: true, completedCount: 0, totalCount: 0 });
+    }
+
+    // Route user to agents training tab if agentId is known
+    if (agentId) {
+      console.log(`🎯 [TakeOver] Opening agents training tab for ${agentId}`);
+      if (unifiedWindow && !unifiedWindow.isDestroyed()) {
+        safeSend(unifiedWindow, 'agents:open-training', { agentId, sessionId: _takeOverSessionId });
+      }
+    }
+  });
+
   // ─── Maintenance Scan: IPC handlers ──────────────────────────────────────
   const COMMAND_SERVICE_URL = process.env.COMMAND_SERVICE_URL || 'http://127.0.0.1:3007';
 
@@ -3290,6 +3338,7 @@ app.whenReady().then(async () => {
   async function runPromptThroughStateGraph(prompt, { selectedText = '', sessionId = null, userId = 'default_user', responseLanguage = null, promptQueueId = null, _planFile = null, _forceNewPlan = false, _skillPlan = null, _skillPlanFile = null, _planCorrectionMode = false, _planCorrectionText = null, _basePlanFile = null, _skillPlanJson = null, _planCorrectionSourcePrompt = null } = {}) {
     const isPlanExecute = !!_planFile;
     console.log('🧠 [StateGraph] Processing prompt:', prompt.substring(0, 80), responseLanguage ? `(responseLanguage: ${responseLanguage})` : '', isPlanExecute ? `[plan:${require('path').basename(_planFile)}]` : '');
+    _currentAutomationPrompt = prompt;
 
     // Track this prompt so clipboard monitor won't re-capture it as a highlight
     recentlySubmittedPrompts.add(prompt.trim());
@@ -3929,6 +3978,10 @@ app.whenReady().then(async () => {
               chosenOption = q.options[idx];
             }
           }
+          // Normalize: option may be an object { label, value } from recipeRequired
+          if (chosenOption && typeof chosenOption === 'object') {
+            chosenOption = chosenOption.value || chosenOption.label || String(chosenOption);
+          }
 
           // ── Guide offer re-entry ─────────────────────────────────────────────
           // When the answer node surfaced a guide offer (_isGuideOffer) and the
@@ -4329,6 +4382,39 @@ app.whenReady().then(async () => {
               stepRetryCount: 0,
               context: { ...paused.context, sessionId: sessionId || currentSessionId }
             };
+          } else if (paused.pendingQuestion?.trainingHandoff || paused.pendingQuestion?.recipeRequired) {
+            // ── Training handoff resume: user chose Open agent training or Cancel ──
+            // browser.agent returned trainingHandoff (or legacy recipeRequired) when
+            // no deep-link or trained recipe was found for a mutation task.
+            // Open agent training → forward IPC to UnifiedOverlay to switch to Agents tab.
+            // Cancel → clear paused state and emit all_done with cancelled: true.
+            const _handoffAgentId = paused.pendingQuestion?.agentId || null;
+            const _wantsTrain = /open|train/i.test(chosenOption) || chosenOption === 'open_agents_training' || chosenOption === 'train_recipe';
+            const _wantsCancel = /cancel/i.test(chosenOption) || chosenOption === 'cancel';
+
+            if (_wantsTrain && _handoffAgentId) {
+              console.log(`[StateGraph] ASK_USER resume: trainingHandoff — opening Agents tab for ${_handoffAgentId}`);
+              safeSendUnified('preflight:open-agents-tab', { agentId: _handoffAgentId });
+              pausedAutomationState = null;
+              if (typeof streamCallback === 'function') {
+                streamCallback(`Opening ${_handoffAgentId} in the Agents tab for training.`);
+              }
+              if (typeof progressCallback === 'function') {
+                progressCallback({ type: 'all_done', cancelled: true, summary: `Opening ${_handoffAgentId} in the Agents tab for training.` });
+              }
+              return;
+            } else {
+              // Cancel — clear paused state and report cancellation
+              console.log('[StateGraph] ASK_USER resume: trainingHandoff — user cancelled');
+              pausedAutomationState = null;
+              if (typeof streamCallback === 'function') {
+                streamCallback('Training handoff cancelled.');
+              }
+              if (typeof progressCallback === 'function') {
+                progressCallback({ type: 'all_done', cancelled: true, summary: 'Training handoff cancelled.' });
+              }
+              return;
+            }
           } else if (paused.pendingQuestion?._isAgentAskUser && /^yes[,.]?\s+run:\s+/i.test(chosenOption.trim())) {
             // cli.agent embedded an exact command in the option text (e.g. "Yes, run: gh api --method PUT /user/starred/microsoft/vscode").
             // Bypass planSkills entirely via _skillPlan injection — planSkills LLM would
@@ -6266,8 +6352,26 @@ app.whenReady().then(async () => {
 
   // ─── Preflight: open agents tab for auth ───────────────────────────────────
   ipcMain.on('preflight:open-agents-tab', (_event, { agentId } = {}) => {
+    // Clear any paused automation state — the user is being routed to the Agents tab
+    // for auth or training, so the paused ask_user should not linger.
+    if (pausedAutomationState) {
+      console.log(`[StateGraph] preflight:open-agents-tab — clearing pausedAutomationState (agentId=${agentId})`);
+      pausedAutomationState = null;
+    }
     // Forward to UnifiedOverlay so it can switch to the agents tab
     safeSendUnified('preflight:open-agents-tab', { agentId });
+  });
+
+  // ─── Training handoff: open agents tab and start training ──────────────────
+  // Triggered by the training handoff option in AutomationProgress.
+  // Forwards to UnifiedOverlay which sets takeover:train-agent in sessionStorage
+  // so AgentsTab auto-starts the CDP recorder.
+  ipcMain.on('agents:open-training', (_event, { agentId } = {}) => {
+    if (pausedAutomationState) {
+      console.log(`[StateGraph] agents:open-training — clearing pausedAutomationState (agentId=${agentId})`);
+      pausedAutomationState = null;
+    }
+    safeSendUnified('agents:open-training', { agentId });
   });
 
   // ─── Gather: browser.agent:auth — kick off headed Playwright sign-in ───────
@@ -6769,6 +6873,24 @@ app.whenReady().then(async () => {
         console.log(`[Agents] Trained skill "${skillName}" saved successfully — refreshing list`);
         // Refresh agents list so the new trained skill appears in the UI
         ipcMain.emit('agents:list');
+
+        // Phase 10: If this save came from a take-over, distill human correction into script DB
+        if (_takeOverContext && _takeOverContext.agentId === agentId && _takeOverContext.task) {
+          try {
+            const recipe = result.recipe || null;
+            const recordedEvents = recipe?.waypoints || [];
+            if (recordedEvents.length >= 2) {
+              trainerAgent.distillHumanCorrection(
+                agentId, _takeOverContext.task, recordedEvents, 'canvas', null
+              ).then(_r => {
+                if (_r) console.log(`🎯 [TakeOver] Distilled human correction into script ${_r.service}.${_r.action} (${_r.steps} steps)`);
+              }).catch(_e => console.warn(`[TakeOver] distillHumanCorrection error (non-fatal): ${_e.message}`));
+            }
+          } catch (_distillErr) {
+            console.warn(`[TakeOver] distillHumanCorrection setup error (non-fatal): ${_distillErr.message}`);
+          }
+          _takeOverContext = null;
+        }
       } else if (unifiedWindow && !unifiedWindow.isDestroyed()) {
         safeSend(unifiedWindow, 'agents:train-error', { agentId, error: result.error });
       }

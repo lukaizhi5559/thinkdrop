@@ -1673,6 +1673,19 @@ export function UnifiedOverlay() {
         try { sessionStorage.setItem('preflight:highlight-agent', data.agentId); } catch (_) {}
       }
     }, token);
+    // Phase 9: Take-over routing — switch to agents tab and start training
+    ipcRenderer.on('agents:open-training', (data: any) => {
+      setActiveTab('agents');
+      setUnreadTabs(prev => {
+        const next = new Set(prev);
+        next.delete('agents');
+        return next;
+      });
+      if (data?.agentId) {
+        try { sessionStorage.setItem('preflight:highlight-agent', data.agentId); } catch (_) {}
+        try { sessionStorage.setItem('takeover:train-agent', data.agentId); } catch (_) {}
+      }
+    }, token);
     ipcRenderer.on('queue:update', handleQueueUpdate, token);
     ipcRenderer.on('queue:item-done', handleQueueItemDone, token);
     ipcRenderer.on('cron:list', handleCronList, token);
@@ -2656,13 +2669,13 @@ export function UnifiedOverlay() {
         </div>
 
         {/* AI Activity Panel - visible on all tabs */}
-        <AIActivityPanel
+        {/* <AIActivityPanel
           ref={aiActivityPanelRef}
           isDebugMode={isDebugMode}
           activeTab={activeTab}
           isRunning={isSubmitting || isStreaming || isThinking}
           currentOperation={statusText}
-        />
+        /> */}
 
         {/* Bottom Input Bar */}
         <div
