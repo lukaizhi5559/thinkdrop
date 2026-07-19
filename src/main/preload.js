@@ -109,6 +109,7 @@ contextBridge.exposeInMainWorld('electron', {
         'app-agent:highlight',
         'ghostlayer:capture-ready',
         'preflight:open-agents-tab',
+        'preflight:recheck',
         'browser.agent:auth',
       ];
       if (validChannels.includes(channel)) {
@@ -180,6 +181,7 @@ contextBridge.exposeInMainWorld('electron', {
         'is-streaming',
         'ui:switch-to-results',
         'preflight:open-agents-tab',
+        'preflight:recheck',
         'agents:list',
         'agents:new',
         'agents:creating',
@@ -253,6 +255,7 @@ contextBridge.exposeInMainWorld('electron', {
         'plan:rescanned',
         'plan:error',
         'preflight:open-agents-tab',
+        'preflight:recheck',
       ];
       if (validChannels.includes(channel)) {
         ipcRenderer.removeAllListeners(channel);

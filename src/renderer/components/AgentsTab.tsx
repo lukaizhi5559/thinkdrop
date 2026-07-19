@@ -1275,12 +1275,16 @@ export function AgentsTab({ items, onRefresh }: AgentsTabProps) {
   const [editedDescriptor, setEditedDescriptor] = useState('');
   // Config fields from descriptor
   const [configFields, setConfigFields] = useState<{key: string; value: string; label: string}[]>([]);
+  // Setup info from descriptor (install/auth commands, URLs, credentials needed)
+  const [setupInfo, setSetupInfo] = useState<any>(null);
   // Dynamic credential pairs for the editor (key-value with metadata)
   const [credentialPairs, setCredentialPairs] = useState<Array<{ key: string; value: string; isEditing: boolean; isStored: boolean }>>([]);
   // Track which credential is pending delete confirmation (stores the key)
   const [confirmDeleteCredential, setConfirmDeleteCredential] = useState<string | null>(null);
   // Preflight highlight: agentId that needs auth, highlighted when user clicks "Open Agents Tab"
   const [preflightHighlightAgent, setPreflightHighlightAgent] = useState<string | null>(null);
+  // Preflight-provided setup data (setupInfo + detected reason) from preflight:auth_required event
+  const [preflightSetupData, setPreflightSetupData] = useState<{ setupInfo?: any; reason?: string; authType?: string } | null>(null);
   // Browser login loading state
   const [browserLoginLoading, setBrowserLoginLoading] = useState<Record<string, boolean>>({});
   // Start URL editing state
@@ -1299,20 +1303,39 @@ export function AgentsTab({ items, onRefresh }: AgentsTabProps) {
     setLocalItems(items);
   }, [items]);
 
-  // Preflight highlight: check sessionStorage for agent to highlight (set by UnifiedOverlay when user clicks "Open Agents Tab")
+  // Preflight highlight: check sessionStorage + listen for preflight:agent-setup event
+  // (set by UnifiedOverlay when user clicks "Open Agents Tab")
+  const openPreflightAgent = (agentId: string, setupData?: { setupInfo?: any; reason?: string; authType?: string } | null) => {
+    setPreflightHighlightAgent(agentId);
+    if (setupData) setPreflightSetupData(setupData);
+    setExpandedAgent(agentId);
+    const isCli = cliAgents.some(a => a.id === agentId);
+    const isApp = appAgents.some(a => a.id === agentId);
+    setActiveSubtab(isCli ? 'cli' : isApp ? 'app' : 'browser');
+    if (isCli) {
+      const cliAgent = cliAgents.find(a => a.id === agentId);
+      if (cliAgent) {
+        setTimeout(() => handleCliDetail(cliAgent), 100);
+      }
+    }
+    setTimeout(() => setPreflightHighlightAgent(null), 10000);
+  };
+
   useEffect(() => {
     try {
       const highlightAgentId = sessionStorage.getItem('preflight:highlight-agent');
       if (highlightAgentId) {
         sessionStorage.removeItem('preflight:highlight-agent');
-        setPreflightHighlightAgent(highlightAgentId);
-        // Auto-expand the agent card and switch to the right subtab
-        setExpandedAgent(highlightAgentId);
-        const isCli = cliAgents.some(a => a.id === highlightAgentId);
-        const isApp = appAgents.some(a => a.id === highlightAgentId);
-        setActiveSubtab(isCli ? 'cli' : isApp ? 'app' : 'browser');
-        // Auto-clear highlight after 10s
-        setTimeout(() => setPreflightHighlightAgent(null), 10000);
+        let setupData: { setupInfo?: any; reason?: string; authType?: string } | null = null;
+        try {
+          const raw = sessionStorage.getItem('preflight:agent-setup');
+          if (raw) {
+            sessionStorage.removeItem('preflight:agent-setup');
+            const parsed = JSON.parse(raw);
+            setupData = { setupInfo: parsed.setupInfo || null, reason: parsed.reason || parsed.message || null, authType: parsed.authType || null };
+          }
+        } catch (_) {}
+        openPreflightAgent(highlightAgentId, setupData);
       }
       // Training handoff: auto-start the CDP recorder for the requested agent
       const trainAgentId = sessionStorage.getItem('takeover:train-agent');
@@ -1322,10 +1345,23 @@ export function AgentsTab({ items, onRefresh }: AgentsTabProps) {
         const isCli = cliAgents.some(a => a.id === trainAgentId);
         const isApp = appAgents.some(a => a.id === trainAgentId);
         setActiveSubtab(isCli ? 'cli' : isApp ? 'app' : 'browser');
-        // Call handleTrain after a short delay to ensure the card is rendered
         setTimeout(() => handleTrain(trainAgentId), 300);
       }
     } catch (_) {}
+    // Listen for real-time preflight:agent-setup events (handles case where component is already mounted)
+    const handlePreflightSetup = (e: Event) => {
+      const detail = (e as CustomEvent).detail;
+      if (detail?.agentId) {
+        openPreflightAgent(detail.agentId, {
+          setupInfo: detail.setupInfo || null,
+          reason: detail.reason || detail.message || null,
+          authType: detail.authType || null,
+        });
+      }
+    };
+    window.addEventListener('preflight:agent-setup', handlePreflightSetup);
+    return () => window.removeEventListener('preflight:agent-setup', handlePreflightSetup);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [items]);
 
   // Request auto-scan setting on mount
@@ -1646,6 +1682,57 @@ export function AgentsTab({ items, onRefresh }: AgentsTabProps) {
     return fields;
   };
 
+  // Parse setupInfo from agent descriptor (## Setup Info section or YAML frontmatter)
+  const parseSetupInfo = (descriptor: string): {
+    installCmd?: string;
+    authCmd?: string;
+    credentials?: string[];
+    verifyCmd?: string;
+    setupUrl?: string | string[];
+    instructions?: string;
+  } | null => {
+    if (!descriptor) return null;
+    // Try ## Setup Info markdown section
+    const mdMatch = descriptor.match(/##\s*Setup\s*Info\s*\n([\s\S]*?)(?=\n##\s|$)/i);
+    if (mdMatch) {
+      const block = mdMatch[1];
+      const info: any = {};
+      for (const line of block.split('\n')) {
+        const m = line.match(/^\s*[-*]\s*(\w+):\s*(.+)$/);
+        if (m) {
+          let val: any = m[2].trim();
+          if (val.startsWith('[') && val.endsWith(']')) {
+            try { val = JSON.parse(val); } catch { val = val.slice(1, -1).split(',').map((s: string) => s.trim()); }
+          }
+          info[m[1]] = val;
+        }
+      }
+      if (Object.keys(info).length > 0) return info;
+    }
+    // Try YAML frontmatter setupInfo
+    const fmMatch = descriptor.match(/^---\s*\n([\s\S]*?)\n---/);
+    if (fmMatch) {
+      const fm = fmMatch[1];
+      const siMatch = fm.match(/^setupInfo:\s*\n([\s\S]*?)(?=\n[a-z]|\n---|$)/m);
+      if (siMatch) {
+        const block = siMatch[1];
+        const info: any = {};
+        for (const line of block.split('\n')) {
+          const m = line.match(/^\s+(\w+):\s*(.+)$/);
+          if (m) {
+            let val: any = m[2].trim();
+            if (val.startsWith('[') && val.endsWith(']')) {
+              try { val = JSON.parse(val); } catch { val = val.slice(1, -1).split(',').map((s: string) => s.trim()); }
+            }
+            info[m[1]] = val;
+          }
+        }
+        if (Object.keys(info).length > 0) return info;
+      }
+    }
+    return null;
+  };
+
   // Load credentials into the dynamic editor
   const loadCredentials = async (agentId: string, service?: string) => {
     try {
@@ -1769,6 +1856,14 @@ export function AgentsTab({ items, onRefresh }: AgentsTabProps) {
       });
       setEditedDescriptor(descriptor);
       setConfigFields(parseConfigFields(descriptor));
+      // Merge descriptor-parsed setupInfo with preflight-provided setupInfo (preflight takes priority)
+      const descriptorSetupInfo = parseSetupInfo(descriptor);
+      if (preflightSetupData?.setupInfo) {
+        const merged = { ...(descriptorSetupInfo || {}), ...preflightSetupData.setupInfo };
+        setSetupInfo(merged);
+      } else {
+        setSetupInfo(descriptorSetupInfo);
+      }
     } catch {}
   };
 
@@ -2304,7 +2399,7 @@ export function AgentsTab({ items, onRefresh }: AgentsTabProps) {
               position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
               backgroundColor: 'rgba(0,0,0,0.6)', zIndex: 1000,
               display: 'flex', justifyContent: 'center', alignItems: 'center',
-            }} onClick={() => { setCliDetailAgent(null); setCliDetailData(null); }}>
+            }} onClick={() => { setCliDetailAgent(null); setCliDetailData(null); setPreflightSetupData(null); }}>
               <div
                 onClick={e => e.stopPropagation()}
                 style={{
@@ -2322,7 +2417,7 @@ export function AgentsTab({ items, onRefresh }: AgentsTabProps) {
                       {cliDetailAgent.service && <span style={{ marginLeft: 10 }}>Service: {cliDetailAgent.service}</span>}
                     </div>
                   </div>
-                  <button onClick={() => { setCliDetailAgent(null); setCliDetailData(null); }} style={{ background: 'none', border: 'none', color: '#6b7280', cursor: 'pointer', fontSize: '1.2rem' }}>x</button>
+                  <button onClick={() => { setCliDetailAgent(null); setCliDetailData(null); setPreflightSetupData(null); }} style={{ background: 'none', border: 'none', color: '#6b7280', cursor: 'pointer', fontSize: '1.2rem' }}>x</button>
                 </div>
                 {/* Status */}
                 <div style={{ marginBottom: 14, display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -2334,6 +2429,93 @@ export function AgentsTab({ items, onRefresh }: AgentsTabProps) {
                     <span style={{ fontSize: '0.7rem', color: '#6b7280' }}>Last validated: {timeAgo(cliDetailAgent.lastValidated)}</span>
                   )}
                 </div>
+                {/* Missing Configuration warning — shows when preflight detected a setup issue */}
+                {preflightSetupData?.reason && (
+                  <div style={{ marginBottom: 14, background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.3)', borderRadius: 10, padding: '12px 14px' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 6 }}>
+                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#ef4444" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                        <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/>
+                      </svg>
+                      <span style={{ fontSize: '0.78rem', fontWeight: 600, color: '#ef4444' }}>Missing Configuration</span>
+                    </div>
+                    <div style={{ fontSize: '0.72rem', color: '#fca5a5', lineHeight: 1.4 }}>
+                      {preflightSetupData.reason}
+                    </div>
+                  </div>
+                )}
+                {/* Setup Info section — shows when setupInfo is available */}
+                {setupInfo && (
+                  <div style={{ marginBottom: 14, background: 'rgba(59,130,246,0.06)', border: '1px solid rgba(59,130,246,0.2)', borderRadius: 10, padding: '12px 14px' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 8 }}>
+                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#60a5fa" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                        <circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/>
+                      </svg>
+                      <span style={{ fontSize: '0.78rem', fontWeight: 600, color: '#60a5fa' }}>Setup Guide</span>
+                    </div>
+                    {/* Instructions */}
+                    {setupInfo.instructions && (
+                      <div style={{ fontSize: '0.72rem', color: '#d1d5db', marginBottom: 8, lineHeight: 1.4 }}>
+                        {setupInfo.instructions}
+                      </div>
+                    )}
+                    {/* Install command */}
+                    {setupInfo.installCmd && (
+                      <div style={{ marginBottom: 6 }}>
+                        <span style={{ fontSize: '0.65rem', color: '#9ca3af' }}>Install: </span>
+                        <code style={{ fontSize: '0.68rem', color: '#10b981', background: 'rgba(16,185,129,0.08)', padding: '2px 6px', borderRadius: 4 }}>{setupInfo.installCmd}</code>
+                      </div>
+                    )}
+                    {/* Auth command */}
+                    {setupInfo.authCmd && (
+                      <div style={{ marginBottom: 6 }}>
+                        <span style={{ fontSize: '0.65rem', color: '#9ca3af' }}>Auth: </span>
+                        <code style={{ fontSize: '0.68rem', color: '#fbbf24', background: 'rgba(251,191,36,0.08)', padding: '2px 6px', borderRadius: 4 }}>{setupInfo.authCmd}</code>
+                      </div>
+                    )}
+                    {/* Verify command */}
+                    {setupInfo.verifyCmd && (
+                      <div style={{ marginBottom: 6 }}>
+                        <span style={{ fontSize: '0.65rem', color: '#9ca3af' }}>Verify: </span>
+                        <code style={{ fontSize: '0.68rem', color: '#60a5fa', background: 'rgba(59,130,246,0.08)', padding: '2px 6px', borderRadius: 4 }}>{setupInfo.verifyCmd}</code>
+                      </div>
+                    )}
+                    {/* Required credentials */}
+                    {Array.isArray(setupInfo.credentials) && setupInfo.credentials.length > 0 && (
+                      <div style={{ marginBottom: 6 }}>
+                        <span style={{ fontSize: '0.65rem', color: '#9ca3af' }}>Required credentials: </span>
+                        {setupInfo.credentials.map((cred: string) => (
+                          <span key={cred} style={{ fontSize: '0.62rem', padding: '1px 6px', borderRadius: 4, background: 'rgba(251,191,36,0.1)', color: '#fbbf24', border: '1px solid rgba(251,191,36,0.2)', marginRight: 4 }}>{cred}</span>
+                        ))}
+                      </div>
+                    )}
+                    {/* Setup URL(s) as clickable links */}
+                    {setupInfo.setupUrl && (
+                      <div style={{ marginTop: 8 }}>
+                        {(() => {
+                          const urls = Array.isArray(setupInfo.setupUrl) ? setupInfo.setupUrl : [setupInfo.setupUrl];
+                          return urls.filter(Boolean).map((url: string) => (
+                            <a
+                              key={url}
+                              href={url}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              onClick={(e) => {
+                                e.preventDefault();
+                                ipcRenderer?.send('shell:open-url', { url });
+                              }}
+                              style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: '0.7rem', color: '#60a5fa', textDecoration: 'none', marginRight: 10, cursor: 'pointer' }}
+                            >
+                              <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/>
+                              </svg>
+                              {url.length > 50 ? url.slice(0, 50) + '...' : url}
+                            </a>
+                          ));
+                        })()}
+                      </div>
+                    )}
+                  </div>
+                )}
                 {/* Credentials card — dynamic key-value editor */}
                 <div style={{ marginBottom: 16, background: 'rgba(251,191,36,0.08)', border: '1px solid rgba(251,191,36,0.3)', borderRadius: 10, padding: '12px 14px' }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 12 }}>
@@ -2673,6 +2855,25 @@ export function AgentsTab({ items, onRefresh }: AgentsTabProps) {
                     </div>
                   </>
                 )}
+                {/* Re-check button — triggers re-preflight via IPC */}
+                <div style={{ marginTop: 16, paddingTop: 14, borderTop: '1px solid rgba(255,255,255,0.06)' }}>
+                  <button
+                    onClick={() => {
+                      ipcRenderer?.send('preflight:recheck', { agentId: cliDetailAgent.id });
+                    }}
+                    style={{
+                      width: '100%', padding: '8px 14px', borderRadius: 8,
+                      border: '1px solid rgba(16,185,129,0.3)', background: 'rgba(16,185,129,0.1)',
+                      color: '#10b981', fontSize: '0.78rem', fontWeight: 600, cursor: 'pointer',
+                      display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
+                    }}
+                  >
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/>
+                    </svg>
+                    Return to Automation &amp; Re-check
+                  </button>
+                </div>
               </div>
             </div>
           )}

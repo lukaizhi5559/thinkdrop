@@ -1661,17 +1661,28 @@ export function UnifiedOverlay() {
     }, token);
     // Preflight auth routing: switch to agents tab when user clicks "Open Agents Tab"
     ipcRenderer.on('preflight:open-agents-tab', (data: any) => {
+      if (data?.agentId) {
+        try {
+          sessionStorage.setItem('preflight:highlight-agent', data.agentId);
+          sessionStorage.setItem('preflight:agent-setup', JSON.stringify(data));
+          window.dispatchEvent(new CustomEvent('preflight:agent-setup', { detail: data }));
+        } catch (_) {}
+      }
       setActiveTab('agents');
       setUnreadTabs(prev => {
         const next = new Set(prev);
         next.delete('agents');
         return next;
       });
-      // Forward agentId to AgentsTab for highlighting (handled via agents:new or direct state)
-      if (data?.agentId) {
-        // Store the agentId so AgentsTab can pick it up for highlighting
-        try { sessionStorage.setItem('preflight:highlight-agent', data.agentId); } catch (_) {}
-      }
+    }, token);
+    // Preflight re-check: switch back to results/automation tab after CLI setup
+    ipcRenderer.on('preflight:recheck', (_data: any) => {
+      setActiveTab('results');
+      setUnreadTabs(prev => {
+        const next = new Set(prev);
+        next.delete('results');
+        return next;
+      });
     }, token);
     // Phase 9: Take-over routing — switch to agents tab and start training
     ipcRenderer.on('agents:open-training', (data: any) => {

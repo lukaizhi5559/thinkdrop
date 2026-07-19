@@ -112,9 +112,18 @@ interface PreflightAgent {
 interface PreflightAuthRequired {
   agentId: string;
   serviceName: string;
-  authType: 'cli_token' | 'browser_oauth' | 'app_intro' | 'cli_install' | 'api_key' | 'bearer' | 'basic' | 'cli_update_needed' | 'browser_reauth';
+  authType: 'cli_token' | 'browser_oauth' | 'app_intro' | 'cli_install' | 'api_key' | 'bearer' | 'basic' | 'cli_update_needed' | 'browser_reauth' | 'cli_setup';
   iconUrl: string;
   message: string;
+  reason?: string;
+  setupInfo?: {
+    installCmd?: string;
+    authCmd?: string;
+    credentials?: string[];
+    verifyCmd?: string;
+    setupUrl?: string | string[];
+    instructions?: string;
+  } | null;
 }
 
 interface RouteChoiceOption {
@@ -1063,6 +1072,8 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
             authType: data.authType,
             iconUrl: data.iconUrl,
             message: data.message,
+            reason: data.reason || null,
+            setupInfo: data.setupInfo || null,
           });
           onAuthPending?.(true);
           break;
@@ -4144,6 +4155,7 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
       {preflightAuthRequired && (
         (() => {
           const isBrowserAuth = preflightAuthRequired.authType === 'browser_oauth' || preflightAuthRequired.authType === 'browser_reauth';
+          const isCliSetup = preflightAuthRequired.authType === 'cli_setup';
           return (
         <div className="rounded-lg"
           style={{
@@ -4171,7 +4183,9 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
               {preflightAuthRequired.message}
             </div>
             <div className="text-xs" style={{ color: '#92400e' }}>
-              {isBrowserAuth
+              {isCliSetup
+                ? 'CLI agent needs configuration — open the Agents tab to complete setup.'
+                : isBrowserAuth
                 ? 'Browser login required — click Sign in to continue.'
                 : preflightAuthRequired.authType === 'cli_install'
                 ? 'CLI install required — open the Agents tab to install.'
@@ -4203,7 +4217,14 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
             ) : (
               <button
                 onClick={() => {
-                  ipcRenderer?.send('preflight:open-agents-tab', { agentId: preflightAuthRequired.agentId });
+                  ipcRenderer?.send('preflight:open-agents-tab', {
+                    agentId: preflightAuthRequired.agentId,
+                    serviceName: preflightAuthRequired.serviceName,
+                    authType: preflightAuthRequired.authType,
+                    message: preflightAuthRequired.message,
+                    reason: preflightAuthRequired.reason || null,
+                    setupInfo: preflightAuthRequired.setupInfo || null,
+                  });
                 }}
                 className="text-xs font-medium rounded-md transition-colors"
                 style={{
@@ -4214,7 +4235,7 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
                   cursor: 'pointer',
                 }}
               >
-                Open Agents Tab →
+                {isCliSetup ? 'Configure in Agents Tab →' : 'Open Agents Tab →'}
               </button>
             )}
           </div>

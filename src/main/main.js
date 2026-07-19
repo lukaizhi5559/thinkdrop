@@ -965,6 +965,7 @@ let currentBrowserUrl = null;        // Last known URL in the active Playwright 
 let _activeBrowserAgentSessionId = null; // Tracks browser session opened during preflight auth (for cancel cleanup)
 let _gatherAuthSessionId = null; // Tracks browser session opened by GatherAuth sign-in (survives stategraph completion)
 let _pendingPreflightPrompt = null; // { prompt, selectedText, responseLanguage, sessionId } — stored when preflight auth required, re-enqueued after auth succeeds
+let _pendingNewlyBuiltAgents = new Set(); // Tracks newly built agents pending auth — deleted on cancel
 let _takeOverContext = null; // Phase 10: { agentId, task, pageType, service } — set when user takes over, used for distillHumanCorrection
 let _currentAutomationPrompt = null; // Phase 10: tracks the active prompt for take-over context
 let currentLastOpenedFilePath = null; // Persists last opened file path so "close it" knows the target
@@ -2768,6 +2769,22 @@ app.whenReady().then(async () => {
     _pendingPreflightPrompt = null;
     currentBrowserSessionId = null;
     currentBrowserUrl = null;
+    // Delete newly built agents that were never authenticated — the user cancelled
+    // before signing in, so the agent should not persist in DuckDB.
+    for (const agentId of _pendingNewlyBuiltAgents) {
+      console.log(`🛑 [Automation] Deleting unauthenticated newly built agent: ${agentId}`);
+      const deleteBody = JSON.stringify({ id: agentId });
+      const deleteReq = http.request({
+        hostname: '127.0.0.1', port: 3007, path: '/agent.delete', method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(deleteBody) },
+        timeout: 5000,
+      }, (res) => { res.resume(); });
+      deleteReq.on('error', () => {});
+      deleteReq.on('timeout', () => { deleteReq.destroy(); });
+      deleteReq.write(deleteBody);
+      deleteReq.end();
+    }
+    _pendingNewlyBuiltAgents.clear();
     // Safety: a cancel may interrupt a capture-heavy app.agent step mid-session,
     // so tear down the drop session and bring the panel back explicitly (the
     // cancel all_done below uses safeSend, which bypasses the drop driver).
@@ -3402,6 +3419,10 @@ app.whenReady().then(async () => {
       // Track active browser agent session for cancel cleanup
       if (event.type === 'preflight:auth_starting' && event.agentId) {
         _activeBrowserAgentSessionId = event.agentId.replace('.agent', '').replace(/[^a-z0-9_]/gi, '_') + '_agent';
+      }
+      // Track newly built agents pending auth so they can be deleted on cancel
+      if (event.type === 'preflight:auth_required' && event._newlyCreated && event.agentId) {
+        _pendingNewlyBuiltAgents.add(event.agentId);
       }
       if (event.type === 'step_started' && (event.skill === 'browser.agent' || event.skill === 'browser.act') && event.agentId) {
         _activeBrowserAgentSessionId = event.agentId.replace('.agent', '').replace(/[^a-z0-9_]/gi, '_') + '_agent';
@@ -6351,15 +6372,43 @@ app.whenReady().then(async () => {
   });
 
   // ─── Preflight: open agents tab for auth ───────────────────────────────────
-  ipcMain.on('preflight:open-agents-tab', (_event, { agentId } = {}) => {
-    // Clear any paused automation state — the user is being routed to the Agents tab
-    // for auth or training, so the paused ask_user should not linger.
+  ipcMain.on('preflight:open-agents-tab', (_event, payload = {}) => {
+    const { agentId } = payload;
     if (pausedAutomationState) {
       console.log(`[StateGraph] preflight:open-agents-tab — clearing pausedAutomationState (agentId=${agentId})`);
       pausedAutomationState = null;
     }
-    // Forward to UnifiedOverlay so it can switch to the agents tab
-    safeSendUnified('preflight:open-agents-tab', { agentId });
+    safeSendUnified('preflight:open-agents-tab', payload);
+  });
+
+  // ─── Preflight: re-check after CLI setup ───────────────────────────────────
+  // Triggered by the "Return to Automation & Re-check" button in the Agents tab
+  // detail drawer. Switches back to the automation tab and re-runs preflight
+  // by re-enqueuing the pending prompt (stored when preflightAuthRequired blocked).
+  ipcMain.on('preflight:recheck', (_event, { agentId } = {}) => {
+    console.log(`[StateGraph] preflight:recheck — agentId=${agentId}`);
+    // Switch back to the automation/results tab
+    safeSendUnified('ui:switch-to-results', {});
+    // Re-enqueue the pending prompt if available
+    if (_pendingPreflightPrompt) {
+      const pp = _pendingPreflightPrompt;
+      _pendingPreflightPrompt = null;
+      console.log(`[StateGraph] preflight:recheck — re-enqueuing prompt: "${pp.prompt.slice(0, 60)}"`);
+      promptQueue.enqueue(pp.prompt, {
+        selectedText: pp.selectedText,
+        responseLanguage: pp.responseLanguage,
+        sessionId: pp.sessionId,
+      });
+    } else if (pausedAutomationState) {
+      // Fallback: if we have a paused automation state, clear it and let user re-submit
+      console.log(`[StateGraph] preflight:recheck — clearing paused automation state (no pending preflight prompt)`);
+      pausedAutomationState = null;
+      safeSendUnified('preflight:recheck', { agentId });
+    } else {
+      // No pending state — just switch to results and let user re-submit
+      console.log(`[StateGraph] preflight:recheck — no pending prompt, switching to results tab`);
+      safeSendUnified('preflight:recheck', { agentId });
+    }
   });
 
   // ─── Training handoff: open agents tab and start training ──────────────────
@@ -6416,6 +6465,7 @@ app.whenReady().then(async () => {
             if (result?.data?.ok && result?.data?.authVerified === true && _pendingPreflightPrompt) {
               const pp = _pendingPreflightPrompt;
               _pendingPreflightPrompt = null;
+              _pendingNewlyBuiltAgents.delete(normalizedAgentId);
               console.log(`[GatherAuth] Auth succeeded — re-enqueuing prompt: "${pp.prompt.slice(0, 60)}"`);
               promptQueue.enqueue(pp.prompt, {
                 selectedText: pp.selectedText,
