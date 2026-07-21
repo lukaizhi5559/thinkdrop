@@ -1362,7 +1362,25 @@ export function AgentsTab({ items, onRefresh }: AgentsTabProps) {
       }
     };
     window.addEventListener('preflight:agent-setup', handlePreflightSetup);
-    return () => window.removeEventListener('preflight:agent-setup', handlePreflightSetup);
+
+    // Listen for real-time training handoff events
+    const handleOpenTraining = (e: Event) => {
+      const detail = (e as CustomEvent).detail;
+      const trainAgentId = detail?.agentId;
+      if (!trainAgentId) return;
+      try { sessionStorage.removeItem('takeover:train-agent'); } catch (_) {}
+      setExpandedAgent(trainAgentId);
+      const isCli = cliAgents.some(a => a.id === trainAgentId);
+      const isApp = appAgents.some(a => a.id === trainAgentId);
+      setActiveSubtab(isCli ? 'cli' : isApp ? 'app' : 'browser');
+      setTimeout(() => handleTrain(trainAgentId), 300);
+    };
+    window.addEventListener('agents:open-training', handleOpenTraining);
+
+    return () => {
+      window.removeEventListener('preflight:agent-setup', handlePreflightSetup);
+      window.removeEventListener('agents:open-training', handleOpenTraining);
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [items]);
 

@@ -1697,6 +1697,8 @@ export function UnifiedOverlay() {
       if (data?.agentId) {
         try { sessionStorage.setItem('preflight:highlight-agent', data.agentId); } catch (_) {}
         try { sessionStorage.setItem('takeover:train-agent', data.agentId); } catch (_) {}
+        // Dispatch a real-time event so AgentsTab picks up the handoff even when already mounted
+        try { window.dispatchEvent(new CustomEvent('agents:open-training', { detail: data })); } catch (_) {}
       }
     }, token);
     ipcRenderer.on('queue:update', handleQueueUpdate, token);
