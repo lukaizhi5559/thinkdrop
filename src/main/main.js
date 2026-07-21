@@ -4484,8 +4484,10 @@ app.whenReady().then(async () => {
               _resumeStepIndex: _uiStepIdx,
               skillPlan: null,
               skillCursor: 0,
-              // Preserve successful results from already-completed steps (e.g. other parallel lanes)
-              skillResults: (paused.skillResults || []).filter(r => r.ok !== false && !r.askUser),
+              // Don't preserve prior skillResults — the UI already has correct statuses
+              // from original step_done/step_failed events. Sending preserved results in
+              // all_done causes position-based matching to map them to wrong UI steps.
+              skillResults: [],
               stepRetryCount: 0,
               context: { ...paused.context, sessionId: sessionId || currentSessionId }
             };
@@ -4563,8 +4565,10 @@ app.whenReady().then(async () => {
               _resumeStepIndex: _uiStepIdx,
               skillPlan: null,
               skillCursor: 0,
-              // Preserve successful results from already-completed steps (e.g. other parallel lanes)
-              skillResults: (paused.skillResults || []).filter(r => r.ok !== false && !r.askUser),
+              // Don't preserve prior skillResults — the UI already has correct statuses
+              // from original step_done/step_failed events. Sending preserved results in
+              // all_done causes position-based matching to map them to wrong UI steps.
+              skillResults: [],
               stepRetryCount: 0,
               // Clear plan file refs so planExecutor passthrough does not fire and
               // planSkillsV2 uses the injected _skillPlan directly — prevents
@@ -4915,11 +4919,12 @@ app.whenReady().then(async () => {
               sessionId: currentSessionId,
             };
             console.log(`[PreflightAuth] Stored pending prompt for re-enqueue after auth: "${prompt.slice(0, 60)}"`);
+          } else {
+            if (resultsWindow && !resultsWindow.isDestroyed()) {
+              safeSend(resultsWindow, 'automation:progress', { type: 'plan_error', error: finalState.planError });
+            }
+            safeSendUnified('automation:progress', { type: 'plan_error', error: finalState.planError });
           }
-          if (resultsWindow && !resultsWindow.isDestroyed()) {
-            safeSend(resultsWindow, 'automation:progress', { type: 'plan_error', error: finalState.planError });
-          }
-          safeSendUnified('automation:progress', { type: 'plan_error', error: finalState.planError });
         }
         // Send all_done for normal completion so AutomationProgress clears evaluating/retrying phases.
         // Skip if paused for ASK_USER — that case sends ask_user above and waits for user reply.
@@ -6522,6 +6527,15 @@ app.whenReady().then(async () => {
                 responseLanguage: pp.responseLanguage,
                 sessionId: pp.sessionId,
               });
+            } else if (_pendingPreflightPrompt) {
+              // Background auth probe failed or returned inconclusive — tell the UI
+              // so the card can show retry/continue options instead of hanging.
+              console.log(`[GatherAuth] Background auth did not verify — notifying UI for ${normalizedAgentId}`);
+              safeSendUnified('automation:progress', {
+                type: 'preflight:auth_background_failed',
+                agentId: normalizedAgentId,
+                message: result?.data?.error || 'Background auth check did not confirm login.',
+              });
             }
           } catch (_) {}
         });
@@ -6530,6 +6544,42 @@ app.whenReady().then(async () => {
     req.on('error', err => console.warn(`[GatherAuth] browser.agent background error for ${normalizedAgentId}:`, err.message));
     req.setTimeout(5 * 60 * 1000); // 5-minute timeout — user has time to sign in
     req.end(payload);
+  });
+
+  // ─── Preflight: manual continue after browser sign-in ─────────────────────
+  // Triggered by the "I've signed in — Continue" button in the preflight auth card.
+  // Re-enqueues the pending prompt to resume planning after the user has manually
+  // completed OAuth in the browser window.
+  ipcMain.on('preflight:auth_continue', async (_event, { agentId } = {}) => {
+    console.log(`[StateGraph] preflight:auth_continue — agentId=${agentId}`);
+    if (_pendingPreflightPrompt) {
+      const pp = _pendingPreflightPrompt;
+      _pendingPreflightPrompt = null;
+      const normalizedAgentId = agentId ? (agentId.endsWith('.agent') ? agentId : `${agentId}.agent`) : null;
+      if (normalizedAgentId) _pendingNewlyBuiltAgents.delete(normalizedAgentId);
+
+      // Persist authed_at to the agent registry so the next preflight pass
+      // treats the agent as authenticated instead of re-emitting auth_required.
+      if (normalizedAgentId) {
+        const _now = new Date().toISOString();
+        const _expires = new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString();
+        try {
+          await _cmdHttp('/agent.update', { id: normalizedAgentId, authed_at: _now, auth_expires_at: _expires });
+          console.log(`[PreflightAuth] Updated ${normalizedAgentId} authed_at=${_now}`);
+        } catch (err) {
+          console.warn(`[PreflightAuth] Could not update authed_at for ${normalizedAgentId}:`, err.message);
+        }
+      }
+
+      console.log(`[StateGraph] preflight:auth_continue — re-enqueuing prompt: "${pp.prompt.slice(0, 60)}"`);
+      promptQueue.enqueue(pp.prompt, {
+        selectedText: pp.selectedText,
+        responseLanguage: pp.responseLanguage,
+        sessionId: pp.sessionId,
+      });
+    } else {
+      console.log(`[StateGraph] preflight:auth_continue — no pending prompt, ignoring`);
+    }
   });
 
   // ─── Agents: list / learn / train / create ────────────────────────────────

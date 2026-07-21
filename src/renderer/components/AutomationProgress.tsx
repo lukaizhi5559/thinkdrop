@@ -101,7 +101,7 @@ type AutomationPhase =
   | 'plan_review';
 
 interface PreflightAgent {
-  type: 'cli' | 'browser' | 'app' | 'api_key' | 'bearer' | 'basic';
+  type: 'cli' | 'browser' | 'app' | 'api_key' | 'bearer' | 'basic' | 'preflight';
   agentId: string;
   ready: boolean;
   authed: boolean;
@@ -817,10 +817,23 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
   const [preflightAuthRequired, setPreflightAuthRequired] = useState<PreflightAuthRequired | null>(null);
   const preflightAuthRequiredRef = useRef<PreflightAuthRequired | null>(null);
   useEffect(() => { preflightAuthRequiredRef.current = preflightAuthRequired; }, [preflightAuthRequired]);
+  const [preflightAuthBrowserOpened, setPreflightAuthBrowserOpened] = useState(false);
+  const [preflightAuthBackgroundFailed, setPreflightAuthBackgroundFailed] = useState(false);
+  const [authContinueVisible, setAuthContinueVisible] = useState(false);
   const [preflightRouteChoice, setPreflightRouteChoice] = useState<RouteChoice | null>(null);
   const [preflightMessage, setPreflightMessage] = useState('Preparing agents...');
   const [preflightWarnings, setPreflightWarnings] = useState<{ type: string; message: string }[]>([]);
   const [vetScriptReview, setVetScriptReview] = useState<{ scriptContent: string; scriptUrl: string; message: string } | null>(null);
+
+  // Delay the "I've signed in — Continue" button by 5s after browser auth opens
+  useEffect(() => {
+    if (preflightAuthBrowserOpened) {
+      setAuthContinueVisible(false);
+      const t = setTimeout(() => setAuthContinueVisible(true), 5000);
+      return () => clearTimeout(t);
+    }
+    setAuthContinueVisible(false);
+  }, [preflightAuthBrowserOpened]);
 
   // Ref to track current phase — avoids stale closure issues in the IPC listener useEffect
   const phaseRef = useRef<AutomationPhase>('idle');
@@ -957,6 +970,8 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
       setTotalCount(0);
       setPreflightAgents([]);
       setPreflightAuthRequired(null);
+      setPreflightAuthBrowserOpened(false);
+      setPreflightAuthBackgroundFailed(false);
       setPreflightRouteChoice(null);
       setPreflightWarnings([]);
       setVetScriptReview(null);
@@ -1047,6 +1062,8 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
           setPhase('preflight');
           setPreflightAgents([]);
           setPreflightAuthRequired(null);
+          setPreflightAuthBrowserOpened(false);
+          setPreflightAuthBackgroundFailed(false);
           setPreflightRouteChoice(null);
           setPreflightWarnings([]);
           setVetScriptReview(null);
@@ -1056,6 +1073,8 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
         case 'preflight:building_agent': {
           setPhase('preflight');
           setPreflightAuthRequired(null);
+          setPreflightAuthBrowserOpened(false);
+          setPreflightAuthBackgroundFailed(false);
           const buildingAgent: PreflightAgent = {
             type: data.agentType || 'browser',
             agentId: data.agentId || '',
@@ -1097,6 +1116,8 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
             reason: data.reason || null,
             setupInfo: data.setupInfo || null,
           });
+          setPreflightAuthBrowserOpened(false);
+          setPreflightAuthBackgroundFailed(false);
           onAuthPending?.(true);
           break;
 
@@ -1148,6 +1169,8 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
           // Transition to planning after a brief delay so user sees the final state
           setTimeout(() => {
             setPreflightAuthRequired(null);
+            setPreflightAuthBrowserOpened(false);
+            setPreflightAuthBackgroundFailed(false);
             setPreflightRouteChoice(null);
             setPhase('planning');
             setPlanMessage('Generating skill plan...');
@@ -1172,6 +1195,8 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
           setFailureAnswer(null);
           setPreflightAgents([]);
           setPreflightAuthRequired(null);
+          setPreflightAuthBrowserOpened(false);
+          setPreflightAuthBackgroundFailed(false);
           setPreflightRouteChoice(null);
           setPreflightWarnings([]);
           setVetScriptReview(null);
@@ -1680,6 +1705,18 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
           // Browser opened for sign-in — swap card to confirmation phase
           setGatherAuthConnecting(false);
           setGatherAuthBrowserOpened(true);
+          // Also update preflight auth card if active
+          if (preflightAuthRequiredRef.current) {
+            setPreflightAuthBrowserOpened(true);
+          }
+          break;
+
+        case 'preflight:auth_background_failed':
+          // Background auth probe returned failure/inconclusive — show retry/continue
+          if (preflightAuthRequiredRef.current?.agentId === data.agentId) {
+            setPreflightAuthBackgroundFailed(true);
+            onAuthPending?.(false);
+          }
           break;
 
         case 'gather_start':
@@ -1908,6 +1945,8 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
           if (phaseRef.current === 'plan_review') break;
           if (data.cancelled) {
             setPreflightAuthRequired(null);
+            setPreflightAuthBrowserOpened(false);
+            setPreflightAuthBackgroundFailed(false);
             setPreflightRouteChoice(null);
           }
           setGuideStep(null);
@@ -1962,8 +2001,11 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
               const posInFinal = s.index - finalOffset;
               const r = (posInFinal >= 0 && posInFinal < finalCount) ? data.skillResults[posInFinal] : null;
               if (!r) {
-                // Step is from a prior (abandoned) replan cycle — don't leave it red
-                if (s.status === 'failed') return { ...s, status: 'skipped' as StepStatus };
+                // Step is from a prior (abandoned) replan cycle — don't leave it red.
+                // Only downgrade steps BEFORE the current plan window (posInFinal < 0).
+                // Steps AFTER the window (posInFinal >= finalCount) may be genuine
+                // failures from the original parallel execution and should stay failed.
+                if (s.status === 'failed' && posInFinal < 0) return { ...s, status: 'skipped' as StepStatus };
                 return s;
               }
               // Find a savedFilePath that this step wrote by matching against its resolved args script
@@ -4135,7 +4177,9 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
                 </svg>
               )}
               <span className="text-xs font-medium" style={{ color: agent.ready ? '#22c55e' : '#60a5fa' }}>
-                {agent.agentId.replace(/\.agent$/i, '')}
+                {agent.type === 'preflight' || agent.agentId === 'preflight'
+                  ? 'preflight...'
+                  : agent.agentId.replace(/\.agent$/i, '')}
               </span>
               {agent.ready ? (
                 <svg width={10} height={10} viewBox="0 0 24 24" fill="none" stroke="#22c55e" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
@@ -4247,7 +4291,11 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
               {isCliSetup
                 ? 'CLI agent needs configuration — open the Agents tab to complete setup.'
                 : isBrowserAuth
-                ? 'Browser login required — click Sign in to continue.'
+                ? preflightAuthBackgroundFailed
+                  ? 'Background auth check could not verify login. If you have signed in, click Continue to proceed.'
+                  : preflightAuthBrowserOpened
+                  ? 'Browser is open — complete the sign-in, then click Continue.'
+                  : 'Browser login required — click Sign in to continue.'
                 : preflightAuthRequired.authType === 'cli_install'
                 ? 'CLI install required — open the Agents tab to install.'
                 : preflightAuthRequired.authType === 'cli_update_needed'
@@ -4260,21 +4308,70 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
           </div>
           <div style={{ display: 'flex', width: '100%', gap: 8, flexWrap: 'wrap', alignItems: 'center', justifyContent: 'flex-end' }}>
             {isBrowserAuth ? (
-              <button
-                onClick={() => {
-                  ipcRenderer?.send('browser.agent:auth', { agentId: preflightAuthRequired.agentId });
-                }}
-                className="text-xs font-medium rounded-md transition-colors"
-                style={{
-                  padding: '6px 12px',
-                  backgroundColor: 'rgba(245,158,11,0.15)',
-                  border: '1px solid rgba(245,158,11,0.4)',
-                  color: '#f59e0b',
-                  cursor: 'pointer',
-                }}
-              >
-                Sign in to {preflightAuthRequired.agentId.replace('.agent', '')} →
-              </button>
+              preflightAuthBrowserOpened || preflightAuthBackgroundFailed ? (
+                <>
+                  {preflightAuthBackgroundFailed && (
+                    <button
+                      onClick={() => {
+                        setPreflightAuthBrowserOpened(false);
+                        setPreflightAuthBackgroundFailed(false);
+                        ipcRenderer?.send('browser.agent:auth', { agentId: preflightAuthRequired.agentId });
+                      }}
+                      className="text-xs font-medium rounded-md transition-colors"
+                      style={{
+                        padding: '6px 12px',
+                        backgroundColor: 'rgba(245,158,11,0.15)',
+                        border: '1px solid rgba(245,158,11,0.4)',
+                        color: '#f59e0b',
+                        cursor: 'pointer',
+                      }}
+                    >
+                      Retry sign-in →
+                    </button>
+                  )}
+                  {authContinueVisible || preflightAuthBackgroundFailed ? (
+                    <button
+                      onClick={() => {
+                        ipcRenderer?.send('preflight:auth_continue', { agentId: preflightAuthRequired.agentId });
+                        setPreflightAuthRequired(null);
+                        setPreflightAuthBrowserOpened(false);
+                        setPreflightAuthBackgroundFailed(false);
+                        setAuthContinueVisible(false);
+                      }}
+                      className="text-xs font-medium rounded-md transition-colors"
+                      style={{
+                        padding: '6px 12px',
+                        backgroundColor: 'rgba(34,197,94,0.15)',
+                        border: '1px solid rgba(34,197,94,0.4)',
+                        color: '#22c55e',
+                        cursor: 'pointer',
+                      }}
+                    >
+                      I've signed in — Continue →
+                    </button>
+                  ) : (
+                    <span className="text-xs" style={{ color: '#92400e' }}>
+                      Complete sign-in… Continue unlocks shortly.
+                    </span>
+                  )}
+                </>
+              ) : (
+                <button
+                  onClick={() => {
+                    ipcRenderer?.send('browser.agent:auth', { agentId: preflightAuthRequired.agentId });
+                  }}
+                  className="text-xs font-medium rounded-md transition-colors"
+                  style={{
+                    padding: '6px 12px',
+                    backgroundColor: 'rgba(245,158,11,0.15)',
+                    border: '1px solid rgba(245,158,11,0.4)',
+                    color: '#f59e0b',
+                    cursor: 'pointer',
+                  }}
+                >
+                  Sign in to {preflightAuthRequired.agentId.replace('.agent', '')} →
+                </button>
+              )
             ) : (
               <button
                 onClick={() => {

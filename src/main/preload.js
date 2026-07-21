@@ -110,6 +110,7 @@ contextBridge.exposeInMainWorld('electron', {
         'ghostlayer:capture-ready',
         'preflight:open-agents-tab',
         'preflight:recheck',
+        'preflight:auth_continue',
         'browser.agent:auth',
       ];
       if (validChannels.includes(channel)) {
