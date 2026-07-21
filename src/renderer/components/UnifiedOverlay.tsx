@@ -965,11 +965,12 @@ export function UnifiedOverlay() {
           setIsStreaming(false);
           setIsAutomationMode(false);
           setIsGlowActive(false);
-        } else if (preflightAuthPendingRef.current) {
-          // Auth banner/browser login is still active; keep cancel button visible
-          setIsSubmitting(true);
         } else {
-          setIsSubmitting(false); // Task complete - reset submitting state
+          // Task complete — always reset submitting state.
+          // (Previously kept isSubmitting=true if preflightAuthPending was stuck,
+          //  but all_done means the task is genuinely done regardless of auth state.)
+          setPreflightAuthPending(false);
+          setIsSubmitting(false);
         }
         setIsAutomationMode(false); // Clear automation status
         setInstallPrompt(null);
@@ -1148,9 +1149,10 @@ export function UnifiedOverlay() {
     };
 
     // --- Queue Enqueued Handler ---
-    const handleQueueEnqueued = () => {
-      console.log('[UNIFIED] Queue enqueued - clearing previous response');
+    const handleQueueEnqueued = (data?: any) => {
+      console.log('[UNIFIED] Queue enqueued - clearing previous response', data?.isResume ? '(resume)' : '');
       setStreamingResponse('');
+      if (data?.isResume) return; // Don't kill automation mode on ASK_USER resume
       setIsAutomationMode(false);
       setActionChips([]);
       setInstallPrompt(null);

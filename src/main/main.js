@@ -375,7 +375,11 @@ function startOverlayControlServer() {
           const onProgress = async (nodeName, _s, durationMs, phase) => {
             // Activate AutomationProgress in Results window when planning starts
             if (nodeName === 'planSkills' && phase === 'started') {
-              progressCallback({ type: 'planning' });
+              if (_s?._skillPlan && !_s?.recoveryContext) {
+                progressCallback({ type: 'resuming', agentId: _s?._skillPlan?.[0]?.args?.agentId || null });
+              } else {
+                progressCallback({ type: 'planning' });
+              }
             }
             if (phase !== 'completed') return;
             _nodeIdx++;
@@ -2327,7 +2331,7 @@ app.whenReady().then(async () => {
 
   const PLAN_MODE_CANCEL_RE = /^(?:\/)?(?:cancel|cancel\s+plan|exit\s+plan\s+mode|leave\s+plan\s+mode)\b/i;
 
-  ipcMain.on('prompt-queue:submit', (_event, { prompt, selectedText = '', responseLanguage = null } = {}) => {
+  ipcMain.on('prompt-queue:submit', (_event, { prompt, selectedText = '', responseLanguage = null, isAskUserAnswer = false } = {}) => {
     const trimmedPrompt = prompt?.trim();
     if (!trimmedPrompt) return;
 
@@ -2392,7 +2396,7 @@ app.whenReady().then(async () => {
 
     const id = promptQueue.enqueue(trimmedPrompt, enqueueOpts);
     console.log(`[PromptQueue] IPC prompt-queue:submit → enqueued id=${id}`);
-    safeSendUnified('queue:enqueued', { id });
+    safeSendUnified('queue:enqueued', { id, isResume: !!pausedAutomationState || !!isAskUserAnswer });
   });
 
   ipcMain.on('prompt-queue:cancel', (_event, { id } = {}) => {
@@ -3379,9 +3383,10 @@ app.whenReady().then(async () => {
       return;
     }
 
+    const isAskUserResume = !!pausedAutomationState;
     // Send unified:set-prompt so streamingResponse reset arrives at unifiedWindow BEFORE the first token.
     // Skip for skill-plan re-runs — PlanPanel already shows the plan in executing state.
-    if (!_skillPlan) safeSendUnified('unified:set-prompt', prompt);
+    if (!_skillPlan && !isAskUserResume) safeSendUnified('unified:set-prompt', prompt);
 
     // Snapshot webContents at handler start — if the window reloads mid-stream the
     // reference becomes stale and safeSend would spam "Render frame was disposed" errors.
@@ -3923,7 +3928,7 @@ app.whenReady().then(async () => {
           console.log(`[StateGraph] ASK_USER resume: prompt exactly matches offered option "${prompt.trim()}" — resuming (skipping semantic check)`);
         }
 
-        if (!isFreshPrompt && !_isOfferedOptionMatch && !paused.pendingQuestion?._isScoutSelect) {
+        if (!isFreshPrompt && !_isOfferedOptionMatch && !paused.pendingQuestion?._isScoutSelect && !paused.pendingQuestion?._isAgentAskUser) {
           try {
             const http = require('http');
             const classifyResult = await new Promise((resolve, reject) => {
@@ -4445,11 +4450,17 @@ app.whenReady().then(async () => {
             const agentId = paused.pendingQuestion?.agentId
               || paused.skillPlan?.[paused.skillCursor || 0]?.args?.agentId
               || null;
-            console.log(`[StateGraph] ASK_USER resume: _isAgentAskUser command confirmed — injecting plan: ${agentId} task="${agentCmd}"`);
-            // Reset AutomationProgress for the second run — planSkills _skillPlan fast-path
-            // will emit plan_ready to re-init steps, but set-prompt must fire first so
-            // handleNewPrompt clears the stale first-run step list and stepOffsetRef.
-            safeSendUnified('unified:set-prompt', agentCmd);
+            const _stepIdx = paused.pendingQuestion?.stepIndex ?? paused.skillCursor ?? 0;
+            const _uiStepIdx = paused.pendingQuestion?.uiStepIndex ?? _stepIdx;
+            // Inject remaining steps from the original plan after the resumed step.
+            // Use Math.max(skillCursor, _stepIdx + 1) to skip the asking step itself
+            // in the sequential pause path (where skillCursor == _stepIdx), preventing
+            // duplicate plan growth and runaway resume loops.
+            const _remainingSteps = Array.isArray(paused.skillPlan)
+              ? paused.skillPlan.slice(Math.max(paused.skillCursor || 0, _stepIdx + 1))
+              : [];
+            console.log(`[StateGraph] ASK_USER resume: _isAgentAskUser command confirmed — injecting plan: ${agentId} task="${agentCmd}" (${_remainingSteps.length} remaining step(s) after)`);
+            progressCallback({ type: 'resuming', agentId, stepIndex: _uiStepIdx });
             initialState = {
               ...paused,
               message: agentCmd,
@@ -4464,14 +4475,17 @@ app.whenReady().then(async () => {
               answer: undefined,
               commandExecuted: false,
               // _skillPlan bypasses planSkills LLM (see planSkills.js L255) — used as-is
-              _skillPlan: [{
-                skill: 'cli.agent',
-                args: { action: 'run', agentId, task: agentCmd },
-                description: agentCmd,
-              }],
+              // Include remaining steps from the original plan so they execute after resume
+              _skillPlan: [
+                { skill: paused.pendingQuestion?.skill || 'cli.agent', args: { action: 'run', agentId, task: agentCmd }, description: agentCmd },
+                ..._remainingSteps,
+              ],
+              _skillPlanIsResume: true,
+              _resumeStepIndex: _uiStepIdx,
               skillPlan: null,
               skillCursor: 0,
-              skillResults: [],  // reset — don't carry stale failed steps into reviewExecution
+              // Preserve successful results from already-completed steps (e.g. other parallel lanes)
+              skillResults: (paused.skillResults || []).filter(r => r.ok !== false && !r.askUser),
               stepRetryCount: 0,
               context: { ...paused.context, sessionId: sessionId || currentSessionId }
             };
@@ -4486,17 +4500,47 @@ app.whenReady().then(async () => {
             const _agentId = paused.pendingQuestion?.agentId
               || paused.skillPlan?.[paused.skillCursor || 0]?.args?.agentId
               || null;
-            const _stepIdx = paused.skillCursor || 0;
+            const _stepIdx = paused.pendingQuestion?.stepIndex ?? paused.skillCursor ?? 0;
+            const _uiStepIdx = paused.pendingQuestion?.uiStepIndex ?? _stepIdx;
             // Use the original skill that was running (browser.agent stays browser.agent,
             // cli.agent stays cli.agent) — not hardcoded to 'cli.agent'.
-            const _resumeSkill = paused.skillPlan?.[_stepIdx]?.skill || 'browser.agent';
-            const _originalTask = paused.skillPlan?.[_stepIdx]?.args?.task || paused.message;
+            const _resumeSkill = paused.pendingQuestion?.skill
+              || paused.skillPlan?.[_stepIdx]?.skill
+              || paused.skillResults?.find(result => result.step === _stepIdx + 1)?.skill;
+            if (!_resumeSkill) throw new Error(`ASK_USER resume is missing the original skill for ${_agentId || 'unknown agent'} at step ${_stepIdx}`);
+            // Strip any stale [Resume context: ...] blocks from previous resumes so we
+            // don't accumulate duplicate/conflicting context blocks on every turn.
+            const _originalTask = (paused.pendingQuestion?.originalTask
+              || paused.skillPlan?.[_stepIdx]?.args?.task
+              || paused.message)
+              .replace(/\s*\[Resume context:[\s\S]*?\]\s*$/g, '').trim();
+            const _description = paused.skillPlan?.[_stepIdx]?.description || _originalTask;
             const _priorQuestion = paused.pendingQuestion?.question || '';
-            // Inject the Q&A context into the task string so the agent loop resumes with
-            // full awareness of what was asked and what the user decided.
-            const _taskWithAnswer = `${_originalTask}\n\n[Resume context: You previously asked "${_priorQuestion}". The user answered: "${chosenOption}". Continue from this point based on the user's answer.]`;
-            console.log(`[StateGraph] ASK_USER resume: _isAgentAskUser answer "${chosenOption}" — re-running ${_resumeSkill}/${_agentId} with injected context`);
-            safeSendUnified('unified:set-prompt', chosenOption);
+
+            // ── Multi-turn Q&A accumulation ──────────────────────────────────
+            // Build a list of all prior Q&A pairs from previous resume cycles.
+            // This allows the agent to see the full conversation history when
+            // processing a follow-up answer (e.g. Q1: "Need duration?" → A1: "Yes"
+            // → Q2: "How long?" → A2: "1h").
+            const _priorQAHistory = Array.isArray(paused._askUserHistory) ? [...paused._askUserHistory] : [];
+            _priorQAHistory.push({ question: _priorQuestion, answer: chosenOption });
+
+            // Build multi-pair resume context string
+            const _qaLines = _priorQAHistory.map((qa, i) =>
+              `  ${i + 1}. Q: "${qa.question}" → A: "${qa.answer}"`
+            ).join('\n');
+            const _taskWithAnswer = `${_originalTask}\n\n[Resume context:\n  Previous Q&A:\n${_qaLines}\n  Continue from this point. If the user's latest answer indicates a DIRECTION (e.g. "duration" / "Specify duration") but does NOT contain the actual VALUE needed to proceed, your NEXT action MUST be ask_user with an EMPTY options array asking for the specific value (e.g. "What duration?"). Do NOT repeat the previous choice question. Do NOT guess values.]`;
+
+            // Inject remaining steps from the original plan after the resumed step.
+            // Use Math.max(skillCursor, _stepIdx + 1) to skip the asking step itself
+            // in the sequential pause path (where skillCursor == _stepIdx), preventing
+            // duplicate plan growth and runaway resume loops.
+            const _remainingSteps = Array.isArray(paused.skillPlan)
+              ? paused.skillPlan.slice(Math.max(paused.skillCursor || 0, _stepIdx + 1))
+              : [];
+
+            console.log(`[StateGraph] ASK_USER resume: _isAgentAskUser answer "${chosenOption}" — re-running ${_resumeSkill}/${_agentId} with injected context (${_priorQAHistory.length} Q&A pair(s), ${_remainingSteps.length} remaining step(s) after)`);
+            progressCallback({ type: 'resuming', agentId: _agentId, stepIndex: _uiStepIdx });
             initialState = {
               ...paused,
               message: paused.message,
@@ -4510,14 +4554,17 @@ app.whenReady().then(async () => {
               recoveryAction: null,
               answer: undefined,
               commandExecuted: false,
-              _skillPlan: [{
-                skill: _resumeSkill,
-                args: { action: 'run', agentId: _agentId, task: _taskWithAnswer },
-                description: paused.skillPlan?.[_stepIdx]?.description || _originalTask,
-              }],
+              _askUserHistory: _priorQAHistory,
+              _skillPlan: [
+                { skill: _resumeSkill, args: { action: 'run', agentId: _agentId, task: _taskWithAnswer }, description: _description },
+                ..._remainingSteps,
+              ],
+              _skillPlanIsResume: true,
+              _resumeStepIndex: _uiStepIdx,
               skillPlan: null,
               skillCursor: 0,
-              skillResults: [],
+              // Preserve successful results from already-completed steps (e.g. other parallel lanes)
+              skillResults: (paused.skillResults || []).filter(r => r.ok !== false && !r.askUser),
               stepRetryCount: 0,
               // Clear plan file refs so planExecutor passthrough does not fire and
               // planSkillsV2 uses the injected _skillPlan directly — prevents
@@ -4841,7 +4888,9 @@ app.whenReady().then(async () => {
             safeSend(resultsWindow, 'automation:progress', {
               type: 'ask_user',
               question: q.question,
-              options: q.options || []
+              options: q.options || [],
+              stepIndex: q.stepIndex,
+              agentId: q.agentId || null
             });
           }
         }
@@ -4870,6 +4919,7 @@ app.whenReady().then(async () => {
           if (resultsWindow && !resultsWindow.isDestroyed()) {
             safeSend(resultsWindow, 'automation:progress', { type: 'plan_error', error: finalState.planError });
           }
+          safeSendUnified('automation:progress', { type: 'plan_error', error: finalState.planError });
         }
         // Send all_done for normal completion so AutomationProgress clears evaluating/retrying phases.
         // Skip if paused for ASK_USER — that case sends ask_user above and waits for user reply.
@@ -7643,9 +7693,8 @@ app.whenReady().then(async () => {
   // ─── CLI Agents: list / query / validate / rebuild / delete ──────────────
   ipcMain.handle('cli-agents:list', async () => {
     try {
-      const { cliAgent } = require('../../mcp-services/command-service/src/skills/cli.agent.cjs');
-      const result = await cliAgent({ action: 'list_agents' });
-      return result?.agents || [];
+      const result = await _cmdHttp('/agent.list');
+      return result?.data || [];
     } catch (e) {
       console.error('[CLI-Agents] cli-agents:list failed:', e.message);
       return [];
@@ -7654,8 +7703,8 @@ app.whenReady().then(async () => {
 
   ipcMain.handle('cli-agents:query', async (_event, { id }) => {
     try {
-      const { cliAgent } = require('../../mcp-services/command-service/src/skills/cli.agent.cjs');
-      return await cliAgent({ action: 'query_agent', id });
+      const result = await _cmdHttp('/agent.query', { id });
+      return result?.data || result;
     } catch (e) {
       console.error('[CLI-Agents] cli-agents:query failed:', e.message);
       return { ok: false, error: e.message };
@@ -7664,8 +7713,7 @@ app.whenReady().then(async () => {
 
   ipcMain.handle('cli-agents:validate', async (_event, { id }) => {
     try {
-      const { cliAgent } = require('../../mcp-services/command-service/src/skills/cli.agent.cjs');
-      return await cliAgent({ action: 'validate_agent', id });
+      return await _cmdHttp('/agent.validate', { id });
     } catch (e) {
       console.error('[CLI-Agents] cli-agents:validate failed:', e.message);
       return { ok: false, error: e.message };
@@ -7674,8 +7722,7 @@ app.whenReady().then(async () => {
 
   ipcMain.handle('cli-agents:rebuild', async (_event, { service }) => {
     try {
-      const { cliAgent } = require('../../mcp-services/command-service/src/skills/cli.agent.cjs');
-      return await cliAgent({ action: 'build_agent', service, force: true });
+      return await _cmdHttp('/agent.cli-build', { service, force: true });
     } catch (e) {
       console.error('[CLI-Agents] cli-agents:rebuild failed:', e.message);
       return { ok: false, error: e.message };
@@ -7694,9 +7741,7 @@ app.whenReady().then(async () => {
   ipcMain.handle('cli-agents:create', async (_event, { service, cliTool, credentials }) => {
     try {
       if (!service) return { ok: false, error: 'service is required' };
-      const { cliAgent } = require('../../mcp-services/command-service/src/skills/cli.agent.cjs');
-      const buildResult = await cliAgent({
-        action: 'build_agent',
+      const buildResult = await _cmdHttp('/agent.cli-build', {
         service: service.toLowerCase().trim(),
         cliTool: cliTool ? cliTool.trim() : undefined,
         force: false,
@@ -7738,9 +7783,8 @@ app.whenReady().then(async () => {
 
   ipcMain.handle('cli-agents:auth-login', async (_event, { id, cliTool }) => {
     try {
-      const { cliAgent } = require('../../mcp-services/command-service/src/skills/cli.agent.cjs');
-      // Run the CLI agent with an auth task — discoverAuthLoginCmd + auto-run happens inside
-      const result = await cliAgent({ action: 'run', agentId: id, task: `authenticate ${cliTool || id.replace('.agent', '')} — run the login command` });
+      const task = `authenticate ${cliTool || id.replace('.agent', '')} — run the login command`;
+      const result = await _cmdHttp('/agent.run', { agentId: id, task });
       return result || { ok: false, error: 'No result' };
     } catch (e) {
       console.error('[CLI-Agents] cli-agents:auth-login failed:', e.message);

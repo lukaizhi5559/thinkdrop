@@ -15,7 +15,7 @@ const ipcRenderer = (window as any).electron?.ipcRenderer;
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
-type StepStatus = 'pending' | 'running' | 'done' | 'failed' | 'skipped' | 'replanning' | 'deferred';
+type StepStatus = 'pending' | 'running' | 'done' | 'failed' | 'skipped' | 'replanning' | 'deferred' | 'needs_input';
 
 interface Step {
   index: number;
@@ -186,6 +186,8 @@ interface AskUserPrompt {
   question: string;
   options: (string | { label?: string; value?: string })[];
   agentId?: string | null;
+  freeText?: boolean;
+  stepIndex?: number | null;
 }
 
 interface ParallelLoginService {
@@ -276,6 +278,18 @@ function StepIcon({ status }: { status: StepStatus }) {
         <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="#f59e0b" strokeWidth="2.5"
           strokeLinecap="round" strokeLinejoin="round">
           <line x1="18" y1="6" x2="6" y2="18" />
+        </svg>
+      </div>
+    );
+  }
+  if (status === 'needs_input') {
+    return (
+      <div className="flex-shrink-0 w-4 h-4 rounded-full flex items-center justify-center"
+        style={{ backgroundColor: '#f59e0b' }}>
+        <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="3"
+          strokeLinecap="round" strokeLinejoin="round">
+          <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3" />
+          <line x1="12" y1="17" x2="12.01" y2="17" />
         </svg>
       </div>
     );
@@ -707,6 +721,7 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
   const [synthesisAnswer, setSynthesisAnswer] = useState<string>('');
   const [savedFilePaths, setSavedFilePaths] = useState<string[]>([]);
   const [askUserPrompt, setAskUserPrompt] = useState<AskUserPrompt | null>(null);
+  const [askUserFreeText, setAskUserFreeText] = useState('');
   const [guideStep, setGuideStep] = useState<GuideStepCard | null>(null);
   const [intentType, setIntentType] = useState<string | null>(null);
   const [scheduleCountdown, setScheduleCountdown] = useState<{ label: string; targetTime: string; remainingMs: number } | null>(null);
@@ -724,7 +739,8 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
   const [gatherAuthConnecting, setGatherAuthConnecting] = useState(false);
   const [gatherAuthBrowserOpened, setGatherAuthBrowserOpened] = useState(false);
   // Login guidance — shown inline while waitForAuth polls (step stays running)
-  const [loginGuidance, setLoginGuidance] = useState<{ stepIndex: number; serviceDisplay: string; loginUrl: string; message: string } | null>(null);
+  const [loginGuidance, setLoginGuidance] = useState<{ stepIndex: number; serviceDisplay: string; loginUrl: string; message: string; sessionId: string } | null>(null);
+  const [manualAuthBtnVisible, setManualAuthBtnVisible] = useState(false);
   // Task auth overlay — prominent lock card shown when login wall detected during task execution
   const [taskAuthOverlay, setTaskAuthOverlay] = useState<{ stepIndex: number; serviceDisplay: string; loginUrl: string; agentId: string; message: string } | null>(null);
   const [gatherOAuthConnected, setGatherOAuthConnected] = useState<string | null>(null);
@@ -928,8 +944,13 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
     if (!ipcRenderer) return;
     let active = true;
 
-    // Reset when a new prompt starts
-    const handleNewPrompt = () => {
+    // Reset when a new prompt starts (skip for resume answers so step cards stay visible)
+    const handleNewPrompt = (data?: any) => {
+      if (data?.isResume || (typeof data === 'object' && data?.isResume)) {
+        // Resume answer: clear only the prompt card, keep the step list/spinner intact
+        setAskUserPrompt(null);
+        return;
+      }
       setPhase('idle');
       setSteps([]);
       setGlobalError(null);
@@ -966,6 +987,7 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
       agentLiveTurns.current.clear();
       setHeartbeatTick(0);
       setLoginGuidance(null);
+      setManualAuthBtnVisible(false);
       setTaskAuthOverlay(null);
       setLearnedRules(new Map());
       setAgentThoughts(new Map());
@@ -1121,6 +1143,8 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
           if (Array.isArray(data.warnings)) {
             setPreflightWarnings(data.warnings);
           }
+          // All agents ready — clear auth pending state so cancel button doesn't stick
+          onAuthPending?.(false);
           // Transition to planning after a brief delay so user sees the final state
           setTimeout(() => {
             setPreflightAuthRequired(null);
@@ -1129,6 +1153,18 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
             setPlanMessage('Generating skill plan...');
           }, 500);
           break;
+
+        case 'resuming': {
+          setAskUserPrompt(null);
+          setPhase('executing');
+          // Flip any paused (needs_input) steps back to running spinners
+          setSteps(prev => prev.map(s => s.status === 'needs_input' && (typeof data.stepIndex !== 'number' || s.index === data.stepIndex) ? { ...s, status: 'running' as const } : s));
+          // Resume progress events carry the original step index so step_start maps back to the existing card.
+          if (typeof data.stepIndex === 'number') stepOffsetRef.current = data.stepIndex;
+          setPlanMessage(data.agentId ? `Resuming ${data.agentId}…` : 'Resuming…');
+          setGlobalError(null);
+          break;
+        }
 
         case 'planning':
           setAskUserPrompt(null);
@@ -1149,6 +1185,8 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
         case 'plan_ready': {
           // Don't override an active plan review — user must approve before execution starts
           if (phaseRef.current === 'plan_review') break;
+          // Resume of an ask_user step: resuming already set the offset and flipped the '?' back to spinner.
+          if (data.isResume) break;
           // If there are already completed steps (mid-queue), append rather than replace.
           // This gives users a cumulative view of all sub-intent steps instead of resetting.
           // Exception: recoveryReplan=true means the failed step is being retried with a new plan —
@@ -1449,7 +1487,11 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
             serviceDisplay: data.serviceDisplay || '',
             loginUrl: data.loginUrl || '',
             message: data.message || '',
+            sessionId: data.sessionId || '',
           });
+          // Show manual "I have signed in" button after 5s delay
+          setManualAuthBtnVisible(false);
+          setTimeout(() => setManualAuthBtnVisible(true), 5000);
           break;
         }
 
@@ -1466,6 +1508,7 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
           });
           // Also clear the simpler loginGuidance if it was showing
           setLoginGuidance(null);
+          setManualAuthBtnVisible(false);
           break;
         }
 
@@ -1565,13 +1608,23 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
           // Keep phase as 'executing' — synthesize node emits step_done with answer as stdout
           break;
 
-        case 'ask_user':
+        case 'ask_user': {
           setPhase('ask_user');
-          setAskUserPrompt({ question: data.question, options: data.options || [], agentId: data.agentId || null });
-          // Stop any still-running step spinners; the step failed to complete automatically.
-          setSteps(prev => prev.map(s => s.status === 'running' ? { ...s, status: 'failed' } : s));
+          // Mark only the asking step as needs_input (amber "?"); parallel siblings keep running.
+          // When no stepIndex is provided (global pause), pause running steps as needs_input — never 'failed'.
+          const askIdx = data.stepIndex != null ? data.stepIndex + stepOffsetRef.current : null;
+          setAskUserPrompt({ question: data.question, options: data.options || [], agentId: data.agentId || null, freeText: data.freeText || (data.options || []).length === 0, stepIndex: askIdx });
+          setSteps(prev => prev.map(s => {
+            if (askIdx != null) {
+              return s.index === askIdx && s.status !== 'done' && s.status !== 'failed' && s.status !== 'skipped'
+                ? { ...s, status: 'needs_input' as const }
+                : s;
+            }
+            return s.status === 'running' ? { ...s, status: 'needs_input' as const } : s;
+          }));
           onAskUserShown?.();
           break;
+        }
 
         case 'parallel_login_required':
         case 'parallel_login_start':
@@ -1860,6 +1913,8 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
           setGuideStep(null);
           setParallelLoginServices(null);
           setParallelLoginDecisions({});
+          setLoginGuidance(null);
+          setManualAuthBtnVisible(false);
           // Record actual elapsed and replace ETA with it
           if (executionStartRef.current) {
             const elapsed = Math.round((Date.now() - executionStartRef.current) / 1000);
@@ -1867,7 +1922,7 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
             setEtaLabel(null);
           }
           setPhase('done');
-          setTotalCount(data.totalCount);
+          setTotalCount(prev => Math.max(prev, (data.totalCount || 0) + stepOffsetRef.current));
           // Trigger name-a-plan card if 2+ steps all succeeded
           if (Array.isArray(data.skillResults) && data.skillResults.length >= 2 && data.skillResults.every((r: any) => r.ok || r.skipped)) {
             const _pf = data.planFile || '';
@@ -2130,14 +2185,21 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
       ipcRenderer?.send('agents:open-training', { agentId: _agentId });
       return;
     }
-    ipcRenderer?.send('prompt-queue:submit', { prompt: _value, selectedText: '' });
+    // Answer submitted — flip paused steps back to running spinners while the agent resumes
+    const blockedStepIndex = askUserPrompt?.stepIndex;
+    setSteps(prev => prev.map(s => s.status === 'needs_input' && (blockedStepIndex == null || s.index === blockedStepIndex) ? { ...s, status: 'running' as const } : s));
+    ipcRenderer?.send('prompt-queue:submit', { prompt: _value, selectedText: '', isAskUserAnswer: true });
   };
 
-  const handleTakeOver = () => {
-    const _agentId = askUserPrompt?.agentId || null;
+  const handleAskUserFreeTextSubmit = () => {
+    const _val = askUserFreeText.trim();
+    if (!_val) return;
     setAskUserPrompt(null);
-    setPhase('idle');
-    ipcRenderer?.send('browser:take_over', { agentId: _agentId });
+    setAskUserFreeText('');
+    // Answer submitted — flip paused steps back to running spinners while the agent resumes
+    const blockedStepIndex = askUserPrompt?.stepIndex;
+    setSteps(prev => prev.map(s => s.status === 'needs_input' && (blockedStepIndex == null || s.index === blockedStepIndex) ? { ...s, status: 'running' as const } : s));
+    ipcRenderer?.send('prompt-queue:submit', { prompt: _val, selectedText: '', isAskUserAnswer: true });
   };
 
   const handleGuideContinue = () => {
@@ -2440,27 +2502,6 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
             </>
           );
         })()}
-        {phase === 'executing' && (
-          <button
-            onClick={handleTakeOver}
-            className="ml-auto text-xs px-2 py-0.5 rounded-full transition-colors flex items-center gap-1"
-            style={{
-              backgroundColor: 'rgba(168,85,247,0.06)',
-              border: '1px solid rgba(168,85,247,0.15)',
-              color: '#a78bfa',
-              cursor: 'pointer',
-              opacity: 0.7,
-            }}
-            onMouseEnter={e => { e.currentTarget.style.opacity = '1'; e.currentTarget.style.backgroundColor = 'rgba(168,85,247,0.12)'; }}
-            onMouseLeave={e => { e.currentTarget.style.opacity = '0.7'; e.currentTarget.style.backgroundColor = 'rgba(168,85,247,0.06)'; }}
-            title="Cancel automation and demonstrate the correct action manually"
-          >
-            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/>
-            </svg>
-            Something wrong?
-          </button>
-        )}
         {phase === 'plan_review' && (
           <div>
             <div style={{ marginBottom: 10, padding: '7px 10px', borderRadius: 8, backgroundColor: 'rgba(251,191,36,0.08)', border: '1px solid rgba(251,191,36,0.28)', display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -3311,6 +3352,7 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
                         color: step.status === 'pending' ? '#6b7280'
                           : step.status === 'failed' ? '#fca5a5'
                           : step.status === 'skipped' ? '#fbbf24'
+                          : step.status === 'needs_input' ? '#fbbf24'
                           : step.status === 'deferred' ? '#6b7280'
                           : '#e5e7eb',
                         textDecoration: step.status === 'deferred' ? 'line-through' : undefined,
@@ -3580,6 +3622,25 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
                     <div style={{ fontSize: '10px', color: '#6b7280', marginTop: 4, fontStyle: 'italic' }}>
                       Your request will continue automatically after sign-in.
                     </div>
+                    {manualAuthBtnVisible && loginGuidance.sessionId && (
+                      <button
+                        onClick={() => {
+                          fetch('http://localhost:3007/browser.auth_complete', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ sessionId: loginGuidance.sessionId }),
+                          }).catch(() => {});
+                          setManualAuthBtnVisible(false);
+                        }}
+                        style={{
+                          marginTop: 8, fontSize: '11px', fontWeight: 600, color: '#fbbf24',
+                          background: 'rgba(251,191,36,0.12)', border: '1px solid rgba(251,191,36,0.35)',
+                          borderRadius: 6, padding: '6px 12px', cursor: 'pointer',
+                        }}
+                      >
+                        ✓ I have signed in — generate plan
+                      </button>
+                    )}
                   </div>
                 )}
                 {/* ── Task auth overlay — prominent lock card when login wall detected during task execution ── */}
@@ -4435,24 +4496,56 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
               })}
             </div>
           )}
-          <button
-            onClick={handleTakeOver}
-            className="text-left px-3 py-2 rounded-lg text-sm transition-colors flex items-center gap-2"
-            style={{
-              backgroundColor: 'rgba(168,85,247,0.08)',
-              border: '1px solid rgba(168,85,247,0.25)',
-              color: '#c4b5fd',
-              cursor: 'pointer',
-              marginTop: 4,
-            }}
-            onMouseEnter={e => (e.currentTarget.style.backgroundColor = 'rgba(168,85,247,0.18)')}
-            onMouseLeave={e => (e.currentTarget.style.backgroundColor = 'rgba(168,85,247,0.08)')}
-          >
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
-              <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/>
-            </svg>
-            Take over and train
-          </button>
+          {(askUserPrompt.freeText || askUserPrompt.options.length === 0) && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 8 }}>
+              <input
+                type="text"
+                value={askUserFreeText}
+                onChange={e => setAskUserFreeText(e.target.value)}
+                onKeyDown={e => { if (e.key === 'Enter') handleAskUserFreeTextSubmit(); }}
+                placeholder="Type your answer…"
+                autoFocus
+                style={{
+                  flex: 1, minWidth: 0, background: 'rgba(0,0,0,0.35)',
+                  border: '1px solid rgba(245,158,11,0.35)',
+                  borderRadius: 6, padding: '6px 10px',
+                  color: '#e5e7eb', fontSize: '0.8rem',
+                  outline: 'none',
+                }}
+              />
+              <button
+                onClick={handleAskUserFreeTextSubmit}
+                disabled={!askUserFreeText.trim()}
+                style={{
+                  padding: '6px 14px', borderRadius: 6, fontSize: '0.8rem', fontWeight: 600,
+                  backgroundColor: askUserFreeText.trim() ? 'rgba(245,158,11,0.18)' : 'rgba(245,158,11,0.06)',
+                  border: '1px solid rgba(245,158,11,0.35)',
+                  color: askUserFreeText.trim() ? '#fbbf24' : '#9ca3af',
+                  cursor: askUserFreeText.trim() ? 'pointer' : 'not-allowed',
+                }}
+              >
+                Submit
+              </button>
+            </div>
+          )}
+          {askUserPrompt.options.length > 0 && (
+            <div style={{ marginTop: 6 }}>
+              <input
+                type="text"
+                value={askUserFreeText}
+                onChange={e => setAskUserFreeText(e.target.value)}
+                onKeyDown={e => { if (e.key === 'Enter') handleAskUserFreeTextSubmit(); }}
+                placeholder="…or type your own answer"
+                style={{
+                  width: '100%', background: 'rgba(0,0,0,0.25)',
+                  border: '1px solid rgba(107,114,128,0.25)',
+                  borderRadius: 6, padding: '6px 10px',
+                  color: '#9ca3af', fontSize: '0.75rem',
+                  outline: 'none',
+                }}
+              />
+            </div>
+          )}
         </div>
       )}
     </div>

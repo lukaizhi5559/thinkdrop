@@ -1285,6 +1285,8 @@ export function AgentsTab({ items, onRefresh }: AgentsTabProps) {
   const [preflightHighlightAgent, setPreflightHighlightAgent] = useState<string | null>(null);
   // Preflight-provided setup data (setupInfo + detected reason) from preflight:auth_required event
   const [preflightSetupData, setPreflightSetupData] = useState<{ setupInfo?: any; reason?: string; authType?: string } | null>(null);
+  // Track which command was just copied to clipboard (for "Copied!" feedback)
+  const [copiedCmd, setCopiedCmd] = useState<string | null>(null);
   // Browser login loading state
   const [browserLoginLoading, setBrowserLoginLoading] = useState<Record<string, boolean>>({});
   // Start URL editing state
@@ -2460,23 +2462,42 @@ export function AgentsTab({ items, onRefresh }: AgentsTabProps) {
                     )}
                     {/* Install command */}
                     {setupInfo.installCmd && (
-                      <div style={{ marginBottom: 6 }}>
+                      <div style={{ marginBottom: 6, display: 'flex', alignItems: 'center', gap: 6 }}>
                         <span style={{ fontSize: '0.65rem', color: '#9ca3af' }}>Install: </span>
                         <code style={{ fontSize: '0.68rem', color: '#10b981', background: 'rgba(16,185,129,0.08)', padding: '2px 6px', borderRadius: 4 }}>{setupInfo.installCmd}</code>
+                        <button onClick={() => { navigator.clipboard?.writeText(setupInfo.installCmd); setCopiedCmd('install'); setTimeout(() => setCopiedCmd(null), 2000); }} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '2px', color: copiedCmd === 'install' ? '#10b981' : '#6b7280' }}>
+                          {copiedCmd === 'install' ? '✓' : <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>}
+                        </button>
+                      </div>
+                    )}
+                    {/* Init command (from --help discovery) */}
+                    {setupInfo.initCmd && (
+                      <div style={{ marginBottom: 6, display: 'flex', alignItems: 'center', gap: 6 }}>
+                        <span style={{ fontSize: '0.65rem', color: '#9ca3af' }}>Init: </span>
+                        <code style={{ fontSize: '0.68rem', color: '#a78bfa', background: 'rgba(167,139,250,0.08)', padding: '2px 6px', borderRadius: 4 }}>{setupInfo.initCmd}</code>
+                        <button onClick={() => { navigator.clipboard?.writeText(setupInfo.initCmd); setCopiedCmd('init'); setTimeout(() => setCopiedCmd(null), 2000); }} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '2px', color: copiedCmd === 'init' ? '#a78bfa' : '#6b7280' }}>
+                          {copiedCmd === 'init' ? '✓' : <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>}
+                        </button>
                       </div>
                     )}
                     {/* Auth command */}
                     {setupInfo.authCmd && (
-                      <div style={{ marginBottom: 6 }}>
+                      <div style={{ marginBottom: 6, display: 'flex', alignItems: 'center', gap: 6 }}>
                         <span style={{ fontSize: '0.65rem', color: '#9ca3af' }}>Auth: </span>
                         <code style={{ fontSize: '0.68rem', color: '#fbbf24', background: 'rgba(251,191,36,0.08)', padding: '2px 6px', borderRadius: 4 }}>{setupInfo.authCmd}</code>
+                        <button onClick={() => { navigator.clipboard?.writeText(setupInfo.authCmd); setCopiedCmd('auth'); setTimeout(() => setCopiedCmd(null), 2000); }} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '2px', color: copiedCmd === 'auth' ? '#fbbf24' : '#6b7280' }}>
+                          {copiedCmd === 'auth' ? '✓' : <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>}
+                        </button>
                       </div>
                     )}
                     {/* Verify command */}
                     {setupInfo.verifyCmd && (
-                      <div style={{ marginBottom: 6 }}>
+                      <div style={{ marginBottom: 6, display: 'flex', alignItems: 'center', gap: 6 }}>
                         <span style={{ fontSize: '0.65rem', color: '#9ca3af' }}>Verify: </span>
                         <code style={{ fontSize: '0.68rem', color: '#60a5fa', background: 'rgba(59,130,246,0.08)', padding: '2px 6px', borderRadius: 4 }}>{setupInfo.verifyCmd}</code>
+                        <button onClick={() => { navigator.clipboard?.writeText(setupInfo.verifyCmd); setCopiedCmd('verify'); setTimeout(() => setCopiedCmd(null), 2000); }} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '2px', color: copiedCmd === 'verify' ? '#60a5fa' : '#6b7280' }}>
+                          {copiedCmd === 'verify' ? '✓' : <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>}
+                        </button>
                       </div>
                     )}
                     {/* Required credentials */}
@@ -2516,7 +2537,27 @@ export function AgentsTab({ items, onRefresh }: AgentsTabProps) {
                     )}
                   </div>
                 )}
-                {/* Credentials card — dynamic key-value editor */}
+                {/* Re-check button — triggers re-preflight via IPC */}
+                <div>
+                  <button
+                    onClick={() => {
+                      ipcRenderer?.send('preflight:recheck', { agentId: cliDetailAgent.id });
+                    }}
+                    style={{
+                      width: '100%', padding: '8px 14px', borderRadius: 8,
+                      border: '1px solid rgba(16,185,129,0.3)', background: 'rgba(16,185,129,0.1)',
+                      color: '#10b981', fontSize: '0.78rem', fontWeight: 600, cursor: 'pointer',
+                      display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
+                    }}
+                  >
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/>
+                    </svg>
+                    Return to Automation &amp; Re-check
+                  </button>
+                </div>
+                {/* Credentials card — disabled (setup-guide-only flow) */}
+                {false && (
                 <div style={{ marginBottom: 16, background: 'rgba(251,191,36,0.08)', border: '1px solid rgba(251,191,36,0.3)', borderRadius: 10, padding: '12px 14px' }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 12 }}>
                     <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#fbbf24" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -2533,7 +2574,7 @@ export function AgentsTab({ items, onRefresh }: AgentsTabProps) {
                   </div>
 
                   {/* Search for setup link button */}
-                  <button
+                  {/* <button
                     onClick={() => handleSearchSetupLink(cliDetailAgent.service || cliDetailAgent.id, cliDetailAgent.cliTool)}
                     style={{ display: 'inline-flex', alignItems: 'center', gap: 5, padding: '5px 12px', borderRadius: 6, border: '1px solid rgba(251,191,36,0.4)', background: 'rgba(251,191,36,0.12)', color: '#fbbf24', fontSize: '0.72rem', cursor: 'pointer', fontWeight: 500, marginBottom: 12 }}
                   >
@@ -2541,7 +2582,7 @@ export function AgentsTab({ items, onRefresh }: AgentsTabProps) {
                       <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
                     </svg>
                     Search for setup instructions
-                  </button>
+                  </button> */}
 
                   {/* Dynamic credential editor */}
                   <div style={{ marginTop: 10 }}>
@@ -2699,9 +2740,10 @@ export function AgentsTab({ items, onRefresh }: AgentsTabProps) {
                     ))}
                   </div>
                 </div>
+                )}
                 {/* Capabilities */}
                 {cliDetailAgent.capabilities && cliDetailAgent.capabilities.length > 0 && (
-                  <div style={{ marginBottom: 14 }}>
+                  <div style={{ marginTop: 16, marginBottom: 14, paddingTop: 14, borderTop: '1px solid rgba(255,255,255,0.06)' }}>
                     <div style={{ fontSize: '0.7rem', color: '#9ca3af', marginBottom: 4, fontWeight: 500 }}>Capabilities</div>
                     <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
                       {cliDetailAgent.capabilities.map(cap => (
@@ -2855,25 +2897,6 @@ export function AgentsTab({ items, onRefresh }: AgentsTabProps) {
                     </div>
                   </>
                 )}
-                {/* Re-check button — triggers re-preflight via IPC */}
-                <div style={{ marginTop: 16, paddingTop: 14, borderTop: '1px solid rgba(255,255,255,0.06)' }}>
-                  <button
-                    onClick={() => {
-                      ipcRenderer?.send('preflight:recheck', { agentId: cliDetailAgent.id });
-                    }}
-                    style={{
-                      width: '100%', padding: '8px 14px', borderRadius: 8,
-                      border: '1px solid rgba(16,185,129,0.3)', background: 'rgba(16,185,129,0.1)',
-                      color: '#10b981', fontSize: '0.78rem', fontWeight: 600, cursor: 'pointer',
-                      display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
-                    }}
-                  >
-                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                      <polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/>
-                    </svg>
-                    Return to Automation &amp; Re-check
-                  </button>
-                </div>
               </div>
             </div>
           )}
