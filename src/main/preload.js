@@ -96,6 +96,7 @@ contextBridge.exposeInMainWorld('electron', {
         'agents:train',
         'agents:train-save',
         'agents:train-cancel',
+        'agents:open-training',
         'agents:delete',
         'agents:test-skill',
         'agents:publish-skill',
@@ -193,6 +194,7 @@ contextBridge.exposeInMainWorld('electron', {
         'agents:skill-test-update',
         'agents:skill-refresh-update',
         'app-agent:highlight',
+        'agents:open-training',
       ];
       if (validChannels.includes(channel)) {
         const wrapped = (_event, ...args) => func(...args);
@@ -311,6 +313,7 @@ contextBridge.exposeInMainWorld('electron', {
         'agents:error',
         'agents:update',
         'operation:status',
+        'agents:open-training',
       ];
       if (validChannels.includes(channel)) {
         const chMap = _wiredListeners.get(channel);
