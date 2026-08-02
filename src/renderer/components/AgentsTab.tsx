@@ -1343,11 +1343,16 @@ export function AgentsTab({ items, onRefresh }: AgentsTabProps) {
       const trainAgentId = sessionStorage.getItem('takeover:train-agent');
       if (trainAgentId) {
         sessionStorage.removeItem('takeover:train-agent');
+        let trainContext: { mode?: string; task?: string | null; startUrl?: string | null; keepSession?: boolean } | null = null;
+        try {
+          const ctxRaw = sessionStorage.getItem('takeover:train-context');
+          if (ctxRaw) { sessionStorage.removeItem('takeover:train-context'); trainContext = JSON.parse(ctxRaw); }
+        } catch (_) {}
         setExpandedAgent(trainAgentId);
         const isCli = cliAgents.some(a => a.id === trainAgentId);
         const isApp = appAgents.some(a => a.id === trainAgentId);
         setActiveSubtab(isCli ? 'cli' : isApp ? 'app' : 'browser');
-        setTimeout(() => handleTrain(trainAgentId), 300);
+        setTimeout(() => handleTrain(trainAgentId, trainContext), 300);
       }
     } catch (_) {}
     // Listen for real-time preflight:agent-setup events (handles case where component is already mounted)
@@ -1373,7 +1378,14 @@ export function AgentsTab({ items, onRefresh }: AgentsTabProps) {
       const isCli = cliAgents.some(a => a.id === trainAgentId);
       const isApp = appAgents.some(a => a.id === trainAgentId);
       setActiveSubtab(isCli ? 'cli' : isApp ? 'app' : 'browser');
-      setTimeout(() => handleTrain(trainAgentId), 300);
+      // Pass through train context (mode, task, startUrl, keepSession) from the
+      // failure handoff so the trainer attaches to the live session or starts fresh.
+      setTimeout(() => handleTrain(trainAgentId, {
+        mode: detail?.mode || 'fresh',
+        task: detail?.task || null,
+        startUrl: detail?.startUrl || null,
+        keepSession: detail?.keepSession === true,
+      }), 300);
     };
     window.addEventListener('agents:open-training', handleOpenTraining);
 
@@ -1500,9 +1512,15 @@ export function AgentsTab({ items, onRefresh }: AgentsTabProps) {
     return () => { ipcRenderer.removeListener('agents:skill-refresh-update', handleRefreshUpdate); };
   }, []);
 
-  const handleTrain = (agentId: string) => {
+  const handleTrain = (agentId: string, trainContext?: { mode?: string; task?: string | null; startUrl?: string | null; keepSession?: boolean } | null) => {
     setTrainingAgentId(agentId);
-    ipcRenderer?.send('agents:train', { agentId });
+    ipcRenderer?.send('agents:train', {
+      agentId,
+      mode: trainContext?.mode || 'fresh',
+      task: trainContext?.task || null,
+      startUrl: trainContext?.startUrl || null,
+      keepSession: trainContext?.keepSession === true,
+    });
   };
 
   const handleTrainSave = (skillName: string) => {

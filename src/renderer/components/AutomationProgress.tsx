@@ -188,6 +188,10 @@ interface AskUserPrompt {
   agentId?: string | null;
   freeText?: boolean;
   stepIndex?: number | null;
+  // Train-from-current-page context (present on agent-aware failures)
+  currentUrl?: string | null;
+  keepSession?: boolean;
+  originalTask?: string | null;
 }
 
 interface ParallelLoginService {
@@ -722,6 +726,7 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
   const [savedFilePaths, setSavedFilePaths] = useState<string[]>([]);
   const [askUserPrompt, setAskUserPrompt] = useState<AskUserPrompt | null>(null);
   const [askUserFreeText, setAskUserFreeText] = useState('');
+  const [askUserCorrectionMode, setAskUserCorrectionMode] = useState(false);
   const [guideStep, setGuideStep] = useState<GuideStepCard | null>(null);
   const [intentType, setIntentType] = useState<string | null>(null);
   const [scheduleCountdown, setScheduleCountdown] = useState<{ label: string; targetTime: string; remainingMs: number } | null>(null);
@@ -957,13 +962,8 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
     if (!ipcRenderer) return;
     let active = true;
 
-    // Reset when a new prompt starts (skip for resume answers so step cards stay visible)
-    const handleNewPrompt = (data?: any) => {
-      if (data?.isResume || (typeof data === 'object' && data?.isResume)) {
-        // Resume answer: clear only the prompt card, keep the step list/spinner intact
-        setAskUserPrompt(null);
-        return;
-      }
+    // Full reset to idle — used on new prompt and on cancelled all_done
+    const resetToIdle = () => {
       setPhase('idle');
       setSteps([]);
       setGlobalError(null);
@@ -1017,6 +1017,16 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
       setEtaLabel(null);
       setElapsedLabel(null);
       executionStartRef.current = null;
+    };
+
+    // Reset when a new prompt starts (skip for resume answers so step cards stay visible)
+    const handleNewPrompt = (data?: any) => {
+      if (data?.isResume || (typeof data === 'object' && data?.isResume)) {
+        // Resume answer: clear only the prompt card, keep the step list/spinner intact
+        setAskUserPrompt(null);
+        return;
+      }
+      resetToIdle();
     };
     const handleScanProgress = (data: any) => {
       if (!active) return;
@@ -1638,7 +1648,8 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
           // Mark only the asking step as needs_input (amber "?"); parallel siblings keep running.
           // When no stepIndex is provided (global pause), pause running steps as needs_input — never 'failed'.
           const askIdx = data.stepIndex != null ? data.stepIndex + stepOffsetRef.current : null;
-          setAskUserPrompt({ question: data.question, options: data.options || [], agentId: data.agentId || null, freeText: data.freeText || (data.options || []).length === 0, stepIndex: askIdx });
+          setAskUserCorrectionMode(false);
+          setAskUserPrompt({ question: data.question, options: data.options || [], agentId: data.agentId || null, freeText: data.freeText || (data.options || []).length === 0, stepIndex: askIdx, currentUrl: data.currentUrl || null, keepSession: data.keepSession === true, originalTask: data.originalTask || null });
           setSteps(prev => prev.map(s => {
             if (askIdx != null) {
               return s.index === askIdx && s.status !== 'done' && s.status !== 'failed' && s.status !== 'skipped'
@@ -1944,10 +1955,9 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
           // Don't let all_done collapse an active plan review (awaitingPlanApproval path)
           if (phaseRef.current === 'plan_review') break;
           if (data.cancelled) {
-            setPreflightAuthRequired(null);
-            setPreflightAuthBrowserOpened(false);
-            setPreflightAuthBackgroundFailed(false);
-            setPreflightRouteChoice(null);
+            // Cancel = wipe the panel back to idle — no done summary, no step rows.
+            resetToIdle();
+            break;
           }
           setGuideStep(null);
           setParallelLoginServices(null);
@@ -2221,12 +2231,31 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
   const handleOptionClick = (option: string | { label?: string; value?: string }) => {
     const _label = typeof option === 'string' ? option : (option?.label || String(option));
     const _value = typeof option === 'string' ? option : (option?.value || _label);
-    setAskUserPrompt(null);
-    if (_value === 'open_agents_training') {
-      const _agentId = askUserPrompt?.agentId || null;
-      ipcRenderer?.send('agents:open-training', { agentId: _agentId });
+    // "Correct and retry" — don't submit; focus the free-text input so the user
+    // can type what was missed. The free-text submit goes through the existing
+    // _isAgentAskUser resume path (re-runs same agent with [Resume context: Q&A]).
+    if (_value === 'correct_and_retry') {
+      setAskUserCorrectionMode(true);
+      // Keep the askUserPrompt open — just switch to correction input mode.
+      // The input field renders below the options when freeText/correctionMode is true.
       return;
     }
+    // "Record recipe from beginning" — open the training tab (fresh mode).
+    if (_value === 'record_recipe' || _value === 'open_agents_training' || _value === 'open_agents_training_here') {
+      const _agentId = askUserPrompt?.agentId || null;
+      const _mode = (_value === 'open_agents_training_here') ? 'here' : 'fresh';
+      setAskUserPrompt(null);
+      ipcRenderer?.send('agents:open-training', {
+        agentId: _agentId,
+        mode: _mode,
+        task: askUserPrompt?.originalTask || null,
+        startUrl: _mode === 'here' ? (askUserPrompt?.currentUrl || null) : null,
+        keepSession: _mode === 'here' ? (askUserPrompt?.keepSession === true) : false,
+      });
+      return;
+    }
+    setAskUserPrompt(null);
+    setAskUserCorrectionMode(false);
     // Answer submitted — flip paused steps back to running spinners while the agent resumes
     const blockedStepIndex = askUserPrompt?.stepIndex;
     setSteps(prev => prev.map(s => s.status === 'needs_input' && (blockedStepIndex == null || s.index === blockedStepIndex) ? { ...s, status: 'running' as const } : s));
@@ -2238,6 +2267,7 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
     if (!_val) return;
     setAskUserPrompt(null);
     setAskUserFreeText('');
+    setAskUserCorrectionMode(false);
     // Answer submitted — flip paused steps back to running spinners while the agent resumes
     const blockedStepIndex = askUserPrompt?.stepIndex;
     setSteps(prev => prev.map(s => s.status === 'needs_input' && (blockedStepIndex == null || s.index === blockedStepIndex) ? { ...s, status: 'running' as const } : s));
@@ -4625,22 +4655,38 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
               </button>
             </div>
           )}
-          {askUserPrompt.options.length > 0 && (
+          {(askUserPrompt.options.length > 0 || askUserCorrectionMode) && (
             <div style={{ marginTop: 6 }}>
               <input
                 type="text"
                 value={askUserFreeText}
                 onChange={e => setAskUserFreeText(e.target.value)}
                 onKeyDown={e => { if (e.key === 'Enter') handleAskUserFreeTextSubmit(); }}
-                placeholder="…or type your own answer"
+                placeholder={askUserCorrectionMode ? "What was missed? e.g. 'You never typed the update text'" : "…or type your own answer"}
+                autoFocus={askUserCorrectionMode}
                 style={{
-                  width: '100%', background: 'rgba(0,0,0,0.25)',
-                  border: '1px solid rgba(107,114,128,0.25)',
+                  width: '100%', background: askUserCorrectionMode ? 'rgba(245,158,11,0.08)' : 'rgba(0,0,0,0.25)',
+                  border: askUserCorrectionMode ? '1px solid rgba(245,158,11,0.45)' : '1px solid rgba(107,114,128,0.25)',
                   borderRadius: 6, padding: '6px 10px',
-                  color: '#9ca3af', fontSize: '0.75rem',
+                  color: askUserCorrectionMode ? '#fbbf24' : '#9ca3af', fontSize: '0.75rem',
                   outline: 'none',
                 }}
               />
+              {askUserCorrectionMode && (
+                <button
+                  onClick={handleAskUserFreeTextSubmit}
+                  disabled={!askUserFreeText.trim()}
+                  style={{
+                    marginTop: 6, padding: '6px 14px', borderRadius: 6, fontSize: '0.8rem', fontWeight: 600,
+                    backgroundColor: askUserFreeText.trim() ? 'rgba(245,158,11,0.18)' : 'rgba(245,158,11,0.06)',
+                    border: '1px solid rgba(245,158,11,0.35)',
+                    color: askUserFreeText.trim() ? '#fbbf24' : '#9ca3af',
+                    cursor: askUserFreeText.trim() ? 'pointer' : 'not-allowed',
+                  }}
+                >
+                  Retry with correction
+                </button>
+              )}
             </div>
           )}
         </div>

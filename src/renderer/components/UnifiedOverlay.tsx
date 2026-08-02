@@ -1697,6 +1697,9 @@ export function UnifiedOverlay() {
       if (data?.agentId) {
         try { sessionStorage.setItem('preflight:highlight-agent', data.agentId); } catch (_) {}
         try { sessionStorage.setItem('takeover:train-agent', data.agentId); } catch (_) {}
+        // Store full training context (mode, task, startUrl, keepSession) so the
+        // trainer can attach to the live session or start fresh from a deep-link.
+        try { sessionStorage.setItem('takeover:train-context', JSON.stringify(data)); } catch (_) {}
         // Dispatch a real-time event so AgentsTab picks up the handoff even when already mounted
         try { window.dispatchEvent(new CustomEvent('agents:open-training', { detail: data })); } catch (_) {}
       }

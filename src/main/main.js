@@ -2742,21 +2742,15 @@ app.whenReady().then(async () => {
     }
   });
 
-  // ─── Automation: Cancel active run ───────────────────────────────────────
-  ipcMain.on('automation:cancel', () => {
-    console.log('🛑 [Automation] Cancel requested by user');
-    if (activeAbortController) {
-      activeAbortController.abort();
-      activeAbortController = null;
-    }
-    // Close any active browser session opened by preflight auth or plan execution.
-    // playwright-cli daemon keeps Chrome alive independently — must explicitly close it.
+  // Close any active browser session opened by preflight auth or plan execution.
+  // playwright-cli daemon keeps Chrome alive independently — must explicitly close it.
+  function closeActiveBrowserSessions(reason = 'cancel') {
     const sessionsToClose = new Set();
     if (_activeBrowserAgentSessionId) sessionsToClose.add(_activeBrowserAgentSessionId);
     if (_gatherAuthSessionId && _gatherAuthSessionId !== _activeBrowserAgentSessionId) sessionsToClose.add(_gatherAuthSessionId);
     if (currentBrowserSessionId && currentBrowserSessionId !== _activeBrowserAgentSessionId && currentBrowserSessionId !== _gatherAuthSessionId) sessionsToClose.add(currentBrowserSessionId);
     for (const sid of sessionsToClose) {
-      console.log(`🛑 [Automation] Closing browser session: ${sid}`);
+      console.log(`🛑 [Automation] Closing browser session (${reason}): ${sid}`);
       const closeBody = JSON.stringify({ payload: { skill: 'browser.act', args: { action: 'close', sessionId: sid } } });
       const closeReq = http.request({
         hostname: '127.0.0.1', port: 3007, path: '/command.automate', method: 'POST',
@@ -2773,6 +2767,16 @@ app.whenReady().then(async () => {
     _pendingPreflightPrompt = null;
     currentBrowserSessionId = null;
     currentBrowserUrl = null;
+  }
+
+  // ─── Automation: Cancel active run ───────────────────────────────────────
+  ipcMain.on('automation:cancel', () => {
+    console.log('🛑 [Automation] Cancel requested by user');
+    if (activeAbortController) {
+      activeAbortController.abort();
+      activeAbortController = null;
+    }
+    closeActiveBrowserSessions('cancel');
     // Delete newly built agents that were never authenticated — the user cancelled
     // before signing in, so the agent should not persist in DuckDB.
     for (const agentId of _pendingNewlyBuiltAgents) {
@@ -4121,13 +4125,17 @@ app.whenReady().then(async () => {
               return { success: true, aborted: true };
             }
           } else if (wantsAbort) {
-            // User wants to abort — notify and return immediately, do NOT re-run the graph
+            // User wants to abort — notify and return immediately, do NOT re-run the graph.
+            // Must emit all_done (terminal event) or AutomationProgress stays stuck on the
+            // ask_user banner/spinner, and must close any browser session the failed step opened.
             console.log('[StateGraph] ASK_USER resume: user chose abort — stopping, not replanning');
             if (typeof streamCallback === 'function') {
               streamCallback('Operation cancelled.');
-            } else if (typeof progressCallback === 'function') {
-              progressCallback({ type: 'step_done', skill: 'cancel', description: 'Operation cancelled.' });
             }
+            if (typeof progressCallback === 'function') {
+              progressCallback({ type: 'all_done', cancelled: true, summary: 'Operation cancelled.', completedCount: 0, totalCount: 0 });
+            }
+            closeActiveBrowserSessions('ask_user abort');
             return { success: true, aborted: true };
           } else if (wantsLoginContinue) {
             // User confirmed login — resume plan from current skillCursor (page is now authenticated).
@@ -4408,19 +4416,125 @@ app.whenReady().then(async () => {
               stepRetryCount: 0,
               context: { ...paused.context, sessionId: sessionId || currentSessionId }
             };
-          } else if (paused.pendingQuestion?.trainingHandoff || paused.pendingQuestion?.recipeRequired) {
-            // ── Training handoff resume: user chose Open agent training or Cancel ──
+          } else if (paused.pendingQuestion?._isSaveSkillOffer) {
+            // ── Save-as-named-skill resume (Phase 3) ──────────────────────────────
+            // User was offered to save a completed flow as a named recipe. If they
+            // typed a dot-name or clicked the suggestion, build the recipe from the
+            // stashed transcript. If "Skip", just resume remaining steps.
+            const _offer = paused.pendingQuestion?.saveSkillOffer;
+            const _wantsSkipSave = /^skip$/i.test(chosenOption.trim());
+            const _skillName = _wantsSkipSave ? null : (chosenOption.trim() || _offer?.suggestedName || null);
+            const _remainingSteps = Array.isArray(paused.skillPlan) ? paused.skillPlan.slice(paused.skillCursor || 0) : [];
+
+            if (_skillName && _offer?.transcriptPath) {
+              console.log(`[StateGraph] ASK_USER resume: saveSkillOffer — saving recipe "${_skillName}" for ${_offer.agentId}`);
+              try {
+                const _stashRaw = require('fs').readFileSync(_offer.transcriptPath, 'utf8');
+                const _stash = JSON.parse(_stashRaw);
+                const trainerAgent = require('../../mcp-services/command-service/src/skills/trainer.agent.cjs');
+                // Build + save the recipe (fire-and-forget — don't block resume)
+                trainerAgent.saveAutoRecipe(
+                  _offer.agentId, _stash.task || _offer.task || '', _stash.transcript, _stash.targetUrl, _stash.agentContext, _skillName
+                ).then(_r => {
+                  if (_r) console.log(`[StateGraph] saveSkillOffer: recipe "${_skillName}" saved (${_r.waypoints?.length || 0} waypoints)`);
+                  try { require('fs').unlinkSync(_offer.transcriptPath); } catch (_) {}
+                }).catch(_e => {
+                  console.warn(`[StateGraph] saveSkillOffer: save failed (non-fatal): ${_e.message}`);
+                  try { require('fs').unlinkSync(_offer.transcriptPath); } catch (_) {}
+                });
+              } catch (_stashErr) {
+                console.warn(`[StateGraph] saveSkillOffer: transcript stash read failed: ${_stashErr.message}`);
+              }
+            } else if (_offer?.transcriptPath) {
+              // Skipped — clean up the stash
+              try { require('fs').unlinkSync(_offer.transcriptPath); } catch (_) {}
+            }
+
+            // Resume remaining steps (cursor already advanced past the completed step)
+            initialState = {
+              ...paused,
+              message: paused.message,
+              streamCallback, progressCallback, confirmInstallCallback, confirmGuideCallback, isGuideCancelled,
+              failedStep: null, pendingQuestion: null, recoveryAction: null,
+              answer: undefined, commandExecuted: false,
+              skillPlan: paused.skillPlan, skillCursor: paused.skillCursor || 0,
+              stepRetryCount: 0,
+              context: { ...paused.context, sessionId: sessionId || currentSessionId }
+            };
+          } else if ((paused.pendingQuestion?.trainingHandoff || paused.pendingQuestion?.recipeRequired)
+                     && (!paused.pendingQuestion?._isAgentAskUser
+                         || /^(try_again|record_recipe|open_agents_training|open_agents_training_here|train_recipe|cancel|no)$/i.test((chosenOption || '').trim()))) {
+            // ── Training handoff resume: user chose a KNOWN option (train/cancel/try_again) ──
             // browser.agent returned trainingHandoff (or legacy recipeRequired) when
             // no deep-link or trained recipe was found for a mutation task.
             // Open agent training → forward IPC to UnifiedOverlay to switch to Agents tab.
             // Cancel → clear paused state and emit all_done with cancelled: true.
+            //
+            // IMPORTANT: When _isAgentAskUser is true AND the answer is free-text
+            // (not a known option), skip this branch and fall through to the
+            // _isAgentAskUser branch (line ~4600) which re-runs the agent with
+            // [Resume context: Q&A]. Otherwise free-text corrections get routed
+            // to "user cancelled" — the bug that caused "Correct and retry" to fail.
             const _handoffAgentId = paused.pendingQuestion?.agentId || null;
-            const _wantsTrain = /open|train/i.test(chosenOption) || chosenOption === 'open_agents_training' || chosenOption === 'train_recipe';
+            // "Record recipe" / "Open agent training" → training handoff.
+            // "Correct and retry" → NOT training; flows through the free-text path
+            // (user types what was missed, then it's injected as [Resume context: Q&A]).
+            const _wantsTrain = chosenOption === 'open_agents_training' || chosenOption === 'open_agents_training_here' || chosenOption === 'train_recipe' || chosenOption === 'record_recipe' || (/open|train/i.test(chosenOption) && chosenOption !== 'correct_and_retry');
             const _wantsCancel = /cancel/i.test(chosenOption) || chosenOption === 'cancel';
+            // "Try again" — re-run the same agent step with the original task (no Q&A).
+            const _wantsRetry = chosenOption === 'try_again' || /^try\s+again/i.test(chosenOption);
 
-            if (_wantsTrain && _handoffAgentId) {
-              console.log(`[StateGraph] ASK_USER resume: trainingHandoff — opening Agents tab for ${_handoffAgentId}`);
-              safeSendUnified('preflight:open-agents-tab', { agentId: _handoffAgentId });
+            if (_wantsRetry && paused.pendingQuestion?._isAgentAskUser) {
+              // Re-run the SAME agent step with the original task — no Q&A injection.
+              const _agentId = paused.pendingQuestion?.agentId || null;
+              const _stepIdx = paused.pendingQuestion?.stepIndex ?? paused.skillCursor ?? 0;
+              const _uiStepIdx = paused.pendingQuestion?.uiStepIndex ?? _stepIdx;
+              const _resumeSkill = paused.pendingQuestion?.skill
+                || paused.skillPlan?.[_stepIdx]?.skill
+                || 'browser.agent';
+              const _originalTask = (paused.pendingQuestion?.originalTask
+                || paused.skillPlan?.[_stepIdx]?.args?.task
+                || paused.message || '').replace(/\s*\[Resume context:[\s\S]*?\]\s*$/g, '').trim();
+              const _remainingSteps = Array.isArray(paused.skillPlan)
+                ? paused.skillPlan.slice(Math.max(paused.skillCursor || 0, _stepIdx + 1))
+                : [];
+              console.log(`[StateGraph] ASK_USER resume: try_again — re-running ${_resumeSkill}/${_agentId} with original task (${_remainingSteps.length} remaining step(s) after)`);
+              progressCallback({ type: 'resuming', agentId: _agentId, stepIndex: _uiStepIdx });
+              initialState = {
+                ...paused,
+                message: paused.message,
+                streamCallback, progressCallback, confirmInstallCallback, confirmGuideCallback, isGuideCancelled,
+                failedStep: null, pendingQuestion: null, recoveryAction: null,
+                answer: undefined, commandExecuted: false,
+                _skillPlan: [
+                  { skill: _resumeSkill, args: { action: 'run', agentId: _agentId, task: _originalTask }, description: _originalTask },
+                  ..._remainingSteps,
+                ],
+                _skillPlanIsResume: true,
+                _resumeStepIndex: _uiStepIdx,
+                skillPlan: null, skillCursor: 0, skillResults: [], stepRetryCount: 0,
+                _planFile: null, _skillPlanFile: null,
+                context: { ...paused.context, sessionId: sessionId || currentSessionId }
+              };
+            } else if (_wantsTrain && _handoffAgentId) {
+              // Thread train context (mode, task, startUrl, keepSession) so the
+              // trainer can attach to the live session (train-from-current-page)
+              // or start fresh from the deep-link (train-from-beginning).
+              const _trainMode = chosenOption === 'open_agents_training_here' ? 'here' : 'fresh';
+              const _trainTask = paused.pendingQuestion?.originalTask || paused.message || null;
+              const _trainStartUrl = _trainMode === 'here' ? (paused.pendingQuestion?.currentUrl || null) : null;
+              const _trainKeepSession = _trainMode === 'here' ? (paused.pendingQuestion?.keepSession === true) : false;
+              // Reuse the live browser session from the failed run so train-from-current-page
+              // attaches to the exact page the failure occurred on (e.g. the LinkedIn composer).
+              const _trainSessionId = _trainMode === 'here' ? (paused.activeBrowserSessionId || null) : null;
+              console.log(`[StateGraph] ASK_USER resume: trainingHandoff — opening Agents tab for ${_handoffAgentId} (mode=${_trainMode})`);
+              // agents:open-training auto-starts the CDP recorder (via takeover:train-agent
+              // in UnifiedOverlay → AgentsTab.handleTrain), unlike preflight:open-agents-tab
+              // which only highlights the agent card.
+              safeSendUnified('agents:open-training', { agentId: _handoffAgentId, mode: _trainMode, task: _trainTask, startUrl: _trainStartUrl, keepSession: _trainKeepSession, browserSessionId: _trainSessionId });
+              // Stash context so agents:train-save fires distillHumanCorrection with the
+              // original task — converting the user's demonstration into a reusable script.
+              _takeOverContext = { agentId: _handoffAgentId, task: _trainTask || '', mode: _trainMode };
               pausedAutomationState = null;
               if (typeof streamCallback === 'function') {
                 streamCallback(`Opening ${_handoffAgentId} in the Agents tab for training.`);
@@ -4894,7 +5008,12 @@ app.whenReady().then(async () => {
               question: q.question,
               options: q.options || [],
               stepIndex: q.stepIndex,
-              agentId: q.agentId || null
+              agentId: q.agentId || null,
+              // Train-from-current-page context (present on agent-aware failures).
+              currentUrl: q.currentUrl || null,
+              keepSession: q.keepSession === true,
+              originalTask: q.originalTask || null,
+              freeText: true,
             });
           }
         }
@@ -6470,12 +6589,16 @@ app.whenReady().then(async () => {
   // Triggered by the training handoff option in AutomationProgress.
   // Forwards to UnifiedOverlay which sets takeover:train-agent in sessionStorage
   // so AgentsTab auto-starts the CDP recorder.
-  ipcMain.on('agents:open-training', (_event, { agentId } = {}) => {
+  ipcMain.on('agents:open-training', (_event, payload = {}) => {
+    const { agentId, mode, task, startUrl, keepSession, browserSessionId } = payload;
     if (pausedAutomationState) {
       console.log(`[StateGraph] agents:open-training — clearing pausedAutomationState (agentId=${agentId})`);
       pausedAutomationState = null;
     }
-    safeSendUnified('agents:open-training', { agentId });
+    // Forward the FULL payload (mode, task, startUrl, keepSession, browserSessionId)
+    // so UnifiedOverlay → AgentsTab → trainerAgent.actionTrain gets the context.
+    // Previously this only forwarded { agentId }, dropping all train context.
+    safeSendUnified('agents:open-training', { agentId, mode, task, startUrl, keepSession, browserSessionId });
   });
 
   // ─── Gather: browser.agent:auth — kick off headed Playwright sign-in ───────
@@ -6995,11 +7118,11 @@ app.whenReady().then(async () => {
   });
 
   // Agent train handler — starts CDP recording session
-  ipcMain.on('agents:train', async (_event, { agentId }) => {
+  ipcMain.on('agents:train', async (_event, { agentId, mode, task, startUrl, keepSession, browserSessionId } = {}) => {
     try {
-      console.log(`[Agents] Starting training (CDP recording) for ${agentId}`);
+      console.log(`[Agents] Starting training (CDP recording) for ${agentId} (mode=${mode || 'fresh'})`);
       const trainerAgent = require('../../mcp-services/command-service/src/skills/trainer.agent.cjs');
-      const result = await trainerAgent.actionTrain({ agentId });
+      const result = await trainerAgent.actionTrain({ agentId, mode, task, startUrl, keepSession, browserSessionId });
       if (result.ok) {
         console.log(`[Agents] Training recording started for ${agentId}`);
       } else {
