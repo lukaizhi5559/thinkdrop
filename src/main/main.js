@@ -3924,10 +3924,21 @@ app.whenReady().then(async () => {
         // Skips the voice-service semantic check entirely to avoid false-positive fresh classification.
         // e.g. recovery handler offered ["Set up access via browser", "Install Google API client"]
         // and user replies "Install Google API client" — must be treated as a resume, not new command.
+        // Options may be strings OR { label, value } objects (e.g. saveSkillOffer options).
         const _pausedOpts = paused.pendingQuestion?.options;
+        const _optMatches = (opt) => {
+          const _p = prompt.trim().toLowerCase();
+          if (typeof opt === 'string') return opt.trim().toLowerCase() === _p;
+          if (opt && typeof opt === 'object') {
+            const v = (opt.value ?? '').toString().trim().toLowerCase();
+            const l = (opt.label ?? '').toString().trim().toLowerCase();
+            return v === _p || l === _p;
+          }
+          return false;
+        };
         const _isOfferedOptionMatch = !isFreshPrompt &&
           Array.isArray(_pausedOpts) && _pausedOpts.length > 0 &&
-          _pausedOpts.some(opt => typeof opt === 'string' && opt.trim().toLowerCase() === prompt.trim().toLowerCase());
+          _pausedOpts.some(_optMatches);
         if (_isOfferedOptionMatch) {
           console.log(`[StateGraph] ASK_USER resume: prompt exactly matches offered option "${prompt.trim()}" — resuming (skipping semantic check)`);
         }
@@ -4396,35 +4407,23 @@ app.whenReady().then(async () => {
               forceBrowserFallback: true,
               context: { ...paused.context, sessionId: sessionId || currentSessionId }
             };
-          } else if (wantsSkip || wantsDone) {
-            // Skip the failed step / user confirmed manual action — advance cursor and resume plan
-            console.log('[StateGraph] ASK_USER resume: user chose skip/done — advancing cursor and resuming plan');
-            initialState = {
-              ...paused,
-              message: paused.message,
-              streamCallback,
-              progressCallback,
-              confirmInstallCallback,
-              confirmGuideCallback,
-              isGuideCancelled,
-              failedStep: null,
-              pendingQuestion: null,
-              recoveryAction: null,
-              answer: undefined,
-              commandExecuted: false,
-              skillCursor: (paused.skillCursor || 0) + 1,  // skip the failed step
-              stepRetryCount: 0,
-              context: { ...paused.context, sessionId: sessionId || currentSessionId }
-            };
           } else if (paused.pendingQuestion?._isSaveSkillOffer) {
             // ── Save-as-named-skill resume (Phase 3) ──────────────────────────────
             // User was offered to save a completed flow as a named recipe. If they
             // typed a dot-name or clicked the suggestion, build the recipe from the
-            // stashed transcript. If "Skip", just resume remaining steps.
+            // stashed transcript. If "Skip", just clean up the stash.
+            //
+            // This branch is checked BEFORE wantsSkip/wantsDone so that "Skip" on a
+            // save-skill offer isn't caught by the generic skip-failed-step branch
+            // (which would double-advance the cursor and try to resume a non-existent
+            // remaining step).
+            //
+            // TERMINAL: saveSkillOffer only fires after the LAST step of a plan
+            // (see executeCommand.js — the offer is deferred until isLastStep), so
+            // there are no remaining steps to resume. Emit all_done and return.
             const _offer = paused.pendingQuestion?.saveSkillOffer;
             const _wantsSkipSave = /^skip$/i.test(chosenOption.trim());
             const _skillName = _wantsSkipSave ? null : (chosenOption.trim() || _offer?.suggestedName || null);
-            const _remainingSteps = Array.isArray(paused.skillPlan) ? paused.skillPlan.slice(paused.skillCursor || 0) : [];
 
             if (_skillName && _offer?.transcriptPath) {
               console.log(`[StateGraph] ASK_USER resume: saveSkillOffer — saving recipe "${_skillName}" for ${_offer.agentId}`);
@@ -4432,7 +4431,7 @@ app.whenReady().then(async () => {
                 const _stashRaw = require('fs').readFileSync(_offer.transcriptPath, 'utf8');
                 const _stash = JSON.parse(_stashRaw);
                 const trainerAgent = require('../../mcp-services/command-service/src/skills/trainer.agent.cjs');
-                // Build + save the recipe (fire-and-forget — don't block resume)
+                // Build + save the recipe (fire-and-forget — don't block the terminal return)
                 trainerAgent.saveAutoRecipe(
                   _offer.agentId, _stash.task || _offer.task || '', _stash.transcript, _stash.targetUrl, _stash.agentContext, _skillName
                 ).then(_r => {
@@ -4450,14 +4449,37 @@ app.whenReady().then(async () => {
               try { require('fs').unlinkSync(_offer.transcriptPath); } catch (_) {}
             }
 
-            // Resume remaining steps (cursor already advanced past the completed step)
+            // Terminal: plan is complete — notify the UI and return without re-entering the graph.
+            // (Re-entering would route to planExecutor which re-reads the plan file, finds all
+            //  steps still ⬜ pending, and re-runs them from cursor 0.)
+            console.log(`[StateGraph] ASK_USER resume: saveSkillOffer resolved (skillName=${_skillName || 'skipped'}) — plan complete, emitting all_done`);
+            if (typeof progressCallback === 'function') {
+              const _completedCount = Array.isArray(paused.skillResults) ? paused.skillResults.filter(r => r.ok).length : 0;
+              const _totalCount = Array.isArray(paused.skillPlan) ? paused.skillPlan.length : 0;
+              progressCallback({ type: 'all_done', completedCount: _completedCount, totalCount: _totalCount, skillResults: paused.skillResults || [], savedFilePaths: [], planFile: paused._skillPlanFile || null });
+            }
+            if (typeof streamCallback === 'function' && !_wantsSkipSave && _skillName) {
+              streamCallback(`Saved as skill: ${_skillName}`);
+            }
+            closeActiveBrowserSessions('save_skill_offer complete');
+            return { success: true };
+          } else if (wantsSkip || wantsDone) {
+            // Skip the failed step / user confirmed manual action — advance cursor and resume plan
+            console.log('[StateGraph] ASK_USER resume: user chose skip/done — advancing cursor and resuming plan');
             initialState = {
               ...paused,
               message: paused.message,
-              streamCallback, progressCallback, confirmInstallCallback, confirmGuideCallback, isGuideCancelled,
-              failedStep: null, pendingQuestion: null, recoveryAction: null,
-              answer: undefined, commandExecuted: false,
-              skillPlan: paused.skillPlan, skillCursor: paused.skillCursor || 0,
+              streamCallback,
+              progressCallback,
+              confirmInstallCallback,
+              confirmGuideCallback,
+              isGuideCancelled,
+              failedStep: null,
+              pendingQuestion: null,
+              recoveryAction: null,
+              answer: undefined,
+              commandExecuted: false,
+              skillCursor: (paused.skillCursor || 0) + 1,  // skip the failed step
               stepRetryCount: 0,
               context: { ...paused.context, sessionId: sessionId || currentSessionId }
             };
@@ -6162,7 +6184,7 @@ app.whenReady().then(async () => {
       id,
       payload: {
         prompt,
-        provider: 'openai',
+        provider: 'auto',
         options: { temperature: 0.7, stream: true, taskType: 'ask' },
         context: { selectedText }
       },
