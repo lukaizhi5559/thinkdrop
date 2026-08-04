@@ -217,7 +217,7 @@ export function UnifiedOverlay() {
   const rulesTabRef = useRef<HTMLDivElement>(null);
 
   // --- Glow Timer Ref ---
-  const glowOffTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const glowOffTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // --- Install Output Scroll Ref ---
   const installOutputRef = useRef<HTMLDivElement>(null);
@@ -239,7 +239,7 @@ export function UnifiedOverlay() {
   const [isDragging, setIsDragging] = useState(false);
   const isDraggingRef = useRef(false);   // Synchronous — safe to read inside ResizeObserver/setTimeout closures
   const isResizingRef = useRef(false);   // True while native window resize handle is active
-  const resizeDebounceRef = useRef<NodeJS.Timeout | null>(null);
+  const resizeDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const dragOffsetX = useRef(0);
   const dragOffsetY = useRef(0);
 
@@ -3057,7 +3057,7 @@ export function UnifiedOverlay() {
       )}
 
       {/* Highlight Debug Button (Dev Mode Only) */}
-      {process.env.NODE_ENV === 'development' && (
+      {import.meta.env.DEV && (
         <>
           <button
             onClick={() => {

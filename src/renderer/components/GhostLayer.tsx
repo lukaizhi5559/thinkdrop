@@ -61,14 +61,14 @@ function GhostLayer() {
   const [isScanning, setIsScanning] = useState(false);
   const [scanTimer, setScanTimer] = useState(0);
   const scanStartTime = useRef<number | null>(null);
-  const timerInterval = useRef<NodeJS.Timeout | null>(null);
+  const timerInterval = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Progress "drop" — a ThinkDrop-styled bubble shown during capture-heavy
   // app.agent steps in place of the (OCR-tainting) main panel. It fades out
   // during each screenshot (capture_begin) and back in afterwards (capture_end).
   const [drop, setDrop] = useState<ProgressDropState | null>(null);
   const [dropVisible, setDropVisible] = useState(false);
-  const captureReadyTimer = useRef<NodeJS.Timeout | null>(null);
+  const captureReadyTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Persistent app-window boundary owned by the drop session (main.js). Unlike
   // BoundingBox highlights (which auto-exit after ~7s), this border stays up for
@@ -296,7 +296,7 @@ function GhostLayer() {
 function BoundingBox({ element, index, onExited }: { element: HighlightElement; index: number; onExited: () => void }) {
   const { x, y, width, height, label, color = '#00aaff', role = 'panel', animState = 'enter' } = element;
   const [localAnim, setLocalAnim] = useState<AnimState>(animState);
-  const timerRef = useRef<NodeJS.Timeout | null>(null);
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     setLocalAnim(animState);

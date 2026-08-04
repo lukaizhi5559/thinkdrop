@@ -872,10 +872,10 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
   // useRef+useEffect([]) misses the mount because the component returns null during idle phase.
   // STABILIZED: Added height delta threshold (40px) and stabilization timer (150ms) to prevent bouncing.
   const rootObserverRef = useRef<ResizeObserver | null>(null);
-  const rootDebounceRef = useRef<NodeJS.Timeout | null>(null);
+  const rootDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastHeightRef = useRef<number>(0);
   const stableHeightRef = useRef<number>(0);
-  const stabilizeTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const stabilizeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const rootCallbackRef = useCallback((node: HTMLDivElement | null) => {
     if (rootObserverRef.current) {
@@ -1405,6 +1405,16 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
               : s
           ));
           setHeartbeatTick(t => t + 1); // Force re-render
+          break;
+        }
+
+        case 'thinking': {
+          // Non-step thinking (from gatherPlanContext) — update the status message
+          // without resetting state. Only applies during planning/preflight phases
+          // (during execution, step_thinking/skill:thinking handle per-step thinking).
+          if (data.message && (phaseRef.current === 'planning' || phaseRef.current === 'preflight')) {
+            setPlanMessage(data.message);
+          }
           break;
         }
 
@@ -3516,7 +3526,7 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
                         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 3 }}>
                           <span style={{ fontSize: '10px', color: '#6b7280', fontFamily: 'ui-monospace, monospace' }}>terminal output</span>
                           <button
-                            onClick={e => { e.stopPropagation(); ipcRenderer?.send('shell:open-terminal', { cwd: process.env.HOME }); }}
+                            onClick={e => { e.stopPropagation(); ipcRenderer?.send('shell:open-terminal', {}); }}
                             style={{ fontSize: '10px', color: '#60a5fa', background: 'none', border: '1px solid rgba(96,165,250,0.3)', borderRadius: 4, padding: '1px 6px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 3 }}
                           >
                             <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">

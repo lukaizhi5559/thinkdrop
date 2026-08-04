@@ -37,7 +37,7 @@ export function useDynamicHeight({
   onResize,
 }: UseDynamicHeightOptions) {
   const lastHeightRef = useRef<number>(0);
-  const debounceTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const debounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const isFirstMountRef = useRef<boolean>(true);
 
   const calculateHeight = useCallback((contentHeight: number): number => {
