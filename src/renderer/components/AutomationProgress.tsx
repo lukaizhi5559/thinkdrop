@@ -1955,9 +1955,20 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
         }
 
         case 'pipeline:done': {
-          // Marks the end of a single StateGraph execution cycle.
-          // The output contract is available in data.contract for inspection / logging.
-          // UI state transitions are driven by all_done / plan:step_done events — no action here.
+          // Safety net for non-automate intents (memory_retrieve, etc.) where all_done
+          // never fires because executeCommand never runs. For command_automate, all_done
+          // is the proper completion signal — skip here to avoid racing with plan:generated.
+          const intent = data?.contract?.intent;
+          if (intent === 'command_automate') break;
+          const p = phaseRef.current;
+          if (p === 'planning' || p === 'executing') {
+            setPhase('done');
+            if (executionStartRef.current) {
+              const elapsed = Math.round((Date.now() - executionStartRef.current) / 1000);
+              setElapsedLabel(`${elapsed}s`);
+              setEtaLabel(null);
+            }
+          }
           break;
         }
 

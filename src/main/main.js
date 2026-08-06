@@ -969,7 +969,7 @@ let currentBrowserUrl = null;        // Last known URL in the active Playwright 
 let _activeBrowserAgentSessionId = null; // Tracks browser session opened during preflight auth (for cancel cleanup)
 let _gatherAuthSessionId = null; // Tracks browser session opened by GatherAuth sign-in (survives stategraph completion)
 let _pendingPreflightPrompt = null; // { prompt, selectedText, responseLanguage, sessionId } — stored when preflight auth required, re-enqueued after auth succeeds
-let _pendingNewlyBuiltAgents = new Set(); // Tracks newly built agents pending auth — deleted on cancel
+let _pendingNewlyBuiltAgents = new Set(); // Tracks newly built agents pending auth — retained on cancel for retry
 let _takeOverContext = null; // Phase 10: { agentId, task, pageType, service } — set when user takes over, used for distillHumanCorrection
 let _currentAutomationPrompt = null; // Phase 10: tracks the active prompt for take-over context
 let currentLastOpenedFilePath = null; // Persists last opened file path so "close it" knows the target
@@ -2777,20 +2777,12 @@ app.whenReady().then(async () => {
       activeAbortController = null;
     }
     closeActiveBrowserSessions('cancel');
-    // Delete newly built agents that were never authenticated — the user cancelled
-    // before signing in, so the agent should not persist in DuckDB.
-    for (const agentId of _pendingNewlyBuiltAgents) {
-      console.log(`🛑 [Automation] Deleting unauthenticated newly built agent: ${agentId}`);
-      const deleteBody = JSON.stringify({ id: agentId });
-      const deleteReq = http.request({
-        hostname: '127.0.0.1', port: 3007, path: '/agent.delete', method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(deleteBody) },
-        timeout: 5000,
-      }, (res) => { res.resume(); });
-      deleteReq.on('error', () => {});
-      deleteReq.on('timeout', () => { deleteReq.destroy(); });
-      deleteReq.write(deleteBody);
-      deleteReq.end();
+    // Keep newly built agents that were never authenticated — the user cancelled
+    // before signing in, but the agent descriptor is still valid. Keeping it lets
+    // a retry skip the build step and go straight to auth. (Previously these were
+    // deleted, forcing a full rebuild on every retry.)
+    if (_pendingNewlyBuiltAgents.size > 0) {
+      console.log(`📋 [Automation] Keeping ${_pendingNewlyBuiltAgents.size} newly built agent(s) for retry: ${[..._pendingNewlyBuiltAgents].join(', ')}`);
     }
     _pendingNewlyBuiltAgents.clear();
     // Safety: a cancel may interrupt a capture-heavy app.agent step mid-session,
@@ -3429,7 +3421,7 @@ app.whenReady().then(async () => {
       if (event.type === 'preflight:auth_starting' && event.agentId) {
         _activeBrowserAgentSessionId = event.agentId.replace('.agent', '').replace(/[^a-z0-9_]/gi, '_') + '_agent';
       }
-      // Track newly built agents pending auth so they can be deleted on cancel
+      // Track newly built agents pending auth so they can be retained on cancel
       if (event.type === 'preflight:auth_required' && event._newlyCreated && event.agentId) {
         _pendingNewlyBuiltAgents.add(event.agentId);
       }
