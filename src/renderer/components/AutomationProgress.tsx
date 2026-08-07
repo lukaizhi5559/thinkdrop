@@ -1274,6 +1274,7 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
                       description: newStep.description,
                       status: 'pending' as StepStatus,
                       runGroup: newStep.runGroup || undefined,
+                      args: newStep.args || undefined,
                     });
                   }
                 } else if (existingStep && !newStep) {
@@ -1287,6 +1288,7 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
                     description: newStep.description,
                     status: 'pending' as StepStatus,
                     runGroup: newStep.runGroup || undefined,
+                    args: newStep.args || undefined,
                   });
                 }
               });
@@ -1308,6 +1310,7 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
                 description: s.description,
                 status: 'pending' as StepStatus,
                 runGroup: s.runGroup || undefined,
+                args: s.args || undefined,
               })),
             ]);
           } else {
@@ -1327,6 +1330,7 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
               description: s.description,
               status: 'pending' as StepStatus,
               runGroup: s.runGroup || undefined,
+              args: s.args || undefined,
             })));
           }
           break;
@@ -4335,10 +4339,10 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
             />
           )}
           <div className="flex-1" style={{ minWidth: 0 }}>
-            <div className="text-sm font-medium" style={{ color: '#f59e0b', overflowWrap: 'anywhere' }}>
+            {/* <div className="text-sm font-medium" style={{ color: '#f59e0b', fontWeight: '800', overflowWrap: 'anywhere' }}>
               {preflightAuthRequired.message}
-            </div>
-            <div className="text-xs" style={{ color: '#92400e' }}>
+            </div> */}
+            <div className="text-xs" style={{ color: '#f59e0b' }}>
               {isCliSetup
                 ? 'CLI agent needs configuration — open the Agents tab to complete setup.'
                 : isBrowserAuth
@@ -4401,7 +4405,7 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
                       I've signed in — Continue →
                     </button>
                   ) : (
-                    <span className="text-xs" style={{ color: '#92400e' }}>
+                    <span className="text-xs" style={{ color: '#f59e0b' }}>
                       Complete sign-in… Continue unlocks shortly.
                     </span>
                   )}

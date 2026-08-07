@@ -205,7 +205,21 @@ start_node_service "phi4" "$PROJECT_ROOT/mcp-services/thinkdrop-phi4-service" 76
 sleep 3
 
 # 6. Command Service — stdio MCP server (node directly, no npm wrapper)
-start_node_direct_service "command" "$PROJECT_ROOT/mcp-services/command-service" "src/server.cjs" 256
+#    Routed through supervise-command-service.sh so it can auto-restart when
+#    THINKDROP_SUPERVISE_COMMAND=1 (prod-like). Default (unset/0) exec's node
+#    directly, so the recorded PID is the node process and stop/pkill logic
+#    is unchanged.
+echo "📦 Starting command..."
+bash "$SCRIPT_DIR/supervise-command-service.sh" &
+COMMAND_PID=$!
+echo "command:$COMMAND_PID" >> "$PIDS_FILE"
+sleep 1
+if kill -0 $COMMAND_PID 2>/dev/null; then
+    echo "   ✅ PID $COMMAND_PID"
+else
+    echo "   ❌ Failed to start — check logs/command.log"
+fi
+echo ""
 sleep 2
 
 # 7. Screen Intelligence Service — port 3008 (has own yarn.lock; must use npm)

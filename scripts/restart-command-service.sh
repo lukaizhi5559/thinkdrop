@@ -26,10 +26,11 @@ fi
 pkill -f "command-service/src/server.cjs" 2>/dev/null || true
 sleep 1
 
-# Start fresh
-cd "$SERVICE_PATH"
-export NODE_OPTIONS="--max-old-space-size=256"
-node src/server.cjs >> "$LOG_FILE" 2>&1 &
+# Start fresh — routed through supervise-command-service.sh so it can
+# auto-restart when THINKDROP_SUPERVISE_COMMAND=1 (prod-like). Default
+# (unset/0) exec's node directly, so the recorded PID is the node process
+# and the pkill above still works.
+bash "$SCRIPT_DIR/supervise-command-service.sh" &
 NEW_PID=$!
 echo "command:$NEW_PID" >> "$PIDS_FILE"
 sleep 2

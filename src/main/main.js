@@ -1021,6 +1021,106 @@ function isBrowserContinuationCommand(prompt) {
 }
 let _userHasMovedPanel = false;
 
+// ---------------------------------------------------------------------------
+// Unified Overlay bounds authority
+// ---------------------------------------------------------------------------
+// Single source of truth for the unified overlay's size + position.
+// The renderer only reports a measured content height; all clamping,
+// quadrant-aware anchoring, and animation happen here.
+//
+// COLLAPSED_HEIGHT = header (row1 ~36) + tabbar (~40) + input area (~120) + footer/padding.
+// Keep in sync with the same constant in src/renderer/components/utils/useDynamicHeight.ts.
+const UNIFIED_COLLAPSED_HEIGHT = 220;
+const UNIFIED_MIN_WIDTH = 400;
+const UNIFIED_MAX_WIDTH = 800;
+const UNIFIED_MARGIN = 20;
+const UNIFIED_TOP_MARGIN = 40; // extra clearance under the macOS menu bar
+const UNIFIED_ABSOLUTE_MAX_HEIGHT = 900; // never taller than this, even on huge screens
+
+// Stashed bounds captured before an expand toggle, so collapse can return the
+// panel to exactly where it was instead of re-anchoring by quadrant.
+let _preExpandBounds = null;
+
+// Apply size + position to the unified overlay using quadrant-aware anchoring.
+//   contentHeight: desired total window height (renderer-measured). Falls back to collapsed.
+//   width:         desired window width. Falls back to current width, then UNIFIED_MIN_WIDTH.
+//   animate:       pass through to BrowserWindow.setBounds (macOS animates).
+//   saveBounds:    if true, stash current bounds into _preExpandBounds before resizing
+//                  (used by the expand toggle so collapse can restore them).
+//   restoreBounds: if true, ignore contentHeight/width and restore _preExpandBounds
+//                  (clamped into the work area). Clears the stash.
+//
+// Anchoring rule:
+//   - DEFAULT (user has NOT dragged the panel): always anchor bottom-right —
+//     x = screenWidth - w - margin, y = screenHeight - h - margin. Growth goes
+//     upward; collapse always returns to the bottom-right corner.
+//   - AFTER USER DRAG (_userHasMovedPanel): quadrant-aware — if the panel's
+//     vertical CENTER is in the TOP half of the work area, anchor the TOP edge
+//     (grow downward, clamped on-screen); otherwise anchor the BOTTOM edge
+//     (grow upward). X is preserved and clamped on-screen.
+function applyUnifiedBounds({ contentHeight, width, animate = true, saveBounds = false, restoreBounds = false } = {}) {
+  if (!unifiedWindow || unifiedWindow.isDestroyed()) return null;
+  const primaryDisplay = screen.getPrimaryDisplay();
+  const { width: screenWidth, height: screenHeight } = primaryDisplay.workAreaSize;
+  const margin = UNIFIED_MARGIN;
+  const topMargin = UNIFIED_TOP_MARGIN;
+  const usableMaxH = Math.max(UNIFIED_COLLAPSED_HEIGHT, screenHeight - topMargin - margin);
+  const maxH = Math.min(UNIFIED_ABSOLUTE_MAX_HEIGHT, usableMaxH);
+  const minH = UNIFIED_COLLAPSED_HEIGHT;
+
+  const bounds = unifiedWindow.getBounds();
+
+  // Expand toggle: stash pre-expand bounds so collapse can return to them.
+  if (saveBounds) {
+    _preExpandBounds = { x: bounds.x, y: bounds.y, width: bounds.width, height: bounds.height };
+  }
+
+  // Collapse toggle: restore stashed bounds (clamped into the work area).
+  if (restoreBounds && _preExpandBounds) {
+    const restored = _preExpandBounds;
+    _preExpandBounds = null;
+    const rW = Math.min(Math.max(restored.width, UNIFIED_MIN_WIDTH), UNIFIED_MAX_WIDTH);
+    const rH = Math.min(Math.max(restored.height, minH), maxH);
+    const rX = Math.max(margin, Math.min(restored.x, screenWidth - rW - margin));
+    const rY = Math.max(topMargin, Math.min(restored.y, screenHeight - rH - margin));
+    unifiedWindow.setBounds(
+      { x: Math.round(rX), y: Math.round(rY), width: Math.round(rW), height: Math.round(rH) },
+      animate
+    );
+    return { x: Math.round(rX), y: Math.round(rY), width: Math.round(rW), height: Math.round(rH) };
+  }
+  if (restoreBounds) _preExpandBounds = null; // nothing to restore; clear anyway
+
+  const clampedH = Math.min(Math.max(contentHeight || minH, minH), maxH);
+  const clampedW = Math.min(
+    Math.max(width || bounds.width || UNIFIED_MIN_WIDTH, UNIFIED_MIN_WIDTH),
+    UNIFIED_MAX_WIDTH
+  );
+
+  let newX, newY;
+  if (!_userHasMovedPanel) {
+    // Default: always bottom-right.
+    newX = screenWidth - clampedW - margin;
+    newY = screenHeight - clampedH - margin;
+  } else {
+    // User-dragged: quadrant-aware — top-half anchors top (grow down), bottom-half
+    // anchors bottom (grow up); X preserved and clamped on-screen.
+    const centerY = bounds.y + bounds.height / 2;
+    if (centerY < screenHeight / 2) {
+      newY = Math.max(topMargin, Math.min(bounds.y, screenHeight - clampedH - margin));
+    } else {
+      newY = screenHeight - clampedH - margin;
+    }
+    newX = Math.max(margin, Math.min(bounds.x, screenWidth - clampedW - margin));
+  }
+
+  unifiedWindow.setBounds(
+    { x: Math.round(newX), y: Math.round(newY), width: Math.round(clampedW), height: Math.round(clampedH) },
+    animate
+  );
+  return { x: Math.round(newX), y: Math.round(newY), width: Math.round(clampedW), height: Math.round(clampedH) };
+}
+
 // Tracks whether a learn session is active so the overlay can resist macOS panel auto-hide.
 let _learnSessionActive = false;
 // Tracks if user intentionally hid window (via shortcut) vs auto-hide behavior
@@ -1379,23 +1479,23 @@ function createResultsWindow() {
 function createUnifiedWindow() {
   const primaryDisplay = screen.getPrimaryDisplay();
   const { width: screenWidth, height: screenHeight } = primaryDisplay.workAreaSize;
-  const windowMinWidth = 400;
-  const windowMinHeight = 400;
-  const windowMaxHeight = 800;
-  const margin = 20;
+  const margin = UNIFIED_MARGIN;
+  const topMargin = UNIFIED_TOP_MARGIN;
+  const usableMaxH = Math.max(UNIFIED_COLLAPSED_HEIGHT, screenHeight - topMargin - margin);
+  const windowMaxHeight = Math.min(UNIFIED_ABSOLUTE_MAX_HEIGHT, usableMaxH);
 
-  // Position at bottom-right like the old ResultsWindow
-  const initialX = (screenWidth - windowMinWidth) - margin;
-  const initialY = screenHeight; // Off-screen initially
+  // Start collapsed and fully in view at the bottom-right corner.
+  const initialX = (screenWidth - UNIFIED_MIN_WIDTH) - margin;
+  const initialY = screenHeight - UNIFIED_COLLAPSED_HEIGHT - margin;
 
   unifiedWindow = new BrowserWindow({
     x: initialX,
     y: initialY,
-    width: windowMinWidth,
-    height: windowMinHeight,
-    minWidth: windowMinWidth,
-    maxWidth: 800,
-    minHeight: windowMinHeight,
+    width: UNIFIED_MIN_WIDTH,
+    height: UNIFIED_COLLAPSED_HEIGHT,
+    minWidth: UNIFIED_MIN_WIDTH,
+    maxWidth: UNIFIED_MAX_WIDTH,
+    minHeight: UNIFIED_COLLAPSED_HEIGHT,
     maxHeight: windowMaxHeight,
     transparent: true,
     frame: false,
@@ -2316,6 +2416,11 @@ app.whenReady().then(async () => {
         _basePlanFile: item._basePlanFile || null,
         _skillPlanJson: item._skillPlanJson || null,
         _planCorrectionSourcePrompt: item._planCorrectionSourcePrompt || null,
+        // Multi-intent resume fields (set when plan:approve re-enqueues a mixed-intent queue)
+        _resumeMultiIntent: item._resumeMultiIntent || false,
+        _resumeIntentQueue: item._resumeIntentQueue || [],
+        _resumeIntentResults: item._resumeIntentResults || [],
+        _resumeDataContext: item._resumeDataContext || {},
         sessionId: item.sessionId || null,
         userId: item.userId || 'default_user',
       });
@@ -2583,6 +2688,11 @@ app.whenReady().then(async () => {
         sessionId:     ctx.sessionId || currentSessionId,
         userId:        ctx.userId || 'default_user',
         _planFile:     resolvedPlanFile,
+        // Restore multi-intent context so planExecutor can resume the queue
+        _resumeMultiIntent:   ctx.isMultiIntent || false,
+        _resumeIntentQueue:   ctx.intentQueue || [],
+        _resumeIntentResults: ctx.intentResults || [],
+        _resumeDataContext:   ctx.dataContext || {},
       }
     );
     pendingPlanContext = null;
@@ -3352,7 +3462,7 @@ app.whenReady().then(async () => {
   });
 
   // ─── StateGraph: Core execution — called by promptQueue serially ─────────
-  async function runPromptThroughStateGraph(prompt, { selectedText = '', sessionId = null, userId = 'default_user', responseLanguage = null, promptQueueId = null, _planFile = null, _forceNewPlan = false, _skillPlan = null, _skillPlanFile = null, _planCorrectionMode = false, _planCorrectionText = null, _basePlanFile = null, _skillPlanJson = null, _planCorrectionSourcePrompt = null } = {}) {
+  async function runPromptThroughStateGraph(prompt, { selectedText = '', sessionId = null, userId = 'default_user', responseLanguage = null, promptQueueId = null, _planFile = null, _forceNewPlan = false, _skillPlan = null, _skillPlanFile = null, _planCorrectionMode = false, _planCorrectionText = null, _basePlanFile = null, _skillPlanJson = null, _planCorrectionSourcePrompt = null, _resumeMultiIntent = false, _resumeIntentQueue = [], _resumeIntentResults = [], _resumeDataContext = {} } = {}) {
     const isPlanExecute = !!_planFile;
     console.log('🧠 [StateGraph] Processing prompt:', prompt.substring(0, 80), responseLanguage ? `(responseLanguage: ${responseLanguage})` : '', isPlanExecute ? `[plan:${require('path').basename(_planFile)}]` : '');
     _currentAutomationPrompt = prompt;
@@ -3455,6 +3565,11 @@ app.whenReady().then(async () => {
           userId:        'default_user',
           selectedText:  selectedText || '',
           skillPlanJson: event.skillPlanJson || null,
+          // Preserve multi-intent context for mixed-intent plan approval
+          isMultiIntent: event.isMultiIntent || false,
+          intentQueue:   event.intentQueue || [],
+          intentResults: event.intentResults || [],
+          dataContext:   event.dataContext || {},
         };
         console.log(`[Plan] plan:generated context stored: ${event.planFile}`);
         if (resultsWindow && !resultsWindow.isDestroyed()) {
@@ -4821,6 +4936,11 @@ app.whenReady().then(async () => {
           _basePlanFile: _basePlanFile || null,
           _skillPlanJson: _skillPlanJson || null,
           _planCorrectionSourcePrompt: _planCorrectionSourcePrompt || null,
+          // Multi-intent resume fields (restored by planExecutor after plan approval)
+          _resumeMultiIntent: _resumeMultiIntent || false,
+          _resumeIntentQueue: _resumeIntentQueue || [],
+          _resumeIntentResults: _resumeIntentResults || [],
+          _resumeDataContext: _resumeDataContext || {},
           context: {
             sessionId: resolvedSessionId,
             userId,
@@ -5264,20 +5384,16 @@ app.whenReady().then(async () => {
         unifiedWindow.hide();
         stopClipboardMonitoring();
       } else {
-        const primaryDisplay = screen.getPrimaryDisplay();
-        const { width: screenWidth, height: screenHeight } = primaryDisplay.workAreaSize;
-        
-        // Position unified window at bottom-right of screen (like old ResultsWindow)
+        // Re-show: reanchor to bottom-right, preserving current width + content height.
+        // The renderer owns collapsing to UNIFIED_COLLAPSED_HEIGHT when content is empty
+        // (via useDynamicHeight), so we just re-anchor here without forcing a size.
+        _userHasMovedPanel = false; // Reset so subsequent resizes reanchor to bottom-right
         const bounds = unifiedWindow.getBounds();
-        const windowWidth = bounds.width || 400;
-        const windowHeight = bounds.height || 300;
-        const margin = 20;
-        const x = screenWidth - windowWidth - margin;
-        const y = screenHeight - windowHeight - margin;
-        
-        console.log(`[Unified Window] Positioning at (${x}, ${y}) - screen: ${screenWidth}x${screenHeight}, window: ${windowWidth}x${windowHeight}`);
-        _userHasMovedPanel = false; // Reset on shortcut-show so resize reanchors to bottom-right
-        unifiedWindow.setBounds({ x, y, width: windowWidth, height: windowHeight });
+        applyUnifiedBounds({
+          contentHeight: bounds.height,
+          width: bounds.width,
+          animate: false,
+        });
         unifiedWindow.show();
         unifiedWindow.focus();
 
@@ -5982,79 +6098,32 @@ app.whenReady().then(async () => {
     clipboard.writeText(text);
   });
 
+  // Unified overlay resize — single consolidated channel.
+  // The renderer reports a measured content height (and optional width); all
+  // clamping + quadrant-aware anchoring lives in applyUnifiedBounds().
+  // Legacy channels (window:resize, window:smart-resize, unified:resize-window)
+  // are routed here too so any stale senders still behave correctly.
+  ipcMain.on('unified:set-content-height', (_e, { height, width, animate = true, saveBounds = false, restoreBounds = false } = {}) => {
+    const result = applyUnifiedBounds({ contentHeight: height, width, animate, saveBounds, restoreBounds });
+    if (result) {
+      console.log(`[Unified Window] set-content-height → ${result.width}x${result.height} @ (${result.x}, ${result.y})`);
+    }
+  });
+
+  // Legacy: window:resize (width-only) → route through applyUnifiedBounds keeping current height.
   ipcMain.on('window:resize', (_e, { width }) => {
-    console.log(`[IPC] window:resize called with width: ${width}`);
-    console.log(`[DEBUG] window:resize called with width: ${width}`);
-    if (unifiedWindow && !unifiedWindow.isDestroyed()) {
-      const bounds = unifiedWindow.getBounds();
-      console.log(`[IPC] Current bounds:`, bounds);
-      console.log(`[DEBUG] Current bounds:`, bounds);
-      unifiedWindow.setBounds({ ...bounds, width });
-      console.log(`[IPC] Resized to width: ${width}`);
-      console.log(`[DEBUG] Resized to width: ${width}`);
-    } else {
-      console.log('[IPC] unifiedWindow not available');
-      console.log('[DEBUG] unifiedWindow not available');
-    }
-  });
-
-  // Smart resize with position awareness - expands toward center of screen
-  ipcMain.on('window:smart-resize', (_e, { width, height, animate = true, keepPosition = false }) => {
     if (!unifiedWindow || unifiedWindow.isDestroyed()) return;
-    
-    const bounds = unifiedWindow.getBounds();
-    const { width: screenWidth, height: screenHeight } = screen.getPrimaryDisplay().workAreaSize;
-    const margin = 20;
-    let newHeight = Math.min(height || 900, 900);
-    // If the user has manually dragged the panel, always keep its position
-    const effectiveKeepPosition = keepPosition || _userHasMovedPanel;
-
-    let newX, newY;
-    if (effectiveKeepPosition) {
-      // Keep current position — only nudge x left if panel would clip off the right screen edge
-      newY = Math.min(bounds.y, screenHeight - height - margin);
-      newY = Math.max(margin, newY);
-      newX = Math.min(bounds.x, screenWidth - width - margin);
-      newX = Math.max(margin, newX);
-    } else {
-      // Original behavior: anchor to screen bottom, adjust for right-side overflow
-      const isExpanding = width > 500;
-      const isOnRightSide = (bounds.x + bounds.width) > (screenWidth - 100);
-      newY = screenHeight - newHeight - margin;
-      newX = bounds.x;
-      if (isExpanding && isOnRightSide) {
-        newX = Math.max(margin, bounds.x - (width - bounds.width));
-      }
-      newX = Math.max(margin, Math.min(newX, screenWidth - width - margin));
-    }
-
-    unifiedWindow.setBounds({ x: Math.round(newX), y: Math.round(newY), width, height: newHeight }, animate);
+    applyUnifiedBounds({ contentHeight: unifiedWindow.getBounds().height, width, animate: true });
   });
 
-  // Dynamic height resize based on content (from UnifiedOverlay)
+  // Legacy: window:smart-resize → route through applyUnifiedBounds.
+  ipcMain.on('window:smart-resize', (_e, { width, height, animate = true }) => {
+    applyUnifiedBounds({ contentHeight: height, width, animate });
+  });
+
+  // Legacy: unified:resize-window (height-only) → route through applyUnifiedBounds keeping current width.
   ipcMain.on('unified:resize-window', (_e, { height }) => {
-    if (!unifiedWindow || unifiedWindow.isDestroyed()) return;
-    
-    const bounds = unifiedWindow.getBounds();
-    const { height: screenHeight } = screen.getPrimaryDisplay().workAreaSize;
-    const margin = 20;
-    
-    // Clamp height to reasonable bounds
-    const newHeight = Math.min(Math.max(height, 350), 900);
-    
-    // If user has manually moved the panel, preserve their Y position (grow upward from current bottom)
-    // Otherwise reanchor to screen bottom-right
-    const newY = _userHasMovedPanel
-      ? Math.max(margin, bounds.y + bounds.height - newHeight) // grow upward from current bottom edge
-      : screenHeight - newHeight - margin;
-    
-    console.log(`[Unified Window] Resizing to height: ${newHeight} (y: ${newY}, userMoved: ${_userHasMovedPanel})`);
-    unifiedWindow.setBounds({
-      x: bounds.x,
-      y: newY,
-      width: bounds.width,
-      height: newHeight
-    }, true); // true = animate
+    applyUnifiedBounds({ contentHeight: height, animate: true });
   });
 
   ipcMain.on('window:move', (_e, { x, y }) => {
@@ -6063,6 +6132,30 @@ app.whenReady().then(async () => {
       unifiedWindow.setPosition(x, y);
     } else {
       console.log('[IPC] unifiedWindow not available');
+    }
+  });
+
+  // Drag end: clamp the panel back into the work area with animation.
+  // We deliberately do NOT clamp during `window:move` (mousemove) because that
+  // would fight the cursor; instead we snap back once the user releases.
+  ipcMain.on('window:move-done', () => {
+    if (!unifiedWindow || unifiedWindow.isDestroyed()) return;
+    const primaryDisplay = screen.getPrimaryDisplay();
+    const { width: screenWidth, height: screenHeight } = primaryDisplay.workAreaSize;
+    const margin = UNIFIED_MARGIN;
+    const topMargin = UNIFIED_TOP_MARGIN;
+    const usableMaxH = Math.max(UNIFIED_COLLAPSED_HEIGHT, screenHeight - topMargin - margin);
+    const maxH = Math.min(UNIFIED_ABSOLUTE_MAX_HEIGHT, usableMaxH);
+    const b = unifiedWindow.getBounds();
+    const clampedW = b.width;
+    const clampedH = Math.min(Math.max(b.height, UNIFIED_COLLAPSED_HEIGHT), maxH);
+    const clampedX = Math.max(margin, Math.min(b.x, screenWidth - clampedW - margin));
+    const clampedY = Math.max(topMargin, Math.min(b.y, screenHeight - clampedH - margin));
+    if (clampedX !== b.x || clampedY !== b.y || clampedH !== b.height) {
+      unifiedWindow.setBounds(
+        { x: Math.round(clampedX), y: Math.round(clampedY), width: Math.round(clampedW), height: Math.round(clampedH) },
+        true
+      );
     }
   });
 

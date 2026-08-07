@@ -1,5 +1,5 @@
 import React from 'react';
-import { type TabId, QueueIcon, CronIcon, StoreIcon, SkillsIcon, ConnectionsIcon, RulesIcon, SettingsIcon } from './TabComponents';
+import { type TabId, StoreIcon, SkillsIcon, RulesIcon, SettingsIcon } from './TabComponents';
 
 export function ThinkDropLogo({ size = 20 }: { size?: number }) {
   return (
@@ -23,10 +23,7 @@ type MenuItem =
 
 export function SlideoutDrawer({ isOpen, onClose, onNavigate, activeTab }: SlideoutDrawerProps) {
   const menuItems: MenuItem[] = [
-    { type: 'item', id: 'queue', label: 'Queue', icon: (active) => <QueueIcon active={active} /> },
-    { type: 'item', id: 'cron', label: 'Cron', icon: (active) => <CronIcon active={active} /> },
     // { type: 'item', id: 'connections', label: 'Connections', icon: (active) => <ConnectionsIcon active={active} /> },
-    { type: 'divider' },
     { type: 'item', id: 'rules', label: 'Rules', icon: (active) => <RulesIcon active={active} /> },
     { type: 'item', id: 'skills', label: 'Skills', icon: (active) => <SkillsIcon active={active} /> },
     { type: 'item', id: 'store', label: 'Store', icon: (active) => <StoreIcon active={active} /> },

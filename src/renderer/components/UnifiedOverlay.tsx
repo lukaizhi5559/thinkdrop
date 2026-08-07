@@ -1,6 +1,6 @@
-import { useState, useEffect, useRef, useCallback, useReducer } from 'react';
+import { useState, useEffect, useRef, useCallback, useReducer, useMemo } from 'react';
 import { flushSync } from 'react-dom';
-import { useDynamicHeight } from './utils/useDynamicHeight';
+import { useDynamicHeight, MAX_HEIGHT } from './utils/useDynamicHeight';
 const ipcRenderer = (window as any).electron?.ipcRenderer;
 import { playThinkDropSound, playDropSound } from '../utils/thinkDropSound';
 import {
@@ -205,6 +205,9 @@ export function UnifiedOverlay() {
   const contentRef = useRef<HTMLDivElement>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const scrollBottomRef = useRef<HTMLDivElement>(null);
+  // Fixed sections measured by useDynamicHeight (intrinsic content height, not the clipped root).
+  const headerRef = useRef<HTMLDivElement>(null);
+  const inputBarRef = useRef<HTMLDivElement>(null);
 
   // --- Tab Content Refs for Dynamic Height ---
   const queueTabRef = useRef<HTMLDivElement>(null);
@@ -242,37 +245,73 @@ export function UnifiedOverlay() {
   const resizeDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const dragOffsetX = useRef(0);
   const dragOffsetY = useRef(0);
+  // Epoch ms until which content-driven resize is suppressed after a manual collapse click.
+  const manualCollapseUntilRef = useRef(0);
 
-  // Suppress all resize IPC while user is dragging or using the native resize handle
-  const shouldSuppressResize = () => isDraggingRef.current || isResizingRef.current;
+  // Suppress all resize IPC while user is dragging, using the native resize handle,
+  // or within the brief hold window after a manual collapse via the width toggle.
+  const shouldSuppressResize = () =>
+    isDraggingRef.current || isResizingRef.current || Date.now() < manualCollapseUntilRef.current;
 
-  // --- Width Toggle with Original Size Memory ---
-  const originalWidthRef = useRef(400);
-  const originalHeightRef = useRef(300);
+  // --- Dynamic Height Management ---
+  // Single consolidated pipeline: measures fixed sections (header + input bar)
+  // plus the ACTIVE tab's intrinsic content height. `results` points at the INNER
+  // auto-height content div (contentRef) — NOT the h-full scroll container, whose
+  // scrollHeight can't drop below its window-constrained clientHeight (ratchet).
+  // Collapse is measurement-driven: results content ~0 → COLLAPSED_HEIGHT.
+  // Sends one IPC (unified:set-content-height); main owns clamping + anchoring.
+  const contentRefs = useMemo(() => ({
+    results: contentRef,
+    queue: queueTabRef,
+    cron: cronTabRef,
+    agents: agentsTabRef,
+    skills: skillsTabRef,
+    connections: connectionsTabRef,
+    store: storeTabRef,
+    settings: settingsTabRef,
+    rules: rulesTabRef,
+  }), []);
 
+  const { measureNow } = useDynamicHeight({
+    activeTab,
+    headerRef,
+    inputBarRef,
+    contentRefs,
+    getWidth: () => (isExpanded ? 900 : 400),
+    // While expanded, pin the window at MAX_HEIGHT (expand = 900xMAX).
+    forceHeight: isExpanded ? MAX_HEIGHT : null,
+    debounceMs: 120,
+    suppress: shouldSuppressResize,
+  });
+
+  // --- Width Toggle ---
+  // Expand  → 900 wide + MAX_HEIGHT (pinned while expanded, see forceHeight below).
+  //              Stashes current bounds in main so collapse can return to them.
+  // Collapse → 400 wide, restore pre-expand bounds (position + size), then
+  //              re-measure so the height tracks actual content at 400 width
+  //              (empty results → COLLAPSED_HEIGHT, populated → content height).
   const toggleWidth = useCallback(() => {
     const newExpanded = !isExpanded;
-    console.log('[Width Toggle] Toggling to:', newExpanded ? 'expanded (900px)' : 'compact (original)');
+    console.log('[Width Toggle] Toggling to:', newExpanded ? 'expanded (900xMAX)' : 'compact (restore+measure)');
     setIsExpanded(newExpanded);
-    
     if (newExpanded) {
-      // Expanding: store current dimensions first, then expand
-      const currentWidth = 400;
-      const currentHeight = 300;
-      originalWidthRef.current = currentWidth;
-      originalHeightRef.current = currentHeight;
-      ipcRenderer?.send('window:smart-resize', { width: 900, height: 800, animate: true, keepPosition: true });
+      // Save current bounds so collapse can return to this exact spot.
+      ipcRenderer?.send('unified:set-content-height', { width: 900, height: MAX_HEIGHT, animate: true, saveBounds: true });
     } else {
-      // Collapsing: restore original dimensions, keep current position
-      ipcRenderer?.send('window:smart-resize', { 
-        width: originalWidthRef.current, 
-        height: originalHeightRef.current, 
-        animate: true,
-        keepPosition: true,
-      });
+      // Suppress content-driven re-growth briefly so the width-collapse reflow
+      // doesn't immediately undo the user's collapse click. 200ms covers the
+      // reflow; measureNow() right after re-snaps height to real content.
+      manualCollapseUntilRef.current = Date.now() + 200;
+      // Restore pre-expand bounds (no height override — main uses stashed size).
+      ipcRenderer?.send('unified:set-content-height', { width: 400, animate: true, restoreBounds: true });
+      // After the reflow hold, re-measure so height tracks content at 400 width.
+      setTimeout(() => {
+        manualCollapseUntilRef.current = 0;
+        measureNow();
+      }, 220);
     }
-    console.log('[Width Toggle] Sent IPC window:smart-resize');
-  }, [isExpanded]);
+    console.log('[Width Toggle] Sent IPC unified:set-content-height');
+  }, [isExpanded, measureNow]);
 
   // --- Tab Switching ---
   const handleTabSelect = useCallback((tab: TabId | 'settings' | 'rules') => {
@@ -316,30 +355,6 @@ export function UnifiedOverlay() {
     }
   }, []);
 
-  // --- Dynamic Height Management ---
-  // Automatically resize overlay based on active tab content
-  useDynamicHeight({
-    activeTab,
-    tabRefs: {
-      results: contentRef,
-      queue: queueTabRef,
-      cron: cronTabRef,
-      agents: agentsTabRef,
-      skills: skillsTabRef,
-      connections: connectionsTabRef,
-      store: storeTabRef,
-      settings: settingsTabRef,
-      rules: rulesTabRef,
-    },
-    headerHeight: 52,
-    inputAreaHeight: 100,
-    padding: 32,
-    minHeight: 350,
-    maxHeight: 900,
-    debounceMs: 100,
-    suppress: shouldSuppressResize,
-  });
-
   // --- Prompt Input Functions ---
   const handleTextareaChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
     setPromptText(e.target.value);
@@ -348,6 +363,17 @@ export function UnifiedOverlay() {
     textarea.style.height = 'auto';
     textarea.style.height = `${Math.min(textarea.scrollHeight, 200)}px`;
   };
+
+  // Reset the textarea's inline height whenever the prompt is cleared (submit,
+  // history navigation, programmatic set-prompt). The inline style set by
+  // handleTextareaChange otherwise persists, keeping the input bar (and thus the
+  // window) at the multi-line height after submit. The inputBar ResizeObserver
+  // in useDynamicHeight picks up the shrink and resizes the window accordingly.
+  useEffect(() => {
+    if (promptText === '' && textareaRef.current) {
+      textareaRef.current.style.height = 'auto';
+    }
+  }, [promptText]);
 
   // Captured values ref — set synchronously by clearInputAndShowThinking so handleSubmit
   // can read them after the state has already been cleared.
@@ -730,6 +756,10 @@ export function UnifiedOverlay() {
     const handleMouseUp = () => {
       isDraggingRef.current = false; // Clear ref synchronously
       setIsDragging(false);
+      // Tell main to clamp the panel back into the work area (animated snap-back
+      // if the user dragged it partly off-screen). We don't clamp during
+      // mousemove because that would fight the cursor.
+      ipcRenderer?.send('window:move-done');
     };
 
     document.addEventListener('mousemove', handleMouseMove);
@@ -867,17 +897,6 @@ export function UnifiedOverlay() {
       hasDroppedRef.current = false;
       streamCompletedRef.current = false;
       forceUpdate(); // Force immediate re-render
-    };
-
-    // When the window is re-shown, force a resize measurement
-    const handleWindowShow = () => {
-      console.log('📐 [UNIFIED] Window shown - triggering content resize');
-      if (contentRef.current && ipcRenderer && !shouldSuppressResize()) {
-        const h = contentRef.current.scrollHeight;
-        const headerHeight = 52, padding = 32, minH = 350, maxH = 900;
-        const total = Math.min(Math.max(h + headerHeight + padding, minH), maxH);
-        ipcRenderer.send('unified:resize-window', { height: Math.round(total) });
-      }
     };
 
     // --- Automation Progress ---
@@ -1732,7 +1751,6 @@ export function UnifiedOverlay() {
     ipcRenderer.on('agents:train-progress', handleTrainingProgress, token);
     ipcRenderer.on('action-chips', handleActionChips, token);
     ipcRenderer.on('search:sources', handleSearchSources, token);
-    ipcRenderer.on('window:show', handleWindowShow, token);
     ipcRenderer.on('gather:pending', handleGatherPending, token);
     ipcRenderer.on('queue:enqueued', handleQueueEnqueued, token);
 
@@ -1778,7 +1796,6 @@ export function UnifiedOverlay() {
       ipcRenderer.removeListenerByToken('agents:train-progress', token);
       ipcRenderer.removeListenerByToken('action-chips', token);
       ipcRenderer.removeListenerByToken('search:sources', token);
-      ipcRenderer.removeListenerByToken('window:show', token);
       ipcRenderer.removeListenerByToken('gather:pending', token);
       ipcRenderer.removeListenerByToken('queue:enqueued', token);
     };
@@ -2290,6 +2307,7 @@ export function UnifiedOverlay() {
       >
         {/* Header - Two Row Layout */}
         <div
+          ref={headerRef}
           className="flex flex-col"
           onMouseDown={handleMouseDown}
           style={{
@@ -2485,16 +2503,12 @@ export function UnifiedOverlay() {
                   setIsSubmitting={setIsSubmitting}
                   onAuthPending={setPreflightAuthPending}
                   activeTab={activeTab}
-                  onHeightChange={(automationH: number) => {
-                    if (shouldSuppressResize()) return; // Don't resize while user is dragging or resizing the panel
-                    const HEADER = 105;
-                    const INPUT_AREA = 100;
-                    const PADDING = 48;
-                    const minH = 400;
-                    const maxH = 900;
-                    const total = Math.min(Math.max(automationH + HEADER + INPUT_AREA + PADDING, minH), maxH);
-                    const currentWidth = isExpanded ? 900 : 400;
-                    ipcRenderer?.send('window:smart-resize', { width: currentWidth, height: total });
+                  onHeightChange={() => {
+                    // Route through the single consolidated pipeline — the root
+                    // ResizeObserver in useDynamicHeight will re-measure and send
+                    // the correct height. We just nudge it to measure now.
+                    if (shouldSuppressResize()) return;
+                    measureNow();
                   }}
                   onActiveChange={(active) => {
                     if (streamingStartedRef && active) return;
@@ -2697,6 +2711,7 @@ export function UnifiedOverlay() {
 
         {/* Bottom Input Bar */}
         <div
+          ref={inputBarRef}
           className="border-t p-4 relative"
           style={{ borderColor: 'rgba(255, 255, 255, 0.1)' }}
         >

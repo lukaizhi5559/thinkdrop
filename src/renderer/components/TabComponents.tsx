@@ -251,25 +251,18 @@ export function AgentsIcon({ active }: { active: boolean }) {
   return (
     <svg width="13" height="13" viewBox="0 0 24 24" fill="none"
       stroke={c} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      {/* CPU/chip body */}
-      <rect x="9" y="9" width="6" height="6" rx="1"/>
-      <rect x="4" y="4" width="16" height="16" rx="2"/>
-      {/* Pins — top */}
-      <line x1="9" y1="4" x2="9" y2="2"/>
-      <line x1="12" y1="4" x2="12" y2="2"/>
-      <line x1="15" y1="4" x2="15" y2="2"/>
-      {/* Pins — bottom */}
-      <line x1="9" y1="20" x2="9" y2="22"/>
-      <line x1="12" y1="20" x2="12" y2="22"/>
-      <line x1="15" y1="20" x2="15" y2="22"/>
-      {/* Pins — left */}
-      <line x1="4" y1="9" x2="2" y2="9"/>
-      <line x1="4" y1="12" x2="2" y2="12"/>
-      <line x1="4" y1="15" x2="2" y2="15"/>
-      {/* Pins — right */}
-      <line x1="20" y1="9" x2="22" y2="9"/>
-      <line x1="20" y1="12" x2="22" y2="12"/>
-      <line x1="20" y1="15" x2="22" y2="15"/>
+      {/* Antenna */}
+      <line x1="12" y1="2" x2="12" y2="5"/>
+      <circle cx="12" cy="2" r="0.5" fill={c} stroke="none"/>
+      {/* Head */}
+      <rect x="5" y="5" width="14" height="14" rx="3"/>
+      {/* Eyes */}
+      <circle cx="9.5" cy="11" r="1.2" fill={c} stroke="none"/>
+      <circle cx="14.5" cy="11" r="1.2" fill={c} stroke="none"/>
+      {/* Mouth grille */}
+      <line x1="9" y1="15" x2="15" y2="15"/>
+      <line x1="10.5" y1="16.5" x2="10.5" y2="16.5"/>
+      <line x1="13.5" y1="16.5" x2="13.5" y2="16.5"/>
     </svg>
   );
 }
@@ -285,7 +278,9 @@ export function TabBar({ active, onSelect, queueCount, cronCount, unreadTabs }: 
 }) {
   const tabs: { id: TabId; label: string; icon: React.ReactNode; badge?: number; activeColor: string }[] = [
     { id: 'results',     label: 'Results',  icon: <ResultsIcon     active={active === 'results'}     />, activeColor: '#60a5fa' },
+    { id: 'queue',       label: 'Queue',    icon: <QueueIcon       active={active === 'queue'}       />, badge: queueCount, activeColor: '#a78bfa' },
     { id: 'agents',      label: 'Agents',   icon: <AgentsIcon      active={active === 'agents'}      />, activeColor: '#f59e0b' },
+    { id: 'cron',        label: 'Cron',     icon: <CronIcon        active={active === 'cron'}        />, badge: cronCount, activeColor: '#34d399' },
   ];
 
   return (
@@ -304,8 +299,8 @@ export function TabBar({ active, onSelect, queueCount, cronCount, unreadTabs }: 
             key={tab.id}
             onClick={() => onSelect(tab.id)}
             style={{
-              display: 'flex', alignItems: 'center', gap: 6,
-              padding: '6px 12px',
+              display: 'flex', alignItems: 'center', gap: 4,
+              padding: '6px 10px',
               border: 'none', background: 'none', cursor: 'pointer',
               borderBottom: isActive ? `2px solid ${tab.activeColor}` : '2px solid transparent',
               marginBottom: -1,
@@ -318,7 +313,6 @@ export function TabBar({ active, onSelect, queueCount, cronCount, unreadTabs }: 
             title={tab.label}
           >
             {tab.icon}
-            <span style={{ whiteSpace: 'nowrap' }}>{tab.label}</span>
             {tab.badge != null && tab.badge > 0 && (
               <span style={{
                 fontSize: '0.58rem', fontWeight: 700, minWidth: 14, height: 14,
