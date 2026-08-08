@@ -9,19 +9,52 @@ import { ImageCarousel } from './ImageCarousel';
 
 const SyntaxHighlighter = SyntaxHighlighterBase as any;
 
-// Convert bare URLs to markdown links for clickability
-const linkifyContent = (content: string): string => {
-  // Match URLs that are not already inside markdown links or HTML tags
-  // Pattern: http:// or https:// followed by non-whitespace, not preceded by ]( or href=" or >
-  const urlRegex = /(?<![\]\(])(?<![\w-])(?<!["'])\b(https?:\/\/[^\s<>"{}|\\^`\[\]]+)/gi;
-  
-  return content.replace(urlRegex, (url) => {
-    // Clean up trailing punctuation that might be part of the URL context
-    const cleanUrl = url.replace(/[.,;!?]+$/, '');
-    const trailing = url.slice(cleanUrl.length);
-    // Output raw HTML <a> tag for ReactMarkdown to render as clickable link
-    return `<a href="${cleanUrl}" target="_blank" rel="noopener noreferrer">${cleanUrl}</a>${trailing}`;
-  });
+// Factory: builds the custom `a` component for ReactMarkdown, bound to the
+// caller's onFileLinkClick handler. Bare URLs are autolinked by remark-gfm's
+// autolink-literal feature, so no manual linkify pre-processing is needed —
+// this component just styles and routes the click (IPC shell:open-url, or
+// window.open fallback, or onFileLinkClick for file:// URLs).
+const makeLinkComponent = (onFileLinkClick?: (filePath: string) => void) => {
+  const Link: React.FC<any> = ({ node, children, href, ...props }) => {
+    const isFilePath = href?.startsWith('file://');
+    const ipcRenderer = (window as any).electron?.ipcRenderer;
+    return (
+      <a
+        href={href}
+        onClick={(e) => {
+          e.preventDefault();
+          if (!href) return;
+          if (isFilePath && onFileLinkClick) {
+            const filePath = href.replace(/^file:\/\//, '');
+            onFileLinkClick(filePath);
+          } else if (ipcRenderer) {
+            ipcRenderer.send('shell:open-url', href);
+          } else {
+            window.open(href, '_blank');
+          }
+        }}
+        className={isFilePath
+          ? 'inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-xs font-mono cursor-pointer transition-colors'
+          : 'text-blue-400 hover:text-blue-300 underline cursor-pointer transition-colors'
+        }
+        style={isFilePath ? {
+          backgroundColor: 'rgba(59,130,246,0.12)',
+          border: '1px solid rgba(59,130,246,0.3)',
+          color: '#93c5fd',
+        } : undefined}
+        title={isFilePath ? href.replace(/^file:\/\//, '') : undefined}
+        {...props}
+      >
+        {isFilePath && (
+          <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
+            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/>
+          </svg>
+        )}
+        {children}
+      </a>
+    );
+  };
+  return Link;
 };
 
 // Code block wrapper with copy button
@@ -117,9 +150,14 @@ const ImageGroupRenderer: React.FC<{ content: string; maxHeight?: number }> = ({
 };
 
 // Split content by image groups and render with carousel for multiple images
-const renderContentWithCarousels = (content: string, imageUrlToOriginal?: Map<string, string>): React.ReactNode[] => {
+const renderContentWithCarousels = (
+  content: string,
+  imageUrlToOriginal?: Map<string, string>,
+  onFileLinkClick?: (filePath: string) => void,
+): React.ReactNode[] => {
   const parts: React.ReactNode[] = [];
   let partIndex = 0;
+  const Link = makeLinkComponent(onFileLinkClick);
   
   // Extract ALL images from content (including those in list items)
   // This pattern matches markdown images anywhere: ![alt](url "title")
@@ -167,6 +205,7 @@ const renderContentWithCarousels = (content: string, imageUrlToOriginal?: Map<st
                 </code>
               );
             },
+            a: Link,
             p: ({ children }: any) => <p className="mb-3 leading-relaxed text-white/70">{children}</p>,
           }}
         >
@@ -207,6 +246,7 @@ const renderContentWithCarousels = (content: string, imageUrlToOriginal?: Map<st
             </code>
           );
         },
+        a: Link,
         p: ({ children }: any) => <p className="mb-3 leading-relaxed text-white/70">{children}</p>,
       }}
     >
@@ -222,8 +262,10 @@ const RichContentRenderer: React.FC<RichContentRendererProps> = ({
   onFileLinkClick,
   searchResults,
 }) => {
-  // Pre-process content to make bare URLs clickable
-  const processedContent = linkifyContent(content);
+  // Bare URLs are autolinked by remark-gfm's autolink-literal feature — no
+  // manual pre-processing needed. Using content directly avoids raw <a> HTML
+  // injection that could render as literal text in some markdown contexts.
+  const processedContent = content;
   
   // Build lookup map from image URL to original source URL for click-to-view
   const imageUrlToOriginal = useMemo(() => {
@@ -248,10 +290,12 @@ const RichContentRenderer: React.FC<RichContentRendererProps> = ({
         className={`rich-content-container prose prose-invert prose-sm max-w-none ${animated ? 'animate-fade-in' : ''} ${className}`}
         style={{ overflowWrap: 'break-word', wordBreak: 'break-word', minWidth: 0, ...(animated ? { animation: 'fadeIn 0.3s ease-in-out' } : {}) }}
       >
-        {renderContentWithCarousels(processedContent, imageUrlToOriginal)}
+        {renderContentWithCarousels(processedContent, imageUrlToOriginal, onFileLinkClick)}
       </div>
     );
   }
+
+  const Link = makeLinkComponent(onFileLinkClick);
 
   return (
     <div
@@ -265,7 +309,7 @@ const RichContentRenderer: React.FC<RichContentRendererProps> = ({
           code({ node, inline, className, children, ...props }: any) {
             const match = /language-(\w+)/.exec(className || '');
             const codeString = String(children).replace(/\n$/, '');
-            
+
             return !inline && match ? (
               <CodeBlockWithCopy code={codeString} language={match[1]} />
             ) : (
@@ -274,45 +318,7 @@ const RichContentRenderer: React.FC<RichContentRendererProps> = ({
               </code>
             );
           },
-          a({ node, children, href, ...props }: any) {
-            const isFilePath = href?.startsWith('file://');
-            const ipcRenderer = (window as any).electron?.ipcRenderer;
-            return (
-              <a
-                href={href}
-                onClick={(e) => {
-                  e.preventDefault();
-                  if (!href) return;
-                  if (isFilePath && onFileLinkClick) {
-                    const filePath = href.replace(/^file:\/\//, '');
-                    onFileLinkClick(filePath);
-                  } else if (ipcRenderer) {
-                    ipcRenderer.send('shell:open-url', href);
-                  } else {
-                    window.open(href, '_blank');
-                  }
-                }}
-                className={isFilePath
-                  ? 'inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-xs font-mono cursor-pointer transition-colors'
-                  : 'text-blue-400 hover:text-blue-300 underline cursor-pointer transition-colors'
-                }
-                style={isFilePath ? {
-                  backgroundColor: 'rgba(59,130,246,0.12)',
-                  border: '1px solid rgba(59,130,246,0.3)',
-                  color: '#93c5fd',
-                } : undefined}
-                title={isFilePath ? href.replace(/^file:\/\//, '') : undefined}
-                {...props}
-              >
-                {isFilePath && (
-                  <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
-                    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/>
-                  </svg>
-                )}
-                {children}
-              </a>
-            );
-          },
+          a: Link,
           img({ src, alt, title, ...props }: any) {
             if (!src) return null;
             

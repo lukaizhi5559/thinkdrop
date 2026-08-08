@@ -2421,6 +2421,7 @@ app.whenReady().then(async () => {
         _resumeIntentQueue: item._resumeIntentQueue || [],
         _resumeIntentResults: item._resumeIntentResults || [],
         _resumeDataContext: item._resumeDataContext || {},
+        _resumePriorSynthesizedContent: item._resumePriorSynthesizedContent || '',
         sessionId: item.sessionId || null,
         userId: item.userId || 'default_user',
       });
@@ -2693,6 +2694,7 @@ app.whenReady().then(async () => {
         _resumeIntentQueue:   ctx.intentQueue || [],
         _resumeIntentResults: ctx.intentResults || [],
         _resumeDataContext:   ctx.dataContext || {},
+        _resumePriorSynthesizedContent: ctx.priorSynthesizedContent || '',
       }
     );
     pendingPlanContext = null;
@@ -3570,6 +3572,7 @@ app.whenReady().then(async () => {
           intentQueue:   event.intentQueue || [],
           intentResults: event.intentResults || [],
           dataContext:   event.dataContext || {},
+          priorSynthesizedContent: event.priorSynthesizedContent || '',
         };
         console.log(`[Plan] plan:generated context stored: ${event.planFile}`);
         if (resultsWindow && !resultsWindow.isDestroyed()) {
