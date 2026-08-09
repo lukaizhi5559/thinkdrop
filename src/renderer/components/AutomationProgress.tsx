@@ -196,6 +196,9 @@ interface AskUserPrompt {
   // Partial-progress summary (from playwright.agent via browser.agent).
   // When present, render PartialFailureCard instead of the generic banner.
   partialProgress?: PartialFailureSummary | null;
+  // True for all agent-aware failures (browser.agent, cli.agent, playwright.agent).
+  // When true, render PartialFailureCard even if partialProgress is null.
+  _isAgentAskUser?: boolean;
 }
 
 interface ParallelLoginService {
@@ -1679,7 +1682,7 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
           // When no stepIndex is provided (global pause), pause running steps as needs_input — never 'failed'.
           const askIdx = data.stepIndex != null ? data.stepIndex + stepOffsetRef.current : null;
           setAskUserCorrectionMode(false);
-          setAskUserPrompt({ question: data.question, options: data.options || [], agentId: data.agentId || null, freeText: data.freeText || (data.options || []).length === 0, stepIndex: askIdx, currentUrl: data.currentUrl || null, keepSession: data.keepSession === true, originalTask: data.originalTask || null, partialProgress: data.partialProgress || null });
+          setAskUserPrompt({ question: data.question, options: data.options || [], agentId: data.agentId || null, freeText: data.freeText || (data.options || []).length === 0, stepIndex: askIdx, currentUrl: data.currentUrl || null, keepSession: data.keepSession === true, originalTask: data.originalTask || null, partialProgress: data.partialProgress || null, _isAgentAskUser: data._isAgentAskUser === true });
           setSteps(prev => prev.map(s => {
             if (askIdx != null) {
               return s.index === askIdx && s.status !== 'done' && s.status !== 'failed' && s.status !== 'skipped'
@@ -2848,7 +2851,9 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
       )}
 
       {/* ── Action required banner (ask_user) ───────────────────────────── */}
-      {phase === 'ask_user' && (
+      {/* Hidden for agent failures (_isAgentAskUser) — the PartialFailureCard
+          below has its own header. Showing both is redundant and confusing. */}
+      {phase === 'ask_user' && !askUserPrompt?._isAgentAskUser && (
         <div style={{ padding: '10px 14px', borderRadius: 10, backgroundColor: '#1a120a', border: '1px solid #d97706', position: 'sticky', top: 0, zIndex: 10 }}>
           <div className="flex items-center gap-2.5">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#f59e0b" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
@@ -4715,10 +4720,10 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
       {/* ── ASK_USER: clickable option buttons ───────────────────────────── */}
       {askUserPrompt && (
         <div className="mt-2 space-y-2">
-        {askUserPrompt.partialProgress ? (
-          /* ── Partial-failure QuestionCard (replaces generic banner) ── */
+        {askUserPrompt.partialProgress || askUserPrompt._isAgentAskUser ? (
+          /* ── Partial-failure QuestionCard (replaces generic banner for all agent failures) ── */
           <PartialFailureCard
-            partialFailure={askUserPrompt.partialProgress}
+            partialFailure={askUserPrompt.partialProgress || { summary: askUserPrompt.question, completed: [], remaining: [] }}
             options={(askUserPrompt.options as any[]).map(o => typeof o === 'string' ? { label: o, value: o } : { label: o?.label || String(o), value: o?.value || o?.label || String(o), primary: o?.primary })}
             onSubmit={(value) => handleOptionClick(value)}
             onCancel={() => { setAskUserPrompt(null); }}

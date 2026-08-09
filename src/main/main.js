@@ -5248,6 +5248,7 @@ app.whenReady().then(async () => {
               // failure QuestionCard with "Try to finish" / "Train me with a
               // recipe" / "Other" instead of the generic failure banner.
               partialProgress: q.partialProgress || null,
+              _isAgentAskUser: q._isAgentAskUser === true,
               freeText: true,
             });
           }
