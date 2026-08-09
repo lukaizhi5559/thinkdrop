@@ -151,7 +151,7 @@ export function UnifiedOverlay() {
         : isInstalling
           ? 'Installing tool...'
           : gatherPending
-            ? 'Gathering context...'
+            ? 'Waiting for your answer…'
             : '';
 
   // --- Queue/Cron/Skills/Connections/Agents State ---

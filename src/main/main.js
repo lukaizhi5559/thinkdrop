@@ -980,6 +980,13 @@ let sessionFileCreations = []; // Track all file creation operations in current 
 let pendingGatherResolve = null;
 let pendingGatherQuestion = null; // Stored so we can re-send gather:pending on window re-activation
 
+// ── Grill-Me Phase C: batched question resolver ──────────────────────────────
+// Parallel to pendingGatherResolve but for the new batched question flow.
+// Set when gatherPlanContext emits a batch of questions, resolved when the
+// renderer sends gather:answer_batch with a map of { questionId: answer }.
+let pendingGatherBatchResolve = null;
+let pendingGatherBatchData = null; // { batchId, questions } stored for re-send on window re-activation
+
 // Active schedule countdown — set when a schedule step is running, cleared when done/cancelled
 // Used to warn the user before closing the app mid-countdown
 let activeScheduleCountdown = null; // { id, targetTime, label }
@@ -3453,6 +3460,21 @@ app.whenReady().then(async () => {
     }
   });
 
+  // ─── gather:answer_batch — Grill-Me Phase C: batched question answers ────
+  // Registered ONCE. Resolves pendingGatherBatchResolve with a map of answers.
+  ipcMain.on('gather:answer_batch', (_event, { batchId, answers }) => {
+    console.log(`[GatherContext] IPC received: gather:answer_batch — batchId=${batchId}, keys=${Object.keys(answers || {}).join(',')}`);
+    if (pendingGatherBatchResolve) {
+      const resolve = pendingGatherBatchResolve;
+      pendingGatherBatchResolve = null;
+      pendingGatherBatchData = null;
+      safeSendUnified('gather:question_batch', { active: false, batchId: null, questions: null });
+      resolve(answers || {});
+    } else {
+      console.warn('[GatherContext] Received gather:answer_batch but no pending batch resolve — ignoring');
+    }
+  });
+
   // ─── StateGraph: Route prompt through the serial prompt queue ────────────
   // All stategraph:process calls now go through the prompt queue so prompts
   // are serialized (printer-queue model). The queue calls runPromptThroughStateGraph
@@ -3803,7 +3825,39 @@ app.whenReady().then(async () => {
     // gatherAnswerCallback: waits for user to type/speak an answer in StandalonePromptCapture.
     // NOTE: the actual ipcMain.on('gather:answer') listener is registered ONCE at module level
     // (see below) — NOT here per-run, to avoid MaxListenersExceeded accumulation.
-    const gatherAnswerCallback = (question) => {
+    //
+    // Grill-Me Phase C: supports TWO modes:
+    //   1. Legacy single-string: gatherAnswerCallback("question text") → Promise<string>
+    //   2. Batch mode: gatherAnswerCallback({ batch: true, batchId, questions }) → Promise<object>
+    // The batch mode emits gather:question_batch to the renderer and awaits gather:answer_batch.
+    const gatherAnswerCallback = (questionOrBatch) => {
+      // ── Batch mode (Grill-Me Phase C) ──────────────────────────────────────
+      if (questionOrBatch && typeof questionOrBatch === 'object' && questionOrBatch.batch) {
+        const { batchId, questions, routeConfirmation } = questionOrBatch;
+        return new Promise((resolve) => {
+          pendingGatherBatchResolve = resolve;
+          pendingGatherBatchData = { batchId, questions };
+          console.log(`[GatherContext] Waiting for batch answers (batchId=${batchId}, ${questions?.length || 0} questions)…`);
+          safeSendUnified('gather:question_batch', {
+            active: true,
+            batchId,
+            questions: questions || [],
+            routeConfirmation: routeConfirmation || null,
+          });
+          // 10-minute timeout
+          setTimeout(() => {
+            if (pendingGatherBatchResolve === resolve) {
+              console.warn('[GatherContext] Timed out waiting for batch answers — skipping');
+              pendingGatherBatchResolve = null;
+              pendingGatherBatchData = null;
+              safeSendUnified('gather:question_batch', { active: false, batchId: null, questions: null });
+              resolve({});
+            }
+          }, 10 * 60 * 1000);
+        });
+      }
+      // ── Legacy single-string mode ──────────────────────────────────────────
+      const question = questionOrBatch;
       return new Promise((resolve) => {
         pendingGatherResolve = resolve;
         pendingGatherQuestion = question || null;
@@ -4764,6 +4818,44 @@ app.whenReady().then(async () => {
               .replace(/\s*\[Resume context:[\s\S]*?\]\s*$/g, '').trim();
             const _description = paused.skillPlan?.[_stepIdx]?.description || _originalTask;
             const _priorQuestion = paused.pendingQuestion?.question || '';
+            const _partialProgress = paused.pendingQuestion?.partialProgress || null;
+
+            // ── Plan Extension: "Try to finish" ──────────────────────────────
+            // When the user clicks "Try to finish" on a partial-failure QuestionCard,
+            // build a focused task from the remaining items in the partial-progress
+            // summary and pass planExtend: true + the existing sessionId so
+            // browser.agent runs a focused plan on the current page state instead
+            // of re-running the full auth/probe/deeplink flow.
+            if (chosenOption === 'try_to_finish' && _partialProgress && Array.isArray(_partialProgress.remaining) && _partialProgress.remaining.length > 0) {
+              const _remainingGoal = _partialProgress.remaining.join('; ');
+              const _completedContext = _partialProgress.completed?.length > 0
+                ? `\n\n[Already completed — do NOT redo these:\n${_partialProgress.completed.map(c => `  - ${c}`).join('\n')}\n]`
+                : '';
+              const _extendTask = `${_originalTask}\n\n[Plan extension — finish the remaining work from the current page state.\nRemaining work:\n${_partialProgress.remaining.map(r => `  - ${r}`).join('\n')}${_completedContext}\n\nThe browser is already on the target page. Do NOT navigate away or re-authenticate. Continue from the current state.]`;
+              console.log(`[StateGraph] ASK_USER resume: "Try to finish" — plan extension for ${_resumeSkill}/${_agentId} (${_partialProgress.remaining.length} remaining item(s))`);
+              progressCallback({ type: 'resuming', agentId: _agentId, stepIndex: _uiStepIdx });
+              const _extendSessionId = paused.activeBrowserSessionId || paused.pendingQuestion?.sessionId || null;
+              initialState = {
+                ...paused,
+                message: paused.message,
+                streamCallback,
+                progressCallback,
+                confirmInstallCallback,
+                confirmGuideCallback,
+                isGuideCancelled,
+                failedStep: null,
+                pendingQuestion: null,
+                recoveryAction: null,
+                answer: undefined,
+                commandExecuted: false,
+                _skillPlan: [
+                  { skill: _resumeSkill, args: { action: 'run', agentId: _agentId, task: _extendTask, planExtend: true, sessionId: _extendSessionId }, description: _description },
+                ],
+                _skillPlanIsResume: true,
+                _resumeStepIndex: _uiStepIdx,
+              };
+              pausedAutomationState = null;
+            } else {
 
             // ── Multi-turn Q&A accumulation ──────────────────────────────────
             // Build a list of all prior Q&A pairs from previous resume cycles.
@@ -4823,6 +4915,7 @@ app.whenReady().then(async () => {
               _skillPlanFile: null,
               context: { ...paused.context, sessionId: sessionId || currentSessionId }
             };
+            } // end else (not try_to_finish)
           } else {
             // User provided a custom answer — inject it as recoveryContext and replan
             // (isFreshPrompt already handled the "new task typed as reply" case above)
@@ -5150,6 +5243,11 @@ app.whenReady().then(async () => {
               currentUrl: q.currentUrl || null,
               keepSession: q.keepSession === true,
               originalTask: q.originalTask || null,
+              // Partial-progress summary (from playwright.agent via browser.agent
+              // and executeCommand). When present, the renderer shows a partial-
+              // failure QuestionCard with "Try to finish" / "Train me with a
+              // recipe" / "Other" instead of the generic failure banner.
+              partialProgress: q.partialProgress || null,
               freeText: true,
             });
           }
@@ -5408,6 +5506,15 @@ app.whenReady().then(async () => {
         if (pendingGatherResolve) {
           safeSendUnified('gather:pending', { active: true, question: pendingGatherQuestion });
           console.log('[GatherContext] Re-sent gather:pending on window re-activation');
+        }
+        // Grill-Me Phase C: re-send batch question state on re-activation
+        if (pendingGatherBatchResolve && pendingGatherBatchData) {
+          safeSendUnified('gather:question_batch', {
+            active: true,
+            batchId: pendingGatherBatchData.batchId,
+            questions: pendingGatherBatchData.questions,
+          });
+          console.log('[GatherContext] Re-sent gather:question_batch on window re-activation');
         }
       }
     }

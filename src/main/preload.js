@@ -75,6 +75,7 @@ contextBridge.exposeInMainWorld('electron', {
         'skills:delete',
         'skills:reveal-secret',
         'gather:answer',
+        'gather:answer_batch',
         'gather:credential',
         'gather:oauth_connect',
         'gather:oauth_skip',
@@ -197,6 +198,7 @@ contextBridge.exposeInMainWorld('electron', {
         'agents:skill-refresh-update',
         'app-agent:highlight',
         'agents:open-training',
+        'gather:question_batch',
       ];
       if (validChannels.includes(channel)) {
         const wrapped = (_event, ...args) => func(...args);
@@ -303,6 +305,7 @@ contextBridge.exposeInMainWorld('electron', {
         'search:sources',
         'window:show',
         'gather:pending',
+        'gather:question_batch',
         'queue:enqueued',
         'prompt-capture:show',
         'ws-bridge:connected',

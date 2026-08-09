@@ -10,6 +10,7 @@
 
 import { useEffect, useState, useRef, useCallback } from 'react';
 import { RichContentRenderer } from './rich-content';
+import { QuestionCard, QuestionBatch, PartialFailureCard, PartialFailureSummary } from './QuestionCard';
 
 const ipcRenderer = (window as any).electron?.ipcRenderer;
 
@@ -192,6 +193,9 @@ interface AskUserPrompt {
   currentUrl?: string | null;
   keepSession?: boolean;
   originalTask?: string | null;
+  // Partial-progress summary (from playwright.agent via browser.agent).
+  // When present, render PartialFailureCard instead of the generic banner.
+  partialProgress?: PartialFailureSummary | null;
 }
 
 interface ParallelLoginService {
@@ -743,6 +747,16 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
   const [gatherAuthAction, setGatherAuthAction] = useState<GatherAuthAction | null>(null);
   const [gatherAuthConnecting, setGatherAuthConnecting] = useState(false);
   const [gatherAuthBrowserOpened, setGatherAuthBrowserOpened] = useState(false);
+  // Grill-Me Phase D: batched question card state
+  const [questionBatch, setQuestionBatch] = useState<QuestionBatch | null>(null);
+  // Set when user submits a batch, cleared when the next batch arrives.
+  // Shows "Processing your answers…" during the LLM gap between rounds.
+  const [grillProcessing, setGrillProcessing] = useState(false);
+  // gather:pending — when active, the unified prompt input is intercepting the
+  // next submit as an answer to a clarifying question (e.g. carrier for SMS).
+  // We don't render the question here (the input placeholder already shows it);
+  // we just surface an attention hint so the user knows to look at the input.
+  const [gatherPending, setGatherPending] = useState(false);
   // Login guidance — shown inline while waitForAuth polls (step stays running)
   const [loginGuidance, setLoginGuidance] = useState<{ stepIndex: number; serviceDisplay: string; loginUrl: string; message: string; sessionId: string } | null>(null);
   const [manualAuthBtnVisible, setManualAuthBtnVisible] = useState(false);
@@ -984,6 +998,8 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
       setGatherAuthAction(null);
       setGatherAuthConnecting(false);
       setGatherAuthBrowserOpened(false);
+      setQuestionBatch(null);
+      setGrillProcessing(false);
       setGuideStep(null);
       setIntentType(null);
       setScheduleCountdown(null);
@@ -1663,7 +1679,7 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
           // When no stepIndex is provided (global pause), pause running steps as needs_input — never 'failed'.
           const askIdx = data.stepIndex != null ? data.stepIndex + stepOffsetRef.current : null;
           setAskUserCorrectionMode(false);
-          setAskUserPrompt({ question: data.question, options: data.options || [], agentId: data.agentId || null, freeText: data.freeText || (data.options || []).length === 0, stepIndex: askIdx, currentUrl: data.currentUrl || null, keepSession: data.keepSession === true, originalTask: data.originalTask || null });
+          setAskUserPrompt({ question: data.question, options: data.options || [], agentId: data.agentId || null, freeText: data.freeText || (data.options || []).length === 0, stepIndex: askIdx, currentUrl: data.currentUrl || null, keepSession: data.keepSession === true, originalTask: data.originalTask || null, partialProgress: data.partialProgress || null });
           setSteps(prev => prev.map(s => {
             if (askIdx != null) {
               return s.index === askIdx && s.status !== 'done' && s.status !== 'failed' && s.status !== 'skipped'
@@ -1724,6 +1740,14 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
           });
           setGatherAuthConnecting(false);
           setGatherAuthBrowserOpened(false);
+          break;
+
+        case 'gathering':
+          // Grill-Me: set phase to 'gathering' so header shows "Gathering requirements…"
+          // instead of the executing/planning header. Updates planMessage with the
+          // current step message (e.g. "Checking task details…").
+          setPhase('gathering');
+          if (data.message) setPlanMessage(data.message);
           break;
 
         case 'browser:auth_opened':
@@ -2203,6 +2227,28 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
       setPhase('executing');
     };
 
+    // gather:pending — the prompt input is waiting for an answer to a clarifying
+    // question. We only track active state here to show an attention hint; the
+    // question itself is rendered as the input placeholder by UnifiedOverlay.
+    const handleGatherPending = (data: any) => {
+      setGatherPending(!!data?.active);
+    };
+
+    // Grill-Me Phase D: batched question card handler
+    const handleQuestionBatch = (data: any) => {
+      if (data?.active && data?.questions) {
+        setGrillProcessing(false);
+        setQuestionBatch({
+          batchId: data.batchId,
+          questions: data.questions,
+          routeConfirmation: data.routeConfirmation || null,
+        });
+      } else {
+        setQuestionBatch(null);
+        setGrillProcessing(false);
+      }
+    };
+
     const AP_TOKEN = 'automation-progress';
     ipcRenderer.on('unified:set-prompt', handleNewPrompt, AP_TOKEN);
     ipcRenderer.on('queue:enqueued', handleNewPrompt, AP_TOKEN);
@@ -2212,6 +2258,8 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
     ipcRenderer.on('ws-bridge:message', handleBridgeMessage, AP_TOKEN);
     ipcRenderer.on('app-control:mode-change', handleControlModeChange, AP_TOKEN);
     ipcRenderer.on('plan:approved', handlePlanApproved, AP_TOKEN);
+    ipcRenderer.on('gather:pending', handleGatherPending, AP_TOKEN);
+    ipcRenderer.on('gather:question_batch', handleQuestionBatch, AP_TOKEN);
     return () => {
       active = false;
       ipcRenderer.removeListenerByToken('automation:progress', AP_TOKEN);
@@ -2222,6 +2270,8 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
       ipcRenderer.removeListenerByToken('plan:approved', AP_TOKEN);
       ipcRenderer.removeListenerByToken('scan:progress', AP_TOKEN);
       ipcRenderer.removeListenerByToken('scan:discovery', AP_TOKEN);
+      ipcRenderer.removeListenerByToken('gather:pending', AP_TOKEN);
+      ipcRenderer.removeListenerByToken('gather:question_batch', AP_TOKEN);
     };
   }, []);
 
@@ -3063,6 +3113,40 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
               </div>
             </div>
           </div>
+        </div>
+      )}
+
+      {/* ── Grill-Me Phase D: Batched question card + processing indicator ─── */}
+      {questionBatch && (
+        <QuestionCard
+          batch={questionBatch}
+          onSubmit={(answers) => {
+            ipcRenderer?.send('gather:answer_batch', { batchId: questionBatch.batchId, answers });
+            setQuestionBatch(null);
+            setGrillProcessing(true);
+          }}
+          onCancel={() => {
+            ipcRenderer?.send('gather:answer_batch', { batchId: questionBatch.batchId, answers: {} });
+            setQuestionBatch(null);
+            setGrillProcessing(false);
+          }}
+        />
+      )}
+      {!questionBatch && grillProcessing && (
+        <div style={{
+          padding: '14px 16px',
+          borderRadius: 10,
+          backgroundColor: 'rgba(56,189,248,0.06)',
+          border: '1px solid rgba(56,189,248,0.28)',
+          display: 'flex',
+          alignItems: 'center',
+          gap: 8,
+        }}>
+          <div className="w-3.5 h-3.5 rounded-full border-2 animate-spin flex-shrink-0"
+            style={{ borderColor: '#7dd3fc', borderTopColor: 'transparent' }} />
+          <span style={{ color: '#7dd3fc', fontSize: '0.76rem', fontWeight: 500 }}>
+            Processing your answers…
+          </span>
         </div>
       )}
 
@@ -4538,10 +4622,20 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
 
       {/* ── Planning pulse (no steps yet) ────────────────────────────────── */}
       {phase === 'planning' && steps.length === 0 && (
-        <div className="flex items-center gap-2" style={{ color: '#6b7280' }}>
-          <div className="w-1.5 h-1.5 rounded-full bg-blue-500 animate-pulse" />
-          <span className="text-xs">Analyzing your request...</span>
-        </div>
+        gatherPending ? (
+          <div className="flex items-center gap-2" style={{ color: '#f59e0b' }}>
+            <span style={{ fontSize: '0.85rem', lineHeight: 1, flexShrink: 0 }}>❓</span>
+            <span className="text-xs">
+              I need a bit more context — answer the question in the input below
+              <span style={{ opacity: 0.7, marginLeft: 2 }}>↓</span>
+            </span>
+          </div>
+        ) : (
+          <div className="flex items-center gap-2" style={{ color: '#6b7280' }}>
+            <div className="w-1.5 h-1.5 rounded-full bg-blue-500 animate-pulse" />
+            <span className="text-xs">{planMessage || 'Analyzing your request...'}</span>
+          </div>
+        )
       )}
 
       {/* ── GUIDE STEP: instruction card ──────────────────────────── */}
@@ -4621,6 +4715,16 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
       {/* ── ASK_USER: clickable option buttons ───────────────────────────── */}
       {askUserPrompt && (
         <div className="mt-2 space-y-2">
+        {askUserPrompt.partialProgress ? (
+          /* ── Partial-failure QuestionCard (replaces generic banner) ── */
+          <PartialFailureCard
+            partialFailure={askUserPrompt.partialProgress}
+            options={(askUserPrompt.options as any[]).map(o => typeof o === 'string' ? { label: o, value: o } : { label: o?.label || String(o), value: o?.value || o?.label || String(o), primary: o?.primary })}
+            onSubmit={(value) => handleOptionClick(value)}
+            onCancel={() => { setAskUserPrompt(null); }}
+          />
+        ) : (
+          <>
           <div className="text-sm font-medium" style={{ color: '#e5e7eb', lineHeight: 1.5 }}>
             <RichContentRenderer content={askUserPrompt.question} animated={false} className="text-sm" />
           </div>
@@ -4714,6 +4818,8 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
               )}
             </div>
           )}
+          </>
+        )}
         </div>
       )}
     </div>
