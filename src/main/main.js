@@ -936,7 +936,7 @@ function startOverlayControlServer() {
 }
 
 // StateGraph integration
-const { StateGraphBuilder, RealMCPAdapter, VSCodeLLMBackend } = require('@thinkdrop/stategraph');
+const { StateGraphBuilder, RealMCPAdapter, ThinkDropLLMBackend } = require('@thinkdrop/stategraph');
 const ThinkDropMCPClient = require('./ThinkDropMCPClient');
 const scheduler = require('./scheduler');
 const queueManager = require('./queueManager');
@@ -1142,7 +1142,7 @@ function initStateGraph() {
     mcpClient = new ThinkDropMCPClient({ logger: console, timeoutMs: 420000 });
     mcpAdapter = new RealMCPAdapter(mcpClient, { logger: console });
 
-    llmBackend = new VSCodeLLMBackend({
+    llmBackend = new ThinkDropLLMBackend({
       wsUrl:            process.env.WEBSOCKET_URL     || 'ws://localhost:4000/ws/stream',
       apiKey:           process.env.BASE_API_KEY  || process.env.WEBSOCKET_API_KEY || '',
       userId:           'thinkdrop_electron',
