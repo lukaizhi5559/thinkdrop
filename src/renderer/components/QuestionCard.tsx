@@ -8,7 +8,7 @@
  * AutomationProgress.tsx (cyan info theme + amber memory-resolved badges).
  */
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 
 export interface QuestionOption {
   label: string;
@@ -125,6 +125,33 @@ export function QuestionCard({ batch, onSubmit, onCancel }: QuestionCardProps) {
   const currentQ = allQuestions[currentIdx];
   const isLast = currentIdx === allQuestions.length - 1;
   const hasAnswer = answers[currentQ?.id] !== undefined;
+
+  // Memory-resolved confirmations with a single primary option should always
+  // offer a free-text override, even if the LLM forgot to set freeText: true,
+  // because the user may want to reject the suggested memory value.
+  const _allowFreeText = currentQ.freeText || (currentQ.memoryResolved && currentQ.options?.length === 1);
+  const _otherLabel = currentQ.memoryResolved ? 'No, use a different value' : 'Other (type your own)';
+
+  // Auto-select a single primary option for confirm/choice questions. This is
+  // common for memory-resolved confirmations where the LLM emits a lone "Yes"
+  // option; leaving it unselected would keep the "Next" button dimmed. The
+  // user can still override via free-text if they don't want the suggested value.
+  useEffect(() => {
+    if (!currentQ) return;
+    if (answers[currentQ.id] !== undefined) return;
+    if (
+      (currentQ.type === 'confirm' || currentQ.type === 'choice') &&
+      currentQ.options?.length === 1
+    ) {
+      const opt = currentQ.options[0];
+      if (opt.primary) {
+        const _v = opt.value !== undefined && opt.value !== null && opt.value !== ''
+          ? opt.value
+          : (opt.label || `opt-0`);
+        setAnswers(prev => ({ ...prev, [currentQ.id]: _v }));
+      }
+    }
+  }, [currentIdx]);
 
   // Defensive: if the LLM omitted options[].value, fall back to the label so
   // answers[qid] is always a non-undefined string when an option is clicked.
@@ -294,7 +321,7 @@ export function QuestionCard({ batch, onSubmit, onCancel }: QuestionCardProps) {
           })}
 
           {/* Free-text "Other" option */}
-          {currentQ.freeText && (
+          {_allowFreeText && (
             <div>
               {showOther ? (
                 <div style={{ display: 'flex', gap: 6, marginTop: 4 }}>
@@ -367,7 +394,7 @@ export function QuestionCard({ batch, onSubmit, onCancel }: QuestionCardProps) {
                     ✎
                   </span>
                   <span style={{ color: COLORS.mutedText, fontSize: '0.76rem', fontWeight: 500 }}>
-                    Other (type your own)
+                    {_otherLabel}
                   </span>
                 </button>
               )}
