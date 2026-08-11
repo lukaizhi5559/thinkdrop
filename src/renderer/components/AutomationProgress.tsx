@@ -2241,6 +2241,11 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
     const handleQuestionBatch = (data: any) => {
       if (data?.active && data?.questions) {
         setGrillProcessing(false);
+        // Clear stale planning/gathering message so it doesn't show behind the
+        // question card (e.g. "Generating skill plan…", "Checking task details…").
+        // The thinking/planning progress events will restore the message when
+        // execution resumes after the user submits answers.
+        setPlanMessage('');
         setQuestionBatch({
           batchId: data.batchId,
           questions: data.questions,

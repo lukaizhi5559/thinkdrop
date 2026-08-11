@@ -126,8 +126,13 @@ export function QuestionCard({ batch, onSubmit, onCancel }: QuestionCardProps) {
   const isLast = currentIdx === allQuestions.length - 1;
   const hasAnswer = answers[currentQ?.id] !== undefined;
 
-  const _selectOption = (qid: string, value: string) => {
-    setAnswers(prev => ({ ...prev, [qid]: value }));
+  // Defensive: if the LLM omitted options[].value, fall back to the label so
+  // answers[qid] is always a non-undefined string when an option is clicked.
+  // Without this, the option shows a checkmark (undefined === undefined) but
+  // hasAnswer stays false and the "Next" button never enables.
+  const _selectOption = (qid: string, value: string, fallback?: string) => {
+    const _v = value !== undefined && value !== null && value !== '' ? value : (fallback || '');
+    setAnswers(prev => ({ ...prev, [qid]: _v }));
     setShowOther(false);
     setOtherText('');
   };
@@ -218,12 +223,17 @@ export function QuestionCard({ batch, onSubmit, onCancel }: QuestionCardProps) {
       {(currentQ.type === 'confirm' || currentQ.type === 'choice') && currentQ.options && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 8 }}>
           {currentQ.options.map((opt, i) => {
-            const selected = answers[currentQ.id] === opt.value;
+            // Normalize opt.value: fall back to label (then index) so undefined
+            // values from the LLM don't break selection / Next-button enablement.
+            const optValue = opt.value !== undefined && opt.value !== null && opt.value !== ''
+              ? opt.value
+              : (opt.label || `opt-${i}`);
+            const selected = answers[currentQ.id] === optValue;
             const dim = answers[currentQ.id] !== undefined && !selected;
             return (
               <button
                 key={i}
-                onClick={() => _selectOption(currentQ.id, opt.value)}
+                onClick={() => _selectOption(currentQ.id, opt.value, opt.label || `opt-${i}`)}
                 style={{
                   display: 'flex',
                   alignItems: 'center',
