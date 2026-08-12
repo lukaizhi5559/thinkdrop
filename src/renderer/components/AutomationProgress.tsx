@@ -487,6 +487,56 @@ function SkillBadge({ skill }: { skill: string }) {
   );
 }
 
+// ── SkillIcon — inline SVG icon for each skill type (Feather/Lucide style) ──
+function SkillIcon({ skill, size = 14, color = '#94a3b8' }: { skill: string; size?: number; color?: string }) {
+  const common = {
+    width: size, height: size, viewBox: '0 0 24 24',
+    fill: 'none', stroke: color, strokeWidth: 2,
+    strokeLinecap: 'round' as const, strokeLinejoin: 'round' as const,
+    style: { flexShrink: 0 },
+  };
+  switch (skill) {
+    case 'browser.agent':
+    case 'browser.act':
+      // Globe icon (browser)
+      return <svg {...common}><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>;
+    case 'cli.agent':
+    case 'shell.run':
+      // Terminal icon
+      return <svg {...common}><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg>;
+    case 'app.agent':
+      // App window icon
+      return <svg {...common}><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><line x1="3" y1="9" x2="21" y2="9"/></svg>;
+    case 'user.agent':
+      // User icon
+      return <svg {...common}><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>;
+    case 'web.agent':
+    case 'web.crawl':
+      // Share-nodes icon (web/crawl)
+      return <svg {...common}><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg>;
+    case 'synthesize':
+      // Sparkles icon
+      return <svg {...common}><path d="M12 3v3M12 18v3M3 12h3M18 12h3M5.6 5.6l2.1 2.1M16.3 16.3l2.1 2.1M5.6 18.4l2.1-2.1M16.3 7.7l2.1-2.1"/></svg>;
+    case 'skill.install':
+    case 'skill.create':
+      // Package icon
+      return <svg {...common}><line x1="16.5" y1="9.4" x2="7.5" y2="4.21"/><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg>;
+    case 'image.analyze':
+      // Search icon
+      return <svg {...common}><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>;
+    case 'fs.read':
+    case 'fs.write':
+      // File icon
+      return <svg {...common}><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>;
+    case 'screen.capture':
+      // Camera icon
+      return <svg {...common}><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>;
+    default:
+      // Gear icon (generic skill)
+      return <svg {...common}><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>;
+  }
+}
+
 // ── renderWithLinks ──────────────────────────────────────────────────────────
 // Splits text on https?:// URLs and renders each URL as a clickable span
 // that opens via shell:open-url IPC (handled in main.js).
@@ -1235,6 +1285,44 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
           setGlobalError(null);
           setTotalCount(0);
           break;
+
+        case 'plan:stream_start': {
+          // LLM plan generation has started — clear stale steps and prepare for
+          // incremental step reveal. Stay in planning phase.
+          if (phaseRef.current !== 'plan_review') {
+            setPhase('planning');
+          }
+          setSteps([]);
+          setTotalCount(0);
+          setPlanMessage('Generating plan...');
+          break;
+        }
+
+        case 'plan:step_revealed': {
+          // A complete step object was parsed from the LLM token stream.
+          // Append it to the steps list immediately so the user sees progress.
+          // Don't switch phase — stay in planning until plan_ready/plan:generated.
+          if (phaseRef.current === 'plan_review') break;
+
+          const newStep: Step = {
+            index: data.stepIndex,
+            skill: data.skill || 'unknown',
+            description: data.description || '',
+            status: 'pending' as StepStatus,
+            runGroup: data.runGroup || undefined,
+            args: data.args || undefined,
+          };
+
+          setSteps(prev => {
+            // Avoid duplicates — if step with same index exists, replace it
+            const filtered = prev.filter(s => s.index !== data.stepIndex);
+            return [...filtered, newStep].sort((a, b) => a.index - b.index);
+          });
+
+          // Update total count for ETA display
+          setTotalCount(prev => Math.max(prev, data.stepIndex + 1));
+          break;
+        }
 
         case 'plan_ready': {
           // Don't override an active plan review — user must approve before execution starts
@@ -3554,7 +3642,12 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
                           : step.description}
                       </span>
                       {/* Hide browser.agent badge in parallel runs — we show agent name inline instead */}
-                      {!(step.runGroup && step.skill === 'browser.agent') && <SkillBadge skill={step.skill} />}
+                      {!(step.runGroup && step.skill === 'browser.agent') && (
+                        <>
+                          <SkillIcon skill={step.skill} />
+                          <SkillBadge skill={step.skill} />
+                        </>
+                      )}
                       {/* ── Inline agent header — shown right after badge, live and done ── */}
                       {(() => {
                         const liveTurn = agentLiveTurns.current.get(step.index);
