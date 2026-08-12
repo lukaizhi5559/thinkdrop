@@ -1139,7 +1139,7 @@ let activeAbortController = null;
 
 function initStateGraph() {
   try {
-    mcpClient = new ThinkDropMCPClient({ logger: console, timeoutMs: 420000 });
+    mcpClient = new ThinkDropMCPClient({ logger: console, timeoutMs: 600000 });
     mcpAdapter = new RealMCPAdapter(mcpClient, { logger: console });
 
     llmBackend = new ThinkDropLLMBackend({
