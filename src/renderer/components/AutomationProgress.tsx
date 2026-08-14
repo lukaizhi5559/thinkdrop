@@ -229,6 +229,19 @@ interface AgentComplete {
   ok: boolean;
 }
 
+// ── AgentStepLogEntry — append-only log entry for live agent sub-step display ──
+interface AgentStepLogEntry {
+  id: string;           // unique key: `${turn}-${seq}`
+  turn: number;         // agent turn number (0 if not turn-specific)
+  type: 'thinking' | 'action' | 'outcome' | 'thought' | 'complete' | 'tier';
+  message: string;      // human-readable label
+  action?: { action?: string; [key: string]: any } | null;
+  outcome?: { ok: boolean; error?: string; result?: string } | null;
+  phase?: string;       // 'plan' | 'replan' | 'repair' | 'preparation'
+  tier?: string;        // tier name for 'tier' type entries (e.g. 'liteparse-first', 'turn-loop')
+  timestamp: number;
+}
+
 // ScoutMatchState is defined above the component
 
 interface GuideStepCard {
@@ -537,6 +550,93 @@ function SkillIcon({ skill, size = 14, color = '#94a3b8' }: { skill: string; siz
   }
 }
 
+// ── ActionIcon — inline SVG icon for each agent sub-step action (Feather/Lucide style) ──
+function ActionIcon({ action, size = 12, color = '#94a3b8' }: { action: string | { action?: string; [k: string]: any } | null | undefined; size?: number; color?: string }) {
+  const a = typeof action === 'string' ? action : (action?.action || '');
+  const common = {
+    width: size, height: size, viewBox: '0 0 24 24',
+    fill: 'none', stroke: color, strokeWidth: 2,
+    strokeLinecap: 'round' as const, strokeLinejoin: 'round' as const,
+    style: { flexShrink: 0 },
+  };
+  switch (a) {
+    case 'goto':
+    case 'navigate':
+      // Arrow-right-circle
+      return <svg {...common}><circle cx="12" cy="12" r="10"/><polyline points="12 16 16 12 12 8"/><line x1="8" y1="12" x2="16" y2="12"/></svg>;
+    case 'click':
+    case 'dblclick':
+      // Mouse-pointer
+      return <svg {...common}><path d="M3 3l7.07 16.97 2.51-7.39 7.39-2.51L3 3z"/><path d="M13 13l6 6"/></svg>;
+    case 'fill':
+    case 'type':
+      // Keyboard / type icon
+      return <svg {...common}><rect x="2" y="6" width="20" height="12" rx="2"/><path d="M6 10h.01M10 10h.01M14 10h.01M18 10h.01M8 14h8"/></svg>;
+    case 'press':
+      // Corner-down-left (enter key)
+      return <svg {...common}><polyline points="9 10 4 15 9 20"/><path d="M20 4v7a4 4 0 0 1-4 4H4"/></svg>;
+    case 'snapshot':
+    case 'run-code':
+    case 'evaluate':
+    case 'eval':
+      // Eye / read page
+      return <svg {...common}><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>;
+    case 'scroll':
+      // Move-vertical
+      return <svg {...common}><polyline points="12 5 12 19"/><polyline points="8 9 12 5 16 9"/><polyline points="8 15 12 19 16 15"/></svg>;
+    case 'select':
+      // List-checks
+      return <svg {...common}><polyline points="3 7 5 9 9 5"/><polyline points="3 17 5 19 9 15"/><line x1="13" y1="7" x2="21" y2="7"/><line x1="13" y1="17" x2="21" y2="17"/></svg>;
+    case 'check':
+      // Check-square
+      return <svg {...common}><polyline points="9 11 12 14 22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>;
+    case 'uncheck':
+      // Square
+      return <svg {...common}><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/></svg>;
+    case 'return':
+      // Corner-up-left
+      return <svg {...common}><polyline points="9 14 4 9 9 4"/><path d="M20 20v-7a4 4 0 0 0-4-4H4"/></svg>;
+    case 'run_cmd':
+      // Terminal
+      return <svg {...common}><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg>;
+    case 'run_shell':
+    case 'run_help':
+      // Help-circle / search-code
+      return <svg {...common}><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>;
+    case 'web_search':
+      // Search
+      return <svg {...common}><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>;
+    case 'web_fetch':
+      // Download-cloud
+      return <svg {...common}><path d="M8 19H5a4 4 0 0 1-1-7.9A6 6 0 0 1 18 8h1a4 4 0 0 1 0 8h-3"/><polyline points="8 13 12 17 16 13"/><line x1="12" y1="12" x2="12" y2="21"/></svg>;
+    case 'run_update':
+      // Refresh-cw
+      return <svg {...common}><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>;
+    case 'ask_user':
+      // Message-circle-question
+      return <svg {...common}><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/><path d="M12 8v.01"/><path d="M9.5 8a2.5 2.5 0 0 1 5 0c0 1.5-2.5 2-2.5 2"/></svg>;
+    case 'done':
+      // Check-circle
+      return <svg {...common}><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>;
+    case 'external_skill':
+      // Box
+      return <svg {...common}><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg>;
+    default:
+      // Activity (generic)
+      return <svg {...common}><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>;
+  }
+}
+
+// ── ThoughtIcon — small SVG for thinking/thought rows ──
+function ThoughtIcon({ size = 12, color = '#93c5fd' }: { size?: number; color?: string }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth={2}
+      strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
+      <path d="M9 18h6"/><path d="M10 22h4"/><path d="M12 2a7 7 0 0 0-7 7c0 2.38 1.19 4.47 3 5.74V17h8v-2.26c1.81-1.27 3-3.36 3-5.74a7 7 0 0 0-7-7z"/>
+    </svg>
+  );
+}
+
 // ── renderWithLinks ──────────────────────────────────────────────────────────
 // Splits text on https?:// URLs and renders each URL as a clickable span
 // that opens via shell:open-url IPC (handled in main.js).
@@ -824,6 +924,10 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
   const [learnedRules, setLearnedRules] = useState<Map<number, string[]>>(new Map());
   // Maps stepIndex → LLM thought strings from browser.agent (plan / replan / repair phases)
   const [agentThoughts, setAgentThoughts] = useState<Map<number, string[]>>(new Map());
+  // Maps stepIndex → append-only live log of agent sub-step events (thinking, actions, outcomes)
+  const [agentStepLog, setAgentStepLog] = useState<Map<number, AgentStepLogEntry[]>>(new Map());
+  // Counter for generating unique log entry IDs per step
+  const agentStepLogSeq = useRef<Map<number, number>>(new Map());
   // Maps stepIndex → current thinking text from shell.run goal resolution
   const [stepThinking, setStepThinking] = useState<Map<number, string>>(new Map());
   // Maps stepIndex → accumulated live stdout/stderr text (streamed during execution)
@@ -1136,6 +1240,24 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
     const handleProgress = (data: any) => {
       if (suppressIfScheduledRef.current) return;
       if (!active) return;
+      // ── Helper: append an entry to the live agent sub-step log ──────────────
+      const _appendAgentStepLog = (stepIdx: number, entry: Omit<AgentStepLogEntry, 'id' | 'timestamp'>) => {
+        const seq = (agentStepLogSeq.current.get(stepIdx) || 0) + 1;
+        agentStepLogSeq.current.set(stepIdx, seq);
+        const fullEntry: AgentStepLogEntry = {
+          ...entry,
+          id: `${entry.turn}-${seq}-${entry.type}`,
+          timestamp: Date.now(),
+        };
+        setAgentStepLog(prev => {
+          const next = new Map(prev);
+          const existing = next.get(stepIdx) || [];
+          // Cap at 50 entries per step to avoid unbounded growth
+          const capped = existing.length >= 50 ? existing.slice(-49) : existing;
+          next.set(stepIdx, [...capped, fullEntry]);
+          return next;
+        });
+      };
       switch (data.type) {
         case 'preflight:start':
           setPhase('preflight');
@@ -1465,6 +1587,9 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
           // If recovery just patched and retried (AUTO_PATCH), clear the orange banner — we're executing again
           if (phaseRef.current === 'retrying_with_fix') setPhase('executing');
           agentStepStartTimes.current.set(stepIdx, Date.now());
+          // Clear the agent step log for this step so it starts fresh
+          setAgentStepLog(prev => { const next = new Map(prev); next.delete(stepIdx); return next; });
+          agentStepLogSeq.current.delete(stepIdx);
           setSteps(prev => prev.map(s =>
             s.index === stepIdx
               ? { ...s, 
@@ -1684,6 +1809,15 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
             agentId: data.agentId ?? null,
             thinking: data.thinking ?? null,
           });
+          // Append to live step log — action starting (or thinking update)
+          _appendAgentStepLog(stepIdx, {
+            turn: data.turn ?? 0,
+            type: data.thinking ? 'thinking' : 'action',
+            message: data.thinking
+              ? String(data.thinking).slice(0, 160)
+              : (data.currentAction ? formatActionLabel({ action: data.currentAction }) : 'Working…'),
+            action: data.currentAction ? { action: data.currentAction } : null,
+          });
           setHeartbeatTick(t => t + 1); // force re-render to show updated label
           break;
         }
@@ -1703,6 +1837,21 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
             }]);
             return next;
           });
+          // Append outcome to live step log
+          const _outcomeText = data.outcome
+            ? (data.outcome.ok
+                ? (data.outcome.result && data.action?.action !== 'snapshot'
+                    ? `✓ ${String(data.outcome.result).slice(0, 100)}`
+                    : '✓')
+                : `✗ ${data.outcome.error || 'failed'}`)
+            : '';
+          _appendAgentStepLog(stepIdx, {
+            turn: data.turn ?? 0,
+            type: 'outcome',
+            message: _outcomeText || formatActionLabel(data.action),
+            action: data.action || null,
+            outcome: data.outcome || null,
+          });
           break;
         }
 
@@ -1721,6 +1870,14 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
             });
             return next;
           });
+          // Append completion entry to live step log
+          _appendAgentStepLog(stepIdx, {
+            turn: data.totalTurns || 0,
+            type: 'complete',
+            message: data.ok !== false
+              ? `Completed in ${data.totalTurns || 0} turn${(data.totalTurns || 0) !== 1 ? 's' : ''}`
+              : `Failed after ${data.totalTurns || 0} turn${(data.totalTurns || 0) !== 1 ? 's' : ''}`,
+          });
           break;
         }
 
@@ -1731,6 +1888,14 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
             const existing = next.get(stepIdx) || [];
             next.set(stepIdx, [...existing, String(data.thoughts || '')]);
             return next;
+          });
+          // Append thought to live step log with phase label
+          const _phaseLabel = data.phase === 'replan' ? 'Replan' : data.phase === 'repair' ? 'Repair' : data.phase === 'plan' ? 'Plan' : 'Thought';
+          _appendAgentStepLog(stepIdx, {
+            turn: 0,
+            type: 'thought',
+            message: String(data.thoughts || '').slice(0, 200),
+            phase: data.phase,
           });
           setHeartbeatTick(t => t + 1); // force re-render so live thought text appears immediately
           break;
@@ -1747,6 +1912,13 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
             next.set(stepIdx, [...existing, thoughtText]);
             return next;
           });
+          // Append thinking to live step log
+          _appendAgentStepLog(stepIdx, {
+            turn: 0,
+            type: 'thinking',
+            message: String(data.thought || data.thoughts || '').slice(0, 200),
+            phase: data.phase || 'preparation',
+          });
           setHeartbeatTick(t => t + 1); // force re-render so thinking appears immediately
           break;
         }
@@ -1756,6 +1928,17 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
             const next = new Map(prev);
             next.set(stepIdx, [...(next.get(stepIdx) || []), String(data.rule || '')]);
             return next;
+          });
+          break;
+        }
+
+        case 'agent:tier': {
+          const stepIdx = (data.stepIndex ?? 0) + stepOffsetRef.current;
+          _appendAgentStepLog(stepIdx, {
+            turn: 0,
+            type: 'tier',
+            message: data.message || `Tier: ${data.tier}`,
+            tier: data.tier,
           });
           break;
         }
@@ -3709,8 +3892,9 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
                     })()}
                     {/* ── shell.run goal-mode thinking — shown while _resolveGoalToCommand runs ── */}
                     {step.status === 'running' && !!stepThinking.get(step.index) && (
-                      <div style={{ marginTop: 3, fontSize: '11px', color: '#7c6fa0', fontStyle: 'italic', lineHeight: '1.45' }}>
-                        {stepThinking.get(step.index)}
+                      <div style={{ marginTop: 3, fontSize: '11px', color: '#93c5fd', fontStyle: 'italic', lineHeight: '1.45', display: 'flex', alignItems: 'flex-start', gap: 4 }}>
+                        <ThoughtIcon size={11} color="#93c5fd" />
+                        <span>{stepThinking.get(step.index)}</span>
                       </div>
                     )}
                     {/* ── sudo warning — shown when step needs administrator access ── */}
@@ -3995,17 +4179,20 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
                         const isExecAction = t.action?.action === 'run_cmd' || t.action?.action === 'done';
                         const isProbeAction = t.action?.action === 'run_shell' || t.action?.action === 'run_help' || t.action?.action === 'web_search' || t.action?.action === 'web_fetch';
                         const isFailed = isExecAction && t.outcome && !t.outcome.ok;
+                        const iconColor = isFailed ? '#f87171' : isProbeAction ? '#fbbf24' : '#94a3b8';
                         return (
                           <div style={{
                             fontSize: '11px',
                             padding: '2px 0 2px 8px',
                             borderLeft: `2px solid ${isFailed ? 'rgba(248,113,113,0.4)' : isProbeAction ? 'rgba(251,191,36,0.35)' : 'rgba(99,102,241,0.35)'}`,
                             marginTop: 3,
+                            display: 'flex', alignItems: 'center', gap: 5,
                           }}>
-                            <span style={{ color: '#6b7280', marginRight: 6 }}>Step {t.turn}</span>
+                            <ActionIcon action={t.action} size={11} color={iconColor} />
+                            {t.turn > 0 && <span style={{ color: '#6b7280', fontSize: '10px' }}>{t.turn}.</span>}
                             {t.action?.action && (
                               <span style={{
-                                color: isFailed ? '#f87171' : isProbeAction ? '#fbbf24' : '#a5b4fc',
+                                color: isFailed ? '#f87171' : isProbeAction ? '#fbbf24' : '#cbd5e1',
                                 marginRight: 4, fontFamily: 'ui-monospace,monospace', fontSize: '10px',
                               }}>
                                 {formatActionLabel(t.action)}
@@ -4031,17 +4218,20 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
                         const isExecAction = t.action?.action === 'run_cmd' || t.action?.action === 'done';
                         const isProbeAction = t.action?.action === 'run_shell' || t.action?.action === 'run_help' || t.action?.action === 'web_search' || t.action?.action === 'web_fetch';
                         const isFailed = isExecAction && t.outcome && !t.outcome.ok;
+                        const iconColor = isFailed ? '#f87171' : isProbeAction ? '#fbbf24' : '#94a3b8';
                         return (
                           <div style={{
                             fontSize: '11px',
                             padding: '2px 0 2px 8px',
                             borderLeft: `2px solid ${isFailed ? 'rgba(248,113,113,0.4)' : isProbeAction ? 'rgba(251,191,36,0.35)' : 'rgba(99,102,241,0.35)'}`,
                             marginTop: 3,
+                            display: 'flex', alignItems: 'center', gap: 5,
                           }}>
-                            <span style={{ color: '#6b7280', marginRight: 6 }}>Step {t.turn}</span>
+                            <ActionIcon action={t.action} size={11} color={iconColor} />
+                            {t.turn > 0 && <span style={{ color: '#6b7280', fontSize: '10px' }}>{t.turn}.</span>}
                             {t.action?.action && (
                               <span style={{
-                                color: isFailed ? '#f87171' : isProbeAction ? '#fbbf24' : '#a5b4fc',
+                                color: isFailed ? '#f87171' : isProbeAction ? '#fbbf24' : '#cbd5e1',
                                 marginRight: 4, fontFamily: 'ui-monospace,monospace', fontSize: '10px',
                               }}>
                                 {formatActionLabel(t.action)}
@@ -4104,18 +4294,45 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
                         </div>
                       )}
 
-                      {/* ── Live thinking — cli.agent (liveTurn.thinking) or playwright.agent (agentThoughts) ── */}
-                      {isRunning && liveTurn?.thinking && (
-                        <div style={{ marginTop: 3, fontSize: '11px', color: '#7c6fa0', fontStyle: 'italic', lineHeight: '1.45' }}>
-                          ☁️ {liveTurn.thinking.length > 140 ? liveTurn.thinking.slice(0, 140) + '…' : liveTurn.thinking}
-                        </div>
-                      )}
-                      {isRunning && !liveTurn?.thinking && (agentThoughts.get(step.index) || []).length > 0 && (() => {
-                        const thoughts = agentThoughts.get(step.index)!;
-                        const latest = thoughts[thoughts.length - 1];
+                      {/* ── Live agent sub-step log — streaming actions/thinking/outcomes ── */}
+                      {isRunning && (() => {
+                        const logEntries = agentStepLog.get(step.index) || [];
+                        if (logEntries.length === 0) return null;
+                        // Show the last 4 entries (most recent activity)
+                        const recent = logEntries.slice(-4);
                         return (
-                          <div style={{ marginTop: 3, fontSize: '11px', color: '#7c6fa0', fontStyle: 'italic', lineHeight: '1.45' }}>
-                            ☁️ {latest.length > 160 ? latest.slice(0, 160) + '…' : latest}
+                          <div style={{ marginTop: 4, display: 'flex', flexDirection: 'column', gap: 2 }}>
+                            {recent.map((entry) => {
+                              const isThought = entry.type === 'thinking' || entry.type === 'thought';
+                              const isOutcome = entry.type === 'outcome';
+                              const isComplete = entry.type === 'complete';
+                              const isFail = isOutcome && entry.outcome && !entry.outcome.ok;
+                              const iconColor = isFail ? '#f87171' : isComplete ? (entry.message.startsWith('Completed') ? '#34d399' : '#f87171') : isThought ? '#93c5fd' : '#94a3b8';
+                              const textColor = isFail ? '#fca5a5' : isThought ? '#93c5fd' : '#cbd5e1';
+                              return (
+                                <div key={entry.id} style={{ display: 'flex', alignItems: 'flex-start', gap: 5, fontSize: '11px', lineHeight: '1.4' }}>
+                                  {isThought ? (
+                                    <ThoughtIcon size={11} color={iconColor} />
+                                  ) : isComplete ? (
+                                    <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke={iconColor} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0, marginTop: 1 }}>
+                                      {entry.message.startsWith('Completed')
+                                        ? <><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></>
+                                        : <><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></>}
+                                    </svg>
+                                  ) : (
+                                    <ActionIcon action={entry.action} size={11} color={iconColor} />
+                                  )}
+                                  {entry.turn > 0 && (
+                                    <span style={{ color: '#6b7280', fontSize: '10px', flexShrink: 0, minWidth: 18 }}>
+                                      {entry.turn}.
+                                    </span>
+                                  )}
+                                  <span style={{ color: textColor, fontStyle: isThought ? 'italic' : 'normal' }}>
+                                    {entry.message}
+                                  </span>
+                                </div>
+                              );
+                            })}
                           </div>
                         );
                       })()}
@@ -4151,6 +4368,7 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
                             const isFailed = isExecAction && t.outcome && !t.outcome.ok;
                             const observationText = t.observation || '';
                             const thoughtText = t.thoughts || '';
+                            const iconColor = isFailed ? '#f87171' : isProbeAction ? '#fbbf24' : '#94a3b8';
                             return (
                               <div key={i} style={{
                                 fontSize: '11px',
@@ -4158,11 +4376,14 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
                                 borderLeft: `2px solid ${isFailed ? 'rgba(248,113,113,0.4)' : isProbeAction ? 'rgba(251,191,36,0.35)' : 'rgba(99,102,241,0.35)'}`,
                                 marginBottom: 2,
                               }}>
-                                <div>
-                                  <span style={{ color: '#6b7280', marginRight: 6 }}>Step {t.turn}</span>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
+                                  <ActionIcon action={t.action} size={11} color={iconColor} />
+                                  <span style={{ color: '#6b7280', fontSize: '10px', flexShrink: 0 }}>
+                                    {t.turn > 0 ? `${t.turn}.` : ''}
+                                  </span>
                                   {t.action?.action && (
                                     <span style={{
-                                      color: isFailed ? '#f87171' : isProbeAction ? '#fbbf24' : '#a5b4fc',
+                                      color: isFailed ? '#f87171' : isProbeAction ? '#fbbf24' : '#cbd5e1',
                                       marginRight: 4, fontFamily: 'ui-monospace,monospace', fontSize: '10px',
                                     }}>
                                       {formatActionLabel(t.action)}
@@ -4180,10 +4401,12 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
                                 </div>
                                 {thoughtText && (
                                   <div style={{
-                                    marginTop: 2, fontSize: '10px', color: '#7c6fa0',
+                                    marginTop: 2, fontSize: '10px', color: '#93c5fd',
                                     fontStyle: 'italic', lineHeight: '1.4',
+                                    display: 'flex', alignItems: 'flex-start', gap: 4,
                                   }}>
-                                    ☁️ {thoughtText.length > 140 ? thoughtText.slice(0, 140) + '…' : thoughtText}
+                                    <ThoughtIcon size={10} color="#93c5fd" />
+                                    <span>{thoughtText.length > 140 ? thoughtText.slice(0, 140) + '…' : thoughtText}</span>
                                   </div>
                                 )}
                                 {observationText && (
@@ -4208,16 +4431,29 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
                               {complete!.reasoning}
                             </div>
                           )}
-                          {(agentThoughts.get(step.index) || []).map((thought, ti) => (
-                            <div key={`thought-${ti}`} style={{
-                              fontSize: '11px', color: '#a78bfa', fontStyle: 'italic',
-                              padding: '2px 0 2px 8px',
-                              borderLeft: '2px solid rgba(167,139,250,0.3)',
-                              marginBottom: 2,
-                            }}>
-                              ☁️ {thought.length > 200 ? thought.slice(0, 200) + '…' : thought}
-                            </div>
-                          ))}
+                          {(agentThoughts.get(step.index) || []).map((thought, ti) => {
+                            // Detect phase prefix from agent:thinking format "[Agent] text"
+                            const phaseMatch = thought.match(/^\[(.*?)\]\s*(.*)$/);
+                            const phaseLabel = phaseMatch ? phaseMatch[1] : null;
+                            const thoughtContent = phaseMatch ? phaseMatch[2] : thought;
+                            return (
+                              <div key={`thought-${ti}`} style={{
+                                fontSize: '11px', color: '#93c5fd', fontStyle: 'italic',
+                                padding: '2px 0 2px 8px',
+                                borderLeft: '2px solid rgba(147,197,253,0.3)',
+                                marginBottom: 2,
+                                display: 'flex', alignItems: 'flex-start', gap: 4,
+                              }}>
+                                <ThoughtIcon size={10} color="#93c5fd" />
+                                {phaseLabel && (
+                                  <span style={{ color: '#60a5fa', fontWeight: 600, fontSize: '10px', flexShrink: 0 }}>
+                                    {phaseLabel}:
+                                  </span>
+                                )}
+                                <span>{thoughtContent.length > 200 ? thoughtContent.slice(0, 200) + '…' : thoughtContent}</span>
+                              </div>
+                            );
+                          })}
                         </div>
                       )}
                     </div>
@@ -4822,7 +5058,9 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
           /* ── Partial-failure QuestionCard (replaces generic banner for all agent failures) ── */
           <PartialFailureCard
             partialFailure={askUserPrompt.partialProgress || { summary: askUserPrompt.question, completed: [], remaining: [] }}
-            options={(askUserPrompt.options as any[]).map(o => typeof o === 'string' ? { label: o, value: o } : { label: o?.label || String(o), value: o?.value || o?.label || String(o), primary: o?.primary })}
+            options={(askUserPrompt.options as any[])
+              .map(o => typeof o === 'string' ? { label: o, value: o } : { label: o?.label || String(o), value: o?.value || o?.label || String(o), primary: o?.primary })
+              .filter(o => o.value !== 'correct_and_retry')}
             onSubmit={(value) => handleOptionClick(value)}
             onCancel={() => { setAskUserPrompt(null); }}
           />
