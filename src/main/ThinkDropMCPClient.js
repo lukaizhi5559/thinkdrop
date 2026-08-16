@@ -69,6 +69,10 @@ class ThinkDropMCPClient {
     const url = `${baseUrl}/${action}`;
     const requestId = `mcp_${Date.now()}_${Math.random().toString(36).substr(2, 8)}`;
     const timeoutMs = options.timeoutMs || this.timeoutMs;
+    // Optional AbortSignal — when fired, destroys the in-flight HTTP socket so
+    // long-running MCP calls (e.g. command.automate running playwright.agent)
+    // are cancelled instead of running on after the caller aborts.
+    const abortSignal = options.signal || null;
 
     const body = JSON.stringify({
       version: 'mcp.v1',
@@ -95,7 +99,7 @@ class ThinkDropMCPClient {
     this.logger.debug(`[MCPClient] ${serviceName}.${action} → ${url}`);
 
     try {
-      const responseText = await this._httpPost(url, headers, body, timeoutMs);
+      const responseText = await this._httpPost(url, headers, body, timeoutMs, abortSignal);
       const response = JSON.parse(responseText);
 
       // Handle both MCP response envelope formats:
@@ -169,11 +173,17 @@ class ThinkDropMCPClient {
 
   // ─── Internal HTTP helpers ────────────────────────────────────────────────
 
-  _httpPost(url, headers, body, timeoutMs) {
+  _httpPost(url, headers, body, timeoutMs, signal) {
     const effectiveTimeout = timeoutMs || this.timeoutMs;
     return new Promise((resolve, reject) => {
       const parsed = new URL(url);
       const lib = parsed.protocol === 'https:' ? https : http;
+
+      // Fast-fail if the signal is already aborted (avoids opening a socket).
+      if (signal && signal.aborted) {
+        reject(new Error('aborted'));
+        return;
+      }
 
       const req = lib.request(
         {
@@ -201,7 +211,23 @@ class ThinkDropMCPClient {
         reject(new Error(`[MCPClient] Request timeout after ${effectiveTimeout}ms: ${url}`));
       });
 
-      req.on('error', reject);
+      // AbortSignal: destroy the socket when the caller cancels. This closes
+      // the HTTP connection, which the command-service ties to its own
+      // AbortController (server.cjs onClose) so the server-side loop stops too.
+      const onAbort = () => {
+        req.destroy(new Error('aborted'));
+      };
+      if (signal) {
+        signal.addEventListener('abort', onAbort, { once: true });
+      }
+
+      const cleanup = () => {
+        if (signal) signal.removeEventListener('abort', onAbort);
+      };
+      req.on('error', (err) => { cleanup(); reject(err); });
+      // Clean up the listener once the request finishes so it doesn't leak.
+      req.on('close', cleanup);
+
       req.write(body);
       req.end();
     });

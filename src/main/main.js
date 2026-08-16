@@ -2896,6 +2896,21 @@ app.whenReady().then(async () => {
       activeAbortController = null;
     }
     closeActiveBrowserSessions('cancel');
+    // Tell the command-service to abort all in-flight command.automate runs
+    // AND forcibly kill the playwright-cli daemon + Chrome processes. This is
+    // the reliable fallback: even if graceful signal propagation races (the
+    // playwright agent is mid-action), the processes are killed so the browser
+    // actually stops and no orphan Chrome holds the profile lock.
+    const cancelBody = JSON.stringify({});
+    const cancelReq = http.request({
+      hostname: '127.0.0.1', port: 3007, path: '/automation.cancel', method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(cancelBody) },
+      timeout: 8000,
+    }, (res) => { res.resume(); });
+    cancelReq.on('error', () => {});
+    cancelReq.on('timeout', () => { cancelReq.destroy(); });
+    cancelReq.write(cancelBody);
+    cancelReq.end();
     // Keep newly built agents that were never authenticated — the user cancelled
     // before signing in, but the agent descriptor is still valid. Keeping it lets
     // a retry skip the build step and go straight to auth. (Previously these were
@@ -4649,7 +4664,7 @@ app.whenReady().then(async () => {
             };
           } else if ((paused.pendingQuestion?.trainingHandoff || paused.pendingQuestion?.recipeRequired)
                      && (!paused.pendingQuestion?._isAgentAskUser
-                         || /^(try_again|record_recipe|open_agents_training|open_agents_training_here|train_recipe|cancel|no)$/i.test((chosenOption || '').trim()))) {
+                         || /^(try_again|record_recipe|open_agents_training|open_agents_training_here|train_recipe|guided_train|cancel|no)$/i.test((chosenOption || '').trim()))) {
             // ── Training handoff resume: user chose a KNOWN option (train/cancel/try_again) ──
             // browser.agent returned trainingHandoff (or legacy recipeRequired) when
             // no deep-link or trained recipe was found for a mutation task.
@@ -4665,10 +4680,14 @@ app.whenReady().then(async () => {
             // "Record recipe" / "Open agent training" → training handoff.
             // "Correct and retry" → NOT training; flows through the free-text path
             // (user types what was missed, then it's injected as [Resume context: Q&A]).
-            const _wantsTrain = chosenOption === 'open_agents_training' || chosenOption === 'open_agents_training_here' || chosenOption === 'train_recipe' || chosenOption === 'record_recipe' || (/open|train/i.test(chosenOption) && chosenOption !== 'correct_and_retry');
+            const _wantsTrain = chosenOption === 'open_agents_training' || chosenOption === 'open_agents_training_here' || chosenOption === 'train_recipe' || chosenOption === 'record_recipe' || (/open|train/i.test(chosenOption) && chosenOption !== 'correct_and_retry' && chosenOption !== 'guided_train');
             const _wantsCancel = /cancel/i.test(chosenOption) || chosenOption === 'cancel';
             // "Try again" — re-run the same agent step with the original task (no Q&A).
             const _wantsRetry = chosenOption === 'try_again' || /^try\s+again/i.test(chosenOption);
+            // "Start guided training" — planner gate offered guided plan-first training.
+            // Generate a step plan via LLM, then start actionGuidedTrain which navigates
+            // to the agent's start URL and watches the user do each step one at a time.
+            const _wantsGuidedTrain = chosenOption === 'guided_train';
 
             if (_wantsRetry && paused.pendingQuestion?._isAgentAskUser) {
               // Re-run the SAME agent step with the original task — no Q&A injection.
@@ -4702,6 +4721,85 @@ app.whenReady().then(async () => {
                 _planFile: null, _skillPlanFile: null,
                 context: { ...paused.context, sessionId: sessionId || currentSessionId }
               };
+            } else if (_wantsGuidedTrain && _handoffAgentId) {
+              // ── Guided plan-first training ──────────────────────────────────
+              // Planner gate surfaced an ask_user offering guided training for a
+              // multi-step browser content-creation task with no trained recipe.
+              // Generate a step plan via LLM, then start actionGuidedTrain which
+              // navigates to the agent's start URL and watches the user do each
+              // step one at a time (brain icon → green check on match).
+              const _guidedTask = paused.pendingQuestion?.trainingTask || paused.pendingQuestion?.originalTask || paused.message || null;
+              console.log(`[StateGraph] ASK_USER resume: guided_train — generating plan for ${_handoffAgentId}, task="${(_guidedTask || '').slice(0, 80)}"`);
+              try {
+                const trainerAgent = require('../../mcp-services/command-service/src/skills/trainer.agent.cjs');
+                // Read agent start_url for plan generation context
+                const fsMod = require('fs');
+                const pathMod = require('path');
+                const osMod = require('os');
+                const _agentPath = pathMod.join(osMod.homedir(), '.thinkdrop', 'agents', `${_handoffAgentId}.agent.md`);
+                let _startUrl = null;
+                if (fsMod.existsSync(_agentPath)) {
+                  const _desc = fsMod.readFileSync(_agentPath, 'utf8');
+                  const _m = _desc.match(/^start_url:\s*(.+)$/m);
+                  if (_m) _startUrl = _m[1].trim();
+                }
+                // Generate the step plan
+                const _planResult = await trainerAgent.generateGuidedPlan(_guidedTask, _handoffAgentId, _startUrl);
+                if (!_planResult?.ok || !_planResult.plan) {
+                  console.error(`[StateGraph] Guided train: plan generation failed: ${_planResult?.error}`);
+                  if (typeof streamCallback === 'function') {
+                    streamCallback(`Failed to generate training plan: ${_planResult?.error || 'unknown error'}. Please try again or use free-form training.`);
+                  }
+                  if (typeof progressCallback === 'function') {
+                    progressCallback({ type: 'all_done', cancelled: true, summary: `Guided training plan generation failed.` });
+                  }
+                  pausedAutomationState = null;
+                  return;
+                }
+                console.log(`[StateGraph] Guided train: generated ${_planResult.plan.length} steps — starting guided training`);
+                // Start guided training (navigates to start URL, injects recorder, emits first step)
+                const _trainResult = await trainerAgent.actionGuidedTrain({
+                  agentId: _handoffAgentId,
+                  task: _guidedTask,
+                  plan: _planResult.plan,
+                  startUrl: _startUrl,
+                });
+                if (!_trainResult?.ok) {
+                  console.error(`[StateGraph] Guided train: start failed: ${_trainResult?.error}`);
+                  if (typeof streamCallback === 'function') {
+                    streamCallback(`Failed to start guided training: ${_trainResult?.error || 'unknown error'}.`);
+                  }
+                  if (typeof progressCallback === 'function') {
+                    progressCallback({ type: 'all_done', cancelled: true, summary: `Guided training start failed.` });
+                  }
+                  pausedAutomationState = null;
+                  return;
+                }
+                // Notify UI to switch to the guided training view
+                safeSendUnified('agents:guided-training-started', {
+                  agentId: _handoffAgentId,
+                  task: _guidedTask,
+                  plan: _planResult.plan,
+                });
+                if (typeof streamCallback === 'function') {
+                  streamCallback(`Starting guided training for ${_handoffAgentId}. Follow the steps on screen — I'll learn each one as you complete it.`);
+                }
+                if (typeof progressCallback === 'function') {
+                  progressCallback({ type: 'all_done', cancelled: true, summary: `Guided training started for ${_handoffAgentId}.` });
+                }
+                pausedAutomationState = null;
+                return;
+              } catch (_guidedErr) {
+                console.error(`[StateGraph] Guided train error: ${_guidedErr.message}`);
+                if (typeof streamCallback === 'function') {
+                  streamCallback(`Guided training error: ${_guidedErr.message}. Please try free-form training instead.`);
+                }
+                if (typeof progressCallback === 'function') {
+                  progressCallback({ type: 'all_done', cancelled: true, summary: `Guided training error.` });
+                }
+                pausedAutomationState = null;
+                return;
+              }
             } else if (_wantsTrain && _handoffAgentId) {
               // Thread train context (mode, task, startUrl, keepSession) so the
               // trainer can attach to the live session (train-from-current-page)
@@ -7400,6 +7498,29 @@ app.whenReady().then(async () => {
       trainerAgent.actionCancelTraining({ agentId });
     } catch (e) {
       console.error('[Agents] train-cancel failed:', e.message);
+    }
+  });
+
+  // Guided training skip step — user did the step but auto-detection missed
+  ipcMain.on('agents:guided-train-skip', async (_event, { agentId }) => {
+    try {
+      const trainerAgent = require('../../mcp-services/command-service/src/skills/trainer.agent.cjs');
+      const result = trainerAgent.actionGuidedSkipStep({ agentId });
+      if (!result?.ok) {
+        console.warn(`[Agents] guided-train-skip: ${result?.error || 'failed'}`);
+      }
+    } catch (e) {
+      console.error('[Agents] guided-train-skip failed:', e.message);
+    }
+  });
+
+  // Guided training cancel — same as train-cancel (reuses actionCancelTraining)
+  ipcMain.on('agents:guided-train-cancel', async (_event, { agentId }) => {
+    try {
+      const trainerAgent = require('../../mcp-services/command-service/src/skills/trainer.agent.cjs');
+      trainerAgent.actionCancelTraining({ agentId });
+    } catch (e) {
+      console.error('[Agents] guided-train-cancel failed:', e.message);
     }
   });
 
