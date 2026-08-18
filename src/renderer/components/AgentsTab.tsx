@@ -430,7 +430,7 @@ function AgentCard({
 
         {/* Icon-only action buttons — never overflow */}
         <div style={{ display: 'flex', flexDirection: 'row', gap: 4, flexShrink: 0, alignItems: 'center'}}>
-          {/* Scanning indicator (auto-scan when idle) */}
+          {/* Scanning indicator (background scan in progress) */}
           {isLearning && (
             <button
               disabled
@@ -1244,9 +1244,10 @@ export function AgentsTab({ items, onRefresh }: AgentsTabProps) {
   const [creatingAgent, setCreatingAgent] = useState<{ agentId: string; domain: string } | null>(null);
   const [createError, setCreateError] = useState<string | null>(null);
   const [editError, setEditError] = useState<string | null>(null);
-  const [autoScanEnabled, setAutoScanEnabled] = useState<boolean>(false);
   // Training panel state
   const [trainingAgentId, setTrainingAgentId] = useState<string | null>(null);
+  const [trainingMode, setTrainingMode] = useState<'freeform' | 'guided'>('freeform');
+  const [trainingPlan, setTrainingPlan] = useState<any[] | null>(null);
   // testingSkills: key = "agentId::skillName" → true while test is running
   const [testingSkills, setTestingSkills] = useState<Record<string, boolean>>({});
   // refreshingSkills: key = "agentId::skillName" → true while refresh/rescan is running
@@ -1378,14 +1379,22 @@ export function AgentsTab({ items, onRefresh }: AgentsTabProps) {
       const isCli = cliAgents.some(a => a.id === trainAgentId);
       const isApp = appAgents.some(a => a.id === trainAgentId);
       setActiveSubtab(isCli ? 'cli' : isApp ? 'app' : 'browser');
-      // Pass through train context (mode, task, startUrl, keepSession) from the
+      // Pass through train context (mode, task, startUrl, keepSession, plan) from the
       // failure handoff so the trainer attaches to the live session or starts fresh.
-      setTimeout(() => handleTrain(trainAgentId, {
-        mode: detail?.mode || 'fresh',
-        task: detail?.task || null,
-        startUrl: detail?.startUrl || null,
-        keepSession: detail?.keepSession === true,
-      }), 300);
+      // For guided training, the training is already started in main.js; just open the panel.
+      const _mode = (detail?.mode as any) === 'guided' ? 'guided' : 'freeform';
+      setTrainingMode(_mode);
+      setTrainingPlan(_mode === 'guided' ? (detail?.plan || null) : null);
+      if (_mode === 'guided') {
+        setTrainingAgentId(trainAgentId);
+      } else {
+        setTimeout(() => handleTrain(trainAgentId, {
+          mode: detail?.mode || 'fresh',
+          task: detail?.task || null,
+          startUrl: detail?.startUrl || null,
+          keepSession: detail?.keepSession === true,
+        }), 300);
+      }
     };
     window.addEventListener('agents:open-training', handleOpenTraining);
 
@@ -1395,16 +1404,6 @@ export function AgentsTab({ items, onRefresh }: AgentsTabProps) {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [items]);
-
-  // Request auto-scan setting on mount
-  useEffect(() => {
-    if (!ipcRenderer) return;
-    ipcRenderer.invoke?.('agents:auto-scan-get')?.then((result: { enabled?: boolean }) => {
-      setAutoScanEnabled(!!result?.enabled);
-    }).catch(() => {
-      setAutoScanEnabled(false);
-    });
-  }, []);
 
   // Listen for create-specific events from main process.
   useEffect(() => {
@@ -1556,7 +1555,7 @@ export function AgentsTab({ items, onRefresh }: AgentsTabProps) {
     setLocalItems(prev => prev.map(a =>
       a.id === agentId ? { ...a, userGoals: goals } : a
     ));
-    // Save goals to backend — auto-scan will pick them up on idle
+    // Save goals to backend
     ipcRenderer?.send('agents:update-goals', { agentId, goals, options });
   };
 
@@ -2054,61 +2053,6 @@ export function AgentsTab({ items, onRefresh }: AgentsTabProps) {
             {createError}
           </div>
         )}
-
-        {/* Auto-scan toggle - compact row */}
-        <div style={{
-          marginTop: 12,
-          display: 'flex',
-          alignItems: 'center',
-          gap: 8,
-        }}>
-          <label style={{
-            display: 'inline-flex',
-            alignItems: 'center',
-            gap: 6,
-            cursor: 'pointer',
-            fontSize: '0.75rem',
-            color: autoScanEnabled ? '#10b981' : '#6b7280',
-            transition: 'color 0.15s',
-          }} title="Automatically scan all agents when system has been idle for 30+ minutes (once per 24h max)">
-            <div style={{
-              width: 32,
-              height: 18,
-              borderRadius: 9,
-              backgroundColor: autoScanEnabled ? '#10b981' : 'rgba(255,255,255,0.2)',
-              position: 'relative',
-              transition: 'background-color 0.15s',
-            }}>
-              <div style={{
-                width: 14,
-                height: 14,
-                borderRadius: '50%',
-                backgroundColor: '#fff',
-                position: 'absolute',
-                top: 2,
-                left: autoScanEnabled ? 16 : 2,
-                transition: 'left 0.15s',
-              }} />
-              <input
-                type="checkbox"
-                checked={autoScanEnabled}
-                onChange={(e) => {
-                  const enabled = e.target.checked;
-                  setAutoScanEnabled(enabled);
-                  ipcRenderer?.send('agents:auto-scan-set', { enabled });
-                }}
-                style={{
-                  position: 'absolute',
-                  opacity: 0,
-                  width: '100%',
-                  height: '100%',
-                  cursor: 'pointer',
-                }}
-              />
-            </div>
-            <span>Auto-scan when idle</span>
-          </label>
-        </div>
       </div>
 
       {/* Subtab switcher */}
@@ -3045,6 +2989,8 @@ export function AgentsTab({ items, onRefresh }: AgentsTabProps) {
           hostname={localItems.find(a => a.id === trainingAgentId)?.domain || trainingAgentId}
           onDone={handleTrainSave}
           onCancel={handleTrainCancel}
+          mode={trainingMode}
+          plan={trainingPlan || undefined}
         />
       )}
 

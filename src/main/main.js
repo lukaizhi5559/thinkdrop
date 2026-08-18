@@ -3061,51 +3061,30 @@ app.whenReady().then(async () => {
     }
   });
 
-  // ─── Auto-scan setting IPC handlers ────────────────────────────────────────
+  // ─── Auto-scan setting IPC handlers (DISABLED — skills created via trainer) ──
+  // Auto-scan system has been disabled. Skills are now created manually via the
+  // trainer agent, not by automatic page scanning. These handlers remain as no-ops
+  // for backward compatibility with any renderer code that might still call them.
   const osMod = require('os');
   const AUTO_SCAN_SETTINGS_FILE = path.join(osMod.homedir(), '.thinkdrop', 'settings.json');
 
   function _loadAutoScanSetting() {
-    try {
-      const fs = require('fs');
-      if (fs.existsSync(AUTO_SCAN_SETTINGS_FILE)) {
-        const data = JSON.parse(fs.readFileSync(AUTO_SCAN_SETTINGS_FILE, 'utf8'));
-        return !!data.autoScanEnabled;
-      }
-    } catch (_) {}
-    return false; // Default: disabled
+    // Always returns false — auto-scan is permanently disabled
+    return false;
   }
 
-  function _saveAutoScanSetting(enabled) {
-    try {
-      const fs = require('fs');
-      let data = {};
-      if (fs.existsSync(AUTO_SCAN_SETTINGS_FILE)) {
-        data = JSON.parse(fs.readFileSync(AUTO_SCAN_SETTINGS_FILE, 'utf8'));
-      }
-      data.autoScanEnabled = enabled;
-      fs.mkdirSync(path.dirname(AUTO_SCAN_SETTINGS_FILE), { recursive: true });
-      fs.writeFileSync(AUTO_SCAN_SETTINGS_FILE, JSON.stringify(data, null, 2), 'utf8');
-    } catch (err) {
-      console.warn('[AutoScan] Failed to save setting:', err);
-    }
+  function _saveAutoScanSetting(_enabled) {
+    // No-op — auto-scan is permanently disabled
   }
 
-  // Get current auto-scan setting (returns { enabled: boolean })
+  // Get current auto-scan setting (always returns false)
   ipcMain.handle('agents:auto-scan-get', async () => {
-    return { enabled: _loadAutoScanSetting() };
+    return { enabled: false };
   });
 
-  // Set auto-scan enabled/disabled and notify command-service
+  // Set auto-scan enabled/disabled — no-op, logs warning
   ipcMain.on('agents:auto-scan-set', async (_event, { enabled } = {}) => {
-    console.log(`[AutoScan] Setting auto-scan enabled=${enabled}`);
-    _saveAutoScanSetting(!!enabled);
-    // Notify command-service to start/stop idle watcher
-    try {
-      await _scanHttpPost('/scan.idle-watcher', { enabled: !!enabled });
-    } catch (err) {
-      console.warn('[AutoScan] Failed to notify command-service:', err.message);
-    }
+    console.warn(`[AutoScan] auto-scan-set ignored (disabled) — enabled=${enabled}`);
   });
 
   // ─── Generic settings IPC handlers ─────────────────────────────────────────
@@ -4664,7 +4643,8 @@ app.whenReady().then(async () => {
             };
           } else if ((paused.pendingQuestion?.trainingHandoff || paused.pendingQuestion?.recipeRequired)
                      && (!paused.pendingQuestion?._isAgentAskUser
-                         || /^(try_again|record_recipe|open_agents_training|open_agents_training_here|train_recipe|guided_train|cancel|no)$/i.test((chosenOption || '').trim()))) {
+                         || /^(try_again|record_recipe|open_agents_training|open_agents_training_here|train_recipe|guided_train|cancel|no)$/i.test((chosenOption || '').trim())
+                         || /^start\s+guided\s+training$/i.test((chosenOption || '').trim()))) {
             // ── Training handoff resume: user chose a KNOWN option (train/cancel/try_again) ──
             // browser.agent returned trainingHandoff (or legacy recipeRequired) when
             // no deep-link or trained recipe was found for a mutation task.
@@ -4680,14 +4660,13 @@ app.whenReady().then(async () => {
             // "Record recipe" / "Open agent training" → training handoff.
             // "Correct and retry" → NOT training; flows through the free-text path
             // (user types what was missed, then it's injected as [Resume context: Q&A]).
-            const _wantsTrain = chosenOption === 'open_agents_training' || chosenOption === 'open_agents_training_here' || chosenOption === 'train_recipe' || chosenOption === 'record_recipe' || (/open|train/i.test(chosenOption) && chosenOption !== 'correct_and_retry' && chosenOption !== 'guided_train');
+            const _wantsTrain = chosenOption === 'open_agents_training' || chosenOption === 'open_agents_training_here' || chosenOption === 'train_recipe' || chosenOption === 'record_recipe';
             const _wantsCancel = /cancel/i.test(chosenOption) || chosenOption === 'cancel';
             // "Try again" — re-run the same agent step with the original task (no Q&A).
             const _wantsRetry = chosenOption === 'try_again' || /^try\s+again/i.test(chosenOption);
             // "Start guided training" — planner gate offered guided plan-first training.
-            // Generate a step plan via LLM, then start actionGuidedTrain which navigates
-            // to the agent's start URL and watches the user do each step one at a time.
-            const _wantsGuidedTrain = chosenOption === 'guided_train';
+            // Accept either the option value 'guided_train' or the label text.
+            const _wantsGuidedTrain = chosenOption === 'guided_train' || /^start\s+guided\s+training$/i.test((chosenOption || '').trim());
 
             if (_wantsRetry && paused.pendingQuestion?._isAgentAskUser) {
               // Re-run the SAME agent step with the original task — no Q&A injection.
@@ -4775,9 +4754,12 @@ app.whenReady().then(async () => {
                   pausedAutomationState = null;
                   return;
                 }
-                // Notify UI to switch to the guided training view
-                safeSendUnified('agents:guided-training-started', {
+                // Notify UI to switch to the Agents tab and open the TrainingPanel
+                // in guided mode. The panel will receive the plan and listen for
+                // training:guided-step / training:step-learned events.
+                safeSendUnified('agents:open-training', {
                   agentId: _handoffAgentId,
+                  mode: 'guided',
                   task: _guidedTask,
                   plan: _planResult.plan,
                 });
@@ -7087,15 +7069,15 @@ app.whenReady().then(async () => {
               continue;
             }
 
-            // Check for trained recipe skills (.recipe.json)
+            // Check for trained recipe skills (.skill.json or .recipe.json)
             try {
               const files = fsMod.readdirSync(skillPath);
-              const recipeFiles = files.filter(f => f.endsWith('.recipe.json'));
+              const recipeFiles = files.filter(f => f.endsWith('.skill.json') || f.endsWith('.recipe.json'));
               for (const recipeFile of recipeFiles) {
                 try {
                   const recipe = JSON.parse(fsMod.readFileSync(pathMod.join(skillPath, recipeFile), 'utf8'));
                   const skillEntry = {
-                    name: recipe.name || recipeFile.replace('.recipe.json', ''),
+                    name: recipe.name || recipeFile.replace(/\.(skill|recipe)\.json$/, ''),
                     status: 'trained',
                     description: recipe.targetDescription || `Trained recipe (${recipe.waypoints?.length || 0} waypoints)`,
                     skillPath: skillPath,
@@ -7501,7 +7483,19 @@ app.whenReady().then(async () => {
     }
   });
 
-  // Guided training skip step — user did the step but auto-detection missed
+  // Guided training step done/skip — user manually advances the step because
+  // auto-detection missed it, or because they want to skip it.
+  ipcMain.on('agents:guided-train-done', async (_event, { agentId }) => {
+    try {
+      const trainerAgent = require('../../mcp-services/command-service/src/skills/trainer.agent.cjs');
+      const result = trainerAgent.actionGuidedSkipStep({ agentId });
+      if (!result?.ok) {
+        console.warn(`[Agents] guided-train-done: ${result?.error || 'failed'}`);
+      }
+    } catch (e) {
+      console.error('[Agents] guided-train-done failed:', e.message);
+    }
+  });
   ipcMain.on('agents:guided-train-skip', async (_event, { agentId }) => {
     try {
       const trainerAgent = require('../../mcp-services/command-service/src/skills/trainer.agent.cjs');
@@ -7955,17 +7949,17 @@ app.whenReady().then(async () => {
         }
       }
 
-      // Recipe file fallback — trained recipe skills are loose .recipe.json files
+      // Recipe file fallback — trained recipe skills are loose .skill.json or .recipe.json files
       // inside the service dir (no subdirectory, no skill.json).
       if (!resolvedSkillDir && skillPath && fsMod.existsSync(skillPath)) {
         try {
           const files = fsMod.readdirSync(skillPath);
           for (const f of files) {
-            if (!f.endsWith('.recipe.json')) continue;
+            if (!f.endsWith('.skill.json') && !f.endsWith('.recipe.json')) continue;
             try {
               const recipe = JSON.parse(fsMod.readFileSync(pathMod.join(skillPath, f), 'utf8'));
-              if (recipe.name === skillName || f.replace('.recipe.json', '') === skillName) {
-                rawSkillName = recipe.name || f.replace('.recipe.json', '');
+              if (recipe.name === skillName || f.replace(/\.(skill|recipe)\.json$/, '') === skillName) {
+                rawSkillName = recipe.name || f.replace(/\.(skill|recipe)\.json$/, '');
                 fsMod.unlinkSync(pathMod.join(skillPath, f));
                 console.log(`[Agents] Recipe file deleted: ${pathMod.join(skillPath, f)}`);
                 break;

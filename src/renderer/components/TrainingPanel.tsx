@@ -7,6 +7,17 @@ interface TrainingPanelProps {
   hostname: string;
   onDone: (skillName: string) => void;
   onCancel: () => void;
+  mode?: 'freeform' | 'guided';
+  plan?: any[];
+}
+
+interface GuidedStep {
+  step: number;
+  description: string;
+  expectedType: string;
+  expectedText?: string;
+  expectedUrl?: string;
+  learned: boolean;
 }
 
 interface RecordedStep {
@@ -65,7 +76,7 @@ function StepIcon({ type }: { type: RecordedStep['type'] }) {
   }
 }
 
-export function TrainingPanel({ agentId, hostname, onDone, onCancel }: TrainingPanelProps) {
+export function TrainingPanel({ agentId, hostname, onDone, onCancel, mode = 'freeform', plan = [] }: TrainingPanelProps) {
   const [steps, setSteps] = useState<RecordedStep[]>([]);
   const [skillSuffix, setSkillSuffix] = useState('');
   const [validationError, setValidationError] = useState<string | null>(null);
@@ -73,7 +84,17 @@ export function TrainingPanel({ agentId, hostname, onDone, onCancel }: TrainingP
   const [savingMessage, setSavingMessage] = useState<string>('');
   const [isLaunching, setIsLaunching] = useState(true);
   const [launchingUrl, setLaunchingUrl] = useState<string>('');
+  const [guidedSteps, setGuidedSteps] = useState<GuidedStep[]>([]);
+  const [guidedCursor, setGuidedCursor] = useState(0);
   const stepsEndRef = useRef<HTMLDivElement>(null);
+
+  // Initialize guided steps from the plan prop immediately on mount so the
+  // checklist is visible even if the training:start event fired before the panel.
+  useEffect(() => {
+    if (mode === 'guided' && Array.isArray(plan) && plan.length > 0) {
+      setGuidedSteps(plan.map((p: any, i: number) => ({ ...p, learned: false, step: p.step || i + 1 })));
+    }
+  }, [mode, plan]);
 
   const cleanAgentId = agentId.replace(/\.agent$/, '');
   const fullSkillName = `${cleanAgentId}.${skillSuffix}`;
@@ -87,6 +108,30 @@ export function TrainingPanel({ agentId, hostname, onDone, onCancel }: TrainingP
       if (data.type === 'training:start') {
         setIsLaunching(true);
         setLaunchingUrl(data.startUrl || '');
+        if (mode === 'guided' && data.mode === 'guided' && Array.isArray(data.plan) && data.plan.length > 0) {
+          setGuidedSteps(data.plan.map((p: any, i: number) => ({ ...p, learned: false, step: p.step || i + 1 })));
+        }
+        return;
+      }
+
+      if (data.type === 'training:guided-step') {
+        setIsLaunching(false);
+        const idx = data.stepIndex ?? 0;
+        setGuidedCursor(idx);
+        setGuidedSteps(prev => prev.map((s, i) => i < idx ? { ...s, learned: true } : s));
+        return;
+      }
+
+      if (data.type === 'training:step-learned') {
+        const idx = data.stepIndex ?? 0;
+        setGuidedCursor(idx + 1);
+        setGuidedSteps(prev => prev.map((s, i) => i <= idx ? { ...s, learned: true } : s));
+        return;
+      }
+
+      if (data.type === 'training:guided-complete') {
+        setSaving(true);
+        setSavingMessage(data.message || 'Saving recipe…');
         return;
       }
 
@@ -200,17 +245,19 @@ export function TrainingPanel({ agentId, hostname, onDone, onCancel }: TrainingP
         </div>
 
         {/* Instruction banner */}
-        <div
-          className="mx-4 mt-4 p-3 rounded-lg text-xs leading-relaxed"
-          style={{
-            background: 'rgba(99, 102, 241, 0.08)',
-            border: '1px solid rgba(99, 102, 241, 0.2)',
-            color: '#a5b4fc',
-          }}
-        >
-          Navigate through the site to your target. Each click and page change is recorded below.
-          When you reach the page where you want the AI to start working — stop clicking.
-        </div>
+        {mode === 'freeform' && (
+          <div
+            className="mx-4 mt-4 p-3 rounded-lg text-xs leading-relaxed"
+            style={{
+              background: 'rgba(99, 102, 241, 0.08)',
+              border: '1px solid rgba(99, 102, 241, 0.2)',
+              color: '#a5b4fc',
+            }}
+          >
+            Navigate through the site to your target. Each click and page change is recorded below.
+            When you reach the page where you want the AI to start working — stop clicking.
+          </div>
+        )}
 
         {/* Saving overlay — replaces content while LLM builds recipe (~10s) */}
         {saving && (
@@ -256,12 +303,69 @@ export function TrainingPanel({ agentId, hostname, onDone, onCancel }: TrainingP
           </div>
         )}
 
-        {/* Recorded Steps — scrollable area */}
+        {/* Guided Steps — scrollable area */}
         <div
           className="flex-1 overflow-y-auto mx-4 mt-4 pr-1"
           style={{ minHeight: 0, display: saving ? 'none' : undefined }}
         >
-          {steps.length === 0 ? (
+          {mode === 'guided' ? (
+            <div className="flex flex-col gap-2">
+              <div
+                className="p-3 rounded-lg text-xs leading-relaxed"
+                style={{
+                  background: 'rgba(99, 102, 241, 0.08)',
+                  border: '1px solid rgba(99, 102, 241, 0.2)',
+                  color: '#a5b4fc',
+                }}
+              >
+                Follow the steps below in the browser. I'll mark each one as you complete it.
+              </div>
+              {guidedSteps.length === 0 ? (
+                <div className="flex flex-col items-center justify-center h-full text-center py-12">
+                  <span className="text-xs text-gray-500 italic">Generating guided plan…</span>
+                </div>
+              ) : (
+                guidedSteps.map((gStep, idx) => {
+                  const isCurrent = idx === guidedCursor;
+                  return (
+                    <div
+                      key={idx}
+                      className="flex items-start gap-3 px-3 py-2 rounded-lg"
+                      style={{
+                        background: isCurrent ? 'rgba(99, 102, 241, 0.12)' : (gStep.learned ? 'rgba(16, 185, 129, 0.08)' : 'rgba(255, 255, 255, 0.02)'),
+                        border: isCurrent ? '1px solid rgba(99, 102, 241, 0.35)' : (gStep.learned ? '1px solid rgba(16, 185, 129, 0.2)' : '1px solid transparent'),
+                      }}
+                    >
+                      <div
+                        className="flex items-center justify-center"
+                        style={{
+                          width: 22, height: 22, borderRadius: '50%', flexShrink: 0,
+                          background: gStep.learned ? 'rgba(16, 185, 129, 0.2)' : 'rgba(99, 102, 241, 0.15)',
+                          color: gStep.learned ? '#34d399' : '#818cf8',
+                          fontSize: '0.7rem', fontWeight: 700,
+                        }}
+                      >
+                        {gStep.learned ? '✓' : (idx + 1)}
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <div
+                          className="text-xs"
+                          style={{ color: isCurrent ? '#c7d2fe' : (gStep.learned ? '#6ee7b7' : '#d1d5db') }}
+                        >
+                          {gStep.description}
+                        </div>
+                        {isCurrent && gStep.expectedText && (
+                          <div className="text-[10px] text-gray-500 mt-0.5">
+                            Look for: “{gStep.expectedText}”
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })
+              )}
+            </div>
+          ) : steps.length === 0 ? (
             isLaunching ? (
               /* Launch preloader — shown while browser is opening (~10-22s) */
               <div className="flex flex-col items-center justify-center h-full text-center" style={{ padding: '32px 16px' }}>
@@ -401,74 +505,134 @@ export function TrainingPanel({ agentId, hostname, onDone, onCancel }: TrainingP
             </div>
           )}
 
-          {/* Skill Name Input */}
-          <div>
-            <label className="text-[11px] text-gray-500 block mb-1">Trained Skill Name</label>
-            <div className="flex items-center">
-              <span
-                className="px-2 py-2 rounded-l-md text-xs text-gray-500 font-mono"
+          {mode === 'guided' ? (
+            <>
+              <div
+                className="p-3 rounded-lg text-xs leading-relaxed"
                 style={{
-                  background: 'rgba(255, 255, 255, 0.05)',
-                  border: '1px solid rgba(255, 255, 255, 0.1)',
-                  borderRight: 'none',
+                  background: 'rgba(99, 102, 241, 0.08)',
+                  border: '1px solid rgba(99, 102, 241, 0.2)',
+                  color: '#a5b4fc',
                 }}
               >
-                {cleanAgentId}.
-              </span>
-              <input
-                type="text"
-                value={skillSuffix}
-                onChange={e => handleSuffixChange(e.target.value)}
-                placeholder="editor"
-                className="flex-1 px-2 py-2 rounded-r-md text-xs font-mono text-white outline-none"
-                style={{
-                  background: 'rgba(255, 255, 255, 0.05)',
-                  border: validationError
-                    ? '1px solid rgba(239, 68, 68, 0.5)'
-                    : '1px solid rgba(255, 255, 255, 0.15)',
-                }}
-              />
-            </div>
-            {validationError && (
-              <div className="text-[10px] text-red-400 mt-1">{validationError}</div>
-            )}
-            {skillSuffix && !validationError && (
-              <div className="text-[10px] text-emerald-400 mt-1">
-                Will be saved as: <strong>{fullSkillName}</strong>
+                <strong>Guided mode</strong> — do the step highlighted in blue. When you click the right button or land on the right page, I’ll mark it done automatically.
               </div>
-            )}
-          </div>
+              <div className="flex gap-2">
+                <button
+                  onClick={() => {
+                    const idx = guidedCursor;
+                    if (idx < guidedSteps.length) {
+                      setGuidedSteps(prev => prev.map((s, i) => i === idx ? { ...s, learned: true } : s));
+                      setGuidedCursor(prev => Math.min(prev + 1, guidedSteps.length));
+                      // Notify main process that this step was manually learned
+                      ipcRenderer?.send?.('agents:guided-train-done', { agentId, stepIndex: idx });
+                    }
+                  }}
+                  disabled={guidedCursor >= guidedSteps.length}
+                  className="flex-1 py-2.5 rounded-lg text-sm font-semibold text-white transition-opacity"
+                  style={{
+                    background: guidedCursor < guidedSteps.length ? '#818cf8' : 'rgba(129, 140, 248, 0.15)',
+                    opacity: guidedCursor < guidedSteps.length ? 1 : 0.4,
+                    cursor: guidedCursor < guidedSteps.length ? 'pointer' : 'not-allowed',
+                  }}
+                >
+                  {guidedCursor >= guidedSteps.length ? 'All steps done' : `Mark step ${guidedCursor + 1} done`}
+                </button>
+                <button
+                  onClick={() => {
+                    const idx = guidedCursor;
+                    if (idx < guidedSteps.length) {
+                      setGuidedSteps(prev => prev.map((s, i) => i === idx ? { ...s, learned: true } : s));
+                      setGuidedCursor(prev => Math.min(prev + 1, guidedSteps.length));
+                      // Notify main process to skip the current step
+                      ipcRenderer?.send?.('agents:guided-train-skip', { agentId, stepIndex: idx });
+                    }
+                  }}
+                  disabled={guidedCursor >= guidedSteps.length}
+                  className="px-4 py-2.5 rounded-lg text-sm text-gray-400 transition-opacity"
+                  style={{
+                    border: '1px solid rgba(255, 255, 255, 0.1)',
+                    background: 'transparent',
+                    opacity: guidedCursor < guidedSteps.length ? 1 : 0.4,
+                    cursor: guidedCursor < guidedSteps.length ? 'pointer' : 'not-allowed',
+                  }}
+                >
+                  Skip
+                </button>
+              </div>
+            </>
+          ) : (
+            <>
+              {/* Skill Name Input */}
+              <div>
+                <label className="text-[11px] text-gray-500 block mb-1">Trained Skill Name</label>
+                <div className="flex items-center">
+                  <span
+                    className="px-2 py-2 rounded-l-md text-xs text-gray-500 font-mono"
+                    style={{
+                      background: 'rgba(255, 255, 255, 0.05)',
+                      border: '1px solid rgba(255, 255, 255, 0.1)',
+                      borderRight: 'none',
+                    }}
+                  >
+                    {cleanAgentId}.
+                  </span>
+                  <input
+                    type="text"
+                    value={skillSuffix}
+                    onChange={e => handleSuffixChange(e.target.value)}
+                    placeholder="editor"
+                    className="flex-1 px-2 py-2 rounded-r-md text-xs font-mono text-white outline-none"
+                    style={{
+                      background: 'rgba(255, 255, 255, 0.05)',
+                      border: validationError
+                        ? '1px solid rgba(239, 68, 68, 0.5)'
+                        : '1px solid rgba(255, 255, 255, 0.15)',
+                    }}
+                  />
+                </div>
+                {validationError && (
+                  <div className="text-[10px] text-red-400 mt-1">{validationError}</div>
+                )}
+                {skillSuffix && !validationError && (
+                  <div className="text-[10px] text-emerald-400 mt-1">
+                    Will be saved as: <strong>{fullSkillName}</strong>
+                  </div>
+                )}
+              </div>
 
-          {/* Action Buttons */}
-          <div className="flex gap-2">
-            <button
-              onClick={handleSave}
-              disabled={saving || steps.length === 0 || !!validationError || !skillSuffix}
-              className="flex-1 py-2.5 rounded-lg text-sm font-semibold text-white transition-opacity"
-              style={{
-                background: saving || steps.length === 0 || !!validationError || !skillSuffix
-                  ? 'rgba(16, 185, 129, 0.15)'
-                  : '#10b981',
-                opacity: saving || steps.length === 0 || !!validationError || !skillSuffix ? 0.4 : 1,
-                cursor: saving || steps.length === 0 ? 'not-allowed' : 'pointer',
-              }}
-            >
-              {saving ? 'Saving…' : 'Save Skill'}
-            </button>
-            <button
-              onClick={handleReset}
-              disabled={steps.length === 0}
-              className="px-4 py-2.5 rounded-lg text-sm text-gray-400 transition-opacity"
-              style={{
-                border: '1px solid rgba(255, 255, 255, 0.1)',
-                background: 'transparent',
-                opacity: steps.length === 0 ? 0.4 : 1,
-                cursor: steps.length === 0 ? 'not-allowed' : 'pointer',
-              }}
-            >
-              Reset
-            </button>
-          </div>
+              {/* Action Buttons */}
+              <div className="flex gap-2">
+                <button
+                  onClick={handleSave}
+                  disabled={saving || steps.length === 0 || !!validationError || !skillSuffix}
+                  className="flex-1 py-2.5 rounded-lg text-sm font-semibold text-white transition-opacity"
+                  style={{
+                    background: saving || steps.length === 0 || !!validationError || !skillSuffix
+                      ? 'rgba(16, 185, 129, 0.15)'
+                      : '#10b981',
+                    opacity: saving || steps.length === 0 || !!validationError || !skillSuffix ? 0.4 : 1,
+                    cursor: saving || steps.length === 0 ? 'not-allowed' : 'pointer',
+                  }}
+                >
+                  {saving ? 'Saving…' : 'Save Skill'}
+                </button>
+                <button
+                  onClick={handleReset}
+                  disabled={steps.length === 0}
+                  className="px-4 py-2.5 rounded-lg text-sm text-gray-400 transition-opacity"
+                  style={{
+                    border: '1px solid rgba(255, 255, 255, 0.1)',
+                    background: 'transparent',
+                    opacity: steps.length === 0 ? 0.4 : 1,
+                    cursor: steps.length === 0 ? 'not-allowed' : 'pointer',
+                  }}
+                >
+                  Reset
+                </button>
+              </div>
+            </>
+          )}
         </div>
       </div>
 
