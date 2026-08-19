@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { TrainingReviewPanel } from './TrainingReviewPanel';
 
 const ipcRenderer = (window as any).electron?.ipcRenderer;
 
@@ -76,7 +77,7 @@ function StepIcon({ type }: { type: RecordedStep['type'] }) {
   }
 }
 
-export function TrainingPanel({ agentId, hostname, onDone, onCancel, mode = 'freeform', plan = [] }: TrainingPanelProps) {
+export function TrainingPanel({ agentId, hostname, onDone: _onDone, onCancel, mode = 'freeform', plan = [] }: TrainingPanelProps) {
   const [steps, setSteps] = useState<RecordedStep[]>([]);
   const [skillSuffix, setSkillSuffix] = useState('');
   const [validationError, setValidationError] = useState<string | null>(null);
@@ -86,6 +87,7 @@ export function TrainingPanel({ agentId, hostname, onDone, onCancel, mode = 'fre
   const [launchingUrl, setLaunchingUrl] = useState<string>('');
   const [guidedSteps, setGuidedSteps] = useState<GuidedStep[]>([]);
   const [guidedCursor, setGuidedCursor] = useState(0);
+  const [reviewData, setReviewData] = useState<any>(null);
   const stepsEndRef = useRef<HTMLDivElement>(null);
 
   // Initialize guided steps from the plan prop immediately on mount so the
@@ -173,6 +175,42 @@ export function TrainingPanel({ agentId, hostname, onDone, onCancel, mode = 'fre
     return () => { ipcRenderer.removeListener('agents:train-progress', handleStep); };
   }, [agentId]);
 
+  // Listen for review preview/saved/error events (Phase 4)
+  useEffect(() => {
+    if (!ipcRenderer) return;
+
+    const handlePreviewResult = (_event: any, data: any) => {
+      if (!data || data.agentId !== agentId) return;
+      setSaving(false);
+      setSavingMessage('');
+      setReviewData(data.preview);
+    };
+
+    const handleReviewSaved = (_event: any, data: any) => {
+      if (!data || data.agentId !== agentId) return;
+      setSaving(false);
+      setSavingMessage('');
+      setReviewData(null);
+      onCancel();
+    };
+
+    const handleReviewError = (_event: any, data: any) => {
+      if (!data || data.agentId !== agentId) return;
+      setSaving(false);
+      setSavingMessage('');
+      setValidationError(data.error || 'Save failed');
+    };
+
+    ipcRenderer.on('agents:train-preview-result', handlePreviewResult);
+    ipcRenderer.on('agents:train-review-saved', handleReviewSaved);
+    ipcRenderer.on('agents:train-review-error', handleReviewError);
+    return () => {
+      ipcRenderer.removeListener('agents:train-preview-result', handlePreviewResult);
+      ipcRenderer.removeListener('agents:train-review-saved', handleReviewSaved);
+      ipcRenderer.removeListener('agents:train-review-error', handleReviewError);
+    };
+  }, [agentId]);
+
   // Auto-scroll to bottom when new steps arrive
   useEffect(() => {
     stepsEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -182,7 +220,11 @@ export function TrainingPanel({ agentId, hostname, onDone, onCancel, mode = 'fre
     const err = validateSkillSuffix(skillSuffix);
     if (err) { setValidationError(err); return; }
     setSaving(true);
-    onDone(fullSkillName);
+    setSavingMessage('Analyzing recorded steps…');
+    // Send preview request — backend will auto-split and return preview data
+    // For single-action: backend saves directly and sends training:saved.
+    // For multi-action: backend sends agents:train-preview-result → show review panel.
+    ipcRenderer?.send('agents:train-preview', { agentId, skillName: fullSkillName });
   };
 
   const handleReset = () => {
@@ -654,6 +696,27 @@ export function TrainingPanel({ agentId, hostname, onDone, onCancel, mode = 'fre
           to { transform: rotate(360deg); }
         }
       `}</style>
+
+      {/* Review Panel — shown when preview data arrives (multi-action split) */}
+      {reviewData && (
+        <TrainingReviewPanel
+          agentId={agentId}
+          previewData={reviewData}
+          onSave={(adjustedData) => {
+            setSaving(true);
+            setSavingMessage('Saving skills…');
+            ipcRenderer?.send('agents:train-review-save', {
+              agentId,
+              skills: adjustedData.skills,
+              recipe: adjustedData.recipe,
+            });
+          }}
+          onCancel={() => {
+            ipcRenderer?.send('agents:train-review-cancel', { agentId });
+            setReviewData(null);
+          }}
+        />
+      )}
     </>
   );
 }

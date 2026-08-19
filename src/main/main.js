@@ -7483,6 +7483,98 @@ app.whenReady().then(async () => {
     }
   });
 
+  // ── Phase 4: Train preview / review save / review cancel ────────────────
+
+  // Train preview — user clicks Save, backend auto-splits and returns preview
+  ipcMain.on('agents:train-preview', async (_event, { agentId, skillName }) => {
+    try {
+      console.log(`[Agents] Preview split for "${skillName}" (${agentId})`);
+      const trainerAgent = require('../../mcp-services/command-service/src/skills/trainer.agent.cjs');
+      const result = await trainerAgent.actionPreviewSplit({ agentId, skillName });
+      if (result.ok) {
+        if (result.singleAction) {
+          // Single action — save directly, no review needed
+          console.log(`[Agents] Single action detected, saving directly`);
+          const saveResult = await trainerAgent.actionSaveSkillsAndRecipe({
+            agentId,
+            skills: result.skills,
+            recipe: null,
+          });
+          if (saveResult.ok) {
+            ipcMain.emit('agents:list');
+            if (unifiedWindow && !unifiedWindow.isDestroyed()) {
+              safeSend(unifiedWindow, 'agents:train-progress', {
+                agentId, type: 'training:saved',
+                skillName: saveResult.savedSkills[0]?.name,
+              });
+            }
+          } else {
+            if (unifiedWindow && !unifiedWindow.isDestroyed()) {
+              safeSend(unifiedWindow, 'agents:train-review-error', { agentId, error: saveResult.error });
+            }
+          }
+        } else {
+          // Multi-action — send preview to UI for review
+          console.log(`[Agents] Multi-action split: ${result.skills.length} skills, sending preview to UI`);
+          if (unifiedWindow && !unifiedWindow.isDestroyed()) {
+            safeSend(unifiedWindow, 'agents:train-preview-result', {
+              agentId,
+              preview: { skills: result.skills, recipe: result.recipe, singleAction: false },
+            });
+          }
+        }
+      } else {
+        if (unifiedWindow && !unifiedWindow.isDestroyed()) {
+          safeSend(unifiedWindow, 'agents:train-review-error', { agentId, error: result.error });
+        }
+      }
+    } catch (e) {
+      console.error('[Agents] train-preview failed:', e.message);
+      if (unifiedWindow && !unifiedWindow.isDestroyed()) {
+        safeSend(unifiedWindow, 'agents:train-review-error', { agentId, error: e.message });
+      }
+    }
+  });
+
+  // Train review save — user confirms adjusted split in review UI
+  ipcMain.on('agents:train-review-save', async (_event, { agentId, skills, recipe }) => {
+    try {
+      console.log(`[Agents] Saving reviewed skills+recipe for ${agentId}: ${skills?.length} skills`);
+      const trainerAgent = require('../../mcp-services/command-service/src/skills/trainer.agent.cjs');
+      const result = await trainerAgent.actionSaveSkillsAndRecipe({ agentId, skills, recipe });
+      if (result.ok) {
+        console.log(`[Agents] Review save successful — refreshing list`);
+        ipcMain.emit('agents:list');
+        if (unifiedWindow && !unifiedWindow.isDestroyed()) {
+          safeSend(unifiedWindow, 'agents:train-review-saved', {
+            agentId,
+            savedSkills: result.savedSkills,
+            savedRecipe: result.savedRecipe,
+          });
+        }
+      } else {
+        if (unifiedWindow && !unifiedWindow.isDestroyed()) {
+          safeSend(unifiedWindow, 'agents:train-review-error', { agentId, error: result.error });
+        }
+      }
+    } catch (e) {
+      console.error('[Agents] train-review-save failed:', e.message);
+      if (unifiedWindow && !unifiedWindow.isDestroyed()) {
+        safeSend(unifiedWindow, 'agents:train-review-error', { agentId, error: e.message });
+      }
+    }
+  });
+
+  // Train review cancel — user cancels from review UI
+  ipcMain.on('agents:train-review-cancel', async (_event, { agentId }) => {
+    try {
+      const trainerAgent = require('../../mcp-services/command-service/src/skills/trainer.agent.cjs');
+      trainerAgent.actionCancelTraining({ agentId });
+    } catch (e) {
+      console.error('[Agents] train-review-cancel failed:', e.message);
+    }
+  });
+
   // Guided training step done/skip — user manually advances the step because
   // auto-detection missed it, or because they want to skip it.
   ipcMain.on('agents:guided-train-done', async (_event, { agentId }) => {

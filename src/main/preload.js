@@ -99,6 +99,9 @@ contextBridge.exposeInMainWorld('electron', {
         'agents:train',
         'agents:train-save',
         'agents:train-cancel',
+        'agents:train-preview',
+        'agents:train-review-save',
+        'agents:train-review-cancel',
         'agents:open-training',
         'agents:delete',
         'agents:test-skill',
@@ -194,6 +197,9 @@ contextBridge.exposeInMainWorld('electron', {
         'agents:update',
         'agents:learn-progress',
         'agents:train-progress',
+        'agents:train-preview-result',
+        'agents:train-review-saved',
+        'agents:train-review-error',
         'agents:skill-test-update',
         'agents:skill-refresh-update',
         'app-agent:highlight',
@@ -386,6 +392,9 @@ contextBridge.exposeInMainWorld('electron', {
         'agents:update',
         'agents:learn-progress',
         'agents:train-progress',
+        'agents:train-preview-result',
+        'agents:train-review-saved',
+        'agents:train-review-error',
       ];
       if (validChannels.includes(channel)) {
         // Legacy path: func-reference removal won't work across contextBridge.
