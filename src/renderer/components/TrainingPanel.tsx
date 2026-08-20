@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { TrainingReviewPanel } from './TrainingReviewPanel';
+import { RightSlideoutDrawer } from './RightSlideoutDrawer';
 
 const ipcRenderer = (window as any).electron?.ipcRenderer;
 
@@ -10,15 +11,6 @@ interface TrainingPanelProps {
   onCancel: () => void;
   mode?: 'freeform' | 'guided';
   plan?: any[];
-}
-
-interface GuidedStep {
-  step: number;
-  description: string;
-  expectedType: string;
-  expectedText?: string;
-  expectedUrl?: string;
-  learned: boolean;
 }
 
 interface RecordedStep {
@@ -77,7 +69,8 @@ function StepIcon({ type }: { type: RecordedStep['type'] }) {
   }
 }
 
-export function TrainingPanel({ agentId, hostname, onDone: _onDone, onCancel, mode = 'freeform', plan = [] }: TrainingPanelProps) {
+export function TrainingPanel({ agentId, hostname, onDone: _onDone, onCancel, mode: _mode = 'freeform', plan: _plan = [] }: TrainingPanelProps) {
+  const [isOpen, setIsOpen] = useState(false);
   const [steps, setSteps] = useState<RecordedStep[]>([]);
   const [skillSuffix, setSkillSuffix] = useState('');
   const [validationError, setValidationError] = useState<string | null>(null);
@@ -85,55 +78,34 @@ export function TrainingPanel({ agentId, hostname, onDone: _onDone, onCancel, mo
   const [savingMessage, setSavingMessage] = useState<string>('');
   const [isLaunching, setIsLaunching] = useState(true);
   const [launchingUrl, setLaunchingUrl] = useState<string>('');
-  const [guidedSteps, setGuidedSteps] = useState<GuidedStep[]>([]);
-  const [guidedCursor, setGuidedCursor] = useState(0);
   const [reviewData, setReviewData] = useState<any>(null);
+  const [rejectMessage, setRejectMessage] = useState<string | null>(null);
   const stepsEndRef = useRef<HTMLDivElement>(null);
 
-  // Initialize guided steps from the plan prop immediately on mount so the
-  // checklist is visible even if the training:start event fired before the panel.
-  useEffect(() => {
-    if (mode === 'guided' && Array.isArray(plan) && plan.length > 0) {
-      setGuidedSteps(plan.map((p: any, i: number) => ({ ...p, learned: false, step: p.step || i + 1 })));
-    }
-  }, [mode, plan]);
-
   const cleanAgentId = agentId.replace(/\.agent$/, '');
-  const fullSkillName = `${cleanAgentId}.${skillSuffix}`;
+  const fullSkillName = `${cleanAgentId}.${skillSuffix}.skill`;
 
+  // Trigger slide-in on mount
+  useEffect(() => {
+    setIsOpen(true);
+  }, []);
+
+  // Listen for training progress events
   useEffect(() => {
     if (!ipcRenderer) return;
 
     const handleStep = (data: any) => {
-      if (!data || data.agentId !== agentId) return;
+      console.log('[TrainingPanel] agents:train-progress received:', {
+        type: data?.type,
+        dataAgentId: data?.agentId,
+        panelAgentId: agentId,
+        matches: !!data && data.agentId?.toLowerCase() === agentId.toLowerCase(),
+      });
+      if (!data || data.agentId?.toLowerCase() !== agentId.toLowerCase()) return;
 
       if (data.type === 'training:start') {
         setIsLaunching(true);
         setLaunchingUrl(data.startUrl || '');
-        if (mode === 'guided' && data.mode === 'guided' && Array.isArray(data.plan) && data.plan.length > 0) {
-          setGuidedSteps(data.plan.map((p: any, i: number) => ({ ...p, learned: false, step: p.step || i + 1 })));
-        }
-        return;
-      }
-
-      if (data.type === 'training:guided-step') {
-        setIsLaunching(false);
-        const idx = data.stepIndex ?? 0;
-        setGuidedCursor(idx);
-        setGuidedSteps(prev => prev.map((s, i) => i < idx ? { ...s, learned: true } : s));
-        return;
-      }
-
-      if (data.type === 'training:step-learned') {
-        const idx = data.stepIndex ?? 0;
-        setGuidedCursor(idx + 1);
-        setGuidedSteps(prev => prev.map((s, i) => i <= idx ? { ...s, learned: true } : s));
-        return;
-      }
-
-      if (data.type === 'training:guided-complete') {
-        setSaving(true);
-        setSavingMessage(data.message || 'Saving recipe…');
         return;
       }
 
@@ -169,24 +141,31 @@ export function TrainingPanel({ agentId, hostname, onDone: _onDone, onCancel, mo
         setSaving(false);
         setSavingMessage('');
       }
+
+      if (data.type === 'training:cancelled') {
+        setSaving(false);
+        setSavingMessage('');
+      }
     };
 
     ipcRenderer.on('agents:train-progress', handleStep);
     return () => { ipcRenderer.removeListener('agents:train-progress', handleStep); };
   }, [agentId]);
 
-  // Listen for review preview/saved/error events (Phase 4)
+  // Listen for review preview/saved/error events
   useEffect(() => {
     if (!ipcRenderer) return;
 
-    const handlePreviewResult = (_event: any, data: any) => {
+    const handlePreviewResult = (data: any) => {
+      console.log('[TrainingPanel] agents:train-preview-result received:', data);
       if (!data || data.agentId !== agentId) return;
       setSaving(false);
       setSavingMessage('');
       setReviewData(data.preview);
     };
 
-    const handleReviewSaved = (_event: any, data: any) => {
+    const handleReviewSaved = (data: any) => {
+      console.log('[TrainingPanel] agents:train-review-saved received:', data);
       if (!data || data.agentId !== agentId) return;
       setSaving(false);
       setSavingMessage('');
@@ -194,11 +173,16 @@ export function TrainingPanel({ agentId, hostname, onDone: _onDone, onCancel, mo
       onCancel();
     };
 
-    const handleReviewError = (_event: any, data: any) => {
+    const handleReviewError = (data: any) => {
+      console.log('[TrainingPanel] agents:train-review-error received:', data);
       if (!data || data.agentId !== agentId) return;
       setSaving(false);
       setSavingMessage('');
-      setValidationError(data.error || 'Save failed');
+      if (data.rejected) {
+        setRejectMessage(data.error || 'The LLM could not understand the recorded actions. Try recording again with clearer steps.');
+      } else {
+        setValidationError(data.error || 'Save failed');
+      }
     };
 
     ipcRenderer.on('agents:train-preview-result', handlePreviewResult);
@@ -211,25 +195,52 @@ export function TrainingPanel({ agentId, hostname, onDone: _onDone, onCancel, mo
     };
   }, [agentId]);
 
+  // Escape key to cancel — works even during saving
+  useEffect(() => {
+    const handleEsc = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && !reviewData) {
+        handleCancel();
+      }
+    };
+    window.addEventListener('keydown', handleEsc);
+    return () => window.removeEventListener('keydown', handleEsc);
+  }, [reviewData]);
+
   // Auto-scroll to bottom when new steps arrive
   useEffect(() => {
     stepsEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [steps]);
+
+  const handleCancel = () => {
+    setSaving(false);
+    setSavingMessage('');
+    onCancel();
+  };
 
   const handleSave = () => {
     const err = validateSkillSuffix(skillSuffix);
     if (err) { setValidationError(err); return; }
     setSaving(true);
     setSavingMessage('Analyzing recorded steps…');
-    // Send preview request — backend will auto-split and return preview data
-    // For single-action: backend saves directly and sends training:saved.
-    // For multi-action: backend sends agents:train-preview-result → show review panel.
-    ipcRenderer?.send('agents:train-preview', { agentId, skillName: fullSkillName });
+    setRejectMessage(null);
+    setValidationError(null);
+    // Send preview request — LLM organizes raw events into skill(s) with params
+    const skillName = `${cleanAgentId}.${skillSuffix}.skill`;
+    console.log('[TrainingPanel] sending agents:train-preview', { agentId, skillName });
+    try {
+      ipcRenderer?.send('agents:train-preview', { agentId, skillName });
+    } catch (err) {
+      console.error('[TrainingPanel] send failed:', err);
+      setSaving(false);
+      setValidationError('Failed to start save. Please restart the app.');
+    }
   };
 
   const handleReset = () => {
     setSteps([]);
     setIsLaunching(false);
+    setRejectMessage(null);
+    setValidationError(null);
   };
 
   const handleSuffixChange = (val: string) => {
@@ -240,68 +251,56 @@ export function TrainingPanel({ agentId, hostname, onDone: _onDone, onCancel, mo
 
   return (
     <>
-      {/* Backdrop — click to cancel */}
-      <div
-        className="fixed inset-0 bg-black/50 z-40"
-        onClick={onCancel}
-      />
-
-      {/* Right-side slideout drawer */}
-      <div
-        className="fixed right-0 top-0 bottom-0 z-50 flex flex-col"
-        style={{
-          width: '80%',
-          maxWidth: 520,
-          backgroundColor: 'rgba(28, 28, 30, 0.98)',
-          borderLeft: '1px solid rgba(255, 255, 255, 0.1)',
-          animation: 'slideInRight 0.3s ease-out',
-        }}
-      >
-        {/* Header */}
-        <div
-          className="flex items-center gap-3 px-4 py-3"
-          style={{ borderBottom: '1px solid rgba(255, 255, 255, 0.1)' }}
-        >
-          <button
-            onClick={onCancel}
-            className="w-8 h-8 flex items-center justify-center rounded-md transition-colors"
-            style={{ color: '#9ca3af' }}
-            onMouseEnter={e => { e.currentTarget.style.backgroundColor = 'rgba(255,255,255,0.1)'; }}
-            onMouseLeave={e => { e.currentTarget.style.backgroundColor = 'transparent'; }}
-          >
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <polyline points="9 18 15 12 9 6" />
-            </svg>
-          </button>
-          <div
-            style={{
-              width: 10, height: 10, borderRadius: '50%',
-              backgroundColor: '#ef4444',
-              animation: 'pulse 1.5s infinite',
-            }}
-          />
-          <span className="text-sm font-semibold text-gray-100 flex-1">
-            Training: {cleanAgentId}
+      <RightSlideoutDrawer
+        isOpen={isOpen}
+        onClose={handleCancel}
+        width={420}
+        title={
+          <span className="flex items-center gap-2">
+            <span
+              className="inline-block"
+              style={{ width: 10, height: 10, borderRadius: '50%', backgroundColor: '#ef4444', animation: 'pulse 1.5s infinite' }}
+            />
+            <span>Training: {cleanAgentId}</span>
           </span>
-          <span className="text-xs text-gray-500 font-mono">{hostname}</span>
+        }
+        subtitle={hostname}
+      >
+        {/* Instruction banner */}
+        <div
+          className="mx-4 mt-4 p-3 rounded-lg text-xs leading-relaxed break-words"
+          style={{
+            background: 'rgba(99, 102, 241, 0.08)',
+            border: '1px solid rgba(99, 102, 241, 0.2)',
+            color: '#a5b4fc',
+          }}
+        >
+          Navigate through the site and perform the action you want to train. Each click, fill, and page change is recorded below. When done, click <strong>Save Skill</strong> — the LLM will organize your interactions into a reusable skill with parameters.
         </div>
 
-        {/* Instruction banner */}
-        {mode === 'freeform' && (
+        {/* Reject message — shown when LLM can not understand the flow */}
+        {rejectMessage && !saving && (
           <div
-            className="mx-4 mt-4 p-3 rounded-lg text-xs leading-relaxed"
+            className="mx-4 mt-3 p-3 rounded-lg text-xs leading-relaxed break-words"
             style={{
-              background: 'rgba(99, 102, 241, 0.08)',
-              border: '1px solid rgba(99, 102, 241, 0.2)',
-              color: '#a5b4fc',
+              background: 'rgba(239, 68, 68, 0.1)',
+              border: '1px solid rgba(239, 68, 68, 0.3)',
+              color: '#fca5a5',
             }}
           >
-            Navigate through the site to your target. Each click and page change is recorded below.
-            When you reach the page where you want the AI to start working — stop clicking.
+            <strong>Could not understand the training:</strong> {rejectMessage}
+            <div className="mt-2">
+              <button
+                onClick={handleReset}
+                className="text-[11px] text-red-300 underline"
+              >
+                Try again
+              </button>
+            </div>
           </div>
         )}
 
-        {/* Saving overlay — replaces content while LLM builds recipe (~10s) */}
+        {/* Saving overlay — replaces content while LLM builds recipe */}
         {saving && (
           <div
             className="flex-1 flex flex-col items-center justify-center text-center"
@@ -342,76 +341,30 @@ export function TrainingPanel({ agentId, hostname, onDone: _onDone, onCancel, mo
               </svg>
               <span style={{ fontSize: '0.7rem', color: '#6b7280', fontStyle: 'italic' }}>LLM cleaning &amp; structuring waypoints…</span>
             </div>
+            {/* Cancel button on saving overlay */}
+            <button
+              onClick={handleCancel}
+              className="mt-6 px-4 py-2 rounded-lg text-xs text-gray-400 transition-opacity"
+              style={{
+                border: '1px solid rgba(255, 255, 255, 0.1)',
+                background: 'transparent',
+                cursor: 'pointer',
+              }}
+            >
+              Cancel
+            </button>
           </div>
         )}
 
-        {/* Guided Steps — scrollable area */}
+        {/* Recorded steps — scrollable area */}
         <div
           className="flex-1 overflow-y-auto mx-4 mt-4 pr-1"
           style={{ minHeight: 0, display: saving ? 'none' : undefined }}
         >
-          {mode === 'guided' ? (
-            <div className="flex flex-col gap-2">
-              <div
-                className="p-3 rounded-lg text-xs leading-relaxed"
-                style={{
-                  background: 'rgba(99, 102, 241, 0.08)',
-                  border: '1px solid rgba(99, 102, 241, 0.2)',
-                  color: '#a5b4fc',
-                }}
-              >
-                Follow the steps below in the browser. I'll mark each one as you complete it.
-              </div>
-              {guidedSteps.length === 0 ? (
-                <div className="flex flex-col items-center justify-center h-full text-center py-12">
-                  <span className="text-xs text-gray-500 italic">Generating guided plan…</span>
-                </div>
-              ) : (
-                guidedSteps.map((gStep, idx) => {
-                  const isCurrent = idx === guidedCursor;
-                  return (
-                    <div
-                      key={idx}
-                      className="flex items-start gap-3 px-3 py-2 rounded-lg"
-                      style={{
-                        background: isCurrent ? 'rgba(99, 102, 241, 0.12)' : (gStep.learned ? 'rgba(16, 185, 129, 0.08)' : 'rgba(255, 255, 255, 0.02)'),
-                        border: isCurrent ? '1px solid rgba(99, 102, 241, 0.35)' : (gStep.learned ? '1px solid rgba(16, 185, 129, 0.2)' : '1px solid transparent'),
-                      }}
-                    >
-                      <div
-                        className="flex items-center justify-center"
-                        style={{
-                          width: 22, height: 22, borderRadius: '50%', flexShrink: 0,
-                          background: gStep.learned ? 'rgba(16, 185, 129, 0.2)' : 'rgba(99, 102, 241, 0.15)',
-                          color: gStep.learned ? '#34d399' : '#818cf8',
-                          fontSize: '0.7rem', fontWeight: 700,
-                        }}
-                      >
-                        {gStep.learned ? '✓' : (idx + 1)}
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <div
-                          className="text-xs"
-                          style={{ color: isCurrent ? '#c7d2fe' : (gStep.learned ? '#6ee7b7' : '#d1d5db') }}
-                        >
-                          {gStep.description}
-                        </div>
-                        {isCurrent && gStep.expectedText && (
-                          <div className="text-[10px] text-gray-500 mt-0.5">
-                            Look for: “{gStep.expectedText}”
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  );
-                })
-              )}
-            </div>
-          ) : steps.length === 0 ? (
+          {steps.length === 0 ? (
             isLaunching ? (
-              /* Launch preloader — shown while browser is opening (~10-22s) */
+              /* Launch preloader — shown while browser is opening */
               <div className="flex flex-col items-center justify-center h-full text-center" style={{ padding: '32px 16px' }}>
-                {/* Animated globe icon */}
                 <div
                   style={{
                     width: 52, height: 52, borderRadius: '50%',
@@ -434,7 +387,6 @@ export function TrainingPanel({ agentId, hostname, onDone: _onDone, onCancel, mo
                 <div style={{ fontSize: '0.72rem', color: '#6b7280', marginBottom: 20, fontFamily: 'ui-monospace, monospace', maxWidth: 260, wordBreak: 'break-all' }}>
                   {launchingUrl || `https://${hostname}`}
                 </div>
-                {/* Shimmer progress bar */}
                 <div style={{ width: '80%', maxWidth: 240, height: 3, borderRadius: 99, background: 'rgba(99,102,241,0.12)', overflow: 'hidden' }}>
                   <div style={{
                     height: '100%',
@@ -533,7 +485,7 @@ export function TrainingPanel({ agentId, hostname, onDone: _onDone, onCancel, mo
           {/* Target explanation */}
           {steps.length > 0 && (
             <div
-              className="p-3 rounded-lg text-xs leading-relaxed"
+              className="p-3 rounded-lg text-xs leading-relaxed break-words"
               style={{
                 background: 'rgba(245, 158, 11, 0.06)',
                 border: '1px solid rgba(245, 158, 11, 0.15)',
@@ -542,150 +494,96 @@ export function TrainingPanel({ agentId, hostname, onDone: _onDone, onCancel, mo
             >
               <strong>★ TARGET</strong> — The AI will navigate here automatically.<br/>
               <span style={{ color: '#92400e' }}>
-                Example: "Use {fullSkillName || `${cleanAgentId}.<name>`} to build a superhero website"
+                Example: &quot;Use {fullSkillName || `${cleanAgentId}.&lt;name&gt;`} to build a superhero website&quot;
               </span>
             </div>
           )}
 
-          {mode === 'guided' ? (
-            <>
-              <div
-                className="p-3 rounded-lg text-xs leading-relaxed"
+          {/* Skill Name Input */}
+          <div>
+            <label className="text-[11px] text-gray-500 block mb-1">Trained Skill Name</label>
+            <div className="flex items-center min-w-0">
+              <span
+                className="px-2 py-2 rounded-l-md text-xs text-gray-500 font-mono flex-shrink-0"
                 style={{
-                  background: 'rgba(99, 102, 241, 0.08)',
-                  border: '1px solid rgba(99, 102, 241, 0.2)',
-                  color: '#a5b4fc',
+                  background: 'rgba(255, 255, 255, 0.05)',
+                  border: '1px solid rgba(255, 255, 255, 0.1)',
+                  borderRight: 'none',
                 }}
               >
-                <strong>Guided mode</strong> — do the step highlighted in blue. When you click the right button or land on the right page, I’ll mark it done automatically.
+                {cleanAgentId}.
+              </span>
+              <input
+                type="text"
+                value={skillSuffix}
+                onChange={e => handleSuffixChange(e.target.value)}
+                placeholder="create.playlist"
+                className="flex-1 min-w-0 px-2 py-2 rounded-r-md text-xs font-mono text-white outline-none"
+                style={{
+                  background: 'rgba(255, 255, 255, 0.05)',
+                  border: validationError
+                    ? '1px solid rgba(239, 68, 68, 0.5)'
+                    : '1px solid rgba(255, 255, 255, 0.15)',
+                }}
+              />
+              <span
+                className="px-2 py-2 rounded-r-md text-xs text-gray-500 font-mono flex-shrink-0"
+                style={{
+                  background: 'rgba(255, 255, 255, 0.05)',
+                  border: '1px solid rgba(255, 255, 255, 0.1)',
+                  borderLeft: 'none',
+                }}
+              >
+                .skill
+              </span>
+            </div>
+            {validationError && (
+              <div className="text-[10px] text-red-400 mt-1">{validationError}</div>
+            )}
+            {skillSuffix && !validationError && (
+              <div className="text-[10px] text-emerald-400 mt-1">
+                Will be saved as: <strong>{fullSkillName}</strong>
               </div>
-              <div className="flex gap-2">
-                <button
-                  onClick={() => {
-                    const idx = guidedCursor;
-                    if (idx < guidedSteps.length) {
-                      setGuidedSteps(prev => prev.map((s, i) => i === idx ? { ...s, learned: true } : s));
-                      setGuidedCursor(prev => Math.min(prev + 1, guidedSteps.length));
-                      // Notify main process that this step was manually learned
-                      ipcRenderer?.send?.('agents:guided-train-done', { agentId, stepIndex: idx });
-                    }
-                  }}
-                  disabled={guidedCursor >= guidedSteps.length}
-                  className="flex-1 py-2.5 rounded-lg text-sm font-semibold text-white transition-opacity"
-                  style={{
-                    background: guidedCursor < guidedSteps.length ? '#818cf8' : 'rgba(129, 140, 248, 0.15)',
-                    opacity: guidedCursor < guidedSteps.length ? 1 : 0.4,
-                    cursor: guidedCursor < guidedSteps.length ? 'pointer' : 'not-allowed',
-                  }}
-                >
-                  {guidedCursor >= guidedSteps.length ? 'All steps done' : `Mark step ${guidedCursor + 1} done`}
-                </button>
-                <button
-                  onClick={() => {
-                    const idx = guidedCursor;
-                    if (idx < guidedSteps.length) {
-                      setGuidedSteps(prev => prev.map((s, i) => i === idx ? { ...s, learned: true } : s));
-                      setGuidedCursor(prev => Math.min(prev + 1, guidedSteps.length));
-                      // Notify main process to skip the current step
-                      ipcRenderer?.send?.('agents:guided-train-skip', { agentId, stepIndex: idx });
-                    }
-                  }}
-                  disabled={guidedCursor >= guidedSteps.length}
-                  className="px-4 py-2.5 rounded-lg text-sm text-gray-400 transition-opacity"
-                  style={{
-                    border: '1px solid rgba(255, 255, 255, 0.1)',
-                    background: 'transparent',
-                    opacity: guidedCursor < guidedSteps.length ? 1 : 0.4,
-                    cursor: guidedCursor < guidedSteps.length ? 'pointer' : 'not-allowed',
-                  }}
-                >
-                  Skip
-                </button>
-              </div>
-            </>
-          ) : (
-            <>
-              {/* Skill Name Input */}
-              <div>
-                <label className="text-[11px] text-gray-500 block mb-1">Trained Skill Name</label>
-                <div className="flex items-center">
-                  <span
-                    className="px-2 py-2 rounded-l-md text-xs text-gray-500 font-mono"
-                    style={{
-                      background: 'rgba(255, 255, 255, 0.05)',
-                      border: '1px solid rgba(255, 255, 255, 0.1)',
-                      borderRight: 'none',
-                    }}
-                  >
-                    {cleanAgentId}.
-                  </span>
-                  <input
-                    type="text"
-                    value={skillSuffix}
-                    onChange={e => handleSuffixChange(e.target.value)}
-                    placeholder="editor"
-                    className="flex-1 px-2 py-2 rounded-r-md text-xs font-mono text-white outline-none"
-                    style={{
-                      background: 'rgba(255, 255, 255, 0.05)',
-                      border: validationError
-                        ? '1px solid rgba(239, 68, 68, 0.5)'
-                        : '1px solid rgba(255, 255, 255, 0.15)',
-                    }}
-                  />
-                </div>
-                {validationError && (
-                  <div className="text-[10px] text-red-400 mt-1">{validationError}</div>
-                )}
-                {skillSuffix && !validationError && (
-                  <div className="text-[10px] text-emerald-400 mt-1">
-                    Will be saved as: <strong>{fullSkillName}</strong>
-                  </div>
-                )}
-              </div>
+            )}
+          </div>
 
-              {/* Action Buttons */}
-              <div className="flex gap-2">
-                <button
-                  onClick={handleSave}
-                  disabled={saving || steps.length === 0 || !!validationError || !skillSuffix}
-                  className="flex-1 py-2.5 rounded-lg text-sm font-semibold text-white transition-opacity"
-                  style={{
-                    background: saving || steps.length === 0 || !!validationError || !skillSuffix
-                      ? 'rgba(16, 185, 129, 0.15)'
-                      : '#10b981',
-                    opacity: saving || steps.length === 0 || !!validationError || !skillSuffix ? 0.4 : 1,
-                    cursor: saving || steps.length === 0 ? 'not-allowed' : 'pointer',
-                  }}
-                >
-                  {saving ? 'Saving…' : 'Save Skill'}
-                </button>
-                <button
-                  onClick={handleReset}
-                  disabled={steps.length === 0}
-                  className="px-4 py-2.5 rounded-lg text-sm text-gray-400 transition-opacity"
-                  style={{
-                    border: '1px solid rgba(255, 255, 255, 0.1)',
-                    background: 'transparent',
-                    opacity: steps.length === 0 ? 0.4 : 1,
-                    cursor: steps.length === 0 ? 'not-allowed' : 'pointer',
-                  }}
-                >
-                  Reset
-                </button>
-              </div>
-            </>
-          )}
+          {/* Action Buttons */}
+          <div className="flex gap-2">
+            <button
+              onClick={handleSave}
+              disabled={saving || steps.length === 0 || !!validationError || !skillSuffix}
+              className="flex-1 py-2.5 rounded-lg text-sm font-semibold text-white transition-opacity"
+              style={{
+                background: saving || steps.length === 0 || !!validationError || !skillSuffix
+                  ? 'rgba(16, 185, 129, 0.15)'
+                  : '#10b981',
+                opacity: saving || steps.length === 0 || !!validationError || !skillSuffix ? 0.4 : 1,
+                cursor: saving || steps.length === 0 ? 'not-allowed' : 'pointer',
+              }}
+            >
+              {saving ? 'Saving…' : 'Save Skill'}
+            </button>
+            <button
+              onClick={handleReset}
+              disabled={steps.length === 0}
+              className="px-4 py-2.5 rounded-lg text-sm text-gray-400 transition-opacity"
+              style={{
+                border: '1px solid rgba(255, 255, 255, 0.1)',
+                background: 'transparent',
+                opacity: steps.length === 0 ? 0.4 : 1,
+                cursor: steps.length === 0 ? 'not-allowed' : 'pointer',
+              }}
+            >
+              Reset
+            </button>
+          </div>
         </div>
-      </div>
+      </RightSlideoutDrawer>
 
       <style>{`
         @keyframes pulse {
           0%, 100% { opacity: 1; }
           50% { opacity: 0.5; }
-        }
-        @keyframes slideInRight {
-          from { transform: translateX(100%); }
-          to { transform: translateX(0); }
         }
         @keyframes trainShimmer {
           0% { background-position: 200% 0; }
@@ -697,7 +595,7 @@ export function TrainingPanel({ agentId, hostname, onDone: _onDone, onCancel, mo
         }
       `}</style>
 
-      {/* Review Panel — shown when preview data arrives (multi-action split) */}
+      {/* Review Panel — shown when preview data arrives (LLM-organized skills) */}
       {reviewData && (
         <TrainingReviewPanel
           agentId={agentId}

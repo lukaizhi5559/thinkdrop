@@ -1,4 +1,5 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useEffect } from 'react';
+import { RightSlideoutDrawer } from './RightSlideoutDrawer';
 import {
   DndContext,
   closestCenter,
@@ -120,7 +121,7 @@ function SortableSkillCard({
     >
       {/* Header with drag handle */}
       <div
-        className="flex items-center gap-2 px-3 py-2 cursor-grab active:cursor-grabbing"
+        className="flex items-center gap-2 px-3 py-2 cursor-grab active:cursor-grabbing min-w-0"
         style={{ background: 'rgba(255, 255, 255, 0.05)', borderBottom: '1px solid rgba(255, 255, 255, 0.08)' }}
         {...attributes}
         {...listeners}
@@ -135,12 +136,12 @@ function SortableSkillCard({
             onBlur={handleNameSave}
             onKeyDown={e => { if (e.key === 'Enter') handleNameSave(); if (e.key === 'Escape') setEditingName(false); }}
             autoFocus
-            className="flex-1 px-2 py-1 rounded text-xs font-mono text-white outline-none"
+            className="flex-1 min-w-0 px-2 py-1 rounded text-xs font-mono text-white outline-none"
             style={{ background: 'rgba(255, 255, 255, 0.1)', border: '1px solid rgba(16, 185, 129, 0.5)' }}
           />
         ) : (
           <span
-            className="flex-1 text-xs font-mono text-emerald-400 cursor-text"
+            className="flex-1 min-w-0 text-xs font-mono text-emerald-400 cursor-text truncate"
             onClick={() => { setEditingName(true); setNameDraft(skill.name); }}
           >
             {skill.name}
@@ -161,14 +162,14 @@ function SortableSkillCard({
       {/* Waypoints */}
       <div className="px-3 pb-2 space-y-1">
         {skill.waypoints.map((wp, wi) => (
-          <div key={wi} className="flex items-start gap-2 text-[11px] font-mono">
-            <span className="text-gray-600 w-6 text-right">{wp.step}.</span>
-            <span className="text-blue-400 w-16 uppercase">{wp.type}</span>
-            <span className="text-gray-300 flex-1 break-all">
+          <div key={wi} className="flex items-start gap-2 text-[11px] font-mono min-w-0">
+            <span className="text-gray-600 w-6 text-right flex-shrink-0">{wp.step}.</span>
+            <span className="text-blue-400 w-16 uppercase flex-shrink-0">{wp.type}</span>
+            <span className="text-gray-300 flex-1 min-w-0 break-all">
               {wp.type === 'navigate' && (wp.url || '')}
               {wp.type === 'click' && (wp.elementText ? `"${wp.elementText}"` : wp.selector || '')}
               {wp.type === 'fill' && (
-                <span className="flex items-center gap-1 flex-wrap">
+                <span className="flex items-center gap-1 flex-wrap min-w-0">
                   <span className="text-gray-400">{wp.selector}</span>
                   <span className="text-gray-500">→</span>
                   {wp.paramRef ? (
@@ -264,13 +265,13 @@ function ParamRow({
   if (!editing) {
     return (
       <div
-        className="flex items-center gap-2 text-[11px] cursor-pointer hover:bg-white/5 rounded px-2 py-1"
+        className="flex items-center gap-2 text-[11px] cursor-pointer hover:bg-white/5 rounded px-2 py-1 min-w-0"
         onClick={() => { setEditing(true); setDraft(param); }}
       >
-        <span className="font-mono text-amber-400 w-32 truncate">{param.name}</span>
-        <span className="text-gray-400 flex-1 truncate">{param.description || '—'}</span>
+        <span className="font-mono text-amber-400 max-w-32 min-w-0 truncate">{param.name}</span>
+        <span className="text-gray-400 flex-1 min-w-0 truncate">{param.description || '—'}</span>
         <span
-          className="text-[9px] px-1.5 py-0.5 rounded font-bold"
+          className="text-[9px] px-1.5 py-0.5 rounded font-bold flex-shrink-0"
           style={{
             background: param.required ? 'rgba(239, 68, 68, 0.15)' : 'rgba(255, 255, 255, 0.05)',
             color: param.required ? '#ef4444' : '#6b7280',
@@ -280,7 +281,7 @@ function ParamRow({
         </span>
         <button
           onClick={(e) => { e.stopPropagation(); onDelete(); }}
-          className="text-red-400/50 hover:text-red-400 text-[10px]"
+          className="text-red-400/50 hover:text-red-400 text-[10px] flex-shrink-0"
         >
           ✕
         </button>
@@ -342,6 +343,11 @@ export function TrainingReviewPanel({ agentId: _agentId, previewData, onSave, on
   const [recipe, setRecipe] = useState<ReviewRecipe | null>(previewData.recipe || null);
   const [editingRecipeName, setEditingRecipeName] = useState(false);
   const [recipeNameDraft, setRecipeNameDraft] = useState(recipe?.name || '');
+  const [isOpen, setIsOpen] = useState(false);
+
+  useEffect(() => {
+    setIsOpen(true);
+  }, []);
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
@@ -513,31 +519,14 @@ export function TrainingReviewPanel({ agentId: _agentId, previewData, onSave, on
   };
 
   return (
-    <div
-      className="fixed top-0 right-0 h-full flex flex-col"
-      style={{
-        width: '480px',
-        background: 'rgba(28, 28, 30, 0.98)',
-        borderLeft: '1px solid rgba(255, 255, 255, 0.1)',
-        zIndex: 1000,
-      }}
+    <RightSlideoutDrawer
+      isOpen={isOpen}
+      onClose={onCancel}
+      width={520}
+      zIndex={60}
+      title="Review Trained Skills"
+      subtitle={`${skills.length} skill(s)${recipe ? ' + 1 recipe' : ''} • Adjust boundaries, params, and names`}
     >
-      {/* Header */}
-      <div className="flex items-center justify-between px-4 py-3" style={{ borderBottom: '1px solid rgba(255, 255, 255, 0.1)' }}>
-        <div>
-          <h2 className="text-sm font-semibold text-white">Review Trained Skills</h2>
-          <p className="text-[10px] text-gray-500 mt-0.5">
-            {skills.length} skill(s){recipe ? ` + 1 recipe` : ''} • Adjust boundaries, params, and names
-          </p>
-        </div>
-        <button
-          onClick={onCancel}
-          className="text-gray-400 hover:text-white text-sm px-2 py-1"
-        >
-          Cancel
-        </button>
-      </div>
-
       {/* Scrollable content */}
       <div className="flex-1 overflow-y-auto px-4 py-3 space-y-3">
         <DndContext
@@ -587,8 +576,8 @@ export function TrainingReviewPanel({ agentId: _agentId, previewData, onSave, on
             className="rounded-lg border p-3"
             style={{ borderColor: 'rgba(16, 185, 129, 0.3)', background: 'rgba(16, 185, 129, 0.05)' }}
           >
-            <div className="flex items-center gap-2 mb-2">
-              <span className="text-[10px] text-emerald-500/70 font-mono">RECIPE</span>
+            <div className="flex items-center gap-2 mb-2 min-w-0">
+              <span className="text-[10px] text-emerald-500/70 font-mono flex-shrink-0">RECIPE</span>
               {editingRecipeName ? (
                 <input
                   type="text"
@@ -597,12 +586,12 @@ export function TrainingReviewPanel({ agentId: _agentId, previewData, onSave, on
                   onBlur={handleRecipeNameSave}
                   onKeyDown={e => { if (e.key === 'Enter') handleRecipeNameSave(); if (e.key === 'Escape') setEditingRecipeName(false); }}
                   autoFocus
-                  className="flex-1 px-2 py-1 rounded text-xs font-mono text-white outline-none"
+                  className="flex-1 min-w-0 px-2 py-1 rounded text-xs font-mono text-white outline-none"
                   style={{ background: 'rgba(255, 255, 255, 0.1)', border: '1px solid rgba(16, 185, 129, 0.5)' }}
                 />
               ) : (
                 <span
-                  className="flex-1 text-xs font-mono text-emerald-400 cursor-text"
+                  className="flex-1 min-w-0 text-xs font-mono text-emerald-400 cursor-text truncate"
                   onClick={() => { setEditingRecipeName(true); setRecipeNameDraft(recipe.name); }}
                 >
                   {recipe.name}
@@ -661,6 +650,6 @@ export function TrainingReviewPanel({ agentId: _agentId, previewData, onSave, on
           Cancel
         </button>
       </div>
-    </div>
+    </RightSlideoutDrawer>
   );
 }

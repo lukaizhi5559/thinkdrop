@@ -2431,6 +2431,7 @@ app.whenReady().then(async () => {
         _resumePriorSynthesizedContent: item._resumePriorSynthesizedContent || '',
         sessionId: item.sessionId || null,
         userId: item.userId || 'default_user',
+        isAskUserAnswer: item.isAskUserAnswer || false,
       });
     },
     alertRestart: (items, countdownMs) => {
@@ -2477,7 +2478,7 @@ app.whenReady().then(async () => {
       return;
     }
 
-    const enqueueOpts = { selectedText, responseLanguage, sessionId: currentSessionId };
+    const enqueueOpts = { selectedText, responseLanguage, sessionId: currentSessionId, isAskUserAnswer };
     if (pendingPlanContext) {
       // Robust: skip plan correction mode if this is a different session OR if a new session was created
       const planSessionId = pendingPlanContext.sessionId;
@@ -3480,7 +3481,7 @@ app.whenReady().then(async () => {
   });
 
   // ─── StateGraph: Core execution — called by promptQueue serially ─────────
-  async function runPromptThroughStateGraph(prompt, { selectedText = '', sessionId = null, userId = 'default_user', responseLanguage = null, promptQueueId = null, _planFile = null, _forceNewPlan = false, _skillPlan = null, _skillPlanFile = null, _planCorrectionMode = false, _planCorrectionText = null, _basePlanFile = null, _skillPlanJson = null, _planCorrectionSourcePrompt = null, _resumeMultiIntent = false, _resumeIntentQueue = [], _resumeIntentResults = [], _resumeDataContext = {} } = {}) {
+  async function runPromptThroughStateGraph(prompt, { selectedText = '', sessionId = null, userId = 'default_user', responseLanguage = null, promptQueueId = null, _planFile = null, _forceNewPlan = false, _skillPlan = null, _skillPlanFile = null, _planCorrectionMode = false, _planCorrectionText = null, _basePlanFile = null, _skillPlanJson = null, _planCorrectionSourcePrompt = null, _resumeMultiIntent = false, _resumeIntentQueue = [], _resumeIntentResults = [], _resumeDataContext = {}, isAskUserAnswer = false } = {}) {
     const isPlanExecute = !!_planFile;
     console.log('🧠 [StateGraph] Processing prompt:', prompt.substring(0, 80), responseLanguage ? `(responseLanguage: ${responseLanguage})` : '', isPlanExecute ? `[plan:${require('path').basename(_planFile)}]` : '');
     _currentAutomationPrompt = prompt;
@@ -4062,26 +4063,12 @@ app.whenReady().then(async () => {
         const paused = pausedAutomationState;
         const userReply = prompt.trim().toLowerCase();
 
-        // ── Part A: TTL expiry ────────────────────────────────────────────────
-        // If the paused state is older than 90 seconds the user has clearly moved on.
-        // Skip any semantic check — it's always a fresh task.
-        const PAUSED_TTL_MS = 90_000;
-        const pausedAge = paused._pausedAt ? (Date.now() - paused._pausedAt) : Infinity;
-        const isExpired = pausedAge > PAUSED_TTL_MS;
-
-        // ── Part C: Semantic check via voice-service embedding classifier ─────
-        // Compare new prompt against the paused question text using cosine similarity.
-        // Falls back to regex heuristic if voice-service is unavailable.
-        // Scout select responses (provider names like "openai") must never be reclassified
-        // as fresh tasks — skip the semantic check entirely for _isScoutSelect pauses.
-        let isFreshPrompt = isExpired;
-
-        // ── Part B: Offered-option exact match ──────────────────────────────────
+        // ── Part B: Offered-option exact match (BEFORE expiry check) ───────────
         // When the paused question presented discrete choices and the user's reply
-        // matches one of them verbatim, it is ALWAYS a resume answer — never a fresh task.
-        // Skips the voice-service semantic check entirely to avoid false-positive fresh classification.
-        // e.g. recovery handler offered ["Set up access via browser", "Install Google API client"]
-        // and user replies "Install Google API client" — must be treated as a resume, not new command.
+        // matches one of them verbatim, it is ALWAYS a resume answer — never a fresh
+        // task, regardless of how much time has passed. The user clicked a button.
+        // This check runs BEFORE the TTL expiry check so that option clicks are never
+        // misclassified as fresh prompts when the pause is older than 90 seconds.
         // Options may be strings OR { label, value } objects (e.g. saveSkillOffer options).
         const _pausedOpts = paused.pendingQuestion?.options;
         const _optMatches = (opt) => {
@@ -4094,11 +4081,29 @@ app.whenReady().then(async () => {
           }
           return false;
         };
-        const _isOfferedOptionMatch = !isFreshPrompt &&
+        const _isOfferedOptionMatch =
           Array.isArray(_pausedOpts) && _pausedOpts.length > 0 &&
           _pausedOpts.some(_optMatches);
+
+        // ── Part A: TTL expiry ────────────────────────────────────────────────
+        // If the paused state is older than 90 seconds the user has clearly moved on.
+        // Skip any semantic check — it's always a fresh task.
+        // EXCEPTIONS: if the prompt exactly matches an offered option (user clicked a
+        // button) OR the UI flagged this as an ask_user answer, it's a resume answer
+        // regardless of age.
+        const PAUSED_TTL_MS = 90_000;
+        const pausedAge = paused._pausedAt ? (Date.now() - paused._pausedAt) : Infinity;
+        const isExpired = pausedAge > PAUSED_TTL_MS;
+
+        // ── Part C: Semantic check via voice-service embedding classifier ─────
+        // Compare new prompt against the paused question text using cosine similarity.
+        // Falls back to regex heuristic if voice-service is unavailable.
+        // Scout select responses (provider names like "openai") must never be reclassified
+        // as fresh tasks — skip the semantic check entirely for _isScoutSelect pauses.
+        let isFreshPrompt = isExpired && !_isOfferedOptionMatch && !isAskUserAnswer;
+
         if (_isOfferedOptionMatch) {
-          console.log(`[StateGraph] ASK_USER resume: prompt exactly matches offered option "${prompt.trim()}" — resuming (skipping semantic check)`);
+          console.log(`[StateGraph] ASK_USER resume: prompt exactly matches offered option "${prompt.trim()}" — resuming (skipping expiry + semantic check)`);
         }
 
         if (!isFreshPrompt && !_isOfferedOptionMatch && !paused.pendingQuestion?._isScoutSelect && !paused.pendingQuestion?._isAgentAskUser) {
@@ -4665,8 +4670,11 @@ app.whenReady().then(async () => {
             // "Try again" — re-run the same agent step with the original task (no Q&A).
             const _wantsRetry = chosenOption === 'try_again' || /^try\s+again/i.test(chosenOption);
             // "Start guided training" — planner gate offered guided plan-first training.
-            // Accept either the option value 'guided_train' or the label text.
-            const _wantsGuidedTrain = chosenOption === 'guided_train' || /^start\s+guided\s+training$/i.test((chosenOption || '').trim());
+            // Accept the option value 'guided_train', the label text, or common variants.
+            const _wantsGuidedTrain = chosenOption === 'guided_train'
+              || /^start\s+guided\s+training$/i.test((chosenOption || '').trim())
+              || /^guided[_\-]?train(ing)?$/i.test((chosenOption || '').trim());
+            console.log(`[StateGraph] ASK_USER resume: training handoff — chosenOption="${chosenOption}" _wantsGuidedTrain=${_wantsGuidedTrain} _wantsTrain=${_wantsTrain} _handoffAgentId=${_handoffAgentId || 'null'}`);
 
             if (_wantsRetry && paused.pendingQuestion?._isAgentAskUser) {
               // Re-run the SAME agent step with the original task — no Q&A injection.
@@ -7486,44 +7494,28 @@ app.whenReady().then(async () => {
   // ── Phase 4: Train preview / review save / review cancel ────────────────
 
   // Train preview — user clicks Save, backend auto-splits and returns preview
-  ipcMain.on('agents:train-preview', async (_event, { agentId, skillName }) => {
+  ipcMain.on('agents:train-preview', async (_event, { agentId, skillName, guidedPlan }) => {
     try {
-      console.log(`[Agents] Preview split for "${skillName}" (${agentId})`);
+      console.log(`[Agents] agents:train-preview received: "${skillName}" for ${agentId}${guidedPlan ? ' [guided]' : ''}`);
       const trainerAgent = require('../../mcp-services/command-service/src/skills/trainer.agent.cjs');
-      const result = await trainerAgent.actionPreviewSplit({ agentId, skillName });
+      const result = await trainerAgent.actionPreviewSplit({ agentId, skillName, guidedPlan });
       if (result.ok) {
-        if (result.singleAction) {
-          // Single action — save directly, no review needed
-          console.log(`[Agents] Single action detected, saving directly`);
-          const saveResult = await trainerAgent.actionSaveSkillsAndRecipe({
+        // Always send preview to UI — user reviews and saves from the panel
+        console.log(`[Agents] Preview ready: ${result.skills.length} skill(s)${result.singleAction ? ' (single-action)' : ' + recipe'} — sending to UI for review`);
+        if (unifiedWindow && !unifiedWindow.isDestroyed()) {
+          safeSend(unifiedWindow, 'agents:train-preview-result', {
             agentId,
-            skills: result.skills,
-            recipe: null,
+            preview: { skills: result.skills, recipe: result.recipe, singleAction: result.singleAction },
           });
-          if (saveResult.ok) {
-            ipcMain.emit('agents:list');
-            if (unifiedWindow && !unifiedWindow.isDestroyed()) {
-              safeSend(unifiedWindow, 'agents:train-progress', {
-                agentId, type: 'training:saved',
-                skillName: saveResult.savedSkills[0]?.name,
-              });
-            }
-          } else {
-            if (unifiedWindow && !unifiedWindow.isDestroyed()) {
-              safeSend(unifiedWindow, 'agents:train-review-error', { agentId, error: saveResult.error });
-            }
-          }
-        } else {
-          // Multi-action — send preview to UI for review
-          console.log(`[Agents] Multi-action split: ${result.skills.length} skills, sending preview to UI`);
-          if (unifiedWindow && !unifiedWindow.isDestroyed()) {
-            safeSend(unifiedWindow, 'agents:train-preview-result', {
-              agentId,
-              preview: { skills: result.skills, recipe: result.recipe, singleAction: false },
-            });
-          }
+        }
+      } else if (result.rejected) {
+        // LLM could not understand the recorded actions
+        console.log(`[Agents] Preview rejected: ${result.reason}`);
+        if (unifiedWindow && !unifiedWindow.isDestroyed()) {
+          safeSend(unifiedWindow, 'agents:train-review-error', { agentId, error: result.reason, rejected: true });
         }
       } else {
+        console.error(`[Agents] Preview failed: ${result.error}`);
         if (unifiedWindow && !unifiedWindow.isDestroyed()) {
           safeSend(unifiedWindow, 'agents:train-review-error', { agentId, error: result.error });
         }
@@ -7575,32 +7567,8 @@ app.whenReady().then(async () => {
     }
   });
 
-  // Guided training step done/skip — user manually advances the step because
-  // auto-detection missed it, or because they want to skip it.
-  ipcMain.on('agents:guided-train-done', async (_event, { agentId }) => {
-    try {
-      const trainerAgent = require('../../mcp-services/command-service/src/skills/trainer.agent.cjs');
-      const result = trainerAgent.actionGuidedSkipStep({ agentId });
-      if (!result?.ok) {
-        console.warn(`[Agents] guided-train-done: ${result?.error || 'failed'}`);
-      }
-    } catch (e) {
-      console.error('[Agents] guided-train-done failed:', e.message);
-    }
-  });
-  ipcMain.on('agents:guided-train-skip', async (_event, { agentId }) => {
-    try {
-      const trainerAgent = require('../../mcp-services/command-service/src/skills/trainer.agent.cjs');
-      const result = trainerAgent.actionGuidedSkipStep({ agentId });
-      if (!result?.ok) {
-        console.warn(`[Agents] guided-train-skip: ${result?.error || 'failed'}`);
-      }
-    } catch (e) {
-      console.error('[Agents] guided-train-skip failed:', e.message);
-    }
-  });
-
   // Guided training cancel — same as train-cancel (reuses actionCancelTraining)
+  // Kept for backwards compat with UI that may still send this channel.
   ipcMain.on('agents:guided-train-cancel', async (_event, { agentId }) => {
     try {
       const trainerAgent = require('../../mcp-services/command-service/src/skills/trainer.agent.cjs');
@@ -7688,6 +7656,23 @@ app.whenReady().then(async () => {
         }
       }
 
+      // Trainer recipe fallback: agentId/<skillName>.skill.json or <skillName>.json
+      let trainedRecipePath = null;
+      if (!rawSkillName && fsMod.existsSync(skillsBaseDir)) {
+        const agentDir = agentId.replace(/\.agent$/, '');
+        const recipePath = pathMod.join(skillsBaseDir, agentDir, `${skillName}.json`);
+        const legacyRecipePath = pathMod.join(skillsBaseDir, agentDir, `${skillName}.skill.json`);
+        if (fsMod.existsSync(recipePath)) {
+          trainedRecipePath = recipePath;
+          rawSkillName = skillName;
+          sourceDomain = agentDir;
+        } else if (fsMod.existsSync(legacyRecipePath)) {
+          trainedRecipePath = legacyRecipePath;
+          rawSkillName = skillName;
+          sourceDomain = agentDir;
+        }
+      }
+
       if (!rawSkillName) {
         console.error(`[Agents] Cannot test "${skillName}": skill not found on disk`);
         if (unifiedWindow && !unifiedWindow.isDestroyed()) {
@@ -7714,6 +7699,61 @@ app.whenReady().then(async () => {
         console.error(`[Agents] Cannot test "${skillName}": no start_url for agent ${agentId}`);
         if (unifiedWindow && !unifiedWindow.isDestroyed()) {
           unifiedWindow.webContents.send('agents:skill-test-update', { agentId, skillName, status: 'error', errorReason: 'no_start_url' });
+        }
+        return;
+      }
+
+      // ── Trained recipe path: run the waypoint recipe via external.skill ─────────
+      if (trainedRecipePath) {
+        if (unifiedWindow && !unifiedWindow.isDestroyed()) {
+          unifiedWindow.webContents.send('agents:skill-test-update', { agentId, skillName, status: 'testing' });
+        }
+        const BROWSER_ACT_PORT_DIRECT = parseInt(process.env.SERVICE_PORT || process.env.COMMAND_SERVICE_PORT || '3007', 10);
+        const sessionIdDirect = `${agentId.replace(/[^a-z0-9_]/gi, '_')}_agent`;
+
+        // Build test args from recipe params
+        let recipeArgs = {};
+        try {
+          const recipe = JSON.parse(fsMod.readFileSync(trainedRecipePath, 'utf8'));
+          for (const p of recipe.params || []) {
+            recipeArgs[p.name] = p.example || 'Test';
+          }
+        } catch (_) {}
+
+        console.log(`[Agents] Running trained recipe test: "${skillName}" on ${startUrl}`);
+        const result = await new Promise((resolve) => {
+          const body = JSON.stringify({
+            payload: {
+              skill: 'external.skill',
+              args: {
+                name: skillName,
+                args: { ...recipeArgs, sessionId: sessionIdDirect },
+                timeoutMs: 120000,
+              },
+            },
+          });
+          const req = httpMod.request({
+            hostname: '127.0.0.1', port: BROWSER_ACT_PORT_DIRECT, path: '/command.automate', method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) },
+            timeout: 120000,
+          }, res => {
+            let raw = ''; res.on('data', c => { raw += c; });
+            res.on('end', () => { try { resolve(JSON.parse(raw)); } catch (_) { resolve({}); } });
+          });
+          req.on('error', (e) => { console.warn(`[Agents] external.skill test error: ${e.message}`); resolve({}); });
+          req.on('timeout', () => { req.destroy(); resolve({}); });
+          req.write(body); req.end();
+        });
+
+        const testStatus = (result && result.ok) ? 'done' : 'error';
+        console.log(`[Agents] Trained recipe test complete: "${skillName}" → ${testStatus}`);
+        if (unifiedWindow && !unifiedWindow.isDestroyed()) {
+          unifiedWindow.webContents.send('agents:skill-test-update', {
+            agentId,
+            skillName,
+            status: testStatus,
+            error: result?.error || null,
+          });
         }
         return;
       }
