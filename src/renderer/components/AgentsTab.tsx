@@ -131,13 +131,15 @@ function CompactSkillRow({
   onDelete: (agentId: string, skillName: string, skillPath?: string) => void;
   isTesting?: boolean;
   isRefreshing?: boolean;
-  errorInfo?: { reason: string } | null;
+  errorInfo?: { reason: string; errorText?: string } | null;
 }) {
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [choosing, setChoosing] = useState(false);
   const [showErrorTooltip, setShowErrorTooltip] = useState(false);
   const isDraft = skill.status === 'draft';
   const hasError = !!errorInfo;
+  const isCompositeRecipe = skill.type === 'composite_recipe' || skill.name.endsWith('.recipe');
+  const isTrainedSkill = skill.type === 'trained_recipe' || skill.status === 'trained';
 
   return (
     <div style={{
@@ -145,22 +147,37 @@ function CompactSkillRow({
       alignItems: 'center',
       padding: '4px 6px',
       backgroundColor: hasError ? 'rgba(239,68,68,0.04)' : 'rgba(255,255,255,0.02)',
-      border: `1px solid ${hasError ? 'rgba(239,68,68,0.18)' : 'rgba(255,255,255,0.05)'}`,
+      border: `1px solid ${hasError ? 'rgba(239,68,68,0.18)' : isCompositeRecipe ? 'rgba(16,185,129,0.15)' : 'rgba(255,255,255,0.05)'}`,
       borderRadius: 4,
       marginBottom: 3,
       gap: 6,
     }}>
-      <div style={{
-        width: 5,
-        height: 5,
-        borderRadius: '50%',
-        flexShrink: 0,
-        backgroundColor: hasError ? '#ef4444' : isDraft ? '#f59e0b' : '#10b981',
-      }} />
+      {/* Icon: chain for composite recipes, dot for skills */}
+      {isCompositeRecipe ? (
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#10b981" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
+          <title>{`Recipe chaining ${skill.chainedSkills?.length || 0} skills`}</title>
+          <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/>
+          <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>
+        </svg>
+      ) : (
+        <div style={{
+          width: 5,
+          height: 5,
+          borderRadius: '50%',
+          flexShrink: 0,
+          backgroundColor: hasError ? '#ef4444' : isDraft ? '#f59e0b' : isTrainedSkill ? '#818cf8' : '#10b981',
+        }} />
+      )}
 
       <div style={{ flex: 1, minWidth: 0 }}>
-        <div style={{ fontSize: '0.65rem', color: '#9ca3af', fontFamily: 'ui-monospace,monospace', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+        <div
+          style={{ fontSize: '0.65rem', color: isCompositeRecipe ? '#6ee7b7' : '#9ca3af', fontFamily: 'ui-monospace,monospace', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+          title={isCompositeRecipe ? `Recipe chaining ${skill.chainedSkills?.length || 0} skill(s): ${skill.chainedSkills?.join(' → ') || ''}` : skill.description || skill.name}
+        >
           {skill.name}
+          {isCompositeRecipe && skill.chainedSkills && (
+            <span style={{ fontSize: '0.55rem', color: '#34d399', marginLeft: 4 }}>({skill.chainedSkills.length} skills)</span>
+          )}
         </div>
       </div>
 
@@ -169,7 +186,7 @@ function CompactSkillRow({
         <div style={{ position: 'relative', flexShrink: 0 }}>
           <button
             onClick={() => setShowErrorTooltip(v => !v)}
-            title={SKILL_ERROR_MESSAGES[errorInfo!.reason] || 'Test failed'}
+            title={errorInfo!.errorText || SKILL_ERROR_MESSAGES[errorInfo!.reason] || 'Test failed'}
             style={{ padding: '1px 4px', background: 'rgba(239,68,68,0.12)', border: '1px solid rgba(239,68,68,0.35)', borderRadius: 3, cursor: 'pointer', color: '#f87171', display: 'flex', alignItems: 'center', gap: 2 }}
           >
             <svg width="8" height="8" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2a10 10 0 1 0 0 20A10 10 0 0 0 12 2zm1 15h-2v-2h2v2zm0-4h-2V7h2v6z"/></svg>
@@ -178,12 +195,12 @@ function CompactSkillRow({
             <div style={{
               position: 'absolute', right: 0, top: '110%', zIndex: 99,
               background: '#1f2937', border: '1px solid rgba(239,68,68,0.3)',
-              borderRadius: 5, padding: '6px 8px', width: 170,
+              borderRadius: 5, padding: '6px 8px', width: 220,
               boxShadow: '0 4px 12px rgba(0,0,0,0.5)',
             }}>
               <div style={{ fontSize: '0.6rem', color: '#f87171', marginBottom: 4, fontWeight: 600 }}>⚠ Test failed</div>
-              <div style={{ fontSize: '0.59rem', color: '#9ca3af', marginBottom: 6, lineHeight: 1.4 }}>
-                {SKILL_ERROR_MESSAGES[errorInfo!.reason] || 'Unknown error'}
+              <div style={{ fontSize: '0.59rem', color: '#9ca3af', marginBottom: 6, lineHeight: 1.4, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
+                {errorInfo!.errorText || SKILL_ERROR_MESSAGES[errorInfo!.reason] || 'Unknown error'}
               </div>
               {skill.skillPath && (
                 <button
@@ -306,7 +323,7 @@ function AgentCard({
   onRefreshSkill: (agentId: string, skillName: string, skillPath: string) => void;
   testingSkills: Record<string, boolean>;
   refreshingSkills: Record<string, boolean>;
-  failedSkills: Record<string, { reason: string; ts: number }>;
+  failedSkills: Record<string, { reason: string; ts: number; errorText?: string }>;
   expanded: boolean;
   onToggle: () => void;
   highlighted?: boolean;
@@ -1253,7 +1270,7 @@ export function AgentsTab({ items, onRefresh }: AgentsTabProps) {
   // refreshingSkills: key = "agentId::skillName" → true while refresh/rescan is running
   const [refreshingSkills, setRefreshingSkills] = useState<Record<string, boolean>>({});
   // failedSkills: key = "agentId::skillName" → { reason, ts } — auto-clears after 30s
-  const [failedSkills, setFailedSkills] = useState<Record<string, { reason: string; ts: number }>>({});
+  const [failedSkills, setFailedSkills] = useState<Record<string, { reason: string; ts: number; errorText?: string }>>({});
 
   // Subtab state: 'browser' | 'cli' | 'app'
   const [activeSubtab, setActiveSubtab] = useState<'browser' | 'cli' | 'app'>('browser');
@@ -1465,7 +1482,7 @@ export function AgentsTab({ items, onRefresh }: AgentsTabProps) {
   // Listen for skill test status updates
   useEffect(() => {
     if (!ipcRenderer) return;
-    const handleTestUpdate = (data: { agentId: string; skillName: string; status: 'testing' | 'done' | 'error'; errorReason?: string }) => {
+    const handleTestUpdate = (data: { agentId: string; skillName: string; status: 'testing' | 'done' | 'error'; errorReason?: string; error?: string }) => {
       const key = `${data.agentId}::${data.skillName}`;
       setTestingSkills(prev => {
         if (data.status === 'testing') return { ...prev, [key]: true };
@@ -1475,7 +1492,8 @@ export function AgentsTab({ items, onRefresh }: AgentsTabProps) {
       });
       if (data.status === 'error') {
         const reason = data.errorReason || 'unknown';
-        setFailedSkills(prev => ({ ...prev, [key]: { reason, ts: Date.now() } }));
+        const errorText = data.error || '';
+        setFailedSkills(prev => ({ ...prev, [key]: { reason, ts: Date.now(), errorText } }));
         setTimeout(() => {
           setFailedSkills(prev => {
             const next = { ...prev };

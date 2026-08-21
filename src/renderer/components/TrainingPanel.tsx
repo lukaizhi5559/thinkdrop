@@ -14,7 +14,7 @@ interface TrainingPanelProps {
 }
 
 interface RecordedStep {
-  id: number;
+  id: number | string;
   type: 'url' | 'click' | 'fill' | 'select' | 'submit' | 'check' | 'drag' | 'scroll' | 'extract';
   target: string;
   selector?: string;
@@ -112,7 +112,7 @@ export function TrainingPanel({ agentId, hostname, onDone: _onDone, onCancel, mo
       if (data.type === 'training:step-recorded') {
         setIsLaunching(false);
         setSteps(prev => [...prev, {
-          id: Date.now(),
+          id: `step_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
           type: data.stepType || 'click',
           target: data.target || '',
           selector: data.selector,
@@ -241,6 +241,8 @@ export function TrainingPanel({ agentId, hostname, onDone: _onDone, onCancel, mo
     setIsLaunching(false);
     setRejectMessage(null);
     setValidationError(null);
+    // Clear backend raw events too so re-recording starts fresh
+    ipcRenderer?.send('agents:train-clear-events', { agentId });
   };
 
   const handleSuffixChange = (val: string) => {
@@ -610,8 +612,12 @@ export function TrainingPanel({ agentId, hostname, onDone: _onDone, onCancel, mo
             });
           }}
           onCancel={() => {
-            ipcRenderer?.send('agents:train-review-cancel', { agentId });
+            // Do NOT send agents:train-review-cancel here — that kills the training
+            // session and prevents re-triggering the preview. Just hide the review
+            // panel so the user returns to the recording screen with the session alive.
             setReviewData(null);
+            setSaving(false);
+            setSavingMessage('');
           }}
         />
       )}

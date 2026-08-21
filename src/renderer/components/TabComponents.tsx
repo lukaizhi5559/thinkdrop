@@ -79,11 +79,14 @@ export interface SkillItem {
 
 export interface AgentSkill {
   name: string;           // e.g., create_track
-  status: 'draft' | 'published';
+  status: 'draft' | 'published' | 'trained' | 'capability';
   description?: string;
   parameters?: string[];  // parameter names for the skill
   testable?: boolean;
   skillPath?: string;     // path to skill directory for editing
+  type?: 'trained_recipe' | 'composite_recipe';  // distinguishes atomic skills from chained recipes
+  chainedSkills?: string[];  // for composite recipes: list of skill names in the chain
+  waypointCount?: number;    // for trained recipes: number of waypoints
 }
 
 export interface AgentItem {

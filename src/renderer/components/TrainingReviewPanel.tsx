@@ -50,7 +50,9 @@ interface ReviewSkill {
   description: string;
   eventStart: number;
   eventEnd: number;
-  waypoints: WaypointPreview[];
+  waypoints?: WaypointPreview[];
+  instructions?: string;
+  execType?: string;
   params: ParamSpec[];
   startUrl?: string;
   targetUrl?: string;
@@ -159,56 +161,74 @@ function SortableSkillCard({
       {/* Description */}
       <div className="px-3 py-2 text-[11px] text-gray-400 italic">{skill.description}</div>
 
-      {/* Waypoints */}
-      <div className="px-3 pb-2 space-y-1">
-        {skill.waypoints.map((wp, wi) => (
-          <div key={wi} className="flex items-start gap-2 text-[11px] font-mono min-w-0">
-            <span className="text-gray-600 w-6 text-right flex-shrink-0">{wp.step}.</span>
-            <span className="text-blue-400 w-16 uppercase flex-shrink-0">{wp.type}</span>
-            <span className="text-gray-300 flex-1 min-w-0 break-all">
-              {wp.type === 'navigate' && (wp.url || '')}
-              {wp.type === 'click' && (wp.elementText ? `"${wp.elementText}"` : wp.selector || '')}
-              {wp.type === 'fill' && (
-                <span className="flex items-center gap-1 flex-wrap min-w-0">
-                  <span className="text-gray-400">{wp.selector}</span>
-                  <span className="text-gray-500">→</span>
-                  {wp.paramRef ? (
-                    <span className="text-amber-400 font-semibold">{`{{${wp.paramRef}}}`}</span>
-                  ) : (
-                    <span className="text-gray-300">"{(wp.value || '').substring(0, 40)}"</span>
-                  )}
-                  <button
-                    onClick={() => onToggleParam(skill.id, wp.step)}
-                    className="ml-1 px-1.5 py-0.5 rounded text-[9px] font-bold transition-colors"
-                    style={{
-                      background: wp.paramRef ? 'rgba(245, 158, 11, 0.2)' : 'rgba(255, 255, 255, 0.05)',
-                      color: wp.paramRef ? '#f59e0b' : '#6b7280',
-                      border: wp.paramRef ? '1px solid rgba(245, 158, 11, 0.4)' : '1px solid rgba(255, 255, 255, 0.1)',
-                    }}
-                  >
-                    {wp.paramRef ? 'PARAM' : 'STATIC'}
-                  </button>
-                </span>
-              )}
-              {wp.type === 'paste' && (
-                <span>
-                  {wp.selector} → {wp.paramRef ? `{{${wp.paramRef}}}` : `"${(wp.text || '').substring(0, 40)}"`}
-                </span>
-              )}
-              {wp.type === 'select' && (
-                <span>
-                  {wp.selector} → {wp.paramRef ? `{{${wp.paramRef}}}` : `"${wp.value || ''}"`}
-                </span>
-              )}
-              {wp.type === 'submit' && (wp.selector || '')}
-              {wp.type === 'keycombo' && (wp.key || 'Enter')}
-              {wp.type === 'check' && (wp.label || wp.selector || '')}
-              {wp.type === 'hover' && (wp.selector || '')}
-              {wp.type === 'dblclick' && (wp.elementText || wp.selector || '')}
-            </span>
+      {/* Instructions (agent-based skills) or Waypoints (legacy) */}
+      {skill.execType === 'agent' || (skill.instructions && (skill.waypoints || []).length === 0) ? (
+        <div className="px-3 pb-2 space-y-1">
+          <div className="text-[10px] text-gray-500 uppercase tracking-wider mb-1">Instructions</div>
+          <textarea
+            value={skill.instructions || ''}
+            onChange={e => onUpdateSkill(skill.id, { instructions: e.target.value })}
+            rows={6}
+            className="w-full px-2 py-1.5 rounded text-[11px] font-mono text-gray-200 outline-none resize-y"
+            style={{ background: 'rgba(255, 255, 255, 0.05)', border: '1px solid rgba(255, 255, 255, 0.1)' }}
+            placeholder="Step-by-step instructions for the AI agent..."
+          />
+          <div className="text-[10px] text-gray-600">
+            Use <code className="text-amber-400">{'{{param_name}}'}</code> placeholders for parameterized values.
+            The agent will read the live DOM and find elements by intent.
           </div>
-        ))}
-      </div>
+        </div>
+      ) : (
+        <div className="px-3 pb-2 space-y-1">
+          {(skill.waypoints || []).map((wp, wi) => (
+            <div key={wi} className="flex items-start gap-2 text-[11px] font-mono min-w-0">
+              <span className="text-gray-600 w-6 text-right flex-shrink-0">{wp.step}.</span>
+              <span className="text-blue-400 w-16 uppercase flex-shrink-0">{wp.type}</span>
+              <span className="text-gray-300 flex-1 min-w-0 break-all">
+                {wp.type === 'navigate' && (wp.url || '')}
+                {wp.type === 'click' && (wp.elementText ? `"${wp.elementText}"` : wp.selector || '')}
+                {wp.type === 'fill' && (
+                  <span className="flex items-center gap-1 flex-wrap min-w-0">
+                    <span className="text-gray-400">{wp.selector}</span>
+                    <span className="text-gray-500">→</span>
+                    {wp.paramRef ? (
+                      <span className="text-amber-400 font-semibold">{`{{${wp.paramRef}}}`}</span>
+                    ) : (
+                      <span className="text-gray-300">"{(wp.value || '').substring(0, 40)}"</span>
+                    )}
+                    <button
+                      onClick={() => onToggleParam(skill.id, wp.step)}
+                      className="ml-1 px-1.5 py-0.5 rounded text-[9px] font-bold transition-colors"
+                      style={{
+                        background: wp.paramRef ? 'rgba(245, 158, 11, 0.2)' : 'rgba(255, 255, 255, 0.05)',
+                        color: wp.paramRef ? '#f59e0b' : '#6b7280',
+                        border: wp.paramRef ? '1px solid rgba(245, 158, 11, 0.4)' : '1px solid rgba(255, 255, 255, 0.1)',
+                      }}
+                    >
+                      {wp.paramRef ? 'PARAM' : 'STATIC'}
+                    </button>
+                  </span>
+                )}
+                {wp.type === 'paste' && (
+                  <span>
+                    {wp.selector} → {wp.paramRef ? `{{${wp.paramRef}}}` : `"${(wp.text || '').substring(0, 40)}"`}
+                  </span>
+                )}
+                {wp.type === 'select' && (
+                  <span>
+                    {wp.selector} → {wp.paramRef ? `{{${wp.paramRef}}}` : `"${wp.value || ''}"`}
+                  </span>
+                )}
+                {wp.type === 'submit' && (wp.selector || '')}
+                {wp.type === 'keycombo' && (wp.key || 'Enter')}
+                {wp.type === 'check' && (wp.label || wp.selector || '')}
+                {wp.type === 'hover' && (wp.selector || '')}
+                {wp.type === 'dblclick' && (wp.elementText || wp.selector || '')}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
 
       {/* Params section */}
       <div className="px-3 pb-3 pt-2" style={{ borderTop: '1px solid rgba(255, 255, 255, 0.05)' }}>
@@ -221,11 +241,11 @@ function SortableSkillCard({
             + Add param
           </button>
         </div>
-        {skill.params.length === 0 ? (
+        {(skill.params || []).length === 0 ? (
           <div className="text-[10px] text-gray-600 italic">No params (all static values)</div>
         ) : (
           <div className="space-y-1">
-            {skill.params.map((param, pi) => (
+            {(skill.params || []).map((param, pi) => (
               <ParamRow
                 key={pi}
                 param={param}
@@ -291,16 +311,19 @@ function ParamRow({
 
   return (
     <div className="flex flex-col gap-1 px-2 py-1.5 rounded" style={{ background: 'rgba(255, 255, 255, 0.05)' }}>
-      <div className="flex gap-1">
-        <input
-          type="text"
-          value={draft.name}
-          onChange={e => setDraft({ ...draft, name: e.target.value })}
-          className="flex-1 px-2 py-1 rounded text-[11px] font-mono text-white outline-none"
-          style={{ background: 'rgba(255, 255, 255, 0.1)', border: '1px solid rgba(245, 158, 11, 0.4)' }}
-          placeholder="param_name"
-        />
-        <label className="flex items-center gap-1 text-[10px] text-gray-400">
+      <div className="flex gap-1 items-end">
+        <div className="flex-1 min-w-0">
+          <span className="text-[9px] text-gray-500 block mb-0.5">Name</span>
+          <input
+            type="text"
+            value={draft.name}
+            onChange={e => setDraft({ ...draft, name: e.target.value })}
+            className="w-full px-2 py-1 rounded text-[11px] font-mono text-white outline-none"
+            style={{ background: 'rgba(255, 255, 255, 0.1)', border: '1px solid rgba(245, 158, 11, 0.4)' }}
+            placeholder="param_name (no spaces)"
+          />
+        </div>
+        <label className="flex items-center gap-1 text-[10px] text-gray-400 pb-1">
           <input
             type="checkbox"
             checked={draft.required}
@@ -309,14 +332,17 @@ function ParamRow({
           req
         </label>
       </div>
-      <input
-        type="text"
-        value={draft.description}
-        onChange={e => setDraft({ ...draft, description: e.target.value })}
-        className="px-2 py-1 rounded text-[11px] text-gray-300 outline-none"
-        style={{ background: 'rgba(255, 255, 255, 0.05)', border: '1px solid rgba(255, 255, 255, 0.1)' }}
-        placeholder="Description"
-      />
+      <div>
+        <span className="text-[9px] text-gray-500 block mb-0.5">Description</span>
+        <input
+          type="text"
+          value={draft.description}
+          onChange={e => setDraft({ ...draft, description: e.target.value })}
+          className="w-full px-2 py-1 rounded text-[11px] text-gray-300 outline-none"
+          style={{ background: 'rgba(255, 255, 255, 0.05)', border: '1px solid rgba(255, 255, 255, 0.1)' }}
+          placeholder="What does this value represent?"
+        />
+      </div>
       <div className="flex gap-1">
         <button
           onClick={handleSave}
@@ -338,16 +364,105 @@ function ParamRow({
 }
 
 // ── Main component ───────────────────────────────────────────────────────────
-export function TrainingReviewPanel({ agentId: _agentId, previewData, onSave, onCancel }: TrainingReviewPanelProps) {
+export function TrainingReviewPanel({ agentId, previewData, onSave, onCancel }: TrainingReviewPanelProps) {
   const [skills, setSkills] = useState<ReviewSkill[]>(previewData.skills || []);
   const [recipe, setRecipe] = useState<ReviewRecipe | null>(previewData.recipe || null);
   const [editingRecipeName, setEditingRecipeName] = useState(false);
   const [recipeNameDraft, setRecipeNameDraft] = useState(recipe?.name || '');
   const [isOpen, setIsOpen] = useState(false);
+  const [isPreviewing, setIsPreviewing] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
+  const [previewResult, setPreviewResult] = useState<{ ok: boolean; message: string } | null>(null);
+  const [showAddSkillDropdown, setShowAddSkillDropdown] = useState(false);
+  const [existingSkills, setExistingSkills] = useState<any[]>([]);
+  const [loadingExistingSkills, setLoadingExistingSkills] = useState(false);
+  const ipcRenderer = (window as any).electron?.ipcRenderer;
 
   useEffect(() => {
     setIsOpen(true);
   }, []);
+
+  // Listen for preview-run results
+  useEffect(() => {
+    if (!ipcRenderer) return;
+    const handlePreviewRunResult = (data: any) => {
+      if (data?.agentId !== agentId) return;
+      setIsPreviewing(false);
+      if (data.ok) {
+        setPreviewResult({ ok: true, message: 'Preview completed successfully!' });
+      } else {
+        setPreviewResult({ ok: false, message: data.error || 'Preview failed' });
+      }
+    };
+    ipcRenderer.on('agents:train-preview-run-result', handlePreviewRunResult);
+    return () => { ipcRenderer.removeListener('agents:train-preview-run-result', handlePreviewRunResult); };
+  }, [agentId, ipcRenderer]);
+
+  // 60s safety timeout: if no preview-run result arrives, un-stick the button.
+  useEffect(() => {
+    if (!isPreviewing) return;
+    const t = setTimeout(() => {
+      setIsPreviewing(false);
+      setPreviewResult({
+        ok: false,
+        message: 'Preview timed out. If you just updated the app, restart it and try again — the new preview handler needs a restart to take effect.',
+      });
+    }, 60000);
+    return () => clearTimeout(t);
+  }, [isPreviewing]);
+
+  // Listen for trained-skills-list (response to agents:list-trained-skills)
+  useEffect(() => {
+    if (!ipcRenderer) return;
+    const handleTrainedSkillsList = (data: any) => {
+      if (data?.agentId !== agentId) return;
+      setLoadingExistingSkills(false);
+      setExistingSkills(data.skills || []);
+    };
+    ipcRenderer.on('agents:trained-skills-list', handleTrainedSkillsList);
+    return () => { ipcRenderer.removeListener('agents:trained-skills-list', handleTrainedSkillsList); };
+  }, [agentId, ipcRenderer]);
+
+  const handleAddExistingSkillClick = () => {
+    if (showAddSkillDropdown) {
+      setShowAddSkillDropdown(false);
+      return;
+    }
+    setShowAddSkillDropdown(true);
+    setLoadingExistingSkills(true);
+    ipcRenderer?.send('agents:list-trained-skills', { agentId });
+  };
+
+  const handleAddExistingSkill = (skill: any) => {
+    // Don't add if already in the list
+    if (skills.some(s => s.name === skill.name)) return;
+    const newSkill: ReviewSkill = {
+      id: `existing_${skill.name}_${Date.now()}`,
+      name: skill.name,
+      description: skill.description || '',
+      eventStart: 0,
+      eventEnd: 0,
+      waypoints: skill.waypoints || [],
+      instructions: skill.instructions || '',
+      execType: skill.execType || 'agent',
+      params: skill.params || [],
+      startUrl: skill.startUrl,
+      targetUrl: skill.targetUrl,
+    };
+    setSkills(prev => [...prev, newSkill]);
+    // Auto-create a recipe if none exists
+    if (!recipe) {
+      const baseName = skill.name.replace(/\.skill$/, '');
+      setRecipe({
+        name: `${baseName}.recipe`,
+        skills: [...skills.map(s => ({ skill: s.name })), { skill: newSkill.name }],
+        params: [],
+        paramFlow: {},
+      });
+      setRecipeNameDraft(`${baseName}.recipe`);
+    }
+    setShowAddSkillDropdown(false);
+  };
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
@@ -372,7 +487,7 @@ export function TrainingReviewPanel({ agentId: _agentId, previewData, onSave, on
   const toggleParam = (skillId: string, wpStep: number) => {
     setSkills(prev => prev.map(s => {
       if (s.id !== skillId) return s;
-      const waypoints = s.waypoints.map(wp => {
+      const waypoints = (s.waypoints || []).map(wp => {
         if (wp.step !== wpStep) return wp;
         if (wp.paramRef) {
           // Toggle to static — restore original value
@@ -396,13 +511,13 @@ export function TrainingReviewPanel({ agentId: _agentId, previewData, onSave, on
       });
       // Update params array
       const wp = waypoints.find(w => w.step === wpStep);
-      let params = [...s.params];
+      let params = [...(s.params || [])];
       if (wp?.paramRef) {
         if (!params.find(p => p.name === wp.paramRef)) {
           params.push({ name: wp.paramRef, type: 'string', description: wp.paramRef.replace(/_/g, ' '), required: true });
         }
       } else {
-        const oldWp = s.waypoints.find(w => w.step === wpStep);
+        const oldWp = (s.waypoints || []).find(w => w.step === wpStep);
         if (oldWp?.paramRef) {
           params = params.filter(p => p.name !== oldWp.paramRef);
         }
@@ -412,15 +527,24 @@ export function TrainingReviewPanel({ agentId: _agentId, previewData, onSave, on
   };
 
   const editParam = (skillId: string, paramName: string, updates: Partial<ParamSpec>) => {
+    // Sanitize param name to a valid identifier (no spaces, no special chars)
+    if (updates.name) {
+      updates.name = updates.name.replace(/\s+/g, '_').replace(/[^a-zA-Z0-9_]/g, '');
+    }
     setSkills(prev => prev.map(s => {
       if (s.id !== skillId) return s;
-      const params = s.params.map(p => p.name === paramName ? { ...p, ...updates } : p);
-      // If name changed, update paramRef in waypoints too
+      const params = (s.params || []).map(p => p.name === paramName ? { ...p, ...updates } : p);
+      // If name changed, update paramRef in waypoints AND {{placeholder}} in instructions
       if (updates.name && updates.name !== paramName) {
-        const waypoints = s.waypoints.map(wp =>
+        const waypoints = (s.waypoints || []).map(wp =>
           wp.paramRef === paramName ? { ...wp, paramRef: updates.name, value: `{{${updates.name}}}` } : wp
         );
-        return { ...s, params, waypoints };
+        let instructions = s.instructions;
+        if (instructions) {
+          const escaped = paramName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+          instructions = instructions.replace(new RegExp(`\\{\\{\\s*${escaped}\\s*\\}\\}`, 'g'), `{{${updates.name}}}`);
+        }
+        return { ...s, params, waypoints, instructions };
       }
       return { ...s, params };
     }));
@@ -429,8 +553,8 @@ export function TrainingReviewPanel({ agentId: _agentId, previewData, onSave, on
   const deleteParam = (skillId: string, paramName: string) => {
     setSkills(prev => prev.map(s => {
       if (s.id !== skillId) return s;
-      const params = s.params.filter(p => p.name !== paramName);
-      const waypoints = s.waypoints.map(wp =>
+      const params = (s.params || []).filter(p => p.name !== paramName);
+      const waypoints = (s.waypoints || []).map(wp =>
         wp.paramRef === paramName
           ? { ...wp, paramRef: undefined, value: wp.originalValue || wp.value?.replace(/^\{\{|\}\}$/g, '') || '', isParam: false }
           : wp
@@ -443,12 +567,12 @@ export function TrainingReviewPanel({ agentId: _agentId, previewData, onSave, on
     setSkills(prev => prev.map(s => {
       if (s.id !== skillId) return s;
       const newParam: ParamSpec = {
-        name: `param_${s.params.length + 1}`,
+        name: `param_${(s.params || []).length + 1}`,
         type: 'string',
         description: 'New parameter',
         required: true,
       };
-      return { ...s, params: [...s.params, newParam] };
+      return { ...s, params: [...(s.params || []), newParam] };
     }));
   };
 
@@ -460,10 +584,10 @@ export function TrainingReviewPanel({ agentId: _agentId, previewData, onSave, on
     // Split the last skill at its midpoint
     if (skills.length === 0) return;
     const lastSkill = skills[skills.length - 1];
-    const midPoint = Math.floor(lastSkill.waypoints.length / 2);
+    const midPoint = Math.floor((lastSkill.waypoints || []).length / 2);
     if (midPoint < 1) return;
-    const firstHalf = lastSkill.waypoints.slice(0, midPoint);
-    const secondHalf = lastSkill.waypoints.slice(midPoint);
+    const firstHalf = (lastSkill.waypoints || []).slice(0, midPoint);
+    const secondHalf = (lastSkill.waypoints || []).slice(midPoint);
     const newSkill: ReviewSkill = {
       id: `skill_new_${Date.now()}`,
       name: `${lastSkill.name}.part2`,
@@ -484,6 +608,8 @@ export function TrainingReviewPanel({ agentId: _agentId, previewData, onSave, on
   };
 
   const handleSave = () => {
+    if (isSaving) return; // Prevent double-save from rapid clicks or re-renders
+    setIsSaving(true);
     // Recompute recipe paramFlow if recipe exists
     let finalRecipe = recipe;
     if (recipe) {
@@ -491,7 +617,7 @@ export function TrainingReviewPanel({ agentId: _agentId, previewData, onSave, on
       const paramFlow: Record<string, string[]> = {};
       const seenParams = new Set<string>();
       for (const skill of skills) {
-        for (const param of skill.params) {
+        for (const param of (skill.params || [])) {
           if (!seenParams.has(param.name)) {
             seenParams.add(param.name);
             allParams.push(param);
@@ -516,6 +642,58 @@ export function TrainingReviewPanel({ agentId: _agentId, previewData, onSave, on
       setRecipe({ ...recipe, name: trimmed });
     }
     setEditingRecipeName(false);
+  };
+
+  const handlePreviewRun = () => {
+    // Instruction linting — warn about common issues before running
+    const firstSkill = skills[0];
+    if (firstSkill?.execType === 'agent' || firstSkill?.instructions) {
+      const instr = firstSkill.instructions || '';
+      const paramNames = (firstSkill.params || []).map(p => p.name);
+      // Check: params defined but no placeholders in instructions
+      const missingPlaceholders = paramNames.filter(name => !instr.includes(`{{${name}}}`));
+      if (missingPlaceholders.length > 0) {
+        setPreviewResult({
+          ok: false,
+          message: `Warning: Parameter(s) ${missingPlaceholders.map(n => `{{${n}}}`).join(', ')} are defined but not used in instructions. The agent will not know where to type them.`,
+        });
+      }
+      // Check: duplicate action text (same click mentioned twice)
+      const clickMatches = instr.match(/(?:Click|click)\s+["']?([^"'.]+)["']?/gi) || [];
+      const clickTexts = clickMatches.map(m => m.toLowerCase().trim());
+      const duplicates = clickTexts.filter((t, i) => clickTexts.indexOf(t) !== i);
+      if (duplicates.length > 0) {
+        setPreviewResult({
+          ok: false,
+          message: `Warning: Duplicate click detected: "${duplicates[0]}". This may cause the agent to perform the same action twice. Consider editing the instructions.`,
+        });
+      }
+    }
+    setIsPreviewing(true);
+    setPreviewResult(null);
+    // Build the same finalRecipe structure as handleSave
+    let finalRecipe = recipe;
+    if (recipe) {
+      const allParams: ParamSpec[] = [];
+      const paramFlow: Record<string, string[]> = {};
+      const seenParams = new Set<string>();
+      for (const skill of skills) {
+        for (const param of (skill.params || [])) {
+          if (!seenParams.has(param.name)) {
+            seenParams.add(param.name);
+            allParams.push(param);
+          }
+          if (!paramFlow[param.name]) paramFlow[param.name] = [];
+          paramFlow[param.name].push(skill.name);
+        }
+      }
+      finalRecipe = { ...recipe, skills: skills.map(s => ({ skill: s.name })), params: allParams, paramFlow };
+    }
+    ipcRenderer?.send('agents:train-preview-run', {
+      agentId,
+      skills,
+      recipe: finalRecipe,
+    });
   };
 
   return (
@@ -569,6 +747,68 @@ export function TrainingReviewPanel({ agentId: _agentId, previewData, onSave, on
             + Add boundary (split last skill)
           </button>
         )}
+
+        {/* Add existing skill button + dropdown */}
+        <div className="relative">
+          <button
+            onClick={handleAddExistingSkillClick}
+            className="w-full py-2 rounded-lg text-[11px] text-emerald-400/80 hover:text-emerald-400 transition-colors"
+            style={{ border: '1px dashed rgba(16, 185, 129, 0.25)', background: 'rgba(16, 185, 129, 0.03)' }}
+          >
+            + Add existing skill to recipe chain
+          </button>
+          {showAddSkillDropdown && (
+            <div
+              className="absolute left-0 right-0 mt-1 rounded-lg border max-h-64 overflow-y-auto"
+              style={{
+                background: 'rgba(28, 28, 30, 0.99)',
+                borderColor: 'rgba(255, 255, 255, 0.15)',
+                zIndex: 100,
+                boxShadow: '0 8px 24px rgba(0,0,0,0.4)',
+              }}
+            >
+              {loadingExistingSkills ? (
+                <div className="px-3 py-3 text-[11px] text-gray-500 italic">Loading trained skills…</div>
+              ) : existingSkills.length === 0 ? (
+                <div className="px-3 py-3 text-[11px] text-gray-500 italic">No trained skills found for this agent yet.</div>
+              ) : (
+                existingSkills.map((skill, i) => {
+                  const alreadyAdded = skills.some(s => s.name === skill.name);
+                  return (
+                    <button
+                      key={i}
+                      onClick={() => !alreadyAdded && handleAddExistingSkill(skill)}
+                      disabled={alreadyAdded}
+                      className="w-full text-left px-3 py-2 text-[11px] hover:bg-white/5 transition-colors"
+                      style={{
+                        color: alreadyAdded ? '#4b5563' : '#d1d5db',
+                        cursor: alreadyAdded ? 'not-allowed' : 'pointer',
+                        borderBottom: i < existingSkills.length - 1 ? '1px solid rgba(255,255,255,0.05)' : 'none',
+                      }}
+                    >
+                      <div className="flex items-center gap-2">
+                        <span
+                          className="text-[9px] px-1 py-0.5 rounded font-bold flex-shrink-0"
+                          style={{
+                            background: skill.isRecipe ? 'rgba(16, 185, 129, 0.15)' : 'rgba(99, 102, 241, 0.15)',
+                            color: skill.isRecipe ? '#34d399' : '#818cf8',
+                          }}
+                        >
+                          {skill.isRecipe ? 'RECIPE' : 'SKILL'}
+                        </span>
+                        <span className="font-mono truncate flex-1 min-w-0">{skill.name}</span>
+                        {alreadyAdded && <span className="text-[9px] text-gray-600 flex-shrink-0">added</span>}
+                      </div>
+                      {skill.description && (
+                        <div className="text-[10px] text-gray-500 mt-0.5 truncate">{skill.description}</div>
+                      )}
+                    </button>
+                  );
+                })
+              )}
+            </div>
+          )}
+        </div>
 
         {/* Recipe section */}
         {recipe && (
@@ -628,24 +868,67 @@ export function TrainingReviewPanel({ agentId: _agentId, previewData, onSave, on
         )}
       </div>
 
-      {/* Footer with save button */}
+      {/* Preview status banner */}
+      {previewResult && (
+        <div
+          className="mx-4 mb-2 px-3 py-2 rounded-lg text-xs"
+          style={{
+            background: previewResult.ok ? 'rgba(16, 185, 129, 0.1)' : 'rgba(239, 68, 68, 0.1)',
+            border: `1px solid ${previewResult.ok ? 'rgba(16, 185, 129, 0.3)' : 'rgba(239, 68, 68, 0.3)'}`,
+            color: previewResult.ok ? '#6ee7b7' : '#fca5a5',
+          }}
+        >
+          {previewResult.message}
+        </div>
+      )}
+
+      {/* Footer with save + preview + cancel buttons */}
       <div className="px-4 py-3 flex gap-2" style={{ borderTop: '1px solid rgba(255, 255, 255, 0.1)' }}>
         <button
           onClick={handleSave}
-          disabled={skills.length === 0}
+          disabled={skills.length === 0 || isPreviewing || isSaving}
           className="flex-1 py-2.5 rounded-lg text-sm font-semibold text-white transition-opacity"
           style={{
-            background: skills.length === 0 ? 'rgba(16, 185, 129, 0.15)' : '#10b981',
-            opacity: skills.length === 0 ? 0.4 : 1,
-            cursor: skills.length === 0 ? 'not-allowed' : 'pointer',
+            background: skills.length === 0 || isPreviewing || isSaving ? 'rgba(16, 185, 129, 0.15)' : '#10b981',
+            opacity: skills.length === 0 || isPreviewing || isSaving ? 0.4 : 1,
+            cursor: skills.length === 0 || isPreviewing || isSaving ? 'not-allowed' : 'pointer',
           }}
         >
-          Save All Skills{recipe ? ' & Recipe' : ''}
+          {isSaving ? 'Saving…' : `Save All Skills${recipe ? ' & Recipe' : ''}`}
+        </button>
+        <button
+          onClick={handlePreviewRun}
+          disabled={skills.length === 0 || isPreviewing}
+          className="px-4 py-2.5 rounded-lg text-sm font-semibold transition-opacity"
+          style={{
+            background: isPreviewing ? 'rgba(99, 102, 241, 0.15)' : 'rgba(99, 102, 241, 0.15)',
+            border: '1px solid rgba(99, 102, 241, 0.4)',
+            color: '#818cf8',
+            opacity: skills.length === 0 || isPreviewing ? 0.4 : 1,
+            cursor: skills.length === 0 || isPreviewing ? 'not-allowed' : 'pointer',
+          }}
+        >
+          {isPreviewing ? (
+            <span className="flex items-center gap-2">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" style={{ animation: 'spin 1s linear infinite' }}>
+                <path d="M21 12a9 9 0 1 1-6.219-8.56"/>
+              </svg>
+              Running…
+            </span>
+          ) : (
+            <span className="flex items-center gap-1.5">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <polygon points="5 3 19 12 5 21 5 3"/>
+              </svg>
+              Preview
+            </span>
+          )}
         </button>
         <button
           onClick={onCancel}
+          disabled={isPreviewing}
           className="px-4 py-2.5 rounded-lg text-sm text-gray-400"
-          style={{ border: '1px solid rgba(255, 255, 255, 0.1)', background: 'transparent' }}
+          style={{ border: '1px solid rgba(255, 255, 255, 0.1)', background: 'transparent', opacity: isPreviewing ? 0.4 : 1 }}
         >
           Cancel
         </button>

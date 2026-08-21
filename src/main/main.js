@@ -7084,12 +7084,17 @@ app.whenReady().then(async () => {
               for (const recipeFile of recipeFiles) {
                 try {
                   const recipe = JSON.parse(fsMod.readFileSync(pathMod.join(skillPath, recipeFile), 'utf8'));
+                  const isCompositeRecipe = recipeFile.endsWith('.recipe.json') && Array.isArray(recipe.skills);
                   const skillEntry = {
                     name: recipe.name || recipeFile.replace(/\.(skill|recipe)\.json$/, ''),
                     status: 'trained',
-                    description: recipe.targetDescription || `Trained recipe (${recipe.waypoints?.length || 0} waypoints)`,
+                    description: isCompositeRecipe
+                      ? `Recipe chaining ${recipe.skills?.length || 0} skill(s)`
+                      : (recipe.targetDescription || `Trained skill (${recipe.waypoints?.length || 0} waypoints)`),
                     skillPath: skillPath,
-                    type: 'trained_recipe',
+                    type: isCompositeRecipe ? 'composite_recipe' : 'trained_recipe',
+                    chainedSkills: isCompositeRecipe ? (recipe.skills || []).map(s => s.skill) : undefined,
+                    waypointCount: !isCompositeRecipe ? (recipe.waypoints?.length || 0) : undefined,
                   };
                   const agentIdKey = recipe.agentId || skillDir;
                   const agentIdWithSuffix = agentIdKey.endsWith('.agent') ? agentIdKey : agentIdKey + '.agent';
@@ -7567,6 +7572,172 @@ app.whenReady().then(async () => {
     }
   });
 
+  // Train clear events — user clicks Reset in TrainingPanel; clears backend
+  // rawEvents without killing the session so they can re-record.
+  ipcMain.on('agents:train-clear-events', async (_event, { agentId }) => {
+    try {
+      const trainerAgent = require('../../mcp-services/command-service/src/skills/trainer.agent.cjs');
+      trainerAgent.actionClearEvents({ agentId });
+    } catch (e) {
+      console.error('[Agents] train-clear-events failed:', e.message);
+    }
+  });
+
+  // List trained skills for an agent — used by TrainingReviewPanel to chain
+  // already-saved skills into a recipe.
+  ipcMain.on('agents:list-trained-skills', async (_event, { agentId }) => {
+    try {
+      const fsMod = require('fs');
+      const pathMod = require('path');
+      const osMod = require('os');
+      const skillsBaseDir = pathMod.join(osMod.homedir(), '.thinkdrop', 'skills');
+      const agentDir = agentId.replace(/\.agent$/, '');
+      const agentSkillDir = pathMod.join(skillsBaseDir, agentDir);
+
+      const trainedSkills = [];
+      if (fsMod.existsSync(agentSkillDir)) {
+        const files = fsMod.readdirSync(agentSkillDir);
+        for (const f of files) {
+          if (!f.endsWith('.skill.json') && !f.endsWith('.recipe.json')) continue;
+          // Skip temp preview files
+          if (f.startsWith('__preview__')) continue;
+          try {
+            const skillPath = pathMod.join(agentSkillDir, f);
+            const meta = JSON.parse(fsMod.readFileSync(skillPath, 'utf8'));
+            trainedSkills.push({
+              name: meta.name || f.replace(/\.(skill|recipe)\.json$/, ''),
+              description: meta.targetDescription || meta.description || '',
+              params: meta.params || [],
+              waypoints: meta.waypoints || [],
+              startUrl: meta.startUrl || '',
+              targetUrl: meta.targetUrl || '',
+              isRecipe: f.endsWith('.recipe.json'),
+              filePath: skillPath,
+            });
+          } catch (_) {}
+        }
+      }
+
+      console.log(`[Agents] Listed ${trainedSkills.length} trained skills for ${agentId}`);
+      if (unifiedWindow && !unifiedWindow.isDestroyed()) {
+        safeSend(unifiedWindow, 'agents:trained-skills-list', { agentId, skills: trainedSkills });
+      }
+    } catch (e) {
+      console.error('[Agents] list-trained-skills failed:', e.message);
+      if (unifiedWindow && !unifiedWindow.isDestroyed()) {
+        safeSend(unifiedWindow, 'agents:trained-skills-list', { agentId, skills: [], error: e.message });
+      }
+    }
+  });
+
+  // Train preview-run — user clicks Preview in TrainingReviewPanel; runs the
+  // skill in a headed browser without saving so they can verify it works.
+  ipcMain.on('agents:train-preview-run', async (_event, { agentId, skills, recipe }) => {
+    try {
+      console.log(`[Agents] agents:train-preview-run received for ${agentId}: ${skills?.length} skill(s)`);
+      const fsMod = require('fs');
+      const pathMod = require('path');
+      const osMod = require('os');
+      const httpMod = require('http');
+
+      if (!skills || skills.length === 0) {
+        safeSend(unifiedWindow, 'agents:train-preview-run-result', { agentId, ok: false, error: 'No skills to preview' });
+        return;
+      }
+
+      // Write the first skill to a temp .skill.json file
+      const firstSkill = skills[0];
+      const tempDir = pathMod.join(osMod.homedir(), '.thinkdrop', 'skills', agentId.replace(/\.agent$/, ''));
+      if (!fsMod.existsSync(tempDir)) fsMod.mkdirSync(tempDir, { recursive: true });
+      const tempPath = pathMod.join(tempDir, `__preview__${firstSkill.name}.json`);
+
+      const skillJson = {
+        name: firstSkill.name,
+        agentId: agentId.replace(/\.agent$/, ''),
+        startUrl: firstSkill.startUrl || '',
+        targetUrl: firstSkill.targetUrl || firstSkill.startUrl || '',
+        params: firstSkill.params || [],
+        // Instruction-based skills (new format) — execType: "agent" + instructions
+        execType: firstSkill.execType || 'agent',
+        instructions: firstSkill.instructions || '',
+        // Waypoint-based skills (legacy) — kept for backward compat
+        waypoints: firstSkill.waypoints || [],
+        targetDescription: firstSkill.description || '',
+        created: new Date().toISOString(),
+        userConfirmed: false,
+        urlFirst: true,
+      };
+      fsMod.writeFileSync(tempPath, JSON.stringify(skillJson, null, 2), 'utf8');
+      console.log(`[Agents] Preview temp skill written to: ${tempPath}`);
+      console.log(`[Agents] Preview skill: execType=${firstSkill.execType || 'agent'}, instructions=${(firstSkill.instructions || '').length} chars, waypoints=${(firstSkill.waypoints || []).length}`);
+
+      // Build test args from params (use example value, or a descriptive default)
+      const testArgs = {};
+      for (const p of firstSkill.params || []) {
+        if (p.example) {
+          testArgs[p.name] = p.example;
+        } else {
+          // Use a descriptive default based on param name, not just "Test"
+          testArgs[p.name] = `Test_${p.name}_${Date.now().toString(36)}`;
+        }
+      }
+
+      const sessionId = `${agentId.replace(/\.agent$/, '').replace(/[^a-z0-9_]/gi, '_')}_agent`;
+      const COMMAND_PORT = parseInt(process.env.SERVICE_PORT || process.env.COMMAND_SERVICE_PORT || '3007', 10);
+
+      // Use the new direct execPath override so external.skill runs the temp
+      // file directly — no user-memory / disk-scan lookup needed.
+      const requestPayload = {
+        payload: {
+          skill: 'external.skill',
+          args: {
+            name: firstSkill.name,
+            args: { ...testArgs, sessionId },
+            execPath: tempPath,
+            timeoutMs: 90000,
+          },
+        },
+      };
+      console.log(`[Agents] Running preview: ${firstSkill.name} sessionId=${sessionId} port=${COMMAND_PORT}`);
+      console.log(`[Agents] Preview request payload: ${JSON.stringify(requestPayload).slice(0, 300)}`);
+
+      const result = await new Promise((resolve) => {
+        const body = JSON.stringify(requestPayload);
+        const req = httpMod.request({
+          hostname: '127.0.0.1', port: COMMAND_PORT, path: '/command.automate', method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) },
+          timeout: 100000,
+        }, res => {
+          let raw = ''; res.on('data', c => { raw += c; });
+          res.on('end', () => {
+            console.log(`[Agents] Preview-run HTTP ${res.statusCode} bodyLen=${raw.length}`);
+            try { resolve(JSON.parse(raw)); }
+            catch (_) { resolve({ ok: false, error: `Failed to parse response: ${raw.slice(0, 200)}` }); }
+          });
+        });
+        req.on('error', (e) => { console.warn(`[Agents] preview-run error: ${e.message}`); resolve({ ok: false, error: e.message }); });
+        req.on('timeout', () => { req.destroy(); resolve({ ok: false, error: 'Preview timed out (100s)' }); });
+        req.write(body); req.end();
+      });
+
+      // Clean up temp file
+      try { fsMod.unlinkSync(tempPath); } catch (_) {}
+
+      const skillResult = result?.data || result;
+      const ok = !!(skillResult && skillResult.ok);
+      const errorMsg = skillResult?.error || (ok ? '' : 'Preview failed (no error detail)');
+      console.log(`[Agents] Preview-run complete: ok=${ok} error=${errorMsg}`);
+      if (unifiedWindow && !unifiedWindow.isDestroyed()) {
+        safeSend(unifiedWindow, 'agents:train-preview-run-result', { agentId, ok, error: ok ? null : errorMsg });
+      }
+    } catch (e) {
+      console.error('[Agents] train-preview-run failed:', e.message, e.stack);
+      if (unifiedWindow && !unifiedWindow.isDestroyed()) {
+        safeSend(unifiedWindow, 'agents:train-preview-run-result', { agentId, ok: false, error: e.message });
+      }
+    }
+  });
+
   // Guided training cancel — same as train-cancel (reuses actionCancelTraining)
   // Kept for backwards compat with UI that may still send this channel.
   ipcMain.on('agents:guided-train-cancel', async (_event, { agentId }) => {
@@ -7709,7 +7880,7 @@ app.whenReady().then(async () => {
           unifiedWindow.webContents.send('agents:skill-test-update', { agentId, skillName, status: 'testing' });
         }
         const BROWSER_ACT_PORT_DIRECT = parseInt(process.env.SERVICE_PORT || process.env.COMMAND_SERVICE_PORT || '3007', 10);
-        const sessionIdDirect = `${agentId.replace(/[^a-z0-9_]/gi, '_')}_agent`;
+        const sessionIdDirect = `${agentId.replace(/\.agent$/, '').replace(/[^a-z0-9_]/gi, '_')}_agent`;
 
         // Build test args from recipe params
         let recipeArgs = {};
@@ -7745,14 +7916,16 @@ app.whenReady().then(async () => {
           req.write(body); req.end();
         });
 
-        const testStatus = (result && result.ok) ? 'done' : 'error';
-        console.log(`[Agents] Trained recipe test complete: "${skillName}" → ${testStatus}`);
+        const skillResult = result?.data || result;
+        const testStatus = (skillResult && skillResult.ok) ? 'done' : 'error';
+        console.log(`[Agents] Trained recipe test complete: "${skillName}" → ${testStatus} error=${skillResult?.error || 'none'}`);
         if (unifiedWindow && !unifiedWindow.isDestroyed()) {
           unifiedWindow.webContents.send('agents:skill-test-update', {
             agentId,
             skillName,
             status: testStatus,
-            error: result?.error || null,
+            errorReason: testStatus === 'error' ? 'runtime_error' : undefined,
+            error: skillResult?.error || null,
           });
         }
         return;
@@ -7767,7 +7940,7 @@ app.whenReady().then(async () => {
           unifiedWindow.webContents.send('agents:skill-test-update', { agentId, skillName, status: 'testing' });
         }
         const BROWSER_ACT_PORT_DIRECT = parseInt(process.env.SERVICE_PORT || process.env.COMMAND_SERVICE_PORT || '3007', 10);
-        const sessionIdDirect = `${agentId.replace(/[^a-z0-9_]/gi, '_')}_agent`;
+        const sessionIdDirect = `${agentId.replace(/\.agent$/, '').replace(/[^a-z0-9_]/gi, '_')}_agent`;
         // For headed tests, close any existing headless session first so browser.act
         // cold-starts a fresh headed Chrome on the same auth profile (cookies preserved).
         if (isHeaded) {
@@ -7820,7 +7993,7 @@ app.whenReady().then(async () => {
           unifiedWindow.webContents.send('agents:skill-test-update', { agentId, skillName, status: 'testing' });
         }
         const BROWSER_ACT_PORT = parseInt(process.env.SERVICE_PORT || process.env.COMMAND_SERVICE_PORT || '3007', 10);
-        const _sessionId = `${agentId.replace(/[^a-z0-9_]/gi, '_')}_agent`;
+        const _sessionId = `${agentId.replace(/\.agent$/, '').replace(/[^a-z0-9_]/gi, '_')}_agent`;
         // Extract a plausible test query from the skill module's first history item
         let _testQuery = 'test';
         try {
@@ -7850,10 +8023,11 @@ app.whenReady().then(async () => {
           req.write(_extBody);
           req.end();
         });
-        const _testStatus = (_extResult?.ok === false || _extResult?.error) ? 'error' : 'done';
-        console.log(`[Agents] navigate_history test complete: "${skillName}" → ${_testStatus}`);
+        const _extSkillResult = _extResult?.data || _extResult;
+        const _testStatus = (_extSkillResult?.ok === false || _extSkillResult?.error) ? 'error' : 'done';
+        console.log(`[Agents] navigate_history test complete: "${skillName}" → ${_testStatus} error=${_extSkillResult?.error || 'none'}`);
         if (unifiedWindow && !unifiedWindow.isDestroyed()) {
-          unifiedWindow.webContents.send('agents:skill-test-update', { agentId, skillName, status: _testStatus });
+          unifiedWindow.webContents.send('agents:skill-test-update', { agentId, skillName, status: _testStatus, errorReason: _testStatus === 'error' ? 'runtime_error' : undefined, error: _extSkillResult?.error || null });
         }
         return;
       }
@@ -7901,7 +8075,7 @@ app.whenReady().then(async () => {
       // where the user's logged-in cookies already live. Using plain agentId creates a fresh empty
       // profile → Chrome shows the login page every time.
       const BROWSER_ACT_PORT = parseInt(process.env.SERVICE_PORT || process.env.COMMAND_SERVICE_PORT || '3007', 10);
-      const sessionId = `${agentId.replace(/[^a-z0-9_]/gi, '_')}_agent`;
+      const sessionId = `${agentId.replace(/\.agent$/, '').replace(/[^a-z0-9_]/gi, '_')}_agent`;
       // For headed tests, close any existing headless session first so browser.act
       // cold-starts a fresh headed Chrome on the same auth profile (cookies preserved).
       if (isHeaded) {
@@ -7937,11 +8111,29 @@ app.whenReady().then(async () => {
       }
 
       // Navigate to start URL
-      await browserActCall({ action: 'navigate', url: startUrl, sessionId, headed: isHeaded, timeoutMs: 15000 });
+      const navResult = await browserActCall({ action: 'navigate', url: startUrl, sessionId, headed: isHeaded, timeoutMs: 15000 });
+      const navSkillResult = navResult?.data || navResult;
+      if (navSkillResult && !navSkillResult.ok) {
+        const navErr = navSkillResult.error || 'navigate failed';
+        console.log(`[Agents] Skill test navigate failed: "${skillName}" → ${navErr}`);
+        if (unifiedWindow && !unifiedWindow.isDestroyed()) {
+          unifiedWindow.webContents.send('agents:skill-test-update', { agentId, skillName, status: 'error', errorReason: 'runtime_error', error: navErr });
+        }
+        return;
+      }
 
       // Click the skill's primary locator
       const selector = actionEntry.locators.primary;
-      await browserActCall({ action: 'click', selector, sessionId, headed: isHeaded, timeoutMs: 10000 });
+      const clickResult = await browserActCall({ action: 'click', selector, sessionId, headed: isHeaded, timeoutMs: 10000 });
+      const clickSkillResult = clickResult?.data || clickResult;
+      if (clickSkillResult && !clickSkillResult.ok) {
+        const clickErr = clickSkillResult.error || `click on "${selector}" failed`;
+        console.log(`[Agents] Skill test click failed: "${skillName}" → ${clickErr}`);
+        if (unifiedWindow && !unifiedWindow.isDestroyed()) {
+          unifiedWindow.webContents.send('agents:skill-test-update', { agentId, skillName, status: 'error', errorReason: 'runtime_error', error: clickErr });
+        }
+        return;
+      }
 
       console.log(`[Agents] Skill test complete: "${skillName}"`);
 
@@ -7952,7 +8144,7 @@ app.whenReady().then(async () => {
     } catch (err) {
       console.error(`[Agents] agents:test-skill failed: ${err.message}`);
       if (unifiedWindow && !unifiedWindow.isDestroyed()) {
-        unifiedWindow.webContents.send('agents:skill-test-update', { agentId, skillName, status: 'error' });
+        unifiedWindow.webContents.send('agents:skill-test-update', { agentId, skillName, status: 'error', errorReason: 'runtime_error', error: err.message });
       }
     }
   });
