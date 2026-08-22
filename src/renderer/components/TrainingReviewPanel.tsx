@@ -382,6 +382,13 @@ export function TrainingReviewPanel({ agentId, previewData, onSave, onCancel }: 
     setIsOpen(true);
   }, []);
 
+  // Update success message once the save completes (isSaving goes false)
+  useEffect(() => {
+    if (!isSaving && previewResult?.ok && previewResult.message !== 'Skill saved successfully. You can close this panel when ready.') {
+      setPreviewResult({ ok: true, message: 'Skill saved successfully. You can close this panel when ready.' });
+    }
+  }, [isSaving, previewResult]);
+
   // Listen for preview-run results — auto-save on success with discovered keyPath
   useEffect(() => {
     if (!ipcRenderer) return;
@@ -917,7 +924,7 @@ export function TrainingReviewPanel({ agentId, previewData, onSave, onCancel }: 
           className="px-4 min-h-[42px] rounded-lg text-sm text-gray-400 flex items-center justify-center"
           style={{ border: '1px solid rgba(255, 255, 255, 0.1)', background: 'transparent', opacity: isPreviewing ? 0.4 : 1 }}
         >
-          Cancel
+          {!isPreviewing && !isSaving && previewResult?.ok ? 'Close' : 'Cancel'}
         </button>
       </div>
       {/* Info note about first-run discovery */}

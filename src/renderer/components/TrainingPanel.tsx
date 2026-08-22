@@ -169,8 +169,8 @@ export function TrainingPanel({ agentId, hostname, onDone: _onDone, onCancel, mo
       if (!data || data.agentId !== agentId) return;
       setSaving(false);
       setSavingMessage('');
-      setReviewData(null);
-      onCancel();
+      // Keep the review panel open so the user can inspect/edit the saved skill.
+      // TrainingReviewPanel will show a success banner and a manual close button.
     };
 
     const handleReviewError = (data: any) => {
