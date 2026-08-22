@@ -7694,7 +7694,7 @@ app.whenReady().then(async () => {
             name: firstSkill.name,
             args: { ...testArgs, sessionId },
             execPath: tempPath,
-            timeoutMs: 90000,
+            timeoutMs: 600000, // 10 min — first-run discovery can be slow
           },
         },
       };
@@ -7706,7 +7706,7 @@ app.whenReady().then(async () => {
         const req = httpMod.request({
           hostname: '127.0.0.1', port: COMMAND_PORT, path: '/command.automate', method: 'POST',
           headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) },
-          timeout: 100000,
+          timeout: 610000, // 10min + 10s buffer for first-run discovery
         }, res => {
           let raw = ''; res.on('data', c => { raw += c; });
           res.on('end', () => {
@@ -7716,9 +7716,20 @@ app.whenReady().then(async () => {
           });
         });
         req.on('error', (e) => { console.warn(`[Agents] preview-run error: ${e.message}`); resolve({ ok: false, error: e.message }); });
-        req.on('timeout', () => { req.destroy(); resolve({ ok: false, error: 'Preview timed out (100s)' }); });
+        req.on('timeout', () => { req.destroy(); resolve({ ok: false, error: 'Preview timed out (10min) — first-run discovery can be slow. Try again or check logs.' }); });
         req.write(body); req.end();
       });
+
+      // Read the temp file back to get the discovered keyPath (cached by external.skill)
+      let discoveredKeyPath = null;
+      try {
+        const tempContent = fsMod.readFileSync(tempPath, 'utf8');
+        const tempJson = JSON.parse(tempContent);
+        discoveredKeyPath = tempJson.keyPath || null;
+        if (discoveredKeyPath) {
+          console.log(`[Agents] Preview-run discovered keyPath: ${discoveredKeyPath.length} steps`);
+        }
+      } catch (_) {}
 
       // Clean up temp file
       try { fsMod.unlinkSync(tempPath); } catch (_) {}
@@ -7728,7 +7739,7 @@ app.whenReady().then(async () => {
       const errorMsg = skillResult?.error || (ok ? '' : 'Preview failed (no error detail)');
       console.log(`[Agents] Preview-run complete: ok=${ok} error=${errorMsg}`);
       if (unifiedWindow && !unifiedWindow.isDestroyed()) {
-        safeSend(unifiedWindow, 'agents:train-preview-run-result', { agentId, ok, error: ok ? null : errorMsg });
+        safeSend(unifiedWindow, 'agents:train-preview-run-result', { agentId, ok, error: ok ? null : errorMsg, discoveredKeyPath });
       }
     } catch (e) {
       console.error('[Agents] train-preview-run failed:', e.message, e.stack);

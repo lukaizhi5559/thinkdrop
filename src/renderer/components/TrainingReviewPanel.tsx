@@ -382,32 +382,59 @@ export function TrainingReviewPanel({ agentId, previewData, onSave, onCancel }: 
     setIsOpen(true);
   }, []);
 
-  // Listen for preview-run results
+  // Listen for preview-run results — auto-save on success with discovered keyPath
   useEffect(() => {
     if (!ipcRenderer) return;
     const handlePreviewRunResult = (data: any) => {
       if (data?.agentId !== agentId) return;
       setIsPreviewing(false);
       if (data.ok) {
-        setPreviewResult({ ok: true, message: 'Preview completed successfully!' });
+        // Auto-save: inject the discovered keyPath into the first skill, then save
+        const skillsWithKeyPath = skills.map((s, idx) =>
+          idx === 0 && data.discoveredKeyPath ? { ...s, keyPath: data.discoveredKeyPath } : s
+        );
+        setSkills(skillsWithKeyPath);
+        setPreviewResult({ ok: true, message: 'Training successful! Saving skill with discovered keyboard path…' });
+        // Trigger save automatically
+        let finalRecipe = recipe;
+        if (recipe) {
+          const allParams: ParamSpec[] = [];
+          const paramFlow: Record<string, string[]> = {};
+          const seenParams = new Set<string>();
+          for (const skill of skillsWithKeyPath) {
+            for (const param of (skill.params || [])) {
+              if (!seenParams.has(param.name)) {
+                seenParams.add(param.name);
+                allParams.push(param);
+              }
+              if (!paramFlow[param.name]) paramFlow[param.name] = [];
+              paramFlow[param.name].push(skill.name);
+            }
+          }
+          finalRecipe = { ...recipe, skills: skillsWithKeyPath.map(s => ({ skill: s.name })), params: allParams, paramFlow };
+        }
+        setIsSaving(true);
+        onSave({ skills: skillsWithKeyPath, recipe: finalRecipe });
       } else {
         setPreviewResult({ ok: false, message: data.error || 'Preview failed' });
       }
     };
     ipcRenderer.on('agents:train-preview-run-result', handlePreviewRunResult);
     return () => { ipcRenderer.removeListener('agents:train-preview-run-result', handlePreviewRunResult); };
-  }, [agentId, ipcRenderer]);
+  }, [agentId, ipcRenderer, skills, recipe, onSave]);
 
-  // 60s safety timeout: if no preview-run result arrives, un-stick the button.
+  // 10min safety timeout: first-run discovery can take several minutes as it
+  // tabs through every element with LLM verification on each key press.
+  // Subsequent runs use cached keyPath and are fast (~2.5s/step).
   useEffect(() => {
     if (!isPreviewing) return;
     const t = setTimeout(() => {
       setIsPreviewing(false);
       setPreviewResult({
         ok: false,
-        message: 'Preview timed out. If you just updated the app, restart it and try again — the new preview handler needs a restart to take effect.',
+        message: 'Preview timed out after 10 minutes. The first run discovers the keyboard path by tabbing through every element with LLM verification — this can be slow. Try again, or check the logs for errors.',
       });
-    }, 60000);
+    }, 600000);
     return () => clearTimeout(t);
   }, [isPreviewing]);
 
@@ -605,35 +632,6 @@ export function TrainingReviewPanel({ agentId, previewData, onSave, onCancel }: 
       name: `${lastSkill.name}.part1`,
     });
     setSkills(prev => [...prev, newSkill]);
-  };
-
-  const handleSave = () => {
-    if (isSaving) return; // Prevent double-save from rapid clicks or re-renders
-    setIsSaving(true);
-    // Recompute recipe paramFlow if recipe exists
-    let finalRecipe = recipe;
-    if (recipe) {
-      const allParams: ParamSpec[] = [];
-      const paramFlow: Record<string, string[]> = {};
-      const seenParams = new Set<string>();
-      for (const skill of skills) {
-        for (const param of (skill.params || [])) {
-          if (!seenParams.has(param.name)) {
-            seenParams.add(param.name);
-            allParams.push(param);
-          }
-          if (!paramFlow[param.name]) paramFlow[param.name] = [];
-          paramFlow[param.name].push(skill.name);
-        }
-      }
-      finalRecipe = {
-        ...recipe,
-        skills: skills.map(s => ({ skill: s.name })),
-        params: allParams,
-        paramFlow,
-      };
-    }
-    onSave({ skills, recipe: finalRecipe });
   };
 
   const handleRecipeNameSave = () => {
@@ -882,57 +880,53 @@ export function TrainingReviewPanel({ agentId, previewData, onSave, onCancel }: 
         </div>
       )}
 
-      {/* Footer with save + preview + cancel buttons */}
-      <div className="px-4 py-3 flex gap-2" style={{ borderTop: '1px solid rgba(255, 255, 255, 0.1)' }}>
+      {/* Footer with Train & Save + cancel buttons */}
+      <div className="px-4 py-3 flex items-stretch gap-2" style={{ borderTop: '1px solid rgba(255, 255, 255, 0.1)' }}>
         <button
-          onClick={handleSave}
+          onClick={handlePreviewRun}
           disabled={skills.length === 0 || isPreviewing || isSaving}
-          className="flex-1 py-2.5 rounded-lg text-sm font-semibold text-white transition-opacity"
+          className="flex-1 min-h-[42px] rounded-lg text-sm font-semibold text-white flex items-center justify-center gap-2 transition-opacity"
           style={{
             background: skills.length === 0 || isPreviewing || isSaving ? 'rgba(16, 185, 129, 0.15)' : '#10b981',
             opacity: skills.length === 0 || isPreviewing || isSaving ? 0.4 : 1,
             cursor: skills.length === 0 || isPreviewing || isSaving ? 'not-allowed' : 'pointer',
           }}
-        >
-          {isSaving ? 'Saving…' : `Save All Skills${recipe ? ' & Recipe' : ''}`}
-        </button>
-        <button
-          onClick={handlePreviewRun}
-          disabled={skills.length === 0 || isPreviewing}
-          className="px-4 py-2.5 rounded-lg text-sm font-semibold transition-opacity"
-          style={{
-            background: isPreviewing ? 'rgba(99, 102, 241, 0.15)' : 'rgba(99, 102, 241, 0.15)',
-            border: '1px solid rgba(99, 102, 241, 0.4)',
-            color: '#818cf8',
-            opacity: skills.length === 0 || isPreviewing ? 0.4 : 1,
-            cursor: skills.length === 0 || isPreviewing ? 'not-allowed' : 'pointer',
-          }}
+          title="Runs the skill to discover the keyboard path (slow first run), then saves automatically."
         >
           {isPreviewing ? (
-            <span className="flex items-center gap-2">
-              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" style={{ animation: 'spin 1s linear infinite' }}>
+            <>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" style={{ animation: 'spin 1s linear infinite' }}>
                 <path d="M21 12a9 9 0 1 1-6.219-8.56"/>
               </svg>
-              Running…
-            </span>
+              <span>Discovering path…</span>
+            </>
+          ) : isSaving ? (
+            'Saving…'
           ) : (
-            <span className="flex items-center gap-1.5">
+            <>
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                 <polygon points="5 3 19 12 5 21 5 3"/>
               </svg>
-              Preview
-            </span>
+              <span>Train & Save{recipe ? ' & Recipe' : ''}</span>
+            </>
           )}
         </button>
         <button
           onClick={onCancel}
           disabled={isPreviewing}
-          className="px-4 py-2.5 rounded-lg text-sm text-gray-400"
+          className="px-4 min-h-[42px] rounded-lg text-sm text-gray-400 flex items-center justify-center"
           style={{ border: '1px solid rgba(255, 255, 255, 0.1)', background: 'transparent', opacity: isPreviewing ? 0.4 : 1 }}
         >
           Cancel
         </button>
       </div>
+      {/* Info note about first-run discovery */}
+      {isPreviewing && (
+        <div className="px-4 pb-2 text-[10px] text-gray-500 leading-tight">
+          First run discovers the keyboard path (Tab/Arrow/Enter) with LLM verification on each key press — this can take several minutes.
+          Subsequent runs use the cached path and are fast (~2.5s per step).
+        </div>
+      )}
     </RightSlideoutDrawer>
   );
 }

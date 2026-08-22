@@ -217,9 +217,11 @@ function CompactSkillRow({
 
       {/* Test */}
       {isTesting ? (
-        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" style={{ animation: 'spin 0.9s linear infinite', color: '#818cf8' }}>
-          <path d="M21 12a9 9 0 1 1-6.219-8.56"/>
-        </svg>
+        <span title="Discovering keyboard path (first run is slow, subsequent runs use cached path)…">
+          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" style={{ animation: 'spin 0.9s linear infinite', color: '#818cf8' }}>
+            <path d="M21 12a9 9 0 1 1-6.219-8.56"/>
+          </svg>
+        </span>
       ) : choosing ? (
         <div style={{ display: 'flex', gap: 2 }}>
           <button onClick={() => { setChoosing(false); onTest(agentId, skill.name, false, skill.skillPath); }} title="Run headless" style={{ padding: '2px 4px', background: 'transparent', border: '1px solid rgba(255,255,255,0.1)', color: '#9ca3af', borderRadius: 3, cursor: 'pointer', display: 'flex', alignItems: 'center' }}>
