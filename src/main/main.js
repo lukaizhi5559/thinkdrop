@@ -4648,7 +4648,7 @@ app.whenReady().then(async () => {
             };
           } else if ((paused.pendingQuestion?.trainingHandoff || paused.pendingQuestion?.recipeRequired)
                      && (!paused.pendingQuestion?._isAgentAskUser
-                         || /^(try_again|record_recipe|open_agents_training|open_agents_training_here|train_recipe|guided_train|cancel|no)$/i.test((chosenOption || '').trim())
+                         || /^(try_again|record_recipe|open_agents_training|open_agents_training_here|train_recipe|guided_train|proceed_anyway|cancel|no)$/i.test((chosenOption || '').trim())
                          || /^start\s+guided\s+training$/i.test((chosenOption || '').trim()))) {
             // ── Training handoff resume: user chose a KNOWN option (train/cancel/try_again) ──
             // browser.agent returned trainingHandoff (or legacy recipeRequired) when
@@ -4674,7 +4674,10 @@ app.whenReady().then(async () => {
             const _wantsGuidedTrain = chosenOption === 'guided_train'
               || /^start\s+guided\s+training$/i.test((chosenOption || '').trim())
               || /^guided[_\-]?train(ing)?$/i.test((chosenOption || '').trim());
-            console.log(`[StateGraph] ASK_USER resume: training handoff — chosenOption="${chosenOption}" _wantsGuidedTrain=${_wantsGuidedTrain} _wantsTrain=${_wantsTrain} _handoffAgentId=${_handoffAgentId || 'null'}`);
+            // "Proceed anyway" — skip the training gate and attempt the task untrained.
+            const _wantsProceed = chosenOption === 'proceed_anyway'
+              || /^proceed\s+anyway$/i.test((chosenOption || '').trim());
+            console.log(`[StateGraph] ASK_USER resume: training handoff — chosenOption="${chosenOption}" _wantsGuidedTrain=${_wantsGuidedTrain} _wantsTrain=${_wantsTrain} _wantsProceed=${_wantsProceed} _handoffAgentId=${_handoffAgentId || 'null'}`);
 
             if (_wantsRetry && paused.pendingQuestion?._isAgentAskUser) {
               // Re-run the SAME agent step with the original task — no Q&A injection.
@@ -4790,6 +4793,48 @@ app.whenReady().then(async () => {
                 pausedAutomationState = null;
                 return;
               }
+            } else if (_wantsProceed && _handoffAgentId) {
+              // ── Proceed anyway — skip the training gate and let planSkills generate a real plan ──
+              // The user explicitly chose to bypass the planSkills training gate. Instead of
+              // constructing a 1-step _skillPlan (which bypasses real plan generation and runs
+              // with a possibly-wrong URL), we set _skipTrainingGate and let planSkills generate
+              // the full plan via the LLM. The preflight deep-link URL is passed through so
+              // planSkills can inject it into the generated browser.agent steps.
+              const _agentId = _handoffAgentId;
+              const _originalTask = (paused.pendingQuestion?.originalTask || paused.message || '').replace(/\s*\[Resume context:[\s\S]*?\]\s*$/g, '').trim();
+              const _stepIdx = paused.pendingQuestion?.stepIndex ?? paused.skillCursor ?? 0;
+              const _uiStepIdx = paused.pendingQuestion?.uiStepIndex ?? _stepIdx;
+              // Inject deep-link URL from preflight so planSkills can use it in the generated plan
+              const _proceedAgent = paused.preflightResult?.agents?.find(a => a.agentId?.toLowerCase() === _agentId?.toLowerCase());
+              const _proceedDeepLinkUrl = _proceedAgent?.deepLinkUrl || null;
+              if (_proceedDeepLinkUrl) {
+                console.log(`[StateGraph] ASK_USER resume: proceed_anyway — injecting deep-link URL ${_proceedDeepLinkUrl} for ${_agentId}`);
+              }
+              console.log(`[StateGraph] ASK_USER resume: proceed_anyway — skipping training gate, letting planSkills generate real plan`);
+              progressCallback({ type: 'resuming', agentId: _agentId, stepIndex: _uiStepIdx });
+              initialState = {
+                ...paused,
+                message: paused.message,
+                streamCallback,
+                progressCallback,
+                confirmInstallCallback,
+                confirmGuideCallback,
+                isGuideCancelled,
+                failedStep: null,
+                pendingQuestion: null,
+                recoveryAction: null,
+                answer: undefined,
+                commandExecuted: false,
+                _skipTrainingGate: true,
+                _proceedDeepLinkUrl: _proceedDeepLinkUrl,
+                skillPlan: null,
+                skillCursor: 0,
+                skillResults: [],
+                stepRetryCount: 0,
+                _planFile: null,
+                _skillPlanFile: null,
+                context: { ...paused.context, sessionId: sessionId || currentSessionId }
+              };
             } else if (_wantsTrain && _handoffAgentId) {
               // Thread train context (mode, task, startUrl, keepSession) so the
               // trainer can attach to the live session (train-from-current-page)
