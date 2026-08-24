@@ -672,10 +672,10 @@ function startOverlayControlServer() {
       req.on('end', () => {
         try {
           const evt = JSON.parse(body || '{}');
-          if (activeProgressCallback && ['agent:turn_live', 'agent:turn', 'agent:complete', 'agent:thought', 'agent:thinking', 'needs_login', 'task:auth_required', 'task:auth_resolved'].includes(evt.type)) {
+          if (activeProgressCallback && ['agent:turn_live', 'agent:turn', 'agent:complete', 'agent:thought', 'agent:thinking', 'needs_login', 'task:auth_required', 'task:auth_resolved', 'agent:tier'].includes(evt.type)) {
             activeProgressCallback(evt);
           }
-          if (activeCronProgressCallback && ['agent:turn_live', 'agent:turn', 'agent:complete', 'agent:thought', 'agent:thinking', 'needs_login', 'task:auth_required', 'task:auth_resolved'].includes(evt.type)) {
+          if (activeCronProgressCallback && ['agent:turn_live', 'agent:turn', 'agent:complete', 'agent:thought', 'agent:thinking', 'needs_login', 'task:auth_required', 'task:auth_resolved', 'agent:tier'].includes(evt.type)) {
             activeCronProgressCallback(evt);
           }
           res.writeHead(200).end(JSON.stringify({ ok: true }));

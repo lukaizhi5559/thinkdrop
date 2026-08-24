@@ -890,7 +890,7 @@ export function TrainingReviewPanel({ agentId, previewData, onSave, onCancel }: 
       {/* Footer with Train & Save + cancel buttons */}
       <div className="px-4 py-3 flex items-stretch gap-2" style={{ borderTop: '1px solid rgba(255, 255, 255, 0.1)' }}>
         <button
-          onClick={handlePreviewRun}
+          onClick={previewResult?.ok ? onCancel : handlePreviewRun}
           disabled={skills.length === 0 || isPreviewing || isSaving}
           className="flex-1 min-h-[42px] rounded-lg text-sm font-semibold text-white flex items-center justify-center gap-2 transition-opacity"
           style={{
@@ -898,7 +898,7 @@ export function TrainingReviewPanel({ agentId, previewData, onSave, onCancel }: 
             opacity: skills.length === 0 || isPreviewing || isSaving ? 0.4 : 1,
             cursor: skills.length === 0 || isPreviewing || isSaving ? 'not-allowed' : 'pointer',
           }}
-          title="Runs the skill to discover the keyboard path (slow first run), then saves automatically."
+          title={previewResult?.ok ? 'Skill saved. Click to close the review panel.' : 'Runs the skill to discover the keyboard path (slow first run), then saves automatically.'}
         >
           {isPreviewing ? (
             <>
@@ -909,6 +909,8 @@ export function TrainingReviewPanel({ agentId, previewData, onSave, onCancel }: 
             </>
           ) : isSaving ? (
             'Saving…'
+          ) : previewResult?.ok ? (
+            'Done'
           ) : (
             <>
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -924,7 +926,7 @@ export function TrainingReviewPanel({ agentId, previewData, onSave, onCancel }: 
           className="px-4 min-h-[42px] rounded-lg text-sm text-gray-400 flex items-center justify-center"
           style={{ border: '1px solid rgba(255, 255, 255, 0.1)', background: 'transparent', opacity: isPreviewing ? 0.4 : 1 }}
         >
-          {!isPreviewing && !isSaving && previewResult?.ok ? 'Close' : 'Cancel'}
+          {!isPreviewing && !isSaving && previewResult?.ok ? 'Exit' : 'Cancel'}
         </button>
       </div>
       {/* Info note about first-run discovery */}

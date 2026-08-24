@@ -79,11 +79,18 @@ export function TrainingPanel({ agentId, hostname, onDone: _onDone, onCancel, mo
   const [isLaunching, setIsLaunching] = useState(true);
   const [launchingUrl, setLaunchingUrl] = useState<string>('');
   const [reviewData, setReviewData] = useState<any>(null);
+  const reviewDataRef = useRef<any>(null);
+  const [previewRequested, setPreviewRequested] = useState(false);
+  const previewRequestedRef = useRef(false);
   const [rejectMessage, setRejectMessage] = useState<string | null>(null);
   const stepsEndRef = useRef<HTMLDivElement>(null);
 
   const cleanAgentId = agentId.replace(/\.agent$/, '');
   const fullSkillName = `${cleanAgentId}.${skillSuffix}.skill`;
+
+  // Keep refs in sync with state so event handlers always see latest values
+  useEffect(() => { reviewDataRef.current = reviewData; }, [reviewData]);
+  useEffect(() => { previewRequestedRef.current = previewRequested; }, [previewRequested]);
 
   // Trigger slide-in on mount
   useEffect(() => {
@@ -131,9 +138,21 @@ export function TrainingPanel({ agentId, hostname, onDone: _onDone, onCancel, mo
       }
 
       if (data.type === 'training:saved') {
+        const latestReviewData = reviewDataRef.current;
+        const latestPreviewRequested = previewRequestedRef.current;
+        console.log('[TrainingPanel] training:saved received — reviewDataRef:', latestReviewData, 'previewRequestedRef:', latestPreviewRequested, 'data:', data);
         setSaving(false);
         setSavingMessage('');
-        onCancel();
+        // During the preview/review flow, keep the panel open so the user can inspect
+        // the saved skill. Only auto-close for the non-preview direct-save flow.
+        if (!latestReviewData && !latestPreviewRequested) {
+          console.log('[TrainingPanel] training:saved with no reviewData and no preview pending — calling onCancel');
+          onCancel();
+        } else {
+          console.log('[TrainingPanel] training:saved — keeping panel open (reviewData or preview pending)');
+          setPreviewRequested(false);
+          previewRequestedRef.current = false;
+        }
         return;
       }
 
@@ -150,25 +169,30 @@ export function TrainingPanel({ agentId, hostname, onDone: _onDone, onCancel, mo
 
     ipcRenderer.on('agents:train-progress', handleStep);
     return () => { ipcRenderer.removeListener('agents:train-progress', handleStep); };
-  }, [agentId]);
+  }, [agentId, reviewData, previewRequested]);
 
   // Listen for review preview/saved/error events
   useEffect(() => {
     if (!ipcRenderer) return;
 
     const handlePreviewResult = (data: any) => {
-      console.log('[TrainingPanel] agents:train-preview-result received:', data);
+      console.log('[TrainingPanel] agents:train-preview-result received:', data?.agentId, 'current agentId:', agentId);
       if (!data || data.agentId !== agentId) return;
       setSaving(false);
       setSavingMessage('');
       setReviewData(data.preview);
+      reviewDataRef.current = data.preview;
+      setPreviewRequested(false);
+      previewRequestedRef.current = false;
     };
 
     const handleReviewSaved = (data: any) => {
-      console.log('[TrainingPanel] agents:train-review-saved received:', data);
+      console.log('[TrainingPanel] agents:train-review-saved received:', data, 'reviewData:', reviewData);
       if (!data || data.agentId !== agentId) return;
       setSaving(false);
       setSavingMessage('');
+      setPreviewRequested(false);
+      previewRequestedRef.current = false;
       // Keep the review panel open so the user can inspect/edit the saved skill.
       // TrainingReviewPanel will show a success banner and a manual close button.
     };
@@ -212,6 +236,11 @@ export function TrainingPanel({ agentId, hostname, onDone: _onDone, onCancel, mo
   }, [steps]);
 
   const handleCancel = () => {
+    console.log('[TrainingPanel] handleCancel called — reviewData:', reviewData);
+    setReviewData(null);
+    reviewDataRef.current = null;
+    setPreviewRequested(false);
+    previewRequestedRef.current = false;
     setSaving(false);
     setSavingMessage('');
     onCancel();
@@ -224,6 +253,8 @@ export function TrainingPanel({ agentId, hostname, onDone: _onDone, onCancel, mo
     setSavingMessage('Analyzing recorded steps…');
     setRejectMessage(null);
     setValidationError(null);
+    setPreviewRequested(true);
+    previewRequestedRef.current = true;
     // Send preview request — LLM organizes raw events into skill(s) with params
     const skillName = `${cleanAgentId}.${skillSuffix}.skill`;
     console.log('[TrainingPanel] sending agents:train-preview', { agentId, skillName });

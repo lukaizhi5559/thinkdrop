@@ -94,7 +94,7 @@ export function RightSlideoutDrawer({
 
   return (
     <>
-      {/* Backdrop */}
+      {/* Backdrop — no click-to-close; user must use the X button */}
       <div
         className="fixed inset-0 bg-black/50 transition-opacity duration-300 ease-out"
         style={{
@@ -103,7 +103,6 @@ export function RightSlideoutDrawer({
           zIndex: zIndex - 1,
           top: `${HEADER_OFFSET}px`,
         }}
-        onClick={onClose}
       />
 
       {/* Drawer */}
