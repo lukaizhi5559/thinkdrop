@@ -995,6 +995,7 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
   useEffect(() => { preflightAuthRequiredRef.current = preflightAuthRequired; }, [preflightAuthRequired]);
   const [preflightAuthBrowserOpened, setPreflightAuthBrowserOpened] = useState(false);
   const [preflightAuthBackgroundFailed, setPreflightAuthBackgroundFailed] = useState(false);
+  const [preflightAuthVerifying, setPreflightAuthVerifying] = useState(false);
   const [authContinueVisible, setAuthContinueVisible] = useState(false);
   const [preflightRouteChoice, setPreflightRouteChoice] = useState<RouteChoice | null>(null);
   const [preflightMessage, setPreflightMessage] = useState('Preparing agents...');
@@ -1319,6 +1320,7 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
           });
           setPreflightAuthBrowserOpened(false);
           setPreflightAuthBackgroundFailed(false);
+          setPreflightAuthVerifying(false);
           onAuthPending?.(true);
           break;
 
@@ -2038,8 +2040,25 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
           // Background auth probe returned failure/inconclusive — show retry/continue
           if (preflightAuthRequiredRef.current?.agentId === data.agentId) {
             setPreflightAuthBackgroundFailed(true);
+            setPreflightAuthVerifying(false);
             onAuthPending?.(false);
           }
+          break;
+
+        case 'preflight:auth_verifying':
+          // User clicked Continue — background browser.agent is verifying the sign-in
+          if (preflightAuthRequiredRef.current?.agentId === data.agentId) {
+            setPreflightAuthVerifying(true);
+            setPreflightAuthBackgroundFailed(false);
+          }
+          break;
+
+        case 'preflight:auth_succeeded':
+          // Background browser.agent confirmed authVerified=true — clearing auth card
+          setPreflightAuthVerifying(false);
+          setPreflightAuthBackgroundFailed(false);
+          setPreflightAuthRequired(null);
+          onAuthPending?.(false);
           break;
 
         case 'gather_start':
@@ -2193,9 +2212,13 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
         case 'evaluating':
           // Don't override recovery phase - keep showing retrying_with_fix banner
           // if we're already in recovery flow. Evaluating happens during recovery.
-          if (phaseRef.current !== 'retrying_with_fix') {
-            setPhase('evaluating');
+          // Also don't override 'done' — all_done may have already fired, and an
+          // evaluating event arriving after it is a race condition that would
+          // permanently stick the UI on the "Checking result quality" spinner.
+          if (phaseRef.current === 'retrying_with_fix' || phaseRef.current === 'done' || phaseRef.current === 'plan_review') {
+            break;
           }
+          setPhase('evaluating');
           setEvalMessage(data.message || 'Evaluating result quality...');
           break;
 
@@ -4811,9 +4834,9 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
                     <button
                       onClick={() => {
                         ipcRenderer?.send('preflight:auth_continue', { agentId: preflightAuthRequired.agentId });
-                        setPreflightAuthRequired(null);
-                        setPreflightAuthBrowserOpened(false);
-                        setPreflightAuthBackgroundFailed(false);
+                        // Do NOT clear preflightAuthRequired — the background browser.agent
+                        // task is the single source of truth. It will send
+                        // preflight:auth_succeeded (clears card) or preflight:auth_background_failed.
                         setAuthContinueVisible(false);
                       }}
                       className="text-xs font-medium rounded-md transition-colors"
@@ -4830,6 +4853,12 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
                   ) : (
                     <span className="text-xs" style={{ color: '#f59e0b' }}>
                       Complete sign-in… Continue unlocks shortly.
+                    </span>
+                  )}
+                  {preflightAuthVerifying && (
+                    <span className="text-xs" style={{ color: '#3b82f6', display: 'flex', alignItems: 'center', gap: 6 }}>
+                      <span className="animate-spin" style={{ display: 'inline-block', width: 12, height: 12, border: '2px solid #3b82f6', borderTopColor: 'transparent', borderRadius: '50%' }} />
+                      Verifying sign-in…
                     </span>
                   )}
                 </>
