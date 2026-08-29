@@ -1105,6 +1105,22 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
     onActiveChange?.(phase !== 'idle');
   }, [phase]);
 
+  // Nudge UnifiedOverlay to resize and scroll when a question batch appears.
+  // The card's own DOM may not be measured by the time the state flips, so we
+  // wait for the next paint before asking for a re-measure.
+  const nudgeRef = useRef({ onAskUserShown, onHeightChange });
+  useEffect(() => {
+    nudgeRef.current = { onAskUserShown, onHeightChange };
+  });
+  useEffect(() => {
+    if (!questionBatch) return;
+    const id = setTimeout(() => {
+      nudgeRef.current.onAskUserShown?.();
+      nudgeRef.current.onHeightChange?.(0);
+    }, 80);
+    return () => clearTimeout(id);
+  }, [questionBatch]);
+
   // Heartbeat ticker — drives flickering status labels on running steps
   useEffect(() => {
     if (phase !== 'executing') return;
@@ -2535,10 +2551,9 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
     const handleQuestionBatch = (data: any) => {
       if (data?.active && data?.questions) {
         setGrillProcessing(false);
-        // Clear stale planning/gathering message so it doesn't show behind the
-        // question card (e.g. "Generating skill plan…", "Checking task details…").
-        // The thinking/planning progress events will restore the message when
-        // execution resumes after the user submits answers.
+        // Switch to gathering so the planning/gathering spinner header is hidden
+        // and the question card takes over. Stale plan messages are also cleared.
+        setPhase('gathering');
         setPlanMessage('');
         setQuestionBatch({
           batchId: data.batchId,
@@ -2866,6 +2881,7 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
         </div>
       )}
       {/* ── Phase header ─────────────────────────────────────────────────── */}
+      {!questionBatch && (
       <div className="flex items-center gap-2">
         {phase === 'gathering' && (
           <>
@@ -3023,6 +3039,7 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
           </>
         )}
       </div>
+      )}
 
       {/* ── Parallel login wall card ─────────────────────────────────────── */}
       {parallelLoginServices && parallelLoginServices.length > 0 && (
