@@ -3831,7 +3831,7 @@ app.whenReady().then(async () => {
         const { batchId, questions, routeConfirmation } = questionOrBatch;
         return new Promise((resolve) => {
           pendingGatherBatchResolve = resolve;
-          pendingGatherBatchData = { batchId, questions };
+          pendingGatherBatchData = { batchId, questions, routeConfirmation: routeConfirmation || null };
           console.log(`[GatherContext] Waiting for batch answers (batchId=${batchId}, ${questions?.length || 0} questions)…`);
           safeSendUnified('gather:question_batch', {
             active: true,
@@ -4826,6 +4826,7 @@ app.whenReady().then(async () => {
                 answer: undefined,
                 commandExecuted: false,
                 _skipTrainingGate: true,
+                _proceedAgentId: _agentId,
                 _proceedDeepLinkUrl: _proceedDeepLinkUrl,
                 skillPlan: null,
                 skillCursor: 0,
@@ -5647,6 +5648,7 @@ app.whenReady().then(async () => {
             active: true,
             batchId: pendingGatherBatchData.batchId,
             questions: pendingGatherBatchData.questions,
+            routeConfirmation: pendingGatherBatchData.routeConfirmation || null,
           });
           console.log('[GatherContext] Re-sent gather:question_batch on window re-activation');
         }

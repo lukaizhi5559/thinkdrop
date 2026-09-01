@@ -136,6 +136,8 @@ export function QuestionCard({ batch, onSubmit, onCancel }: QuestionCardProps) {
   // common for memory-resolved confirmations where the LLM emits a lone "Yes"
   // option; leaving it unselected would keep the "Next" button dimmed. The
   // user can still override via free-text if they don't want the suggested value.
+  // Also auto-selects the primary "accept" option for route confirmations so
+  // the Next button isn't dimmed when the recommended route is the obvious choice.
   useEffect(() => {
     if (!currentQ) return;
     if (answers[currentQ.id] !== undefined) return;
@@ -148,6 +150,16 @@ export function QuestionCard({ batch, onSubmit, onCancel }: QuestionCardProps) {
         const _v = opt.value !== undefined && opt.value !== null && opt.value !== ''
           ? opt.value
           : (opt.label || `opt-0`);
+        setAnswers(prev => ({ ...prev, [currentQ.id]: _v }));
+      }
+    }
+    // Auto-select primary option for route confirmations (accept recommended route)
+    if (currentQ.isRoute && currentQ.options) {
+      const _primary = currentQ.options.find(o => o.primary);
+      if (_primary) {
+        const _v = _primary.value !== undefined && _primary.value !== null && _primary.value !== ''
+          ? _primary.value
+          : (_primary.label || `opt-route`);
         setAnswers(prev => ({ ...prev, [currentQ.id]: _v }));
       }
     }
