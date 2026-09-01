@@ -132,6 +132,12 @@ export function QuestionCard({ batch, onSubmit, onCancel }: QuestionCardProps) {
   const _allowFreeText = currentQ.freeText || (currentQ.memoryResolved && currentQ.options?.length === 1);
   const _otherLabel = currentQ.memoryResolved ? 'No, use a different value' : 'Other (type your own)';
 
+  // UI safety: detect when a question has no answerable controls (no options,
+  // no freeText, not type:text). The backend should coerce these to text, but
+  // defend against regressions so the user is never stuck with Cancel/Next only.
+  const _hasOptions = (currentQ.type === 'confirm' || currentQ.type === 'choice') && currentQ.options && currentQ.options.length > 0;
+  const _showTextInput = currentQ.type === 'text' || (!_hasOptions && !_allowFreeText);
+
   // Auto-select a single primary option for confirm/choice questions. This is
   // common for memory-resolved confirmations where the LLM emits a lone "Yes"
   // option; leaving it unselected would keep the "Next" button dimmed. The
@@ -415,8 +421,10 @@ export function QuestionCard({ batch, onSubmit, onCancel }: QuestionCardProps) {
         </div>
       )}
 
-      {/* Text-only question (no options) */}
-      {currentQ.type === 'text' && (
+      {/* Text-only question (no options) — also a UI safety fallback when a
+          confirm/choice question has no options and no freeText (shouldn't
+          happen after backend validation, but defends against regressions). */}
+      {_showTextInput && (
         <div style={{ marginBottom: 8 }}>
           <input
             type="text"
