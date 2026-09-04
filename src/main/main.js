@@ -997,6 +997,7 @@ let currentBrowserSessionId = null; // Persists active Playwright session across
 let currentBrowserUrl = null;        // Last known URL in the active Playwright session
 let _activeBrowserAgentSessionId = null; // Tracks browser session opened during preflight auth (for cancel cleanup)
 let _gatherAuthSessionId = null; // Tracks browser session opened by GatherAuth sign-in (survives stategraph completion)
+let _gatherAuthInFlight = false; // Tracks whether a background browser.agent:auth request is currently running
 let _pendingPreflightPrompt = null; // { prompt, selectedText, responseLanguage, sessionId } — stored when preflight auth required, re-enqueued after auth succeeds
 let _pendingNewlyBuiltAgents = new Set(); // Tracks newly built agents pending auth — retained on cancel for retry
 let _takeOverContext = null; // Phase 10: { agentId, task, pageType, service } — set when user takes over, used for distillHumanCorrection
@@ -7204,6 +7205,7 @@ app.whenReady().then(async () => {
     const normalizedAgentId = agentId.endsWith('.agent') ? agentId : `${agentId}.agent`;
     console.log(`[GatherAuth] Opening browser sign-in for ${normalizedAgentId} (fire-and-forget)`);
     _gatherAuthSessionId = normalizedAgentId.replace('.agent', '').replace(/[^a-z0-9_]/gi, '_') + '_agent';
+    _gatherAuthInFlight = true;
 
     // Immediately tell the renderer the browser is open so the card changes state
     safeSendUnified('automation:progress', { type: 'browser:auth_opened', agentId: normalizedAgentId });
@@ -7229,6 +7231,7 @@ app.whenReady().then(async () => {
         let data = '';
         res.on('data', chunk => { data += chunk; });
         res.on('end', async () => {
+          _gatherAuthInFlight = false;
           try {
             const result = JSON.parse(data);
             console.log(`[GatherAuth] browser.agent background run done for ${normalizedAgentId}: ok=${result?.data?.ok} authVerified=${result?.data?.authVerified}`);
@@ -7260,9 +7263,9 @@ app.whenReady().then(async () => {
             } else if (_pendingPreflightPrompt) {
               // Background auth probe failed or returned inconclusive — tell the UI
               // so the card can show retry/continue options instead of hanging.
-              // Do NOT update authed_at or re-enqueue.
-              _pendingPreflightPrompt = null;
-              console.log(`[GatherAuth] Background auth did not verify — notifying UI for ${normalizedAgentId}`);
+              // Do NOT clear _pendingPreflightPrompt — the Retry button needs it to
+              // re-enqueue after a successful retry. Only clear on success or cancel.
+              console.log(`[GatherAuth] Background auth did not verify — notifying UI for ${normalizedAgentId} (preserving pending prompt for retry)`);
               safeSendUnified('automation:progress', {
                 type: 'preflight:auth_background_failed',
                 agentId: normalizedAgentId,
@@ -7274,10 +7277,10 @@ app.whenReady().then(async () => {
       }
     );
     req.on('error', err => {
+      _gatherAuthInFlight = false;
       console.warn(`[GatherAuth] browser.agent background error for ${normalizedAgentId}:`, err.message);
-      // On HTTP error, nullify pending prompt and notify UI — don't hang forever
+      // Notify UI but preserve _pendingPreflightPrompt for retry — don't hang forever
       if (_pendingPreflightPrompt) {
-        _pendingPreflightPrompt = null;
         safeSendUnified('automation:progress', {
           type: 'preflight:auth_background_failed',
           agentId: normalizedAgentId,
@@ -7287,10 +7290,11 @@ app.whenReady().then(async () => {
     });
     req.setTimeout(5 * 60 * 1000); // 5-minute timeout — user has time to sign in
     req.on('timeout', () => {
+      _gatherAuthInFlight = false;
       console.warn(`[GatherAuth] browser.agent background timeout for ${normalizedAgentId}`);
       req.destroy();
       if (_pendingPreflightPrompt) {
-        _pendingPreflightPrompt = null;
+        // Preserve _pendingPreflightPrompt for retry — only notify UI of timeout
         safeSendUnified('automation:progress', {
           type: 'preflight:auth_background_failed',
           agentId: normalizedAgentId,
@@ -7303,8 +7307,10 @@ app.whenReady().then(async () => {
 
   // ─── Preflight: manual continue after browser sign-in ─────────────────────
   // Triggered by the "I've signed in — Continue" button in the preflight auth card.
-  // Does NOT re-enqueue the prompt or update authed_at — the background browser.agent
-  // auth task is the single source of truth. It will re-enqueue when authVerified=true.
+  // If a background browser.agent:auth request is in flight, signals the running
+  // waitForAuth poll via POST /browser.auth_complete so it returns success immediately.
+  // If no request is in flight (e.g. previous attempt timed out), re-triggers
+  // browser.agent:auth so a fresh waitForAuth can verify and re-enqueue the prompt.
   // This prevents the second run's preflight from closing the browser session the user
   // is actively signing in on (which killed the auth flow in the Google Calendar bug).
   ipcMain.on('preflight:auth_continue', (_event, { agentId } = {}) => {
@@ -7319,6 +7325,86 @@ app.whenReady().then(async () => {
         agentId: normalizedAgentId,
         message: 'Verifying sign-in...',
       });
+      // Signal the running waitForAuth poll to return success immediately.
+      // If no background request is in flight (timed out), re-trigger browser.agent:auth.
+      if (_gatherAuthInFlight && _gatherAuthSessionId) {
+        console.log(`[StateGraph] preflight:auth_continue — signaling /browser.auth_complete for session=${_gatherAuthSessionId}`);
+        const _completePayload = JSON.stringify({ sessionId: _gatherAuthSessionId });
+        const _completeReq = http.request(
+          { hostname: '127.0.0.1', port: 3007, path: '/browser.auth_complete', method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(_completePayload) } },
+          () => {}
+        );
+        _completeReq.on('error', (err) => {
+          console.warn(`[StateGraph] preflight:auth_continue — /browser.auth_complete failed:`, err.message);
+        });
+        _completeReq.end(_completePayload);
+      } else if (normalizedAgentId) {
+        console.log(`[StateGraph] preflight:auth_continue — no in-flight auth request, re-triggering browser.agent:auth for ${normalizedAgentId}`);
+        // Re-trigger the auth flow — waitForAuth will verify the already-signed-in session
+        // (via LLM detection or cookie sniff) and re-enqueue the prompt on success.
+        _gatherAuthInFlight = true;
+        const _rePayload = JSON.stringify({
+          payload: {
+            skill: 'browser.agent',
+            args: {
+              action: 'authenticate',
+              agentId: normalizedAgentId,
+              task: 'navigate to the sign-in page and wait for the user to authenticate',
+              manualLogin: true,
+            },
+          },
+        });
+        const _reReq = http.request(
+          { hostname: '127.0.0.1', port: 3007, path: '/command.automate', method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(_rePayload) } },
+          (res) => {
+            let _data = '';
+            res.on('data', chunk => { _data += chunk; });
+            res.on('end', async () => {
+              _gatherAuthInFlight = false;
+              try {
+                const result = JSON.parse(_data);
+                console.log(`[GatherAuth] re-trigger done for ${normalizedAgentId}: ok=${result?.data?.ok} authVerified=${result?.data?.authVerified}`);
+                if (result?.data?.ok && result?.data?.authVerified === true && _pendingPreflightPrompt) {
+                  const pp = _pendingPreflightPrompt;
+                  _pendingPreflightPrompt = null;
+                  _pendingNewlyBuiltAgents.delete(normalizedAgentId);
+                  const _now = new Date().toISOString();
+                  const _expires = new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString();
+                  try {
+                    await _cmdHttp('/agent.update', { id: normalizedAgentId, authed_at: _now, auth_expires_at: _expires });
+                  } catch (err) {
+                    console.warn(`[PreflightAuth] Could not update authed_at for ${normalizedAgentId}:`, err.message);
+                  }
+                  console.log(`[GatherAuth] Re-trigger auth succeeded — re-enqueuing prompt: "${pp.prompt.slice(0, 60)}"`);
+                  safeSendUnified('automation:progress', {
+                    type: 'preflight:auth_succeeded',
+                    agentId: normalizedAgentId,
+                    message: 'Sign-in verified — resuming task...',
+                  });
+                  promptQueue.enqueue(pp.prompt, {
+                    selectedText: pp.selectedText,
+                    responseLanguage: pp.responseLanguage,
+                    sessionId: pp.sessionId,
+                  });
+                } else if (_pendingPreflightPrompt) {
+                  console.log(`[GatherAuth] Re-trigger auth did not verify — notifying UI for ${normalizedAgentId}`);
+                  safeSendUnified('automation:progress', {
+                    type: 'preflight:auth_background_failed',
+                    agentId: normalizedAgentId,
+                    message: result?.data?.error || 'Background auth check did not confirm login.',
+                  });
+                }
+              } catch (_) {}
+            });
+          }
+        );
+        _reReq.on('error', () => { _gatherAuthInFlight = false; });
+        _reReq.setTimeout(5 * 60 * 1000);
+        _reReq.on('timeout', () => { _gatherAuthInFlight = false; _reReq.destroy(); });
+        _reReq.end(_rePayload);
+      }
     } else {
       console.log(`[StateGraph] preflight:auth_continue — no pending prompt, ignoring`);
     }
