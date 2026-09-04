@@ -13,6 +13,7 @@ interface InstalledSkill {
 export default function StandalonePromptCapture() {
   const [promptText, setPromptText] = useState('');
   const [highlights, setHighlights] = useState<string[]>([]);
+  const [copyButtonGlowing, setCopyButtonGlowing] = useState(false);
   const [isDragOver, setIsDragOver] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -122,6 +123,11 @@ export default function StandalonePromptCapture() {
       setIsProcessing(false);
     };
 
+    // Copy button glow — main process sends this when text is highlighted
+    const handleCopyButtonGlow = (_event: any, glowing: boolean) => {
+      setCopyButtonGlowing(!!glowing);
+    };
+
     ipcRenderer.on('prompt-capture:show', handleShow);
     ipcRenderer.on('prompt-capture:add-highlight', handleAddHighlight);
     ipcRenderer.on('automation:progress', handleProgress);
@@ -133,6 +139,7 @@ export default function StandalonePromptCapture() {
     ipcRenderer.on('skill:store-trigger', handleSkillStoreTrigger);
     ipcRenderer.on('queue:started', handleQueueStarted);
     ipcRenderer.on('gather:pending', handleGatherPending);
+    ipcRenderer.on('copy-button:glow', handleCopyButtonGlow);
 
     return () => {
       if (ipcRenderer.removeListener) {
@@ -147,6 +154,7 @@ export default function StandalonePromptCapture() {
         ipcRenderer.removeListener('skill:store-trigger', handleSkillStoreTrigger);
         ipcRenderer.removeListener('queue:started', handleQueueStarted);
         ipcRenderer.removeListener('gather:pending', handleGatherPending);
+        ipcRenderer.removeListener('copy-button:glow', handleCopyButtonGlow);
       }
     };
   }, []);
@@ -899,6 +907,28 @@ export default function StandalonePromptCapture() {
               <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
             </svg>
             <span>Attach file or folder</span>
+          </button>
+
+          {/* Copy Button — pulses when text is highlighted (detected via mouse drag) */}
+          <button
+            title={copyButtonGlowing ? 'Click to save highlighted text as a copy file' : 'Highlight text to activate'}
+            onClick={copyButtonGlowing ? () => ipcRenderer?.send('copy-button:click') : undefined}
+            className={copyButtonGlowing ? 'copy-button-glowing' : ''}
+            style={{
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              width: '26px', height: '26px', borderRadius: '6px',
+              backgroundColor: copyButtonGlowing ? 'rgba(59,130,246,0.25)' : 'rgba(255,255,255,0.04)',
+              border: `1px solid ${copyButtonGlowing ? 'rgba(59,130,246,0.5)' : 'rgba(255,255,255,0.07)'}`,
+              color: copyButtonGlowing ? '#93c5fd' : '#6b7280',
+              cursor: copyButtonGlowing ? 'pointer' : 'default',
+              transition: 'background-color 0.2s, border-color 0.2s, color 0.2s',
+              flexShrink: 0,
+            }}
+          >
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
+              <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+            </svg>
           </button>
 
           {/* Skills Manager gear button — flush right */}

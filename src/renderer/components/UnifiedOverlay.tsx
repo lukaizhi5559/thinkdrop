@@ -85,6 +85,7 @@ export function UnifiedOverlay() {
   // --- Prompt Input State ---
   const [promptText, setPromptText] = useState('');
   const [highlights, setHighlights] = useState<string[]>([]);
+  const [copyButtonGlowing, setCopyButtonGlowing] = useState(false);
   const [_isRecording, setIsRecording] = useState(false);
   // Skill panel removed - now in slideout
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -102,7 +103,6 @@ export function UnifiedOverlay() {
   const [isStreaming, setIsStreaming] = useState(false);
   const [isThinking, setIsThinking] = useState(false);
   const [isAutomationMode, setIsAutomationMode] = useState(false);
-  const [isScheduledRun, setIsScheduledRun] = useState(false);
   const [streamingStartedRef, setStreamingStartedRef] = useState(false);
   const [actionChips, setActionChips] = useState<ActionChip[]>([]);
   const [searchSources, setSearchSources] = useState<SearchSource[]>([]);
@@ -910,11 +910,14 @@ export function UnifiedOverlay() {
 
     const handleAutomationProgress = (data: any) => {
       if (data?.type === 'reminder_fired') {
-        // Scheduled run starting — suppress AutomationProgress, let AIActivityPanel take over
+        // Scheduled run starting — AIActivityPanel is intentionally disabled, so let
+        // AutomationProgress handle the deferred step progress. Do NOT suppress it.
+        // Switch to the results tab so the user sees the deferred steps activate.
         if (data?.triggerIntent === 'execute_steps') {
-          setIsScheduledRun(true);
+          setIsAutomationMode(true);
+          setActiveTab('results');
         }
-        return; // Don't activate Results tab or automation mode for scheduled runs
+        return; // Don't trigger planning flow for scheduled runs
       } else if (data?.type === 'planning') {
         setIsThinking(false);
         setIsAutomationMode(true);
@@ -972,7 +975,6 @@ export function UnifiedOverlay() {
           markUnreadTab('skills');
         }, 600);
       } else if (data?.type === 'all_done') {
-        setIsScheduledRun(false); // Clear scheduled run flag on completion
         markUnreadTab('results');
         setIsThinking(false);
         setIsStreaming(false);
@@ -1099,6 +1101,11 @@ export function UnifiedOverlay() {
         const combined = [...prev, ...data.highlights];
         return combined.filter((h, i) => combined.indexOf(h) === i);
       });
+    };
+
+    // --- Copy Button Glow ---
+    const handleCopyButtonGlow = (glowing: boolean) => {
+      setCopyButtonGlowing(!!glowing);
     };
 
     // --- Voice ---
@@ -1737,6 +1744,7 @@ export function UnifiedOverlay() {
     ipcRenderer.on('highlights:update', handleHighlightsUpdate, token);
     ipcRenderer.on('highlights:available', handleHighlightsAvailable, token);
     ipcRenderer.on('highlights:confirmed', handleHighlightsConfirmed, token);
+    ipcRenderer.on('copy-button:glow', handleCopyButtonGlow, token);
     ipcRenderer.on('voice:inject-prompt', handleVoiceInject, token);
     ipcRenderer.on('voice:response', handleVoiceResponse, token);
     ipcRenderer.on('voice:recording-started', handleVoiceRecordingStarted, token);
@@ -1782,6 +1790,7 @@ export function UnifiedOverlay() {
       ipcRenderer.removeListenerByToken('highlights:update', token);
       ipcRenderer.removeListenerByToken('highlights:available', token);
       ipcRenderer.removeListenerByToken('highlights:confirmed', token);
+      ipcRenderer.removeListenerByToken('copy-button:glow', token);
       ipcRenderer.removeListenerByToken('voice:inject-prompt', token);
       ipcRenderer.removeListenerByToken('voice:response', token);
       ipcRenderer.removeListenerByToken('voice:recording-started', token);
@@ -2499,7 +2508,7 @@ export function UnifiedOverlay() {
                 )}
 
                 <AutomationProgress
-                  suppressIfScheduled={isScheduledRun}
+                  suppressIfScheduled={false}
                   setIsSubmitting={setIsSubmitting}
                   onAuthPending={setPreflightAuthPending}
                   activeTab={activeTab}
@@ -2747,21 +2756,44 @@ export function UnifiedOverlay() {
           {/* Action Buttons */}
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
-              {/* Mic Button */}
-              <VoiceButton compact={true} />
-
               {/* Attach Button */}
               <button
                 onClick={handleAttachClick}
-                className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium bg-white/5 text-gray-400 border border-white/10 hover:bg-white/10 transition-all"
+                className="flex items-center justify-center w-9 h-9 p-0 rounded-lg text-sm font-medium bg-white/5 text-gray-400 border border-white/10 hover:bg-white/10 transition-all"
               >
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                   <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48" />
                 </svg>
               </button>
 
-              {/* Terminal Button */}
+              {/* Copy Button — pulses when text is highlighted (detected via mouse drag) */}
               <button
+                onClick={copyButtonGlowing ? () => ipcRenderer?.send('copy-button:click') : undefined}
+                title={copyButtonGlowing ? 'Click to save highlighted text as a copy file' : 'Highlight text to activate'}
+                className={copyButtonGlowing ? 'copy-button-glowing' : ''}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  width: '36px',
+                  height: '36px',
+                  borderRadius: '8px',
+                  backgroundColor: copyButtonGlowing ? 'rgba(59,130,246,0.25)' : 'rgba(255,255,255,0.05)',
+                  border: '1px solid',
+                  borderColor: copyButtonGlowing ? 'rgba(59,130,246,0.5)' : 'rgba(255,255,255,0.1)',
+                  color: copyButtonGlowing ? '#93c5fd' : '#6b7280',
+                  cursor: copyButtonGlowing ? 'pointer' : 'default',
+                  transition: 'background-color 0.2s, border-color 0.2s, color 0.2s',
+                }}
+              >
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
+                  <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+                </svg>
+              </button>
+
+              {/* Terminal Button */}
+              {/* <button
                 onClick={() => setIsDebugMode(!isDebugMode)}
                 className={`flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium border transition-all ${
                   isDebugMode
@@ -2774,74 +2806,77 @@ export function UnifiedOverlay() {
                   <polyline points="4 17 10 11 4 5" />
                   <line x1="12" y1="19" x2="20" y2="19" />
                 </svg>
-              </button>
+              </button> */}
             </div>
 
             {/* Submit/Cancel Button - Matching StandalonePromptCapture style */}
-            <div
-              className={isSubmitting ? 'relative group' : ''}
-              style={{
-                width: '32px',
-                height: '32px',
-                borderRadius: '6px',
-                backgroundColor: isSubmitting
-                  ? 'rgba(239, 68, 68, 0.15)'
-                  : (promptText.trim() || highlights.length > 0) ? 'rgba(59, 130, 246, 0.2)' : 'rgba(255, 255, 255, 0.05)',
-                border: '1px solid',
-                borderColor: isSubmitting
-                  ? 'rgba(239, 68, 68, 0.3)'
-                  : (promptText.trim() || highlights.length > 0) ? 'rgba(59, 130, 246, 0.3)' : 'rgba(255, 255, 255, 0.1)',
-                flexShrink: 0,
-                marginTop: '0px',
-                cursor: (isSubmitting || promptText.trim() || highlights.length > 0) ? 'pointer' : 'default',
-                transition: 'background-color 0.15s, border-color 0.15s',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                position: 'relative',
-              }}
-              onMouseEnter={(e) => {
-                if (isSubmitting) {
-                  e.currentTarget.style.backgroundColor = 'rgba(239, 68, 68, 0.25)';
-                  e.currentTarget.style.borderColor = 'rgba(239, 68, 68, 0.5)';
-                }
-              }}
-              onMouseLeave={(e) => {
-                if (isSubmitting) {
-                  e.currentTarget.style.backgroundColor = 'rgba(239, 68, 68, 0.15)';
-                  e.currentTarget.style.borderColor = 'rgba(239, 68, 68, 0.3)';
-                }
-              }}
-              title={isSubmitting ? 'Cancel' : 'Send'}
-              onClick={isSubmitting ? () => ipcRenderer?.send('automation:cancel') : (promptText.trim() || highlights.length > 0) ? () => { clearInputAndShowThinking(); handleSubmit(); } : undefined}
-            >
-              {/* Red glow ring on hover when cancelling */}
-              {isSubmitting && (
-                <div 
-                  className="cancel-glow-ring group-hover:active"
-                  style={{ borderRadius: '8px' }}
-                />
-              )}
-              {isSubmitting ? (
-                /* Stop square — like ChatGPT/Windsurf cancel */
-                <svg width="10" height="10" viewBox="0 0 10 10" className="group-hover:fill-[#ef4444] transition-colors" fill="#9ca3af">
-                  <rect x="0" y="0" width="10" height="10" rx="2" />
-                </svg>
-              ) : (
-                <svg
-                  width="14"
-                  height="14"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke={(promptText.trim() || highlights.length > 0) ? '#60a5fa' : '#6b7280'}
-                  strokeWidth="2"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                >
-                  <path d="M9 10l-5 5 5 5" />
-                  <path d="M20 4v7a4 4 0 0 1-4 4H4" />
-                </svg>
-              )}
+            <div className="flex items-center gap-2">
+              <div
+                className={isSubmitting ? 'relative group' : ''}
+                style={{
+                  width: '36px',
+                  height: '36px',
+                  borderRadius: '8px',
+                  backgroundColor: isSubmitting
+                    ? 'rgba(239, 68, 68, 0.15)'
+                    : (promptText.trim() || highlights.length > 0) ? 'rgba(59, 130, 246, 0.2)' : 'rgba(255, 255, 255, 0.05)',
+                  border: '1px solid',
+                  borderColor: isSubmitting
+                    ? 'rgba(239, 68, 68, 0.3)'
+                    : (promptText.trim() || highlights.length > 0) ? 'rgba(59, 130, 246, 0.3)' : 'rgba(255, 255, 255, 0.1)',
+                  flexShrink: 0,
+                  marginTop: '0px',
+                  cursor: (isSubmitting || promptText.trim() || highlights.length > 0) ? 'pointer' : 'default',
+                  transition: 'background-color 0.15s, border-color 0.15s',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  position: 'relative',
+                }}
+                onMouseEnter={(e) => {
+                  if (isSubmitting) {
+                    e.currentTarget.style.backgroundColor = 'rgba(239, 68, 68, 0.25)';
+                    e.currentTarget.style.borderColor = 'rgba(239, 68, 68, 0.5)';
+                  }
+                }}
+                onMouseLeave={(e) => {
+                  if (isSubmitting) {
+                    e.currentTarget.style.backgroundColor = 'rgba(239, 68, 68, 0.15)';
+                    e.currentTarget.style.borderColor = 'rgba(239, 68, 68, 0.3)';
+                  }
+                }}
+                title={isSubmitting ? 'Cancel' : 'Send'}
+                onClick={isSubmitting ? () => ipcRenderer?.send('automation:cancel') : (promptText.trim() || highlights.length > 0) ? () => { clearInputAndShowThinking(); handleSubmit(); } : undefined}
+              >
+                {/* Red glow ring on hover when cancelling */}
+                {isSubmitting && (
+                  <div 
+                    className="cancel-glow-ring group-hover:active"
+                    style={{ borderRadius: '8px' }}
+                  />
+                )}
+                {isSubmitting ? (
+                  /* Stop square — like ChatGPT/Windsurf cancel */
+                  <svg width="10" height="10" viewBox="0 0 10 10" className="group-hover:fill-[#ef4444] transition-colors" fill="#9ca3af">
+                    <rect x="0" y="0" width="10" height="10" rx="2" />
+                  </svg>
+                ) : (
+                  <svg
+                    width="14"
+                    height="14"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke={(promptText.trim() || highlights.length > 0) ? '#60a5fa' : '#6b7280'}
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  >
+                    <path d="M9 10l-5 5 5 5" />
+                    <path d="M20 4v7a4 4 0 0 1-4 4H4" />
+                  </svg>
+                )}
+              </div>
+              <VoiceButton compact={true} icon="voice" style={{ width: '36px', height: '36px', borderRadius: '8px' }} />
             </div>
           </div>
         </div>
@@ -3074,7 +3109,7 @@ export function UnifiedOverlay() {
       {/* Highlight Debug Button (Dev Mode Only) */}
       {import.meta.env.DEV && (
         <>
-          <button
+          {/* <button
             onClick={() => {
               if (activeHighlight) {
                 // Clear highlights
@@ -3110,7 +3145,7 @@ export function UnifiedOverlay() {
             }}
           >
             🔍
-          </button>
+          </button> */}
 
           {/* Highlight Debug Dialog */}
           {showHighlightDebug && (

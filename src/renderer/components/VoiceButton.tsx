@@ -18,9 +18,11 @@ interface VoiceButtonProps {
   mode?: string;
   onTranscript?: (text: string, language: string) => void;
   onResponse?: (text: string, audioBase64: string, format: string) => void;
+  icon?: 'mic' | 'voice';
+  style?: React.CSSProperties;
 }
 
-export default function VoiceButton({ compact = false }: VoiceButtonProps) {
+export default function VoiceButton({ compact = false, icon = 'mic', style = {} }: VoiceButtonProps) {
   const [voiceState, setVoiceState] = useState<VoiceState>('idle');
   const [companionOpen, setCompanionOpen] = useState(false);
 
@@ -92,6 +94,7 @@ export default function VoiceButton({ compact = false }: VoiceButtonProps) {
           outline: 'none',
           position: 'relative',
           overflow: 'hidden',
+          ...style,
         }}
         onMouseEnter={e => {
           if (voiceState === 'idle') {
@@ -118,13 +121,22 @@ export default function VoiceButton({ compact = false }: VoiceButtonProps) {
           }} />
         )}
 
-        {/* Mic icon */}
-        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-          <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/>
-          <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
-          <line x1="12" y1="19" x2="12" y2="23"/>
-          <line x1="8" y1="23" x2="16" y2="23"/>
-        </svg>
+        {/* Mic / voice icon */}
+        {icon === 'voice' ? (
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" role="img" aria-label="voice">
+            <rect x="5" y="10" width="2.5" height="4" rx="1.25" />
+            <rect x="9.25" y="7" width="2.5" height="10" rx="1.25" />
+            <rect x="13.5" y="4" width="2.5" height="16" rx="1.25" />
+            <rect x="17.75" y="9" width="2.5" height="6" rx="1.25" />
+          </svg>
+        ) : (
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/>
+            <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
+            <line x1="12" y1="19" x2="12" y2="23"/>
+            <line x1="8" y1="23" x2="16" y2="23"/>
+          </svg>
+        )}
 
         {/* Label */}
         {!compact && (

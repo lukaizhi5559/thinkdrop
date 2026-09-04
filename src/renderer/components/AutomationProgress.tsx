@@ -9,7 +9,6 @@
  */
 
 import { useEffect, useState, useRef, useCallback } from 'react';
-import { RichContentRenderer } from './rich-content';
 import { QuestionCard, QuestionBatch, PartialFailureCard, PartialFailureSummary } from './QuestionCard';
 
 const ipcRenderer = (window as any).electron?.ipcRenderer;
@@ -905,11 +904,6 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
   // Set when user submits a batch, cleared when the next batch arrives.
   // Shows "Processing your answers…" during the LLM gap between rounds.
   const [grillProcessing, setGrillProcessing] = useState(false);
-  // gather:pending — when active, the unified prompt input is intercepting the
-  // next submit as an answer to a clarifying question (e.g. carrier for SMS).
-  // We don't render the question here (the input placeholder already shows it);
-  // we just surface an attention hint so the user knows to look at the input.
-  const [gatherPending, setGatherPending] = useState(false);
   // Login guidance — shown inline while waitForAuth polls (step stays running)
   const [loginGuidance, setLoginGuidance] = useState<{ stepIndex: number; serviceDisplay: string; loginUrl: string; message: string; sessionId: string } | null>(null);
   const [manualAuthBtnVisible, setManualAuthBtnVisible] = useState(false);
@@ -1468,7 +1462,22 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
           // Don't override an active plan review — user must approve before execution starts
           if (phaseRef.current === 'plan_review') break;
           // Resume of an ask_user step: resuming already set the offset and flipped the '?' back to spinner.
-          if (data.isResume) break;
+          // For deferred reminder runs (isResume=true with a full plan), enter executing phase
+          // WITHOUT replacing the step list — the existing deferred rows from the original run
+          // should stay and be activated by subsequent step_start/step_done events.
+          if (data.isResume) {
+            // Only enter executing phase if we have existing steps (deferred reminder resume).
+            // If no steps exist (ask_user resume), just break — the offset was already set.
+            if (steps.length > 0) {
+              setPhase('executing');
+              setTotalCount(data.steps?.length || steps.length);
+              if (data.intent) setIntentType(data.intent);
+              executionStartRef.current = Date.now();
+              setEtaLabel(null);
+              setElapsedLabel(null);
+            }
+            break;
+          }
           // If there are already completed steps (mid-queue), append rather than replace.
           // This gives users a cumulative view of all sub-intent steps instead of resetting.
           // Exception: recoveryReplan=true means the failed step is being retried with a new plan —
@@ -2540,13 +2549,6 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
       setPhase('executing');
     };
 
-    // gather:pending — the prompt input is waiting for an answer to a clarifying
-    // question. We only track active state here to show an attention hint; the
-    // question itself is rendered as the input placeholder by UnifiedOverlay.
-    const handleGatherPending = (data: any) => {
-      setGatherPending(!!data?.active);
-    };
-
     // Grill-Me Phase D: batched question card handler
     const handleQuestionBatch = (data: any) => {
       if (data?.active && data?.questions) {
@@ -2575,7 +2577,6 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
     ipcRenderer.on('ws-bridge:message', handleBridgeMessage, AP_TOKEN);
     ipcRenderer.on('app-control:mode-change', handleControlModeChange, AP_TOKEN);
     ipcRenderer.on('plan:approved', handlePlanApproved, AP_TOKEN);
-    ipcRenderer.on('gather:pending', handleGatherPending, AP_TOKEN);
     ipcRenderer.on('gather:question_batch', handleQuestionBatch, AP_TOKEN);
     return () => {
       active = false;
@@ -2587,7 +2588,6 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
       ipcRenderer.removeListenerByToken('plan:approved', AP_TOKEN);
       ipcRenderer.removeListenerByToken('scan:progress', AP_TOKEN);
       ipcRenderer.removeListenerByToken('scan:discovery', AP_TOKEN);
-      ipcRenderer.removeListenerByToken('gather:pending', AP_TOKEN);
       ipcRenderer.removeListenerByToken('gather:question_batch', AP_TOKEN);
     };
   }, []);
@@ -5007,20 +5007,10 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
 
       {/* ── Planning pulse (no steps yet) ────────────────────────────────── */}
       {phase === 'planning' && steps.length === 0 && (
-        gatherPending ? (
-          <div className="flex items-center gap-2" style={{ color: '#f59e0b' }}>
-            <span style={{ fontSize: '0.85rem', lineHeight: 1, flexShrink: 0 }}>❓</span>
-            <span className="text-xs">
-              I need a bit more context — answer the question in the input below
-              <span style={{ opacity: 0.7, marginLeft: 2 }}>↓</span>
-            </span>
-          </div>
-        ) : (
-          <div className="flex items-center gap-2" style={{ color: '#6b7280' }}>
-            <div className="w-1.5 h-1.5 rounded-full bg-blue-500 animate-pulse" />
-            <span className="text-xs">{planMessage || 'Analyzing your request...'}</span>
-          </div>
-        )
+        <div className="flex items-center gap-2" style={{ color: '#6b7280' }}>
+          <div className="w-1.5 h-1.5 rounded-full bg-blue-500 animate-pulse" />
+          <span className="text-xs">{planMessage || 'Analyzing your request...'}</span>
+        </div>
       )}
 
       {/* ── GUIDE STEP: instruction card ──────────────────────────── */}
@@ -5112,47 +5102,59 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
           />
         ) : (
           <>
-          <div className="text-sm font-medium" style={{ color: '#e5e7eb', lineHeight: 1.5 }}>
-            <RichContentRenderer content={askUserPrompt.question} animated={false} className="text-sm" />
-          </div>
-          {askUserPrompt.options.length > 0 && (
-            <div className="flex flex-col gap-1.5 mt-2">
-              {askUserPrompt.options.map((option, i) => {
-                const _label = typeof option === 'string' ? option : (option?.label || String(option));
-                return (
-                <button
-                  key={i}
-                  onClick={() => handleOptionClick(option)}
-                  className="text-left px-3 py-2 rounded-lg text-sm transition-colors"
-                  style={{
-                    backgroundColor: 'rgba(59,130,246,0.08)',
-                    border: '1px solid rgba(59,130,246,0.25)',
-                    color: '#93c5fd',
-                    cursor: 'pointer',
-                  }}
-                  onMouseEnter={e => (e.currentTarget.style.backgroundColor = 'rgba(59,130,246,0.18)')}
-                  onMouseLeave={e => (e.currentTarget.style.backgroundColor = 'rgba(59,130,246,0.08)')}
-                >
-                  {_label}
-                </button>
-                );
-              })}
-            </div>
-          )}
-          {(askUserPrompt.freeText || askUserPrompt.options.length === 0) && (
-            <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 8 }}>
+          <QuestionCard
+            batch={{
+              batchId: `ask_user_${askUserPrompt.stepIndex ?? 'global'}`,
+              questions: [{
+                id: 'ask_user',
+                text: askUserPrompt.question,
+                type: askUserPrompt.options.length > 0 ? 'choice' : 'text',
+                options: (askUserPrompt.options as any[]).map(o =>
+                  typeof o === 'string'
+                    ? { label: o, value: o }
+                    : { label: o?.label || String(o), value: o?.value || o?.label || String(o), primary: o?.primary }
+                ),
+                freeText: askUserPrompt.freeText || askUserPrompt.options.length === 0,
+              }],
+            }}
+            onSubmit={(answers) => {
+              const answer = answers['ask_user'];
+              if (!answer) return;
+              // If the answer matches one of the options, use handleOptionClick (preserves correct_and_retry / record_recipe special cases)
+              const matchedOption = (askUserPrompt.options as any[]).find(o => {
+                const v = typeof o === 'string' ? o : (o?.value || o?.label || String(o));
+                return v === answer;
+              });
+              if (matchedOption) {
+                handleOptionClick(matchedOption);
+              } else {
+                // Free-text "Other" path — inline the same logic as handleAskUserFreeTextSubmit
+                // but using the answer from QuestionCard instead of askUserFreeText state
+                setAskUserPrompt(null);
+                setAskUserFreeText('');
+                setAskUserCorrectionMode(false);
+                const blockedStepIndex = askUserPrompt?.stepIndex;
+                setSteps(prev => prev.map(s => s.status === 'needs_input' && (blockedStepIndex == null || s.index === blockedStepIndex) ? { ...s, status: 'running' as const } : s));
+                ipcRenderer?.send('prompt-queue:submit', { prompt: answer, selectedText: '', isAskUserAnswer: true });
+              }
+            }}
+            onCancel={() => { setAskUserPrompt(null); }}
+          />
+          {/* Correction-mode fallback — rendered below QuestionCard when correct_and_retry was selected */}
+          {askUserCorrectionMode && (
+            <div style={{ marginTop: 6 }}>
               <input
                 type="text"
                 value={askUserFreeText}
                 onChange={e => setAskUserFreeText(e.target.value)}
                 onKeyDown={e => { if (e.key === 'Enter') handleAskUserFreeTextSubmit(); }}
-                placeholder="Type your answer…"
+                placeholder="What was missed? e.g. 'You never typed the update text'"
                 autoFocus
                 style={{
-                  flex: 1, minWidth: 0, background: 'rgba(0,0,0,0.35)',
-                  border: '1px solid rgba(245,158,11,0.35)',
+                  width: '100%', background: 'rgba(245,158,11,0.08)',
+                  border: '1px solid rgba(245,158,11,0.45)',
                   borderRadius: 6, padding: '6px 10px',
-                  color: '#e5e7eb', fontSize: '0.8rem',
+                  color: '#fbbf24', fontSize: '0.75rem',
                   outline: 'none',
                 }}
               />
@@ -5160,49 +5162,15 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
                 onClick={handleAskUserFreeTextSubmit}
                 disabled={!askUserFreeText.trim()}
                 style={{
-                  padding: '6px 14px', borderRadius: 6, fontSize: '0.8rem', fontWeight: 600,
+                  marginTop: 6, padding: '6px 14px', borderRadius: 6, fontSize: '0.8rem', fontWeight: 600,
                   backgroundColor: askUserFreeText.trim() ? 'rgba(245,158,11,0.18)' : 'rgba(245,158,11,0.06)',
                   border: '1px solid rgba(245,158,11,0.35)',
                   color: askUserFreeText.trim() ? '#fbbf24' : '#9ca3af',
                   cursor: askUserFreeText.trim() ? 'pointer' : 'not-allowed',
                 }}
               >
-                Submit
+                Retry with correction
               </button>
-            </div>
-          )}
-          {(askUserPrompt.options.length > 0 || askUserCorrectionMode) && (
-            <div style={{ marginTop: 6 }}>
-              <input
-                type="text"
-                value={askUserFreeText}
-                onChange={e => setAskUserFreeText(e.target.value)}
-                onKeyDown={e => { if (e.key === 'Enter') handleAskUserFreeTextSubmit(); }}
-                placeholder={askUserCorrectionMode ? "What was missed? e.g. 'You never typed the update text'" : "…or type your own answer"}
-                autoFocus={askUserCorrectionMode}
-                style={{
-                  width: '100%', background: askUserCorrectionMode ? 'rgba(245,158,11,0.08)' : 'rgba(0,0,0,0.25)',
-                  border: askUserCorrectionMode ? '1px solid rgba(245,158,11,0.45)' : '1px solid rgba(107,114,128,0.25)',
-                  borderRadius: 6, padding: '6px 10px',
-                  color: askUserCorrectionMode ? '#fbbf24' : '#9ca3af', fontSize: '0.75rem',
-                  outline: 'none',
-                }}
-              />
-              {askUserCorrectionMode && (
-                <button
-                  onClick={handleAskUserFreeTextSubmit}
-                  disabled={!askUserFreeText.trim()}
-                  style={{
-                    marginTop: 6, padding: '6px 14px', borderRadius: 6, fontSize: '0.8rem', fontWeight: 600,
-                    backgroundColor: askUserFreeText.trim() ? 'rgba(245,158,11,0.18)' : 'rgba(245,158,11,0.06)',
-                    border: '1px solid rgba(245,158,11,0.35)',
-                    color: askUserFreeText.trim() ? '#fbbf24' : '#9ca3af',
-                    cursor: askUserFreeText.trim() ? 'pointer' : 'not-allowed',
-                  }}
-                >
-                  Retry with correction
-                </button>
-              )}
             </div>
           )}
           </>

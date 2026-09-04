@@ -523,22 +523,44 @@ function startOverlayControlServer() {
           };
           safeSendUnified('automation:progress', reminderFiredPayload);
 
+          // 2b. Show the unified window so the user sees the reminder and deferred step progress.
+          // Without this, the stategraph runs in the background but the user sees nothing.
+          if (unifiedWindow && !unifiedWindow.isDestroyed()) {
+            unifiedWindow.showInactive();
+            unifiedWindow.moveTop();
+          }
+
           // 3. Run deferred steps through the stategraph so progress events flow to AIActivityPanel.
           if (triggerIntent === 'execute_steps' && pendingSteps) {
             try {
-              const steps = JSON.parse(pendingSteps);
-              if (stateGraph && Array.isArray(steps) && steps.length > 0) {
-                console.log(`🔔 [Reminder] Running ${steps.length} deferred step(s) via stategraph for "${label}"`);
+              const parsed = JSON.parse(pendingSteps);
+              // Support both old format (flat array) and new format (object with metadata)
+              const isObjectPayload = !Array.isArray(parsed) && parsed.steps;
+              const fullPlan = isObjectPayload ? parsed.steps : parsed;
+              const deferredSteps = isObjectPayload ? parsed.deferredSteps : parsed;
+              const startCursor = isObjectPayload ? (parsed.skillCursor || 0) : 0;
+              const skillPlanFile = isObjectPayload ? (parsed._skillPlanFile || null) : null;
+              const taskClassification = isObjectPayload ? (parsed._taskClassification || null) : null;
+              if (stateGraph && Array.isArray(deferredSteps) && deferredSteps.length > 0) {
+                console.log(`🔔 [Reminder] Running ${deferredSteps.length} deferred step(s) via stategraph for "${label}" (startCursor=${startCursor}, planFile=${skillPlanFile})`);
                 const reminderProgressCallback = (event) => {
+                  console.log(`🔔 [Reminder] progress event: ${event.type} stepIndex=${event.stepIndex} skill=${event.skill || ''}`);
                   safeSendUnified('automation:progress', event);
+                };
+                const reminderStreamCallback = (token) => {
+                  safeSendUnified('ws-bridge:message', { type: 'chunk', text: token });
                 };
                 const reminderInitialState = {
                   message: triggerPrompt || label,
                   intent: { type: 'command_automate' },
-                  _skillPlan: steps,
-                  skillCursor: 0,
-                  skillResults: [],
+                  _skillPlan: fullPlan,              // full plan so stepIndex matches UI
+                  _skillPlanFile: skillPlanFile,     // so plan:step_start/step_done events emit
+                  _skillPlanIsResume: true,          // prevents AutomationProgress from appending duplicate steps
+                  _taskClassification: taskClassification || { taskType: 'scheduling' },  // preserve original classification so reviewExecution short-circuits
+                  skillCursor: startCursor,          // start at original index (e.g. 1, not 0)
+                  skillResults: [],                  // empty — deferred run builds its own
                   progressCallback: reminderProgressCallback,
+                  streamCallback: reminderStreamCallback,
                   mcpAdapter,
                   activeBrowserSessionId: null,
                   activeBrowserUrl: null,
@@ -567,14 +589,21 @@ function startOverlayControlServer() {
           try {
             const { Notification } = require('electron');
             if (Notification.isSupported()) {
-              new Notification({
+              const n = new Notification({
                 title: '⏰ ThinkDrop Reminder',
                 body: reminderText,
                 silent: false,
                 icon: logoPath,
-              }).show();
+              });
+              n.on('show', () => console.log('[Reminder] Notification shown'));
+              n.on('failed', (e) => console.warn('[Reminder] Notification failed:', e?.message || 'unknown'));
+              n.show();
+            } else {
+              console.warn('[Reminder] Electron Notification not supported on this platform');
             }
-          } catch (_) {}
+          } catch (notifErr) {
+            console.warn('[Reminder] Notification error:', notifErr?.message || 'unknown');
+          }
 
           // 5. Bounce dock icon to grab attention
           try { app.dock?.bounce?.('critical'); } catch (_) {}
@@ -1271,6 +1300,267 @@ let lastClipboardContent = '';
 let clipboardCheckInterval = null;
 let sentHighlights = new Set();
 let recentlySubmittedPrompts = new Set(); // Track prompts sent via stategraph:process to avoid clipboard re-capture
+
+// ── Copy-to-File: highlight text → .md attachment ─────────────────────────
+// Global mouse monitor (uiohook-napi) detects text selection via drag, then
+// immediately sends Cmd+C to the still-focused source app, reads the clipboard,
+// restores it, and stores the text in memory. If the text passes detection
+// (non-empty, not a file/folder path), the copy button glows. Clicking the
+// glowing button (or pressing Shift+Cmd/Ctrl+C) writes the in-memory text to
+// ~/.thinkdrop/edits/copies/copy-<timestamp>.md and attaches it as [File: ...].
+let _uIOhookInstance = null;
+let _mouseDownPos = null;        // { x, y, t } from last mousedown
+let _dragGlowTriggered = false;  // true once glow is sent during a drag (avoids repeated mousemove checks)
+let _lastCapturedText = '';     // text captured at mouseup, waiting to be written to file
+let _lastSelectionApp = null;   // frontmost app name at capture time (for logging)
+let _captureInProgress = false; // guard against overlapping captures
+
+/**
+ * Check if a point is inside any ThinkDrop window (so we can ignore internal clicks).
+ */
+function _isInsideThinkDropWindow(x, y) {
+  const windows = [unifiedWindow, promptCaptureWindow].filter(w => w && !w.isDestroyed());
+  for (const win of windows) {
+    try {
+      const b = win.getBounds();
+      if (x >= b.x && x <= b.x + b.width && y >= b.y && y <= b.y + b.height) return true;
+    } catch (_) {}
+  }
+  return false;
+}
+
+/**
+ * Get the frontmost app name via osascript (macOS) — for logging only.
+ */
+function _getFrontmostAppName() {
+  try {
+    const { execSync } = require('child_process');
+    const name = execSync(
+      `osascript -e 'tell application "System Events" to get name of first process whose frontmost is true'`,
+      { encoding: 'utf8', timeout: 2000 }
+    ).trim();
+    return name || null;
+  } catch (_) { return null; }
+}
+
+/**
+ * Capture text selection at mouseup time (source app still has focus).
+ * Sends Cmd+C, reads clipboard, restores original, stores text in memory, glows button.
+ */
+async function _captureOnMouseup() {
+  if (_captureInProgress) return;
+  _captureInProgress = true;
+  try {
+    // Backup current clipboard
+    const backup = clipboard.readText();
+
+    // Send Cmd+C to the focused app via Nut.js
+    let nut;
+    try {
+      nut = require('@nut-tree-fork/nut-js');
+    } catch (err) {
+      console.warn('[CopyMonitor] Nut.js unavailable:', err.message);
+      return;
+    }
+    const { Key } = nut;
+    await nut.keyboard.pressKey(Key.LeftSuper, Key.C);
+    await nut.keyboard.releaseKey(Key.LeftSuper, Key.C);
+
+    // Poll clipboard until it changes from the backup value (Cmd+C was processed)
+    // or we hit the 200ms timeout. This is instant for fast apps and still
+    // works for slow ones — no fixed delay needed.
+    let text = '';
+    const pollStart = Date.now();
+    while (Date.now() - pollStart < 200) {
+      await new Promise(r => setTimeout(r, 5));
+      const current = clipboard.readText();
+      if (current !== backup) { text = current; break; }
+    }
+    if (!text) text = clipboard.readText(); // final read after timeout
+
+    // Restore original clipboard immediately
+    clipboard.writeText(backup);
+
+    // Detection: skip if empty — retract optimistic glow if it was triggered
+    if (!text || !text.trim()) {
+      console.log('[CopyMonitor] No text captured (not a text selection).');
+      if (_dragGlowTriggered) {
+        safeSend(unifiedWindow, 'copy-button:glow', false);
+        safeSend(promptCaptureWindow, 'copy-button:glow', false);
+      }
+      return;
+    }
+
+    // Detection: skip if it's a file/folder path (Finder drag, not text)
+    const looksLikeFilePath = /^(\/[^\n]+|[A-Z]:\\[^\n]+)$/.test(text.trim());
+    if (looksLikeFilePath) {
+      const fs = require('fs');
+      const withNarrowSpace = text.trim().replace(/ (AM|PM)\./g, '\u202F$1.');
+      const candidates = [
+        text.trim(),
+        withNarrowSpace,
+        text.trim().normalize('NFC'),
+        text.trim().normalize('NFD'),
+        withNarrowSpace.normalize('NFC'),
+        withNarrowSpace.normalize('NFD'),
+      ];
+      if (candidates.some(c => { try { return fs.existsSync(c); } catch (_) { return false; } })) {
+        console.log('[CopyMonitor] File/folder path detected — skipping (not text).');
+        if (_dragGlowTriggered) {
+          safeSend(unifiedWindow, 'copy-button:glow', false);
+          safeSend(promptCaptureWindow, 'copy-button:glow', false);
+        }
+        return;
+      }
+    }
+
+    // Confirmed text selection — store in memory (glow was already sent during drag)
+    _lastCapturedText = text;
+    _lastSelectionApp = _getFrontmostAppName();
+    console.log(`[CopyMonitor] Captured ${text.length} chars from "${_lastSelectionApp}" — copy button active.`);
+
+    // If the drag glow wasn't triggered (e.g. <5px movement but still a selection), glow now
+    if (!_dragGlowTriggered) {
+      safeSend(unifiedWindow, 'copy-button:glow', true);
+      safeSend(promptCaptureWindow, 'copy-button:glow', true);
+    }
+  } catch (err) {
+    console.error('[CopyMonitor] Capture error:', err.message);
+  } finally {
+    _captureInProgress = false;
+  }
+}
+
+/**
+ * Write the last captured text to a .md file and attach as [File: ...] chip.
+ * Called when the user clicks the glowing copy button or presses Shift+Cmd/Ctrl+C.
+ */
+function _createCopyFile() {
+  if (!_lastCapturedText || !_lastCapturedText.trim()) {
+    console.log('[CopyMonitor] No captured text to write.');
+    safeSend(unifiedWindow, 'copy-button:glow', false);
+    safeSend(promptCaptureWindow, 'copy-button:glow', false);
+    return;
+  }
+
+  const fs = require('fs');
+  const path = require('path');
+  const os = require('os');
+
+  const copiesDir = path.join(os.homedir(), '.thinkdrop', 'edits', 'copies');
+  try { fs.mkdirSync(copiesDir, { recursive: true }); } catch (_) {}
+
+  const ts = Date.now();
+  const filepath = path.join(copiesDir, `copy-${ts}.md`);
+  try {
+    fs.writeFileSync(filepath, _lastCapturedText, 'utf8');
+    console.log(`[CopyMonitor] Wrote copy file: ${filepath}`);
+  } catch (err) {
+    console.error('[CopyMonitor] Failed to write copy file:', err.message);
+    return;
+  }
+
+  // Attach as [File: ...] chip — same IPC channel as the existing Shift+Cmd+C text-tag shortcut
+  const tagContent = `[File: ${filepath}]`;
+  safeSend(unifiedWindow, 'highlights:update', [tagContent]);
+  sentHighlights.add(tagContent);
+
+  // Stop glowing and clear the stored text
+  safeSend(unifiedWindow, 'copy-button:glow', false);
+  safeSend(promptCaptureWindow, 'copy-button:glow', false);
+  _lastCapturedText = '';
+}
+
+/**
+ * Start the global mouse monitor for text selection detection.
+ */
+function startMouseSelectionMonitor() {
+  if (_uIOhookInstance) return;
+  try {
+    const { uIOhook, UiohookKey } = require('uiohook-napi');
+    _uIOhookInstance = uIOhook;
+
+    // Cmd+A (Select All) — no mouse drag involved, so the mouse monitor misses it.
+    // Detect the keyboard shortcut and trigger the same capture flow.
+    uIOhook.on('keydown', (e) => {
+      const isSelectAll = (e.metaKey || e.ctrlKey) && e.keycode === UiohookKey.A;
+      if (!isSelectAll) return;
+      if (_captureInProgress) return;
+
+      // Optimistic glow — the app is about to select all text
+      _dragGlowTriggered = true;
+      safeSend(unifiedWindow, 'copy-button:glow', true);
+      safeSend(promptCaptureWindow, 'copy-button:glow', true);
+
+      // Wait 100ms for the app to process Select All and for the user to release
+      // the Cmd key, avoiding Cmd+A+C chord interference. Then capture via Cmd+C.
+      setTimeout(() => { _captureOnMouseup(); }, 100);
+    });
+
+    uIOhook.on('mousedown', (e) => {
+      _mouseDownPos = { x: e.x, y: e.y, t: Date.now() };
+      _dragGlowTriggered = false;
+
+      // If the copy button is glowing and the user clicks outside ThinkDrop,
+      // clear the glow — they clicked away from the copy button.
+      if (_lastCapturedText && !_isInsideThinkDropWindow(e.x, e.y)) {
+        _lastCapturedText = '';
+        safeSend(unifiedWindow, 'copy-button:glow', false);
+        safeSend(promptCaptureWindow, 'copy-button:glow', false);
+      }
+    });
+
+    // Optimistic glow: start the pulse animation during the drag (before mouseup)
+    // for truly instant visual feedback. Fires once per drag — subsequent mousemove
+    // events hit the O(1) fast path (_dragGlowTriggered is already true).
+    uIOhook.on('mousemove', (e) => {
+      if (!_mouseDownPos || _dragGlowTriggered) return;
+      const dx = e.x - _mouseDownPos.x;
+      const dy = e.y - _mouseDownPos.y;
+      if (dx * dx + dy * dy < 25) return; // <5px (squared to avoid sqrt)
+      if (_isInsideThinkDropWindow(e.x, e.y)) return;
+
+      _dragGlowTriggered = true;
+      safeSend(unifiedWindow, 'copy-button:glow', true);
+      safeSend(promptCaptureWindow, 'copy-button:glow', true);
+    });
+
+    uIOhook.on('mouseup', async (e) => {
+      if (!_mouseDownPos) return;
+      const dx = e.x - _mouseDownPos.x;
+      const dy = e.y - _mouseDownPos.y;
+      const dist = Math.sqrt(dx * dx + dy * dy);
+      _mouseDownPos = null;
+
+      // Skip clicks (no movement) and internal ThinkDrop clicks
+      if (dist < 5) return;
+      if (_isInsideThinkDropWindow(e.x, e.y)) return;
+
+      // Candidate selection — capture immediately (source app still has focus).
+      // _captureOnMouseup() will retract the optimistic glow if no text is found.
+      await _captureOnMouseup();
+    });
+
+    uIOhook.start();
+    console.log('[CopyMonitor] Mouse selection monitor started.');
+  } catch (err) {
+    console.warn('[CopyMonitor] Failed to start mouse monitor:', err.message);
+    console.warn('[CopyMonitor] The copy-to-file feature will not work. Check Accessibility permission.');
+  }
+}
+
+/**
+ * Stop the global mouse monitor.
+ */
+function stopMouseSelectionMonitor() {
+  if (!_uIOhookInstance) return;
+  try {
+    _uIOhookInstance.stop();
+    console.log('[CopyMonitor] Mouse selection monitor stopped.');
+  } catch (_) {}
+  _uIOhookInstance = null;
+  _mouseDownPos = null;
+}
 
 function createPromptCaptureWindow() {
   const windowWidth = 500;
@@ -5676,84 +5966,22 @@ app.whenReady().then(async () => {
     }
   });
 
-  // Shift+Cmd+C — tag current clipboard content as context, then restore original clipboard.
-  // Workflow: user selects text or a file and copies (Cmd+C), then presses Shift+Cmd+C to tag it.
-  // The clipboard is read, tagged, then restored to its prior value so nothing is lost.
-  // Works on Mac and Windows — no AppleScript or platform-specific APIs needed.
+  // Shift+Cmd+C — write the last captured text selection to a .md file and attach it.
+  // The mouse monitor captures text on mouseup (via Cmd+C) and stores it in _lastCapturedText.
+  // This shortcut writes that stored text to ~/.thinkdrop/edits/copies/copy-<ts>.md and
+  // attaches it as a [File: ...] chip — same as clicking the glowing copy button.
+  // If no text was captured (button not glowing), this is a no-op.
   globalShortcut.register('CommandOrControl+Shift+C', () => {
-    // Save the current clipboard value before we do anything
-    const previousClipboard = clipboard.readText();
-    const tagged = previousClipboard;
-
-    if (!tagged || !tagged.trim()) {
-      console.log('[Tag Shortcut] Clipboard is empty — nothing to tag.');
-      return;
-    }
-    if (recentlySubmittedPrompts.has(tagged.trim())) {
-      console.log('[Tag Shortcut] Skipping recently submitted prompt.');
-      return;
-    }
-
-    // Detect if the clipboard content looks like a file path (tagged as file context)
-    const looksLikeFilePath = /^(\/[^\n]+|[A-Z]:\\[^\n]+)$/.test(tagged.trim());
-    let resolvedTagPath = tagged.trim();
-    if (looksLikeFilePath) {
-      // macOS screenshot filenames use U+202F NARROW NO-BREAK SPACE before AM/PM.
-      // The clipboard delivers a regular space, so we try normalization candidates
-      // to find the actual path that exists on disk before storing the tag.
-      const fs = require('fs');
-      const withNarrowSpace = resolvedTagPath.replace(/ (AM|PM)\./g, '\u202F$1.');
-      const candidates = [
-        resolvedTagPath,
-        withNarrowSpace,
-        resolvedTagPath.normalize('NFC'),
-        resolvedTagPath.normalize('NFD'),
-        withNarrowSpace.normalize('NFC'),
-        withNarrowSpace.normalize('NFD'),
-      ];
-      for (const c of candidates) {
-        if (fs.existsSync(c)) { resolvedTagPath = c; break; }
-      }
-    }
-    const tagContent = looksLikeFilePath
-      ? `[File: ${resolvedTagPath}]`
-      : resolvedTagPath;
-
-    console.log(`[Tag Shortcut] Tagging: ${tagContent.substring(0, 120)}`);
-
-    if (promptCaptureWindow && !promptCaptureWindow.isDestroyed()) {
-      if (!promptCaptureWindow.isVisible()) {
-        const primaryDisplay = screen.getPrimaryDisplay();
-        const { width: screenWidth, height: screenHeight } = primaryDisplay.workAreaSize;
-        // Position prompt capture at center-bottom of screen
-        const pcBounds2 = promptCaptureWindow.getBounds();
-        const pcWidth2 = pcBounds2.width || 500;
-        const pcX2 = Math.round((screenWidth - pcWidth2) / 2);
-        const pcY2 = screenHeight - 140;
-        promptCaptureWindow.setPosition(pcX2, pcY2);
-        promptCaptureWindow.show();
-        promptCaptureWindow.focus();
-        safeSend(promptCaptureWindow, 'prompt-capture:show', { position: { x: pcX2, y: pcY2 } });
-
-        if (resultsWindow && !resultsWindow.isDestroyed()) {
-          const margin = 20;
-          const currentBounds = resultsWindow.getBounds();
-          const windowWidth = currentBounds.width || 400;
-          const windowHeight = currentBounds.height || 300;
-          resultsWindow.setBounds({ x: screenWidth - windowWidth - margin, y: screenHeight - windowHeight - margin, width: windowWidth, height: windowHeight });
-          resultsWindow.showInactive();
-        }
-      }
-      safeSend(unifiedWindow, 'highlights:update', [{ type: 'text', content: tagContent }]);
-      sentHighlights.add(tagContent);
-    }
-
-    // Restore the original clipboard after a short delay so the tag send completes first
-    setTimeout(() => {
-      clipboard.writeText(previousClipboard);
-      console.log('[Tag Shortcut] Clipboard restored.');
-    }, 500);
+    _createCopyFile();
   });
+
+  // Copy button click — renderer sends this when the user clicks the glowing copy button.
+  ipcMain.on('copy-button:click', () => {
+    _createCopyFile();
+  });
+
+  // Start the global mouse monitor for text selection detection.
+  startMouseSelectionMonitor();
 
   // File drop handler — receives files from drag-and-drop in renderer
   ipcMain.on('file-drop', (_event, data) => {
@@ -11017,6 +11245,7 @@ app.on('window-all-closed', () => {
 app.on('will-quit', () => {
   globalShortcut.unregisterAll();
   stopCryptoBridge();
+  stopMouseSelectionMonitor();
 });
 
 // ── Schedule: warn before close if countdown is active ───────────────────────

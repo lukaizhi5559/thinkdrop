@@ -71,6 +71,7 @@
     "tailwind-merge": "^2.0.0",
     "tailwindcss-animate": "^1.0.7",
     "tesseract.js": "^7.0.0",
+    "uiohook-napi": "^1.5.5",
     "ws": "^8.19.0"
   },
   "build": {
@@ -89,7 +90,8 @@
     },
     "electronRebuild": {
       "onlyModules": [
-        "keytar"
+        "keytar",
+        "uiohook-napi"
       ]
     }
   }

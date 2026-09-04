@@ -216,7 +216,7 @@ export function QuestionCard({ batch, onSubmit, onCancel }: QuestionCardProps) {
       {/* Header */}
       <div className="flex items-center justify-between" style={{ marginBottom: 12 }}>
         <div style={{ color: COLORS.headerText, fontSize: '0.76rem', fontWeight: 600 }}>
-          A few questions before I start
+          Question(s)
         </div>
         <div style={{ color: COLORS.mutedText, fontSize: '0.69rem' }}>
           {currentIdx + 1} of {allQuestions.length}

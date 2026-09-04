@@ -6400,6 +6400,17 @@ __metadata:
   languageName: node
   linkType: hard
 
+"node-gyp-build@npm:^4.8.4":
+  version: 4.8.4
+  resolution: "node-gyp-build@npm:4.8.4"
+  bin:
+    node-gyp-build: bin.js
+    node-gyp-build-optional: optional.js
+    node-gyp-build-test: build-test.js
+  checksum: 8b81ca8ffd5fa257ad8d067896d07908a36918bc84fb04647af09d92f58310def2d2b8614d8606d129d9cd9b48890a5d2bec18abe7fcff54818f72bedd3a7d74
+  languageName: node
+  linkType: hard
+
 "node-gyp@npm:^9.4.1":
   version: 9.4.1
   resolution: "node-gyp@npm:9.4.1"
@@ -8511,6 +8522,7 @@ __metadata:
     tailwindcss-animate: ^1.0.7
     tesseract.js: ^7.0.0
     typescript: ^5.0.0
+    uiohook-napi: ^1.5.5
     vite: ^5.0.0
     ws: ^8.19.0
   languageName: unknown
@@ -8668,6 +8680,16 @@ __metadata:
     tsc: bin/tsc
     tsserver: bin/tsserver
   checksum: 8bb8d86819ac86a498eada254cad7fb69c5f74778506c700c2a712daeaff21d3a6f51fd0d534fe16903cb010d1b74f89437a3d02d4d0ff5ca2ba9a4660de8497
+  languageName: node
+  linkType: hard
+
+"uiohook-napi@npm:^1.5.5":
+  version: 1.5.5
+  resolution: "uiohook-napi@npm:1.5.5"
+  dependencies:
+    node-gyp: latest
+    node-gyp-build: ^4.8.4
+  checksum: 83531849abf9113b3de7c27d2759e246a88528fa97fdc767e3a4ccabd46a952bf95bc3497d39bd57296d8bef7728cba6d38a4329b02a84ae989000a98d686b4d
   languageName: node
   linkType: hard
 

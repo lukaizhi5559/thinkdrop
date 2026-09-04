@@ -84,3 +84,18 @@ body {
     transform: translateY(0);
   }
 }
+
+@keyframes copy-button-pulse {
+  0%, 100% {
+    transform: scale(1);
+    box-shadow: 0 0 6px rgba(59, 130, 246, 0.3);
+  }
+  50% {
+    transform: scale(1.12);
+    box-shadow: 0 0 16px rgba(59, 130, 246, 0.65);
+  }
+}
+
+.copy-button-glowing {
+  animation: copy-button-pulse 1.2s ease-in-out infinite;
+}
