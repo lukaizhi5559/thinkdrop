@@ -119,6 +119,7 @@ contextBridge.exposeInMainWorld('electron', {
         'settings:set',
         'clipboard:write-text',
         'copy-button:click',
+        'copy-button:clear',
         'operation:cancel',
         'operation:status',
         'app-agent:highlight',

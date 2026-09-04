@@ -713,6 +713,18 @@ export function UnifiedOverlay() {
     }
   };
 
+  // --- Clear copy-button pulse on any click inside the overlay ---
+  // The copy capture button's onClick (sends copy-button:click) fires first in
+  // the bubble phase, so saving still works. Any other click clears the glow
+  // and tells main to discard the stored captured text.
+  const handleOverlayClick = (e: React.MouseEvent) => {
+    if (!copyButtonGlowing) return;
+    const target = e.target as HTMLElement;
+    if (target?.closest?.('#copy-capture-button')) return;
+    setCopyButtonGlowing(false);
+    ipcRenderer?.send('copy-button:clear');
+  };
+
   // --- Native window resize listener — suppress resize IPC while user drags the window edge ---
   useEffect(() => {
     const handleWindowResize = () => {
@@ -2307,6 +2319,7 @@ export function UnifiedOverlay() {
       {/* Main Container */}
       <div
         className="w-full h-full flex flex-col"
+        onClick={handleOverlayClick}
         style={{
           backgroundColor: 'rgba(23, 23, 23, 0.95)',
           borderRadius: '11px',
@@ -2768,6 +2781,7 @@ export function UnifiedOverlay() {
 
               {/* Copy Button — pulses when text is highlighted (detected via mouse drag) */}
               <button
+                id="copy-capture-button"
                 onClick={copyButtonGlowing ? () => ipcRenderer?.send('copy-button:click') : undefined}
                 title={copyButtonGlowing ? 'Click to save highlighted text as a copy file' : 'Highlight text to activate'}
                 className={copyButtonGlowing ? 'copy-button-glowing' : ''}

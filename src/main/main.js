@@ -5980,6 +5980,17 @@ app.whenReady().then(async () => {
     _createCopyFile();
   });
 
+  // Copy button clear — renderer sends this when the user clicks anywhere inside
+  // the overlay except the copy button itself. Discards the stored captured text
+  // and retracts the glow so the pulse doesn't linger after the user moves on.
+  ipcMain.on('copy-button:clear', () => {
+    if (_lastCapturedText) {
+      _lastCapturedText = '';
+      safeSend(unifiedWindow, 'copy-button:glow', false);
+      safeSend(promptCaptureWindow, 'copy-button:glow', false);
+    }
+  });
+
   // Start the global mouse monitor for text selection detection.
   startMouseSelectionMonitor();
 
