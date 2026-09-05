@@ -2735,7 +2735,7 @@ export function UnifiedOverlay() {
         <div
           ref={inputBarRef}
           className="border-t p-4 relative"
-          style={{ borderColor: 'rgba(255, 255, 255, 0.1)' }}
+          style={{ borderColor: 'rgba(255, 255, 255, 0.1)', flexShrink: 0 }}
         >
           {/* Highlights */}
           {renderHighlightChips()}

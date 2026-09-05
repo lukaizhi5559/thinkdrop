@@ -78,8 +78,9 @@ export function useDynamicHeight({
     const contentEl = contentRefs[activeTab]?.current;
     let contentH = contentEl ? contentEl.scrollHeight : 0;
     if (activeTab === 'results') {
-      // Measurement-driven collapse: no rendered content → collapsed height.
-      if (contentH < EMPTY_CONTENT_THRESHOLD) return COLLAPSED_HEIGHT;
+      // Measurement-driven collapse: no rendered content has no inner height,
+      // but the scroll container's p-4 padding still contributes visually.
+      if (contentH < EMPTY_CONTENT_THRESHOLD) contentH = 0;
       contentH += RESULTS_CONTAINER_PADDING;
     }
 
