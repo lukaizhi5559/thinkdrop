@@ -104,6 +104,8 @@ export function UnifiedOverlay() {
   const [isStreaming, setIsStreaming] = useState(false);
   const [isThinking, setIsThinking] = useState(false);
   const [isAutomationMode, setIsAutomationMode] = useState(false);
+  const isAutomationModeRef = useRef(false);
+  useEffect(() => { isAutomationModeRef.current = isAutomationMode; }, [isAutomationMode]);
   const [streamingStartedRef, setStreamingStartedRef] = useState(false);
   const [actionChips, setActionChips] = useState<ActionChip[]>([]);
   const [searchSources, setSearchSources] = useState<SearchSource[]>([]);
@@ -858,10 +860,16 @@ export function UnifiedOverlay() {
       } else if (message.type === 'done' || message.type === 'llm_stream_end') {
         setIsStreaming(false);
         setIsThinking(false);
-        if (!preflightAuthPendingRef.current) {
+        // Don't reset isSubmitting/isAutomationMode during automation — the plan
+        // generation LLM stream ends before execution completes, which would
+        // prematurely hide the cancel button. Automation cleanup is handled by
+        // the 'all_done' event in handleAutomationProgress.
+        if (!preflightAuthPendingRef.current && !isAutomationModeRef.current) {
           setIsSubmitting(false); // Task complete - reset cancel button
         }
-        setIsAutomationMode(false); // Clear automation status
+        if (!isAutomationModeRef.current) {
+          setIsAutomationMode(false); // Clear automation status
+        }
         streamCompletedRef.current = true;
         console.log('✅ [UNIFIED] Streaming complete, final streamingResponse length:', streamingResponse.length);
         glowOffTimerRef.current = setTimeout(() => setIsGlowActive(false), 300);

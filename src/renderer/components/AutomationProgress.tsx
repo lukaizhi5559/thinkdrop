@@ -4571,7 +4571,7 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
                       )}
 
                       {/* ── Tab-Flow pre-computed steps checklist ── */}
-                      {isRunning && (() => {
+                      {(isRunning || step.status === 'failed') && (() => {
                         const flow = tabFlow.get(step.index);
                         if (!flow || flow.length === 0) return null;
                         const subPlan = tabMapPlan.get(step.index);
