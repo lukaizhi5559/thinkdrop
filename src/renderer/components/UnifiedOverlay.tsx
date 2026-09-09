@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useCallback, useReducer, useMemo } from 'react';
 import { flushSync } from 'react-dom';
 import { useDynamicHeight, MAX_HEIGHT } from './utils/useDynamicHeight';
+import { Favicon } from './DefaultFaviconIcon';
 const ipcRenderer = (window as any).electron?.ipcRenderer;
 import { playThinkDropSound, playDropSound } from '../utils/thinkDropSound';
 import {
@@ -2002,21 +2003,7 @@ export function UnifiedOverlay() {
                 key={src.url}
                 style={{ position: 'absolute', left: i * (CIRCLE - OVERLAP), top: 0, width: CIRCLE, height: CIRCLE, borderRadius: '50%', overflow: 'hidden', border: '1.5px solid rgba(255,255,255,0.12)', backgroundColor: '#1a1a1a', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: visible.length - i, flexShrink: 0 }}
               >
-                <img
-                  src={`https://www.google.com/s2/favicons?domain=${src.hostname}&sz=32`}
-                  alt={src.hostname}
-                  width={14}
-                  height={14}
-                  style={{ borderRadius: 2 }}
-                  onError={(e) => {
-                    (e.currentTarget as HTMLImageElement).style.display = 'none';
-                    const p = e.currentTarget.parentElement as HTMLElement;
-                    p.style.fontSize = '8px';
-                    p.style.color = '#9ca3af';
-                    p.style.fontWeight = '700';
-                    p.textContent = src.hostname.charAt(0).toUpperCase();
-                  }}
-                />
+                <Favicon domain={src.hostname} size={14} alt={src.hostname} />
               </div>
             ))}
           </div>
@@ -2039,7 +2026,7 @@ export function UnifiedOverlay() {
                 onMouseLeave={e => (e.currentTarget.style.backgroundColor = 'transparent')}
               >
                 <div style={{ width: 20, height: 20, borderRadius: '50%', backgroundColor: '#2a2a2c', border: '1px solid rgba(255,255,255,0.08)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-                  <img src={`https://www.google.com/s2/favicons?domain=${src.hostname}&sz=32`} alt="" width={12} height={12} style={{ borderRadius: 2 }} />
+                  <Favicon domain={src.hostname} size={12} alt="" />
                 </div>
                 <div style={{ minWidth: 0, flex: 1 }}>
                   <div style={{ fontSize: '0.72rem', fontWeight: 500, color: '#e5e7eb', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>

@@ -13,21 +13,13 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 SERVICE_PATH="$PROJECT_ROOT/mcp-services/command-service"
 LOG_FILE="$PROJECT_ROOT/logs/command.log"
-MAX_LOG_SIZE=$((50 * 1024 * 1024))  # 50MB
 
-# Rotate log if it exceeds MAX_LOG_SIZE (checked on each start/restart)
-_rotate_log() {
-  if [ -f "$LOG_FILE" ]; then
-    local file_size
-    file_size=$(stat -f%z "$LOG_FILE" 2>/dev/null || stat -c%s "$LOG_FILE" 2>/dev/null || echo 0)
-    if [ "$file_size" -gt "$MAX_LOG_SIZE" ]; then
-      mv "$LOG_FILE" "$LOG_FILE.$(date +%Y%m%d_%H%M%S).old"
-      echo "[$(date)] Rotated command.log (was ${file_size} bytes)" >> "$LOG_FILE"
-    fi
-  fi
-}
-
-_rotate_log
+# Clear the log on every startup so each session starts fresh, matching the
+# behavior of every other service (which truncates via `>` in start-services.sh).
+# The `>>` appends below preserve logs across crash-restarts *within* a single
+# supervised session (this script is invoked once; the while-loop restarts node
+# without re-running this truncation).
+: > "$LOG_FILE"
 
 cd "$SERVICE_PATH"
 export NODE_OPTIONS="--max-old-space-size=256"
@@ -40,7 +32,6 @@ fi
 # Supervised mode: restart with backoff + crash cap.
 CRASHES=0
 while true; do
-  _rotate_log
   node src/server.cjs >> "$LOG_FILE" 2>&1
   EXIT=$?
   [ $EXIT -eq 0 ] && CRASHES=0

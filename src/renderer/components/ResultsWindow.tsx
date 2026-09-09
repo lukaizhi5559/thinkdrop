@@ -2,6 +2,7 @@ import React, { useEffect, useState, useRef } from 'react';
 import { RichContentRenderer } from './rich-content';
 import AutomationProgress from './AutomationProgress';
 import { playDropSound } from '../utils/thinkDropSound';
+import { Favicon } from './DefaultFaviconIcon';
 import { TabBar, QueueTab, CronTab, SkillsTab, StoreTab, ConnectionsTab, PromptQueueSection } from './TabComponents';
 import type { TabId, QueueItem, CronItem, SkillItem, PromptQueueItem, ConnectionItem } from './TabComponents';
 
@@ -834,21 +835,7 @@ export default function ResultsWindow() {
                     flexShrink: 0,
                   }}
                 >
-                  <img
-                    src={`https://www.google.com/s2/favicons?domain=${src.hostname}&sz=32`}
-                    alt={src.hostname}
-                    width={14}
-                    height={14}
-                    style={{ borderRadius: 2 }}
-                    onError={(e) => {
-                      (e.currentTarget as HTMLImageElement).style.display = 'none';
-                      const p = e.currentTarget.parentElement as HTMLElement;
-                      p.style.fontSize = '8px';
-                      p.style.color = '#9ca3af';
-                      p.style.fontWeight = '700';
-                      p.textContent = src.hostname.charAt(0).toUpperCase();
-                    }}
-                  />
+                  <Favicon domain={src.hostname} size={14} alt={src.hostname} />
                 </div>
               ))}
             </div>
@@ -911,21 +898,7 @@ export default function ResultsWindow() {
                     display: 'flex', alignItems: 'center', justifyContent: 'center',
                     flexShrink: 0,
                   }}>
-                    <img
-                      src={`https://www.google.com/s2/favicons?domain=${src.hostname}&sz=32`}
-                      alt=""
-                      width={12}
-                      height={12}
-                      style={{ borderRadius: 2 }}
-                      onError={(e) => {
-                        (e.currentTarget as HTMLImageElement).style.display = 'none';
-                        const p = e.currentTarget.parentElement as HTMLElement;
-                        p.style.fontSize = '8px';
-                        p.style.color = '#9ca3af';
-                        p.style.fontWeight = '700';
-                        p.textContent = src.hostname.charAt(0).toUpperCase();
-                      }}
-                    />
+                    <Favicon domain={src.hostname} size={12} alt="" />
                   </div>
                   {/* Text */}
                   <div style={{ minWidth: 0, flex: 1 }}>

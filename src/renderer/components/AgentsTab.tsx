@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import type { AgentItem, AgentSkill } from './TabComponents';
 import { TrainingPanel } from './TrainingPanel';
+import { Favicon } from './DefaultFaviconIcon';
 
 const ipcRenderer = (window as any).electron?.ipcRenderer;
 
@@ -37,70 +38,14 @@ const statusLabels: Record<string, string> = {
 
 // Favicon fetch with fallback
 function AgentIcon({ domain, name, size = 32 }: { domain: string; name: string; size?: number }) {
-  const [iconUrl, setIconUrl] = useState<string | null>(null);
-  const [error, setError] = useState(false);
-  const radius = Math.round(size * 0.22);
-
-  useEffect(() => {
-    if (!domain || error) return;
-    
-    // Try to fetch favicon from Google's service (reliable)
-    const faviconUrl = `https://www.google.com/s2/favicons?domain=${encodeURIComponent(domain)}&sz=128`;
-    
-    const img = new Image();
-    img.onload = () => setIconUrl(faviconUrl);
-    img.onerror = () => setError(true);
-    img.src = faviconUrl;
-  }, [domain, error]);
-
-  if (iconUrl && !error) {
-    return (
-      <img 
-        src={iconUrl} 
-        alt={name}
-        style={{ 
-          width: size, 
-          height: size, 
-          borderRadius: radius,
-          objectFit: 'cover',
-          backgroundColor: 'rgba(255,255,255,0.1)'
-        }}
-        onError={() => setError(true)}
-      />
-    );
-  }
-
-  const svgSize = Math.round(size * 0.5);
-
-  // Fallback: CPU/chip outline SVG — no emoji
   return (
-    <div style={{
-      width: size,
-      height: size,
-      borderRadius: radius,
-      display: 'flex',
-      alignItems: 'center',
-      justifyContent: 'center',
-      backgroundColor: 'rgba(245,158,11,0.12)',
-      border: '1px solid rgba(245,158,11,0.2)',
-    }}>
-      <svg width={svgSize} height={svgSize} viewBox="0 0 24 24" fill="none" stroke="#f59e0b" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-        <rect x="9" y="9" width="6" height="6" rx="1"/>
-        <rect x="4" y="4" width="16" height="16" rx="2"/>
-        <line x1="9" y1="4" x2="9" y2="2"/>
-        <line x1="12" y1="4" x2="12" y2="2"/>
-        <line x1="15" y1="4" x2="15" y2="2"/>
-        <line x1="9" y1="20" x2="9" y2="22"/>
-        <line x1="12" y1="20" x2="12" y2="22"/>
-        <line x1="15" y1="20" x2="15" y2="22"/>
-        <line x1="4" y1="9" x2="2" y2="9"/>
-        <line x1="4" y1="12" x2="2" y2="12"/>
-        <line x1="4" y1="15" x2="2" y2="15"/>
-        <line x1="20" y1="9" x2="22" y2="9"/>
-        <line x1="20" y1="12" x2="22" y2="12"/>
-        <line x1="20" y1="15" x2="22" y2="15"/>
-      </svg>
-    </div>
+    <Favicon
+      domain={domain}
+      size={size}
+      alt={name}
+      style={{ objectFit: 'cover' }}
+      imgStyle={{ borderRadius: Math.round(size * 0.22) }}
+    />
   );
 }
 

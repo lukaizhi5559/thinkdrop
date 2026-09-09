@@ -10,6 +10,7 @@
 
 import { useEffect, useState, useRef, useCallback } from 'react';
 import { QuestionCard, QuestionBatch, PartialFailureCard, PartialFailureSummary } from './QuestionCard';
+import { Favicon } from './DefaultFaviconIcon';
 
 const ipcRenderer = (window as any).electron?.ipcRenderer;
 
@@ -29,6 +30,7 @@ interface Step {
   replanMessage?: string;
   savedFilePath?: string;
   guideInstruction?: string; // original instruction text preserved after guide.step completes
+  unconfirmed?: boolean; // step ran to completion but could not confirm/verify the outcome
   userAllowlistHint?: boolean;
   commandName?: string | null;
   runGroup?: string; // parallel group ID (e.g. "g1")
@@ -38,49 +40,16 @@ interface Step {
 // ── AgentFavicon — shown next to agentId on every agent step ─────────────────
 function agentIdToDomain(agentId: string): string {
   // Strip .agent suffix, map to domain (e.g. amazon.agent → amazon.com)
+  // The Favicon component validates the hostname and falls back to
+  // DefaultFaviconIcon for invalid domains (e.g. google_calendar.com with
+  // underscores), so no static overrides map is needed here.
   const base = agentId.replace(/\.agent$/i, '').toLowerCase();
-  const overrides: Record<string, string> = {
-    gmail: 'mail.google.com',
-    google: 'google.com',
-    youtube: 'youtube.com',
-    ebay: 'ebay.com',
-    amazon: 'amazon.com',
-    reddit: 'reddit.com',
-    twitter: 'twitter.com',
-    x: 'x.com',
-    linkedin: 'linkedin.com',
-    slack: 'slack.com',
-    notion: 'notion.so',
-    github: 'github.com',
-    perplexity: 'perplexity.ai',
-    chatgpt: 'chat.openai.com',
-    openai: 'openai.com',
-  };
-  return overrides[base] || `${base}.com`;
+  return `${base}.com`;
 }
 
 function AgentFavicon({ agentId, size = 14 }: { agentId: string; size?: number }) {
-  const [ok, setOk] = useState(true);
   const domain = agentIdToDomain(agentId);
-  const src = `https://www.google.com/s2/favicons?domain=${encodeURIComponent(domain)}&sz=64`;
-  if (!ok) {
-    return (
-      <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ color: '#6b7280', flexShrink: 0 }}>
-        <circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/>
-        <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/>
-      </svg>
-    );
-  }
-  return (
-    <img
-      src={src}
-      width={size}
-      height={size}
-      alt=""
-      onError={() => setOk(false)}
-      style={{ borderRadius: 2, flexShrink: 0, display: 'block' }}
-    />
-  );
+  return <Favicon domain={domain} size={size} alt="" />;
 }
 
 type AutomationPhase =
@@ -241,6 +210,22 @@ interface AgentStepLogEntry {
   timestamp: number;
 }
 
+// ── Tab-Flow pre-computed step checklist ──
+interface TabFlowStep {
+  index: number;
+  tier: number;
+  action: string;
+  status: 'pending' | 'running' | 'done' | 'failed';
+}
+
+// ── Tab-Map sub-plan steps (nested under a running Tab-Flow step) ──
+interface TabMapSubStep {
+  index: number;
+  action: string;
+  target: string;
+  status: 'pending' | 'running' | 'done' | 'failed';
+}
+
 // ScoutMatchState is defined above the component
 
 interface GuideStepCard {
@@ -265,7 +250,30 @@ interface AutomationProgressProps {
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-function StepIcon({ status }: { status: StepStatus }) {
+// Returns true when a done step's job was to confirm/verify an outcome but its
+// output reports that confirmation was not possible (e.g. a synthesize step that
+// answers "I cannot confirm whether Figma has been opened…").
+function isUnconfirmedStep(description: string | undefined, stdout: string | undefined): boolean {
+  if (!description || !stdout) return false;
+  if (!/\b(confirm|verify|check (?:if|whether)|ensure|validate)\b/i.test(description)) return false;
+  return /cannot confirm|can't confirm|unable to (?:confirm|verify)|could not (?:confirm|verify)|not able to (?:confirm|verify)|cannot verify|no text content|no data (?:collected|available)|insufficient (?:data|information|evidence)|does not appear|do not appear/i.test(stdout);
+}
+
+function StepIcon({ status, unconfirmed }: { status: StepStatus; unconfirmed?: boolean }) {
+  if (status === 'done' && unconfirmed) {
+    // Amber "?" — the step ran but could not confirm/verify its outcome.
+    return (
+      <div className="flex-shrink-0 w-4 h-4 rounded-full flex items-center justify-center"
+        style={{ backgroundColor: '#f59e0b' }}
+        title="Completed — could not verify result">
+        <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="3"
+          strokeLinecap="round" strokeLinejoin="round">
+          <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3" />
+          <line x1="12" y1="17" x2="12.01" y2="17" />
+        </svg>
+      </div>
+    );
+  }
   if (status === 'done') {
     return (
       <div className="flex-shrink-0 w-4 h-4 rounded-full flex items-center justify-center"
@@ -922,6 +930,10 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
   const [agentStepLog, setAgentStepLog] = useState<Map<number, AgentStepLogEntry[]>>(new Map());
   // Counter for generating unique log entry IDs per step
   const agentStepLogSeq = useRef<Map<number, number>>(new Map());
+  // Maps stepIndex → Tab-Flow pre-computed step checklist
+  const [tabFlow, setTabFlow] = useState<Map<number, TabFlowStep[]>>(new Map());
+  // Maps stepIndex → Tab-Map sub-plan steps (nested under the current running flow step)
+  const [tabMapPlan, setTabMapPlan] = useState<Map<number, TabMapSubStep[]>>(new Map());
   // Maps stepIndex → current thinking text from shell.run goal resolution
   const [stepThinking, setStepThinking] = useState<Map<number, string>>(new Map());
   // Maps stepIndex → accumulated live stdout/stderr text (streamed during execution)
@@ -1617,6 +1629,9 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
           // Clear the agent step log for this step so it starts fresh
           setAgentStepLog(prev => { const next = new Map(prev); next.delete(stepIdx); return next; });
           agentStepLogSeq.current.delete(stepIdx);
+          // Clear Tab-Flow and Tab-Map state for this step so it starts fresh
+          setTabFlow(prev => { const next = new Map(prev); next.delete(stepIdx); return next; });
+          setTabMapPlan(prev => { const next = new Map(prev); next.delete(stepIdx); return next; });
           setSteps(prev => prev.map(s =>
             s.index === stepIdx
               ? { ...s, 
@@ -1711,9 +1726,12 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
                     status: (s.status === 'done' || s.status === 'failed' || s.status === 'skipped')
                       ? s.status  // Keep existing terminal status
                       : 'done' as const,
-                    description: data.description || s.description, 
-                    stdout: data.stdout, 
-                    exitCode: data.exitCode, 
+                    unconfirmed: (s.status === 'done' || s.status === 'failed' || s.status === 'skipped')
+                      ? s.unconfirmed
+                      : isUnconfirmedStep(data.description || s.description, data.stdout),
+                    description: data.description || s.description,
+                    stdout: data.stdout,
+                    exitCode: data.exitCode,
                     savedFilePath: data.savedFilePath || undefined, 
                     guideInstruction: data.instruction || s.guideInstruction, 
                     runGroup: data.runGroup || s.runGroup 
@@ -1966,6 +1984,97 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
             type: 'tier',
             message: data.message || `Tier: ${data.tier}`,
             tier: data.tier,
+          });
+          break;
+        }
+
+        // ── Tab-Flow pre-computed step checklist events ──
+        case 'tab_flow:computed': {
+          const stepIdx = (data.stepIndex ?? 0) + stepOffsetRef.current;
+          const flow: TabFlowStep[] = (data.flow || []).map((s: any) => ({
+            index: s.index, tier: s.tier, action: s.action || '', status: 'pending' as const,
+          }));
+          setTabFlow(prev => { const next = new Map(prev); next.set(stepIdx, flow); return next; });
+          break;
+        }
+        case 'tab_flow:step_start': {
+          const stepIdx = (data.stepIndex ?? 0) + stepOffsetRef.current;
+          setTabFlow(prev => {
+            const next = new Map(prev);
+            const flow = next.get(stepIdx) || [];
+            const updated = flow.map((s, i) => ({
+              ...s,
+              status: i === data.flowIndex ? 'running' as const : i < data.flowIndex ? 'done' as const : s.status,
+            }));
+            next.set(stepIdx, updated);
+            return next;
+          });
+          break;
+        }
+        case 'tab_flow:step_done': {
+          const stepIdx = (data.stepIndex ?? 0) + stepOffsetRef.current;
+          setTabFlow(prev => {
+            const next = new Map(prev);
+            const flow = next.get(stepIdx) || [];
+            const updated = flow.map((s, i) => ({
+              ...s,
+              status: i < data.flowIndex ? 'done' as const : s.status,
+            }));
+            next.set(stepIdx, updated);
+            return next;
+          });
+          // Clear tab-map sub-plan when flow advances
+          setTabMapPlan(prev => { const next = new Map(prev); next.delete(stepIdx); return next; });
+          break;
+        }
+        case 'tab_flow:step_failed': {
+          const stepIdx = (data.stepIndex ?? 0) + stepOffsetRef.current;
+          setTabFlow(prev => {
+            const next = new Map(prev);
+            const flow = next.get(stepIdx) || [];
+            if (flow[data.flowIndex]) {
+              flow[data.flowIndex] = { ...flow[data.flowIndex], status: 'failed' as const };
+            }
+            next.set(stepIdx, [...flow]);
+            return next;
+          });
+          break;
+        }
+
+        // ── Tab-Map sub-plan step events ──
+        case 'tab_map:plan': {
+          const stepIdx = (data.stepIndex ?? 0) + stepOffsetRef.current;
+          const steps: TabMapSubStep[] = (data.steps || []).map((s: any) => ({
+            index: s.index, action: s.action || '', target: s.target || '', status: 'pending' as const,
+          }));
+          setTabMapPlan(prev => { const next = new Map(prev); next.set(stepIdx, steps); return next; });
+          break;
+        }
+        case 'tab_map:step_start': {
+          const stepIdx = (data.stepIndex ?? 0) + stepOffsetRef.current;
+          setTabMapPlan(prev => {
+            const next = new Map(prev);
+            const plan = next.get(stepIdx) || [];
+            const updated = plan.map((s, i) => ({
+              ...s,
+              status: i === data.subStepIndex ? 'running' as const : i < data.subStepIndex ? 'done' as const : s.status,
+            }));
+            next.set(stepIdx, updated);
+            return next;
+          });
+          break;
+        }
+        case 'tab_map:step_done': {
+          const stepIdx = (data.stepIndex ?? 0) + stepOffsetRef.current;
+          setTabMapPlan(prev => {
+            const next = new Map(prev);
+            const plan = next.get(stepIdx) || [];
+            const updated = plan.map((s, i) => ({
+              ...s,
+              status: i === data.subStepIndex ? (data.ok ? 'done' as const : 'failed' as const) : s.status,
+            }));
+            next.set(stepIdx, updated);
+            return next;
           });
           break;
         }
@@ -2398,6 +2507,9 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
               return {
                 ...s,
                 status: r.skipped ? 'skipped' : r.ok ? 'done' : 'failed',
+                unconfirmed: r.ok && !r.skipped
+                  ? isUnconfirmedStep(s.description, r.stdout || s.stdout)
+                  : false,
                 stdout: r.stdout || s.stdout,
                 stderr: r.stderr || s.stderr,
                 error: r.error || s.error,
@@ -3475,20 +3587,13 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
       {gatherAuthAction && (
         <div style={{ padding: '14px 16px', borderRadius: 10, backgroundColor: 'rgba(245,158,11,0.06)', border: '1px solid rgba(245,158,11,0.35)' }}>
           <div className="flex items-start gap-3">
-            {gatherAuthAction.iconUrl ? (
-              <img
-                src={gatherAuthAction.iconUrl}
-                width={28}
-                height={28}
-                alt={gatherAuthAction.agentId}
-                style={{ borderRadius: 6, flexShrink: 0, marginTop: 1 }}
-                onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }}
-              />
-            ) : (
-              <div style={{ width: 28, height: 28, borderRadius: 6, backgroundColor: 'rgba(245,158,11,0.15)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, marginTop: 1, fontSize: '0.9rem' }}>
-                🔐
-              </div>
-            )}
+            <Favicon
+              src={gatherAuthAction.iconUrl || undefined}
+              size={28}
+              alt={gatherAuthAction.agentId}
+              style={{ marginTop: 1 }}
+              imgStyle={{ borderRadius: 6 }}
+            />
             <div style={{ flex: 1 }}>
               <div style={{ color: '#fbbf24', fontSize: '0.76rem', fontWeight: 600, marginBottom: 4 }}>
                 Sign-in required
@@ -3846,7 +3951,7 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
                   onClick={() => hasOutput && toggleExpand(step.index)}
                 >
                   <div className="mt-0.5">
-                    <StepIcon status={step.status} />
+                    <StepIcon status={step.status} unconfirmed={step.unconfirmed} />
                   </div>
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2 flex-wrap">
@@ -3875,8 +3980,9 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
                       {(() => {
                         const liveTurn = agentLiveTurns.current.get(step.index);
                         const complete = agentCompletes.get(step.index);
-                        if (!liveTurn && !complete) return null;
-                        const agentId = complete ? complete.agentId : liveTurn?.agentId;
+                        const _stepAgentId = step.args?.agentId || null;
+                        if (!liveTurn && !complete && !_stepAgentId) return null;
+                        const agentId = complete ? complete.agentId : (liveTurn?.agentId || _stepAgentId);
                         if (!agentId) return null;
                         if (complete) {
                           return (
@@ -3916,8 +4022,8 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
                       const out = step.stdout?.trim() || '';
                       if (out.length === 0) {
                         return (
-                          <div className="text-xs mt-0.5" style={{ color: '#6b7280' }}>
-                            Done
+                          <div className="text-xs mt-0.5" style={{ color: step.unconfirmed ? '#fbbf24' : '#6b7280' }}>
+                            {step.unconfirmed ? 'Done — could not verify result' : 'Done'}
                           </div>
                         );
                       }
@@ -3925,13 +4031,15 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
                       const preview = lines[0].length > 60 ? lines[0].slice(0, 60) + '…' : lines[0];
                       const more = lines.length > 1 ? ` +${lines.length - 1} more` : '';
                       return (
-                        <div className="text-xs mt-0.5 font-mono truncate" style={{ color: '#6ee7b7' }}>
+                        <div className="text-xs mt-0.5 font-mono truncate" style={{ color: step.unconfirmed ? '#fbbf24' : '#6ee7b7' }}>
+                          {step.unconfirmed && <span style={{ fontStyle: 'normal' }}>Unverified: </span>}
                           {preview}<span style={{ color: '#6b7280' }}>{more}</span>
                         </div>
                       );
                     })()}
                     {/* ── shell.run goal-mode thinking — shown while _resolveGoalToCommand runs ── */}
-                    {step.status === 'running' && !!stepThinking.get(step.index) && (
+                    {/* Suppress when agent step log has real progress entries (tier updates, Tab-Flow steps) */}
+                    {step.status === 'running' && !!stepThinking.get(step.index) && !(agentStepLog.get(step.index) || []).length && (
                       <div style={{ marginTop: 3, fontSize: '11px', color: '#93c5fd', fontStyle: 'italic', lineHeight: '1.45', display: 'flex', alignItems: 'flex-start', gap: 4 }}>
                         <ThoughtIcon size={11} color="#93c5fd" />
                         <span>{stepThinking.get(step.index)}</span>
@@ -4199,7 +4307,9 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
                   const complete = agentCompletes.get(step.index);
                   const isRunning = step.status === 'running' && !complete && loginGuidance?.stepIndex !== step.index;
                   const isDone = !!complete;
-                  if (!liveTurn && !isDone) return null;
+                  const _hasTabFlow = (tabFlow.get(step.index) || []).length > 0;
+                  const _hasStepLog = (agentStepLog.get(step.index) || []).length > 0;
+                  if (!liveTurn && !isDone && !_hasTabFlow && !_hasStepLog) return null;
 
                   const _actionVerbs: Record<string, string> = {
                     run_cmd: 'running command', run_shell: 'probing',
@@ -4333,6 +4443,47 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
                           </span>
                         </div>
                       )}
+
+                      {/* ── Tab-Flow pre-computed steps checklist ── */}
+                      {isRunning && (() => {
+                        const flow = tabFlow.get(step.index);
+                        if (!flow || flow.length === 0) return null;
+                        const subPlan = tabMapPlan.get(step.index);
+                        return (
+                          <div style={{ marginTop: 6, padding: '6px 8px', borderRadius: 6,
+                            background: 'rgba(59,130,246,0.06)', border: '1px solid rgba(59,130,246,0.15)' }}>
+                            <div style={{ fontSize: '10px', color: '#93c5fd', marginBottom: 4, textTransform: 'uppercase', letterSpacing: '0.5px', fontWeight: 600 }}>
+                              Automation Flow
+                            </div>
+                            {flow.map((fs) => (
+                              <div key={fs.index} style={{ display: 'flex', flexDirection: 'column', gap: 2, fontSize: '11px', padding: '2px 0' }}>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                                  <StepIcon status={fs.status === 'pending' ? 'pending' : fs.status === 'running' ? 'running' : fs.status === 'done' ? 'done' : 'failed'} />
+                                  <span style={{
+                                    color: fs.status === 'done' ? '#6b7280' : fs.status === 'running' ? '#e2e8f0' : fs.status === 'failed' ? '#fca5a5' : '#94a3b8',
+                                    textDecoration: fs.status === 'done' ? 'line-through' : 'none',
+                                  }}>
+                                    {fs.action}
+                                  </span>
+                                </div>
+                                {/* Render Tab-Map sub-plan under the current running flow step */}
+                                {fs.status === 'running' && subPlan && subPlan.length > 0 && (
+                                  <div style={{ marginLeft: 18, display: 'flex', flexDirection: 'column', gap: 1, marginTop: 1 }}>
+                                    {subPlan.map((ms) => (
+                                      <div key={ms.index} style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: '10px' }}>
+                                        <StepIcon status={ms.status === 'pending' ? 'pending' : ms.status === 'running' ? 'running' : ms.status === 'done' ? 'done' : 'failed'} />
+                                        <span style={{ color: ms.status === 'done' ? '#6b7280' : ms.status === 'running' ? '#cbd5e1' : ms.status === 'failed' ? '#fca5a5' : '#94a3b8' }}>
+                                          {ms.action} {ms.target ? `"${ms.target}"` : ''}
+                                        </span>
+                                      </div>
+                                    ))}
+                                  </div>
+                                )}
+                              </div>
+                            ))}
+                          </div>
+                        );
+                      })()}
 
                       {/* ── Live agent sub-step log — streaming actions/thinking/outcomes ── */}
                       {isRunning && (() => {
@@ -4679,21 +4830,7 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
                 border: `1px solid ${agent.ready ? 'rgba(34,197,94,0.2)' : 'rgba(59,130,246,0.2)'}`,
               }}
             >
-              {agent.iconUrl ? (
-                <img
-                  src={agent.iconUrl}
-                  width={16}
-                  height={16}
-                  alt={agent.agentId}
-                  style={{ borderRadius: 2, flexShrink: 0 }}
-                  onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }}
-                />
-              ) : (
-                <svg width={16} height={16} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ color: '#6b7280', flexShrink: 0 }}>
-                  <circle cx="12" cy="12" r="10" /><line x1="2" y1="12" x2="22" y2="12" />
-                  <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z" />
-                </svg>
-              )}
+              <Favicon src={agent.iconUrl || undefined} size={16} alt={agent.agentId} />
               <span className="text-xs font-medium" style={{ color: agent.ready ? '#22c55e' : '#60a5fa' }}>
                 {agent.type === 'preflight' || agent.agentId === 'preflight'
                   ? 'preflight...'

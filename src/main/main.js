@@ -701,10 +701,16 @@ function startOverlayControlServer() {
       req.on('end', () => {
         try {
           const evt = JSON.parse(body || '{}');
-          if (activeProgressCallback && ['agent:turn_live', 'agent:turn', 'agent:complete', 'agent:thought', 'agent:thinking', 'needs_login', 'task:auth_required', 'task:auth_resolved', 'agent:tier'].includes(evt.type)) {
+          const _agentEventTypes = [
+            'agent:turn_live', 'agent:turn', 'agent:complete', 'agent:thought', 'agent:thinking',
+            'needs_login', 'task:auth_required', 'task:auth_resolved', 'agent:tier',
+            'tab_flow:computed', 'tab_flow:step_start', 'tab_flow:step_done', 'tab_flow:step_failed',
+            'tab_map:plan', 'tab_map:step_start', 'tab_map:step_done',
+          ];
+          if (activeProgressCallback && _agentEventTypes.includes(evt.type)) {
             activeProgressCallback(evt);
           }
-          if (activeCronProgressCallback && ['agent:turn_live', 'agent:turn', 'agent:complete', 'agent:thought', 'agent:thinking', 'needs_login', 'task:auth_required', 'task:auth_resolved', 'agent:tier'].includes(evt.type)) {
+          if (activeCronProgressCallback && _agentEventTypes.includes(evt.type)) {
             activeCronProgressCallback(evt);
           }
           res.writeHead(200).end(JSON.stringify({ ok: true }));
@@ -1315,6 +1321,9 @@ let _dragGlowTriggered = false;  // true once glow is sent during a drag (avoids
 let _lastCapturedText = '';     // text captured at mouseup, waiting to be written to file
 let _lastSelectionApp = null;   // frontmost app name at capture time (for logging)
 let _captureInProgress = false; // guard against overlapping captures
+let _cmdHeld = false;              // Cmd/Ctrl currently held (uIOhook keydown/keyup)
+let _shiftHeld = false;            // Shift currently held (uIOhook keydown/keyup)
+let _userCopiedAfterMouseup = false; // user pressed plain Cmd/Ctrl+C (no Shift) after this mouseup
 
 /**
  * Check if a point is inside any ThinkDrop window (so we can ignore internal clicks).
@@ -1346,41 +1355,88 @@ function _getFrontmostAppName() {
 
 /**
  * Capture text selection at mouseup time (source app still has focus).
- * Sends Cmd+C, reads clipboard, restores original, stores text in memory, glows button.
+ *
+ * Two paths avoid racing the user's own Cmd+C:
+ *  - Path A: Cmd/Ctrl held (no Shift) at mouseup → user is mid-copy. Skip
+ *    synthetic keys entirely and wait for the user's own Cmd+C to land on the
+ *    clipboard. Never restore (it's their copy).
+ *  - Path B: Cmd/Ctrl not held (or Shift held → tag intent) → send synthetic
+ *    Cmd+C as before, but DEFER the clipboard restore by 300ms. If the user
+ *    presses Cmd+C in that window, skip the restore (don't wipe their copy).
  */
 async function _captureOnMouseup() {
   if (_captureInProgress) return;
   _captureInProgress = true;
+  // Reset the user-copy flag for this capture cycle.
+  _userCopiedAfterMouseup = false;
   try {
-    // Backup current clipboard
+    // Snapshot modifier state at mouseup — determines which path we take.
+    const cmdHeldAtMouseup = _cmdHeld;
+    const shiftHeldAtMouseup = _shiftHeld;
+
+    // Backup current clipboard (used by Path B's deferred restore).
     const backup = clipboard.readText();
 
-    // Send Cmd+C to the focused app via Nut.js
-    let nut;
-    try {
-      nut = require('@nut-tree-fork/nut-js');
-    } catch (err) {
-      console.warn('[CopyMonitor] Nut.js unavailable:', err.message);
-      return;
-    }
-    const { Key } = nut;
-    await nut.keyboard.pressKey(Key.LeftSuper, Key.C);
-    await nut.keyboard.releaseKey(Key.LeftSuper, Key.C);
-
-    // Poll clipboard until it changes from the backup value (Cmd+C was processed)
-    // or we hit the 200ms timeout. This is instant for fast apps and still
-    // works for slow ones — no fixed delay needed.
     let text = '';
-    const pollStart = Date.now();
-    while (Date.now() - pollStart < 200) {
-      await new Promise(r => setTimeout(r, 5));
-      const current = clipboard.readText();
-      if (current !== backup) { text = current; break; }
-    }
-    if (!text) text = clipboard.readText(); // final read after timeout
 
-    // Restore original clipboard immediately
-    clipboard.writeText(backup);
+    if (cmdHeldAtMouseup && !shiftHeldAtMouseup) {
+      // ── Path A: user is holding Cmd/Ctrl (without Shift) at mouseup — they
+      // are about to press C to copy. Sending synthetic Cmd+C would collide
+      // with their held modifier (Race 2) and the immediate restore would
+      // wipe their copy (Race 1). Instead, wait for their own Cmd+C to land
+      // on the clipboard, capture it, and leave it intact (no restore).
+      console.log('[CopyMonitor] Path A — Cmd held at mouseup, waiting for user copy.');
+      const waitStart = Date.now();
+      while (Date.now() - waitStart < 400) {
+        await new Promise(r => setTimeout(r, 5));
+        const current = clipboard.readText();
+        if (current !== backup) { text = current; break; }
+      }
+      // Do NOT fall back to clipboard.readText() if unchanged — that would
+      // treat the user's prior clipboard content as a "captured selection".
+      // `text` stays empty if the user never pressed C (glow retracts below).
+    } else {
+      // ── Path B: user is not holding Cmd (or is holding Shift → tag intent).
+      // Send synthetic Cmd+C to capture the selection, then DEFER the restore
+      // so we can detect if the user presses Cmd+C within 300ms and skip the
+      // restore in that case (avoids wiping their copy, Race 1).
+      let nut;
+      try {
+        nut = require('@nut-tree-fork/nut-js');
+      } catch (err) {
+        console.warn('[CopyMonitor] Nut.js unavailable:', err.message);
+        return;
+      }
+      const { Key } = nut;
+      await nut.keyboard.pressKey(Key.LeftSuper, Key.C);
+      await nut.keyboard.releaseKey(Key.LeftSuper, Key.C);
+
+      // Poll clipboard until it changes from the backup value (Cmd+C was
+      // processed) or we hit the 200ms timeout. Instant for fast apps.
+      const pollStart = Date.now();
+      while (Date.now() - pollStart < 200) {
+        await new Promise(r => setTimeout(r, 5));
+        const current = clipboard.readText();
+        if (current !== backup) { text = current; break; }
+      }
+      if (!text) text = clipboard.readText(); // final read after timeout
+
+      // Defer the restore: if the user presses Cmd+C within 300ms, their copy
+      // is on the clipboard and we must not overwrite it. Otherwise restore
+      // the original clipboard content (preserve prior state when the user
+      // didn't copy). Only restore if the clipboard still holds our synthetic
+      // copy — if the user replaced it with something else, leave it alone.
+      const capturedText = text;
+      setTimeout(() => {
+        if (_userCopiedAfterMouseup) {
+          console.log('[CopyMonitor] User pressed Cmd+C after mouseup — skipping clipboard restore.');
+          return;
+        }
+        if (clipboard.readText() === capturedText) {
+          clipboard.writeText(backup);
+        }
+      }, 300);
+    }
 
     // Detection: skip if empty — retract optimistic glow if it was triggered
     if (!text || !text.trim()) {
@@ -1481,21 +1537,39 @@ function startMouseSelectionMonitor() {
     const { uIOhook, UiohookKey } = require('uiohook-napi');
     _uIOhookInstance = uIOhook;
 
-    // Cmd+A (Select All) — no mouse drag involved, so the mouse monitor misses it.
-    // Detect the keyboard shortcut and trigger the same capture flow.
+    // Track Cmd/Ctrl/Shift key state so _captureOnMouseup() can detect when the
+    // user is mid-copy and avoid racing them with synthetic key events + clipboard
+    // restore (which previously wiped the user's own Cmd+C result). Both keydown
+    // and keyup reconcile state — keydown is authoritative on press, keyup clears
+    // on release, and keydown also self-corrects any stale state from a missed
+    // keyup (platform modifier-flag quirks).
     uIOhook.on('keydown', (e) => {
+      _cmdHeld = !!(e.metaKey || e.ctrlKey);
+      _shiftHeld = !!e.shiftKey;
+      // Plain Cmd/Ctrl+C (NOT Shift+Cmd+C — that's the tag shortcut and must
+      // not be treated as a user copy) → user is copying the selection.
+      if ((e.metaKey || e.ctrlKey) && !e.shiftKey && e.keycode === UiohookKey.C) {
+        _userCopiedAfterMouseup = true;
+      }
+
+      // Cmd+A (Select All) — no mouse drag involved, so the mouse monitor misses it.
+      // Detect the keyboard shortcut and trigger the same capture flow.
       const isSelectAll = (e.metaKey || e.ctrlKey) && e.keycode === UiohookKey.A;
-      if (!isSelectAll) return;
-      if (_captureInProgress) return;
+      if (isSelectAll && !_captureInProgress) {
+        // Optimistic glow — the app is about to select all text
+        _dragGlowTriggered = true;
+        safeSend(unifiedWindow, 'copy-button:glow', true);
+        safeSend(promptCaptureWindow, 'copy-button:glow', true);
 
-      // Optimistic glow — the app is about to select all text
-      _dragGlowTriggered = true;
-      safeSend(unifiedWindow, 'copy-button:glow', true);
-      safeSend(promptCaptureWindow, 'copy-button:glow', true);
+        // Wait 100ms for the app to process Select All and for the user to release
+        // the Cmd key, avoiding Cmd+A+C chord interference. Then capture via Cmd+C.
+        setTimeout(() => { _captureOnMouseup(); }, 100);
+      }
+    });
 
-      // Wait 100ms for the app to process Select All and for the user to release
-      // the Cmd key, avoiding Cmd+A+C chord interference. Then capture via Cmd+C.
-      setTimeout(() => { _captureOnMouseup(); }, 100);
+    uIOhook.on('keyup', (e) => {
+      if (!(e.metaKey || e.ctrlKey)) _cmdHeld = false;
+      if (!e.shiftKey) _shiftHeld = false;
     });
 
     uIOhook.on('mousedown', (e) => {
@@ -3802,7 +3876,9 @@ app.whenReady().then(async () => {
     const isAskUserResume = !!pausedAutomationState;
     // Send unified:set-prompt so streamingResponse reset arrives at unifiedWindow BEFORE the first token.
     // Skip for skill-plan re-runs — PlanPanel already shows the plan in executing state.
-    if (!_skillPlan && !isAskUserResume) safeSendUnified('unified:set-prompt', prompt);
+    // Skip for plan execution runs — the optimistic UI already transitioned to 'executing'
+    // and sending unified:set-prompt would wipe that state via handleNewPrompt → resetToIdle.
+    if (!_skillPlan && !isAskUserResume && !_planFile) safeSendUnified('unified:set-prompt', prompt);
 
     // Snapshot webContents at handler start — if the window reloads mid-stream the
     // reference becomes stale and safeSend would spam "Render frame was disposed" errors.
@@ -7511,7 +7587,16 @@ app.whenReady().then(async () => {
 
       // Merge agents with skills
       const agentsWithSkills = agents.map(agent => {
-        const domain = agent.service ? `${agent.service}.com` : agent.id.replace('.agent', '');
+        // Derive domain from start_url in descriptor (handles underscored services
+        // like google_calendar → calendar.google.com). Falls back to ${service}.com.
+        const _startUrlMatch = agent.descriptor?.match(/^start_url:\s*(.+)$/m);
+        let domain;
+        if (_startUrlMatch) {
+          try { domain = new URL(_startUrlMatch[1].trim()).hostname; } catch (_) {}
+        }
+        if (!domain) {
+          domain = agent.service ? `${agent.service}.com` : agent.id.replace('.agent', '');
+        }
         const skills = agentSkillsMap[agent.id] || agentSkillsMap[agent.service] || agentSkillsMap[domain] || [];
         const lastScanned = agentLastScannedMap[agent.id] || agentLastScannedMap[agent.service] || agentLastScannedMap[domain] || null;
         const category = agent.type === 'cli' || agent.type === 'api_key' ? 'Utility' : 'Social & Communication';
