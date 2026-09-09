@@ -64,6 +64,9 @@ interface PartialFailureCardProps {
   options: QuestionOption[];
   onSubmit: (value: string) => void;
   onCancel: () => void;
+  // Optional auto-retry countdown for agent failures that offer 'try_again'
+  retryCountdown?: number | null;
+  onCancelAutoRetry?: () => void;
 }
 
 // ── ThinkDrop color palette (extracted from AutomationProgress.tsx) ──────────
@@ -492,7 +495,7 @@ export function QuestionCard({ batch, onSubmit, onCancel }: QuestionCardProps) {
 // three action buttons: "Try to finish" (plan extension), "Train me with a
 // recipe", and "Other" (free text). Replaces the generic ask_user failure
 // banner when partialProgress is available.
-export function PartialFailureCard({ partialFailure, options, onSubmit, onCancel }: PartialFailureCardProps) {
+export function PartialFailureCard({ partialFailure, options, onSubmit, onCancel, retryCountdown, onCancelAutoRetry }: PartialFailureCardProps) {
   const { summary, completed, remaining, currentUrl } = partialFailure;
   const [otherText, setOtherText] = useState('');
   const [showOther, setShowOther] = useState(false);
@@ -584,10 +587,16 @@ export function PartialFailureCard({ partialFailure, options, onSubmit, onCancel
       {/* Action buttons */}
       <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 8 }}>
         {options.map((opt, i) => {
-          const isPrimary = opt.primary;
+          const isTryAgain = opt.value === 'try_again';
+          const isPrimary = opt.primary || isTryAgain;
+          const isRetrying = isTryAgain && retryCountdown === 0;
+          const autoRetryLabel = typeof retryCountdown === 'number' && retryCountdown > 0
+            ? `${opt.label} (auto-retry in ${retryCountdown}s)`
+            : opt.label;
           return (
             <button
               key={i}
+              disabled={isRetrying}
               onClick={() => _handleOption(opt.value)}
               style={{
                 display: 'flex',
@@ -595,7 +604,8 @@ export function PartialFailureCard({ partialFailure, options, onSubmit, onCancel
                 gap: 8,
                 padding: '8px 12px',
                 borderRadius: 8,
-                cursor: 'pointer',
+                cursor: isRetrying ? 'not-allowed' : 'pointer',
+                opacity: isRetrying ? 0.7 : 1,
                 backgroundColor: isPrimary ? 'rgba(56,189,248,0.15)' : COLORS.optionBg,
                 border: isPrimary ? COLORS.nextBtnBorder : COLORS.optionBorder,
                 textAlign: 'left',
@@ -609,9 +619,9 @@ export function PartialFailureCard({ partialFailure, options, onSubmit, onCancel
                 fontSize: '0.78rem',
                 fontWeight: 600,
               }}>
-                {opt.label}
+                {isRetrying ? 'Retrying…' : autoRetryLabel}
               </span>
-              {isPrimary && (
+              {isPrimary && !isRetrying && (
                 <span style={{
                   marginLeft: 'auto',
                   fontSize: '0.62rem',
@@ -624,7 +634,7 @@ export function PartialFailureCard({ partialFailure, options, onSubmit, onCancel
                   textTransform: 'uppercase',
                   flexShrink: 0,
                 }}>
-                  Recommended
+                  {typeof retryCountdown === 'number' && retryCountdown > 0 ? `${retryCountdown}s` : 'Recommended'}
                 </span>
               )}
             </button>
@@ -711,8 +721,23 @@ export function PartialFailureCard({ partialFailure, options, onSubmit, onCancel
         </div>
       </div>
 
-      {/* Footer: Cancel */}
-      <div className="flex items-center justify-end" style={{ marginTop: 8 }}>
+      {/* Footer: Cancel + stop auto-retry */}
+      <div className="flex items-center justify-end" style={{ marginTop: 8, gap: 8 }}>
+        {typeof retryCountdown === 'number' && retryCountdown > 0 && onCancelAutoRetry && (
+          <button
+            onClick={onCancelAutoRetry}
+            style={{
+              background: 'transparent',
+              border: 'none',
+              color: '#fbbf24',
+              fontSize: '0.69rem',
+              cursor: 'pointer',
+              padding: '4px 8px',
+            }}
+          >
+            Stop auto-retry
+          </button>
+        )}
         <button
           onClick={onCancel}
           style={{

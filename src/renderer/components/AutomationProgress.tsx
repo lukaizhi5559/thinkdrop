@@ -896,6 +896,13 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
   const [scheduleCountdown, setScheduleCountdown] = useState<{ label: string; targetTime: string; remainingMs: number } | null>(null);
   const [evalMessage, setEvalMessage] = useState<string>('');
   const [retryMessage, setRetryMessage] = useState<string>('');
+  // 15-second auto-retry countdown state for agent failures with a 'try_again' option
+  const [autoRetryCountdown, setAutoRetryCountdown] = useState<number | null>(null);
+  const autoRetryTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const askUserPromptRef = useRef<AskUserPrompt | null>(null);
+  const handleOptionClickRef = useRef<((value: string) => void) | null>(null);
+  // Resume guard: prevent planning/reset from wiping the step list during ask_user resume
+  const isResumeInProgressRef = useRef(false);
   const [skillBuildConfirm, setSkillBuildConfirm] = useState<{ skillName: string; summary: string } | null>(null);
   const [scoutMatch, setScoutMatch] = useState<ScoutMatchState | null>(null);
   const [gatherCredential, setGatherCredential] = useState<GatherCredential | null>(null);
@@ -1175,6 +1182,13 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
       setFailureAnswer(null);
       setSavedFilePaths([]);
       setAskUserPrompt(null);
+      askUserPromptRef.current = null;
+      setAutoRetryCountdown(null);
+      if (autoRetryTimerRef.current) {
+        clearInterval(autoRetryTimerRef.current);
+        autoRetryTimerRef.current = null;
+      }
+      isResumeInProgressRef.current = false;
       setGatherAuthAction(null);
       setGatherAuthConnecting(false);
       setGatherAuthBrowserOpened(false);
@@ -1404,7 +1418,14 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
 
         case 'resuming': {
           setAskUserPrompt(null);
+          setAutoRetryCountdown(null);
+          if (autoRetryTimerRef.current) {
+            clearInterval(autoRetryTimerRef.current);
+            autoRetryTimerRef.current = null;
+          }
           setPhase('executing');
+          // Mark that a resume is in progress so the next 'planning' event doesn't wipe the step list.
+          isResumeInProgressRef.current = true;
           // Flip any paused (needs_input) steps back to running spinners
           setSteps(prev => prev.map(s => s.status === 'needs_input' && (typeof data.stepIndex !== 'number' || s.index === data.stepIndex) ? { ...s, status: 'running' as const } : s));
           // Resume progress events carry the original step index so step_start maps back to the existing card.
@@ -1415,6 +1436,11 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
         }
 
         case 'planning':
+          // During an ask_user resume we already have the step list and offset; the
+          // backend's 'planning' event is just the resolver warming up. Don't reset.
+          if (isResumeInProgressRef.current) {
+            break;
+          }
           setAskUserPrompt(null);
           setExpandedSteps(new Set());
           setFailureAnswer(null);
@@ -1478,15 +1504,59 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
           // WITHOUT replacing the step list — the existing deferred rows from the original run
           // should stay and be activated by subsequent step_start/step_done events.
           if (data.isResume) {
-            // Only enter executing phase if we have existing steps (deferred reminder resume).
-            // If no steps exist (ask_user resume), just break — the offset was already set.
-            if (steps.length > 0) {
+            const resumeOffset = stepOffsetRef.current;
+            const wasResuming = isResumeInProgressRef.current;
+            isResumeInProgressRef.current = false;
+            if (wasResuming) {
+              // Ask-user resume: the resuming event set the offset. Merge the resumed
+              // steps at that offset, preserving the original completed/failed rows so
+              // the user sees a cumulative list (e.g. search done → add retried → confirm).
+              const newStepsByIndex = new Map<number, any>();
+              (data.steps || []).forEach((s: any) => { newStepsByIndex.set(resumeOffset + s.index, s); });
+              setSteps(prev => {
+                const next = new Map<number, Step>();
+                prev.forEach(s => next.set(s.index, s));
+                newStepsByIndex.forEach((s, idx) => {
+                  const existing = next.get(idx);
+                  if (existing) {
+                    // Keep the existing terminal status (e.g. done) unless this is a retry of a failed step.
+                    const keepStatus = existing.status === 'done' || existing.status === 'skipped'
+                      ? existing.status
+                      : ('pending' as StepStatus);
+                    next.set(idx, { ...existing, skill: s.skill || existing.skill, description: s.description || existing.description, status: keepStatus, runGroup: s.runGroup || existing.runGroup, args: s.args || existing.args });
+                  } else {
+                    next.set(idx, { index: idx, skill: s.skill, description: s.description, status: 'pending' as StepStatus, runGroup: s.runGroup || undefined, args: s.args || undefined });
+                  }
+                });
+                return Array.from(next.values()).sort((a, b) => a.index - b.index);
+              });
+              const total = resumeOffset + (data.steps?.length || 0);
+              setTotalCount(prev => Math.max(prev, total));
+              setPhase('executing');
+              if (data.intent) setIntentType(data.intent);
+              executionStartRef.current = Date.now();
+              setEtaLabel(null);
+              setElapsedLabel(null);
+            } else if (steps.length > 0) {
+              // Deferred reminder resume with existing steps: just enter executing; the
+              // existing rows will be activated by step_start/step_done events.
               setPhase('executing');
               setTotalCount(data.steps?.length || steps.length);
               if (data.intent) setIntentType(data.intent);
               executionStartRef.current = Date.now();
               setEtaLabel(null);
               setElapsedLabel(null);
+            } else {
+              // Resume with no existing view: populate the steps directly.
+              const _etaSteps: Step[] = (data.steps || []).map((s: any) => ({ index: s.index, skill: s.skill, description: s.description, status: 'pending' as StepStatus }));
+              const { lo, hi } = estimateEta(_etaSteps);
+              setEtaLabel(formatEta(lo, hi));
+              setElapsedLabel(null);
+              executionStartRef.current = Date.now();
+              setTotalCount(data.steps?.length || 0);
+              if (data.intent) setIntentType(data.intent);
+              setSteps(_etaSteps.map(s => ({ ...s, skill: s.skill || '' })));
+              setPhase('executing');
             }
             break;
           }
@@ -2434,6 +2504,7 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
         case 'all_done': {
           // Don't let all_done collapse an active plan review (awaitingPlanApproval path)
           if (phaseRef.current === 'plan_review') break;
+          isResumeInProgressRef.current = false;
           if (data.cancelled) {
             // Cancel = wipe the panel back to idle — no done summary, no step rows.
             resetToIdle();
@@ -2477,46 +2548,52 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
           if (Array.isArray(data.skillResults)) {
             const filePaths: string[] = Array.isArray(data.savedFilePaths) ? data.savedFilePaths : [];
             const finalOffset = stepOffsetRef.current;
-            const finalCount = data.skillResults.length;
             // Steps the backend tagged as deferred (run when reminder fires)
             const deferredIndices: number[] = Array.isArray(data.deferredStepIndices)
               ? data.deferredStepIndices.map((i: number) => i + finalOffset)
               : [];
-            setSteps(prev => prev.map((s) => {
-              // Mark deferred steps with their own status
-              if (deferredIndices.includes(s.index) && (s.status === 'pending' || s.status === 'running')) {
-                return { ...s, status: 'deferred' as StepStatus };
-              }
-              // Compute position within the final plan window
-              const posInFinal = s.index - finalOffset;
-              const r = (posInFinal >= 0 && posInFinal < finalCount) ? data.skillResults[posInFinal] : null;
-              if (!r) {
-                // Step is from a prior (abandoned) replan cycle — don't leave it red.
-                // Only downgrade steps BEFORE the current plan window (posInFinal < 0).
-                // Steps AFTER the window (posInFinal >= finalCount) may be genuine
-                // failures from the original parallel execution and should stay failed.
-                if (s.status === 'failed' && posInFinal < 0) return { ...s, status: 'skipped' as StepStatus };
-                return s;
-              }
-              // Find a savedFilePath that this step wrote by matching against its resolved args script
-              let stepFilePath = s.savedFilePath;
-              if (!stepFilePath && r.skill === 'shell.run' && filePaths.length > 0) {
-                const script = (r.args?.argv || []).find((a: any) => typeof a === 'string') || '';
-                stepFilePath = filePaths.find(fp => script.includes(fp) || script.includes(fp.replace(/^\/Users\/[^/]+/, '~')));
-              }
-              return {
-                ...s,
-                status: r.skipped ? 'skipped' : r.ok ? 'done' : 'failed',
-                unconfirmed: r.ok && !r.skipped
-                  ? isUnconfirmedStep(s.description, r.stdout || s.stdout)
-                  : false,
-                stdout: r.stdout || s.stdout,
-                stderr: r.stderr || s.stderr,
-                error: r.error || s.error,
-                exitCode: r.exitCode ?? s.exitCode,
-                savedFilePath: stepFilePath || s.savedFilePath,
-              };
-            }));
+            setSteps(prev => {
+              // Build a map so we can create missing step entries if step_done updates
+              // have not yet flushed (e.g. resume race). Existing rows outside the final
+              // plan window are preserved, and stale failed rows are downgraded.
+              const next = new Map<number, Step>();
+              prev.forEach(s => next.set(s.index, s));
+              data.skillResults.forEach((r: any, i: number) => {
+                const idx = finalOffset + i;
+                const s = next.get(idx);
+                // Find a savedFilePath that this step wrote by matching against its resolved args script
+                let stepFilePath = s?.savedFilePath;
+                if (!stepFilePath && r.skill === 'shell.run' && filePaths.length > 0) {
+                  const script = (r.args?.argv || []).find((a: any) => typeof a === 'string') || '';
+                  stepFilePath = filePaths.find(fp => script.includes(fp) || script.includes(fp.replace(/^\/Users\/[^/]+/, '~')));
+                }
+                next.set(idx, {
+                  ...(s ?? { index: idx, skill: r.skill, description: r.description || `Step ${i + 1}`, status: 'pending' as StepStatus }),
+                  status: r.skipped ? 'skipped' : r.ok ? 'done' : 'failed',
+                  unconfirmed: r.ok && !r.skipped
+                    ? isUnconfirmedStep(r.description || s?.description, r.stdout || s?.stdout)
+                    : false,
+                  stdout: r.stdout || s?.stdout,
+                  stderr: r.stderr || s?.stderr,
+                  error: r.error || s?.error,
+                  exitCode: r.exitCode ?? s?.exitCode,
+                  savedFilePath: stepFilePath || s?.savedFilePath,
+                  skill: r.skill ?? s?.skill ?? '',
+                  description: r.description ?? s?.description ?? `Step ${i + 1}`,
+                });
+              });
+              next.forEach((s, idx) => {
+                const posInFinal = idx - finalOffset;
+                // Mark deferred steps with their own status
+                if (deferredIndices.includes(idx) && (s.status === 'pending' || s.status === 'running')) {
+                  next.set(idx, { ...s, status: 'deferred' as StepStatus });
+                } else if (s.status === 'failed' && posInFinal < 0) {
+                  // Stale failed step from an abandoned replan cycle — don't leave it red.
+                  next.set(idx, { ...s, status: 'skipped' as StepStatus });
+                }
+              });
+              return Array.from(next.values()).sort((a, b) => a.index - b.index);
+            });
           }
           // Auto-expand synthesize and surface failure explanation on terminal states only.
           // Uses synthStepIndexRef (set on step_start for synthesize) to avoid calling
@@ -2735,6 +2812,12 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
   const handleOptionClick = (option: string | { label?: string; value?: string }) => {
     const _label = typeof option === 'string' ? option : (option?.label || String(option));
     const _value = typeof option === 'string' ? option : (option?.value || _label);
+    // Cancel any active auto-retry countdown before handling the user's choice.
+    if (autoRetryTimerRef.current) {
+      clearInterval(autoRetryTimerRef.current);
+      autoRetryTimerRef.current = null;
+    }
+    setAutoRetryCountdown(null);
     // "Correct and retry" — don't submit; focus the free-text input so the user
     // can type what was missed. The free-text submit goes through the existing
     // _isAgentAskUser resume path (re-runs same agent with [Resume context: Q&A]).
@@ -2744,39 +2827,82 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
       // The input field renders below the options when freeText/correctionMode is true.
       return;
     }
+    const currentPrompt = askUserPromptRef.current;
     // "Record recipe from beginning" — open the training tab (fresh mode).
     if (_value === 'record_recipe' || _value === 'open_agents_training' || _value === 'open_agents_training_here') {
-      const _agentId = askUserPrompt?.agentId || null;
+      const _agentId = currentPrompt?.agentId || null;
       const _mode = (_value === 'open_agents_training_here') ? 'here' : 'fresh';
       setAskUserPrompt(null);
+      askUserPromptRef.current = null;
       ipcRenderer?.send('agents:open-training', {
         agentId: _agentId,
         mode: _mode,
-        task: askUserPrompt?.originalTask || null,
-        startUrl: _mode === 'here' ? (askUserPrompt?.currentUrl || null) : null,
-        keepSession: _mode === 'here' ? (askUserPrompt?.keepSession === true) : false,
+        task: currentPrompt?.originalTask || null,
+        startUrl: _mode === 'here' ? (currentPrompt?.currentUrl || null) : null,
+        keepSession: _mode === 'here' ? (currentPrompt?.keepSession === true) : false,
       });
       return;
     }
     setAskUserPrompt(null);
+    askUserPromptRef.current = null;
     setAskUserCorrectionMode(false);
     // Answer submitted — flip paused steps back to running spinners while the agent resumes
-    const blockedStepIndex = askUserPrompt?.stepIndex;
+    const blockedStepIndex = currentPrompt?.stepIndex;
     setSteps(prev => prev.map(s => s.status === 'needs_input' && (blockedStepIndex == null || s.index === blockedStepIndex) ? { ...s, status: 'running' as const } : s));
     ipcRenderer?.send('prompt-queue:submit', { prompt: _value, selectedText: '', isAskUserAnswer: true });
   };
 
+  // Keep the latest handler on a ref so the auto-retry timer can call it directly.
+  handleOptionClickRef.current = handleOptionClick;
+
   const handleAskUserFreeTextSubmit = () => {
     const _val = askUserFreeText.trim();
     if (!_val) return;
+    if (autoRetryTimerRef.current) {
+      clearInterval(autoRetryTimerRef.current);
+      autoRetryTimerRef.current = null;
+    }
+    setAutoRetryCountdown(null);
+    const currentPrompt = askUserPromptRef.current;
     setAskUserPrompt(null);
+    askUserPromptRef.current = null;
     setAskUserFreeText('');
     setAskUserCorrectionMode(false);
     // Answer submitted — flip paused steps back to running spinners while the agent resumes
-    const blockedStepIndex = askUserPrompt?.stepIndex;
+    const blockedStepIndex = currentPrompt?.stepIndex;
     setSteps(prev => prev.map(s => s.status === 'needs_input' && (blockedStepIndex == null || s.index === blockedStepIndex) ? { ...s, status: 'running' as const } : s));
     ipcRenderer?.send('prompt-queue:submit', { prompt: _val, selectedText: '', isAskUserAnswer: true });
   };
+
+  // Sync the askUserPrompt ref and manage the 15s auto-retry countdown for agent failures.
+  useEffect(() => {
+    askUserPromptRef.current = askUserPrompt;
+    if (!askUserPrompt || !askUserPrompt._isAgentAskUser) {
+      if (autoRetryTimerRef.current) { clearInterval(autoRetryTimerRef.current); autoRetryTimerRef.current = null; }
+      setAutoRetryCountdown(null);
+      return;
+    }
+    const hasTryAgain = (askUserPrompt.options || []).some((o: any) =>
+      (typeof o === 'string' ? o === 'try_again' : o?.value === 'try_again')
+    );
+    if (!hasTryAgain) {
+      if (autoRetryTimerRef.current) { clearInterval(autoRetryTimerRef.current); autoRetryTimerRef.current = null; }
+      setAutoRetryCountdown(null);
+      return;
+    }
+    setAutoRetryCountdown(15);
+    autoRetryTimerRef.current = setInterval(() => {
+      setAutoRetryCountdown(prev => {
+        if (prev === null || prev <= 1) {
+          if (autoRetryTimerRef.current) { clearInterval(autoRetryTimerRef.current); autoRetryTimerRef.current = null; }
+          handleOptionClickRef.current?.('try_again');
+          return null;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+    return () => { if (autoRetryTimerRef.current) { clearInterval(autoRetryTimerRef.current); autoRetryTimerRef.current = null; } };
+  }, [askUserPrompt]);
 
   const handleGuideContinue = () => {
     setGuideStep(null);
@@ -5235,7 +5361,17 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
               .map(o => typeof o === 'string' ? { label: o, value: o } : { label: o?.label || String(o), value: o?.value || o?.label || String(o), primary: o?.primary })
               .filter(o => o.value !== 'correct_and_retry')}
             onSubmit={(value) => handleOptionClick(value)}
-            onCancel={() => { setAskUserPrompt(null); }}
+            onCancel={() => {
+              if (autoRetryTimerRef.current) { clearInterval(autoRetryTimerRef.current); autoRetryTimerRef.current = null; }
+              setAutoRetryCountdown(null);
+              setAskUserPrompt(null);
+              askUserPromptRef.current = null;
+            }}
+            retryCountdown={autoRetryCountdown}
+            onCancelAutoRetry={() => {
+              if (autoRetryTimerRef.current) { clearInterval(autoRetryTimerRef.current); autoRetryTimerRef.current = null; }
+              setAutoRetryCountdown(null);
+            }}
           />
         ) : (
           <>
