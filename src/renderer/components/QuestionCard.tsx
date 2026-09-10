@@ -10,11 +10,19 @@
 
 import { useEffect, useState } from 'react';
 
+const ipcRenderer = (window as any).electron?.ipcRenderer;
+
+export interface QuestionLink {
+  label: string;
+  url: string;
+}
+
 export interface QuestionOption {
   label: string;
   value: string;
   primary?: boolean;
   description?: string;
+  link?: QuestionLink;
 }
 
 export interface Question {
@@ -26,6 +34,7 @@ export interface Question {
   memoryResolved?: boolean;
   memoryText?: string;
   memoryTextTemplate?: string;
+  link?: QuestionLink;
 }
 
 export interface RouteConfirmation {
@@ -265,6 +274,24 @@ export function QuestionCard({ batch, onSubmit, onCancel }: QuestionCardProps) {
         }}>
           From your memory
         </div>
+      )}
+
+      {/* Question-level link (download page, API token page, CLI secret page, etc.) */}
+      {currentQ.link && (
+        <a
+          href="#"
+          onClick={e => { e.preventDefault(); ipcRenderer?.send('shell:open-url', currentQ.link!.url); }}
+          style={{
+            display: 'inline-block',
+            color: '#818cf8',
+            fontSize: '0.67rem',
+            textDecoration: 'underline',
+            textDecorationStyle: 'dotted',
+            marginBottom: 10,
+          }}
+        >
+          {currentQ.link.label}
+        </a>
       )}
 
       {/* Options (for confirm/choice types) */}

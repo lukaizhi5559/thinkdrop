@@ -207,6 +207,7 @@ interface AgentStepLogEntry {
   outcome?: { ok: boolean; error?: string; result?: string } | null;
   phase?: string;       // 'plan' | 'replan' | 'repair' | 'preparation'
   tier?: string;        // tier name for 'tier' type entries (e.g. 'liteparse-first', 'turn-loop')
+  nextCheckInMs?: number; // for monitoring entries: ms until next check (drives live countdown)
   timestamp: number;
 }
 
@@ -424,11 +425,11 @@ function formatEta(lo: number, hi: number): string {
 
 function humanizeError(error: string): string {
   if (!error) return error;
-  // Strip [MCPClient] prefix and URL noise
+  // Strip [MCPClient] prefix and timeout URL noise, but preserve other URLs
+  // (e.g. download links in plan_error messages) so the user can see them.
   let msg = error
     .replace(/\[MCPClient\]\s*/g, '')
     .replace(/Request timeout after \d+ms:\s*https?:\/\/[^\s]+/g, 'Request timed out')
-    .replace(/https?:\/\/\S+/g, '')
     .trim();
   // Map common internal errors to human-readable messages
   if (msg.includes('timed out') || msg.includes('timeout')) {
@@ -937,6 +938,10 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
   const [agentStepLog, setAgentStepLog] = useState<Map<number, AgentStepLogEntry[]>>(new Map());
   // Counter for generating unique log entry IDs per step
   const agentStepLogSeq = useRef<Map<number, number>>(new Map());
+  // Live countdown tick for monitoring entries (re-renders every 1s while active)
+  const [monitorTick, setMonitorTick] = useState(0);
+  // Per-step expanded state for collapsed sub-step history toggle
+  const [subStepHistoryExpanded, setSubStepHistoryExpanded] = useState<Set<number>>(new Set());
   // Maps stepIndex → Tab-Flow pre-computed step checklist
   const [tabFlow, setTabFlow] = useState<Map<number, TabFlowStep[]>>(new Map());
   // Maps stepIndex → Tab-Map sub-plan steps (nested under the current running flow step)
@@ -1117,6 +1122,19 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
   useEffect(() => {
     onActiveChange?.(phase !== 'idle');
   }, [phase]);
+
+  // Live countdown tick for monitoring entries — re-renders every 1s while
+  // any step's latest log entry has a nextCheckInMs (monitoring phase active).
+  useEffect(() => {
+    if (phase !== 'executing' && phase !== 'preflight') return;
+    const hasMonitor = [...agentStepLog.values()].some(entries => {
+      const last = entries[entries.length - 1];
+      return last?.nextCheckInMs && (Date.now() - last.timestamp) < last.nextCheckInMs;
+    });
+    if (!hasMonitor) return;
+    const id = setInterval(() => setMonitorTick(t => t + 1), 1000);
+    return () => clearInterval(id);
+  }, [phase, agentStepLog]);
 
   // Nudge UnifiedOverlay to resize and scroll when a question batch appears.
   // The card's own DOM may not be measured by the time the state flips, so we
@@ -2239,6 +2257,16 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
             turn: 0,
             type: 'thinking',
             message: data.message || 'All tiers tried — resetting',
+          });
+          break;
+        }
+        case 'app_flow:monitor_progress': {
+          const stepIdx = (data.stepIndex ?? 0) + stepOffsetRef.current;
+          _appendAgentStepLog(stepIdx, {
+            turn: 0,
+            type: 'thinking',
+            message: data.message || `Monitoring... ${data.elapsed || 0}s elapsed`,
+            nextCheckInMs: data.nextCheckInMs,
           });
           break;
         }
@@ -4052,12 +4080,33 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
       )}
 
       {/* ── Global error ─────────────────────────────────────────────────── */}
-      {globalError && (
-        <div className="px-3 py-2 rounded-lg text-xs"
-          style={{ backgroundColor: 'rgba(239,68,68,0.1)', borderLeft: '3px solid #ef4444', color: '#fca5a5' }}>
-          {humanizeError(globalError)}
-        </div>
-      )}
+      {globalError && (() => {
+        const errorText = humanizeError(globalError);
+        const urlMatch = errorText.match(/https?:\/\/\S+/);
+        const url = urlMatch ? urlMatch[0] : null;
+        const baseStyle = { backgroundColor: 'rgba(239,68,68,0.1)', borderLeft: '3px solid #ef4444', color: '#fca5a5' };
+        if (!url) {
+          return (
+            <div className="px-3 py-2 rounded-lg text-xs" style={baseStyle}>
+              {errorText}
+            </div>
+          );
+        }
+        const [before, after] = errorText.split(url);
+        return (
+          <div className="px-3 py-2 rounded-lg text-xs" style={baseStyle}>
+            {before}
+            <a
+              href="#"
+              onClick={e => { e.preventDefault(); ipcRenderer?.send('shell:open-url', url); }}
+              style={{ color: '#818cf8', textDecoration: 'underline', textDecorationStyle: 'dotted' }}
+            >
+              {url}
+            </a>
+            {after}
+          </div>
+        );
+      })()}
 
       {/* ── Skill build confirmation card ───────────────────────────────── */}
       {skillBuildConfirm && (
@@ -4633,7 +4682,7 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
                       })()}
 
                       {/* ── Live step label while running (heartbeat / cli.agent action verb) ── */}
-                      {isRunning && liveTurn && (() => {
+                      {/* {isRunning && liveTurn && (() => {
                         const startTime = agentStepStartTimes.current.get(step.index);
                         const elapsedMs = startTime ? (Date.now() - startTime) : 0;
                         const _actionVerb = liveTurn.currentAction ? (_actionVerbs[liveTurn.currentAction] ?? null) : null;
@@ -4655,26 +4704,7 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
                             </span>
                           </div>
                         );
-                      })()}
-
-                      {/* ── Fallback heartbeat when no liveTurn yet ── */}
-                      {isRunning && !liveTurn && (
-                        <div style={{ marginTop: 3 }}>
-                          <span style={{
-                            fontSize: '11px',
-                            fontStyle: 'italic',
-                            display: 'inline-block',
-                            background: 'linear-gradient(90deg, #818cf8 30%, #c4b5fd 50%, #818cf8 70%)',
-                            backgroundSize: '200% auto',
-                            WebkitBackgroundClip: 'text',
-                            WebkitTextFillColor: 'transparent',
-                            backgroundClip: 'text',
-                            animation: 'agentGloss 2s linear infinite',
-                          }}>
-                            {getAgentStatusLabel(agentStepStartTimes.current.get(step.index) ? Date.now() - agentStepStartTimes.current.get(step.index)! : 0)}
-                          </span>
-                        </div>
-                      )}
+                      })()} */}
 
                       {/* ── Tab-Flow pre-computed steps checklist ── */}
                       {(isRunning || step.status === 'failed') && (() => {
@@ -4717,48 +4747,113 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
                         );
                       })()}
 
-                      {/* ── Live agent sub-step log — streaming actions/thinking/outcomes ── */}
+                      {/* ── Live agent sub-step log — latest active step + collapsed history ── */}
                       {isRunning && (() => {
+                        void monitorTick; // re-render trigger for live countdown
                         const logEntries = agentStepLog.get(step.index) || [];
                         if (logEntries.length === 0) return null;
-                        // Show the last 4 entries (most recent activity)
-                        const recent = logEntries.slice(-4);
+                        // Show only the latest entry prominently; history collapsed behind a toggle
+                        const latest = logEntries[logEntries.length - 1];
+                        const history = logEntries.slice(0, -1);
+                        const isExpanded = subStepHistoryExpanded.has(step.index);
+                        const toggleExpand = () => {
+                          setSubStepHistoryExpanded(prev => {
+                            const next = new Set(prev);
+                            if (next.has(step.index)) next.delete(step.index);
+                            else next.add(step.index);
+                            return next;
+                          });
+                        };
+                        const renderEntry = (entry: AgentStepLogEntry, muted: boolean) => {
+                          const isThought = entry.type === 'thinking' || entry.type === 'thought';
+                          const isOutcome = entry.type === 'outcome';
+                          const isComplete = entry.type === 'complete';
+                          const isFail = isOutcome && entry.outcome && !entry.outcome.ok;
+                          const iconColor = isFail ? '#f87171' : isComplete ? (entry.message.startsWith('Completed') ? '#34d399' : '#f87171') : isThought ? '#93c5fd' : '#94a3b8';
+                          const textColor = muted ? '#6b7280' : isFail ? '#fca5a5' : isThought ? '#93c5fd' : '#cbd5e1';
+                          // Live countdown for monitoring entries
+                          const remaining = entry.nextCheckInMs
+                            ? Math.max(0, Math.ceil((entry.nextCheckInMs - (Date.now() - entry.timestamp)) / 1000))
+                            : null;
+                          const showCountdown = remaining != null;
+                          const isChecking = showCountdown && remaining === 0;
+                          const message = showCountdown
+                            ? (remaining! > 0
+                                ? `${entry.message} — checking again in ${remaining}s`
+                                : `${entry.message} — checking…`)
+                            : entry.message;
+                          return (
+                            <div key={entry.id} style={{ display: 'flex', alignItems: 'flex-start', gap: 5, fontSize: '11px', lineHeight: '1.4' }}>
+                              {isThought ? (
+                                <ThoughtIcon size={11} color={iconColor} />
+                              ) : isComplete ? (
+                                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke={iconColor} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0, marginTop: 1 }}>
+                                  {entry.message.startsWith('Completed')
+                                    ? <><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></>
+                                    : <><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></>}
+                                </svg>
+                              ) : (
+                                <ActionIcon action={entry.action} size={11} color={iconColor} />
+                              )}
+                              {entry.turn > 0 && (
+                                <span style={{ color: '#6b7280', fontSize: '10px', flexShrink: 0, minWidth: 18 }}>
+                                  {entry.turn}.
+                                </span>
+                              )}
+                              <span style={{
+                                color: textColor,
+                                fontStyle: isThought ? 'italic' : 'normal',
+                                ...(isChecking ? {
+                                  animation: 'agentGloss 1.5s ease-in-out infinite',
+                                  background: 'linear-gradient(90deg, #93c5fd 30%, #c4b5fd 50%, #93c5fd 70%)',
+                                  backgroundSize: '200% auto',
+                                  WebkitBackgroundClip: 'text',
+                                  WebkitTextFillColor: 'transparent',
+                                  backgroundClip: 'text',
+                                } : {}),
+                              }}>
+                                {message}
+                              </span>
+                            </div>
+                          );
+                        };
                         return (
                           <div style={{ marginTop: 4, display: 'flex', flexDirection: 'column', gap: 2 }}>
-                            {recent.map((entry) => {
-                              const isThought = entry.type === 'thinking' || entry.type === 'thought';
-                              const isOutcome = entry.type === 'outcome';
-                              const isComplete = entry.type === 'complete';
-                              const isFail = isOutcome && entry.outcome && !entry.outcome.ok;
-                              const iconColor = isFail ? '#f87171' : isComplete ? (entry.message.startsWith('Completed') ? '#34d399' : '#f87171') : isThought ? '#93c5fd' : '#94a3b8';
-                              const textColor = isFail ? '#fca5a5' : isThought ? '#93c5fd' : '#cbd5e1';
-                              return (
-                                <div key={entry.id} style={{ display: 'flex', alignItems: 'flex-start', gap: 5, fontSize: '11px', lineHeight: '1.4' }}>
-                                  {isThought ? (
-                                    <ThoughtIcon size={11} color={iconColor} />
-                                  ) : isComplete ? (
-                                    <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke={iconColor} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0, marginTop: 1 }}>
-                                      {entry.message.startsWith('Completed')
-                                        ? <><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></>
-                                        : <><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></>}
-                                    </svg>
-                                  ) : (
-                                    <ActionIcon action={entry.action} size={11} color={iconColor} />
-                                  )}
-                                  {entry.turn > 0 && (
-                                    <span style={{ color: '#6b7280', fontSize: '10px', flexShrink: 0, minWidth: 18 }}>
-                                      {entry.turn}.
-                                    </span>
-                                  )}
-                                  <span style={{ color: textColor, fontStyle: isThought ? 'italic' : 'normal' }}>
-                                    {entry.message}
-                                  </span>
-                                </div>
-                              );
-                            })}
+                            {/* Collapsed history toggle */}
+                            {history.length > 0 && (
+                              <div
+                                onClick={toggleExpand}
+                                style={{ fontSize: '10px', color: '#6b7280', cursor: 'pointer', userSelect: 'none', padding: '1px 0' }}
+                              >
+                                {isExpanded ? '▾ hide' : `▸ ${history.length} previous step${history.length > 1 ? 's' : ''}`}
+                              </div>
+                            )}
+                            {/* History entries (muted, only when expanded) */}
+                            {isExpanded && history.map((entry) => renderEntry(entry, true))}
+                            {/* Latest entry — prominent */}
+                            {renderEntry(latest, false)}
                           </div>
                         );
                       })()}
+
+                      {/* ── Fallback heartbeat when no liveTurn yet ── */}
+                      {/* {isRunning && !liveTurn && (
+                        <div style={{ marginTop: 3 }}>
+                          <span style={{
+                            fontSize: '11px',
+                            fontStyle: 'italic',
+                            display: 'inline-block',
+                            background: 'linear-gradient(90deg, #818cf8 30%, #c4b5fd 50%, #818cf8 70%)',
+                            backgroundSize: '200% auto',
+                            WebkitBackgroundClip: 'text',
+                            WebkitTextFillColor: 'transparent',
+                            backgroundClip: 'text',
+                            animation: 'agentGloss 2s linear infinite',
+                          }}>
+                            {getAgentStatusLabel(agentStepStartTimes.current.get(step.index) ? Date.now() - agentStepStartTimes.current.get(step.index)! : 0)}
+                          </span>
+                        </div>
+                      )} */}
 
                       {/* ── Learned rule rows — always visible ── */}
                       {(learnedRules.get(step.index) || []).map((rule, ri) => (

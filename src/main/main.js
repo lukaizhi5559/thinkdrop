@@ -93,9 +93,10 @@ function _hidePanelForDrop() {
 }
 
 // Draw a persistent app-window boundary for the current drop session. Sources
-// bounds via the screenshot-free app.agent get_active_bounds (get-windows), so
-// it never taints OCR. The boundary fades during each capture and is cleared by
-// _restorePanelFromDrop (progress_clear). Best-effort — silently skips on error.
+// bounds via memory.getRecentOcr (monitor service polls getActiveWindow() every
+// 5s and stores bounds in capture metadata). Falls back silently on error.
+// The boundary fades during each capture and is cleared by _restorePanelFromDrop
+// (progress_clear). Best-effort — silently skips on error.
 async function _drawSessionBoundary(label) {
   const token = _dropBoundaryToken;
   // Brief delay so focus has settled on the target app before we read bounds
@@ -103,17 +104,31 @@ async function _drawSessionBoundary(label) {
   await new Promise(r => setTimeout(r, 1200));
   if (!dropSessionActive || token !== _dropBoundaryToken) return;
   try {
-    const resp = await _cmdHttp('/command.automate', {
-      payload: { skill: 'app.agent', args: { action: 'get_active_bounds' } },
+    // Query monitor service for cached active window bounds via getRecentOcr.
+    // The monitor polls getActiveWindow() every 5s and stores bounds in capture
+    // metadata. Use maxAgeSeconds: 30 so we get bounds even if the last capture
+    // is slightly stale — better than app.agent get_active_bounds which times out.
+    const _memPort = parseInt(process.env.MEMORY_SERVICE_PORT || '3001', 10);
+    const _memBody = JSON.stringify({
+      version: 'mcp.v1', service: 'user-memory', action: 'memory.getRecentOcr',
+      payload: { maxAgeSeconds: 30 }, requestId: 'boundary-' + Date.now()
     });
-    const bounds = resp?.data?.bounds;
+    const resp = await new Promise((resolve) => {
+      const req = http.request({
+        hostname: '127.0.0.1', port: _memPort, path: '/memory.getRecentOcr',
+        method: 'POST', headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(_memBody) }
+      }, (res) => { let d=''; res.on('data',c=>d+=c); res.on('end',()=>{ try{resolve(JSON.parse(d));}catch(_){resolve({});} }); });
+      req.on('error', () => resolve({})); req.end(_memBody);
+    });
+    const capture = resp?.data?.capture;
     if (!dropSessionActive || token !== _dropBoundaryToken) return;
-    if (bounds && bounds.width > 0 && bounds.height > 0) {
+    if (capture?.bounds && capture.bounds.width > 0 && capture.bounds.height > 0) {
       _sendGhost({
         type: 'boundary_set',
         element: {
-          x: bounds.x, y: bounds.y, width: bounds.width, height: bounds.height,
-          label: bounds.appName || label || 'Working…', color: '#ffaa00',
+          x: capture.bounds.x, y: capture.bounds.y,
+          width: capture.bounds.width, height: capture.bounds.height,
+          label: capture.appName || label || 'Working…', color: '#ffaa00',
         },
       });
     }
