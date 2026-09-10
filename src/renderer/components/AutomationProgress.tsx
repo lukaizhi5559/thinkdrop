@@ -2149,6 +2149,112 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
           break;
         }
 
+        // ── App-Flow (desktop automation) events from app.runner.cjs ──
+        case 'app_flow:start': {
+          const stepIdx = (data.stepIndex ?? 0) + stepOffsetRef.current;
+          _appendAgentStepLog(stepIdx, {
+            turn: 0,
+            type: 'thinking',
+            message: `App-Flow started: ${data.appName} — ${data.goal || ''}`,
+          });
+          break;
+        }
+        case 'app_flow:focusing': {
+          const stepIdx = (data.stepIndex ?? 0) + stepOffsetRef.current;
+          _appendAgentStepLog(stepIdx, {
+            turn: 0,
+            type: 'action',
+            message: data.message || `Focusing ${data.appName}…`,
+          });
+          break;
+        }
+        case 'app_flow:computed': {
+          const stepIdx = (data.stepIndex ?? 0) + stepOffsetRef.current;
+          const flow: TabFlowStep[] = (data.flow || []).map((s: any) => ({
+            index: s.index, tier: s.tier || 0, action: s.action || '', status: 'pending' as const,
+          }));
+          setTabFlow(prev => { const next = new Map(prev); next.set(stepIdx, flow); return next; });
+          break;
+        }
+        case 'app_flow:tier_selected': {
+          const stepIdx = (data.stepIndex ?? 0) + stepOffsetRef.current;
+          _appendAgentStepLog(stepIdx, {
+            turn: 0,
+            type: 'tier',
+            message: `${data.tierName || `Tier ${data.tier}`}: ${data.stepGoal || ''}`,
+            tier: data.tierName,
+          });
+          // Mark the current flow step as running
+          if (data.flowIndex != null) {
+            setTabFlow(prev => {
+              const next = new Map(prev);
+              const flow = next.get(stepIdx) || [];
+              const updated = flow.map((s, i) => ({
+                ...s,
+                status: i === data.flowIndex ? 'running' as const : i < data.flowIndex ? 'done' as const : s.status,
+              }));
+              next.set(stepIdx, updated);
+              return next;
+            });
+          }
+          break;
+        }
+        case 'app_flow:action_start': {
+          const stepIdx = (data.stepIndex ?? 0) + stepOffsetRef.current;
+          _appendAgentStepLog(stepIdx, {
+            turn: 0,
+            type: 'action',
+            message: data.action || `Tier ${data.tier} action`,
+          });
+          break;
+        }
+        case 'app_flow:action_done': {
+          const stepIdx = (data.stepIndex ?? 0) + stepOffsetRef.current;
+          _appendAgentStepLog(stepIdx, {
+            turn: 0,
+            type: 'outcome',
+            message: data.ok
+              ? (data.message || `${data.action || 'Action'} → done`)
+              : `${data.action || 'Action'} → FAILED: ${data.error || 'unknown'}`,
+            outcome: { ok: data.ok, error: data.error, result: data.message },
+          });
+          // Advance the flow checklist on success
+          if (data.ok && data.flowIndex != null) {
+            setTabFlow(prev => {
+              const next = new Map(prev);
+              const flow = next.get(stepIdx) || [];
+              const updated = flow.map((s, i) => ({
+                ...s,
+                status: i < data.flowIndex ? 'done' as const : s.status,
+              }));
+              next.set(stepIdx, updated);
+              return next;
+            });
+          }
+          break;
+        }
+        case 'app_flow:tier_reset': {
+          const stepIdx = (data.stepIndex ?? 0) + stepOffsetRef.current;
+          _appendAgentStepLog(stepIdx, {
+            turn: 0,
+            type: 'thinking',
+            message: data.message || 'All tiers tried — resetting',
+          });
+          break;
+        }
+        case 'app_flow:done': {
+          const stepIdx = (data.stepIndex ?? 0) + stepOffsetRef.current;
+          _appendAgentStepLog(stepIdx, {
+            turn: 0,
+            type: 'complete',
+            message: data.ok
+              ? `App-Flow complete (${data.totalSteps || 0} steps)`
+              : `App-Flow failed: ${data.error || 'unknown'}`,
+            outcome: { ok: data.ok, error: data.error },
+          });
+          break;
+        }
+
         case 'synthesis_start':
           // Keep phase as 'executing' — synthesize node emits step_done with answer as stdout
           break;

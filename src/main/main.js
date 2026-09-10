@@ -42,7 +42,7 @@ function safeSendUnified(channel, ...args) {
   }
   // Drive the GhostLayer progress "drop" + panel lifecycle off the same events.
   if (channel === 'automation:progress') {
-    try { driveProgressDrop(args[0]); } catch (_) {}
+    try { driveProgressDrop(args[0]).catch(() => {}); } catch (_) {}
   }
 }
 
@@ -120,7 +120,7 @@ async function _drawSessionBoundary(label) {
   } catch (_) { /* non-fatal — boundary is cosmetic */ }
 }
 
-function driveProgressDrop(evt) {
+async function driveProgressDrop(evt) {
   if (!evt || typeof evt !== 'object') return;
   const t = evt.type;
   if (t === 'plan:step_start' || t === 'step_start') {
@@ -132,9 +132,26 @@ function driveProgressDrop(evt) {
       const label = evt.description || 'Working…';
       const stepNum = evt.stepNum ?? (typeof evt.stepIndex === 'number' ? evt.stepIndex + 1 : null);
       const totalSteps = evt.totalSteps ?? null;
+
+      // Pre-focus the target app BEFORE drawing the GhostLayer overlay/boundary,
+      // so the overlay lands on the correct window. _focusApp inside app.runner
+      // does this too, but it runs later — by then the boundary is already drawn
+      // on the wrong app (e.g. Warp instead of Devin).
+      const appName = evt.args?.appName;
+      if (appName) {
+        try {
+          const { execSync } = require('child_process');
+          execSync(`open -a "${appName}"`, { timeout: 3000 });
+          // Brief settle so the OS switches foreground before we read bounds.
+          await new Promise(r => setTimeout(r, 600));
+        } catch (_) { /* non-fatal — _focusApp will retry inside app.runner */ }
+      }
+
       try { if (typeof showGhostLayer === 'function') showGhostLayer(); } catch (_) {}
-      _sendGhost({ type: 'progress_drop', label, stepNum, totalSteps });
-      _hidePanelForDrop();
+      // NOTE: Do NOT hide the UnifiedOverlay or send progress_drop — the user
+      // wants to see the App-Flow automation in the panel. Screenshots use
+      // /overlay/flash (via _withFlash in app.agent.cjs) which briefly hides
+      // the panel with a camera-flash animation, then restores it.
       // Draw the persistent app boundary once per session (first app.agent step).
       if (!wasActive) {
         _dropBoundaryToken++;
@@ -706,6 +723,8 @@ function startOverlayControlServer() {
             'needs_login', 'task:auth_required', 'task:auth_resolved', 'agent:tier',
             'tab_flow:computed', 'tab_flow:step_start', 'tab_flow:step_done', 'tab_flow:step_failed',
             'tab_map:plan', 'tab_map:step_start', 'tab_map:step_done',
+            'app_flow:start', 'app_flow:focusing', 'app_flow:computed', 'app_flow:tier_selected',
+            'app_flow:action_start', 'app_flow:action_done', 'app_flow:tier_reset', 'app_flow:done',
           ];
           if (activeProgressCallback && _agentEventTypes.includes(evt.type)) {
             activeProgressCallback(evt);
@@ -838,6 +857,39 @@ function startOverlayControlServer() {
       return;
     }
 
+    // ── Flash endpoints — brief hide + GhostLayer camera-flash for screenshots ──
+    // Unlike /overlay/hide (which keeps the panel hidden until /overlay/show),
+    // /overlay/flash hides the panel + triggers a camera-flash animation in
+    // GhostLayer, and /overlay/unflash restores it. This lets the user watch
+    // the App-Flow automation while still getting clean screenshots.
+    if (req.url === '/overlay/flash') {
+      // Trigger camera-flash animation in GhostLayer
+      if (ghostLayerWindow && !ghostLayerWindow.isDestroyed()) {
+        try { ghostLayerWindow.webContents.send('ghostlayer:flash'); } catch (_) {}
+      }
+      // Hide unified window so it doesn't appear in the screenshot
+      if (unifiedWindow && !unifiedWindow.isDestroyed() && unifiedWindow.isVisible()) {
+        unifiedWindow._flashWasVisible = true;
+        unifiedWindow.hide();
+      }
+      res.writeHead(200).end(JSON.stringify({ ok: true, action: 'flash' }));
+      return;
+    }
+
+    if (req.url === '/overlay/unflash') {
+      // Clear flash animation in GhostLayer
+      if (ghostLayerWindow && !ghostLayerWindow.isDestroyed()) {
+        try { ghostLayerWindow.webContents.send('ghostlayer:unflash'); } catch (_) {}
+      }
+      // Restore unified window
+      if (unifiedWindow && !unifiedWindow.isDestroyed() && unifiedWindow._flashWasVisible) {
+        unifiedWindow.showInactive();
+        unifiedWindow._flashWasVisible = false;
+      }
+      res.writeHead(200).end(JSON.stringify({ ok: true, action: 'unflash' }));
+      return;
+    }
+
     const hide = req.url === '/overlay/hide';
     const show = req.url === '/overlay/show';
     const highlight = req.url === '/overlay/highlight';
@@ -947,12 +999,11 @@ function startOverlayControlServer() {
         win.hide();
       }
     } else {
-      // Restore windows that were visible before hide — UNLESS a drop session
-      // owns the screen, in which case the panel must stay hidden (re-showing it
-      // here is exactly what tainted monitor captures with app:"Electron").
+      // Restore windows that were visible before hide. The panel now stays
+      // visible during App-Flow (captures use /overlay/flash, not drop-session
+      // hiding), so we no longer skip re-show during dropSessionActive.
       for (const win of windows) {
         if (!win || win.isDestroyed()) continue;
-        if (win === unifiedWindow && dropSessionActive) continue;
         if (win._overlayWasVisible) win.showInactive();
       }
     }
@@ -1968,12 +2019,11 @@ function createUnifiedWindow() {
       _intentionalHide = false;
       return; // Don't re-show, user wants it hidden
     }
-    // A capture-heavy app.agent drop session owns the screen — the panel MUST
-    // stay hidden so it doesn't taint screenshots (app:"Electron"). Without this
-    // guard the NSPanel auto-reshow below instantly undoes _hidePanelForDrop().
-    if (dropSessionActive) {
-      return;
-    }
+    // A capture-heavy app.agent drop session used to keep the panel hidden so it
+    // didn't taint screenshots. Now the panel stays visible during App-Flow and
+    // /overlay/flash (via _withFlash) briefly hides it during actual screenshots.
+    // Allow the NSPanel auto-reshow so the panel stays visible if macOS hides it.
+    // if (dropSessionActive) { return; }
     // Auto-hide behavior - re-show the window (don't let macOS panel hide it)
     if (unifiedWindow && !unifiedWindow.isDestroyed()) {
       unifiedWindow.showInactive();

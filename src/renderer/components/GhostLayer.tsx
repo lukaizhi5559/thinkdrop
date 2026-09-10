@@ -76,6 +76,12 @@ function GhostLayer() {
   // never taints OCR, then restores (capture_end). Cleared on the terminal event.
   const [boundary, setBoundary] = useState<HighlightElement | null>(null);
 
+  // Camera-flash overlay — briefly brightens the screen during screenshots.
+  // Triggered by /overlay/flash (main.js) before a screen capture, cleared by
+  // /overlay/unflash after. Gives the user visual feedback that a screenshot
+  // is being taken while the UnifiedOverlay is briefly hidden.
+  const [flash, setFlash] = useState(false);
+
   // Track previous state for conditional logging
   const prevState = useRef({ highlights: 0, isVisible: false, isScanning: false });
 
@@ -211,6 +217,19 @@ function GhostLayer() {
     };
   }, []);
 
+  // Camera-flash IPC listener — triggered by /overlay/flash (main.js)
+  useEffect(() => {
+    if (!ipcRenderer) return;
+    const handleFlash = () => setFlash(true);
+    const handleUnflash = () => setFlash(false);
+    ipcRenderer.on('ghostlayer:flash', handleFlash);
+    ipcRenderer.on('ghostlayer:unflash', handleUnflash);
+    return () => {
+      ipcRenderer.removeListener('ghostlayer:flash', handleFlash);
+      ipcRenderer.removeListener('ghostlayer:unflash', handleUnflash);
+    };
+  }, []);
+
   // Clear highlights on Escape key
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -272,6 +291,23 @@ function GhostLayer() {
         backgroundColor: 'transparent',
       }}
     >
+      {/* Camera-flash overlay — brief white flash during screenshots */}
+      {flash && (
+        <div
+          style={{
+            position: 'fixed',
+            top: 0,
+            left: 0,
+            width: '100vw',
+            height: '100vh',
+            backgroundColor: 'white',
+            opacity: 0.85,
+            zIndex: 100000,
+            pointerEvents: 'none',
+            transition: 'opacity 0.15s ease-out',
+          }}
+        />
+      )}
       {boundaryNode}
       {dropNode}
       {highlights.map((element, index) => (
