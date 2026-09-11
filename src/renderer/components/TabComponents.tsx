@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import SkillStore from './SkillStore';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -1394,49 +1394,308 @@ function SkillItemCard({ item, onSaveSecret, onOpenCode, onOAuthConnect, onScope
   );
 }
 
-export function SkillsTab({ items, onSaveSecret, onOpenCode, onUploadSkill, onOAuthConnect, onScopesChange, onRepairOAuth, onDelete }: {
+interface CreateSkillModalProps {
+  isOpen: boolean;
+  onClose: () => void;
+  onCreate: (payload: { mode: 'url'; url: string; nameOverride?: string; descriptionOverride?: string } | { mode: 'file'; filePath: string; nameOverride?: string; descriptionOverride?: string }) => void;
+  /** Callback ref for the modal's inner card — used by useDynamicHeight to auto-grow the window. */
+  cardRef?: (el: HTMLDivElement | null) => void;
+}
+
+const SKILL_MODAL_INPUT_STYLE: React.CSSProperties = {
+  width: '100%',
+  padding: '9px 11px',
+  borderRadius: 6,
+  border: '1px solid rgba(255,255,255,0.12)',
+  backgroundColor: 'rgba(255,255,255,0.05)',
+  color: '#fff',
+  fontSize: '0.88rem',
+  boxSizing: 'border-box',
+  outline: 'none',
+};
+
+const SKILL_MODAL_LABEL_STYLE: React.CSSProperties = {
+  display: 'block',
+  fontSize: '0.75rem',
+  color: '#9ca3af',
+  marginBottom: 5,
+};
+
+function CreateSkillModal({ isOpen, onClose, onCreate, cardRef }: CreateSkillModalProps) {
+  const [mode, setMode] = useState<'url' | 'file'>('url');
+  const [url, setUrl] = useState('');
+  const [filePath, setFilePath] = useState('');
+  const [nameOverride, setNameOverride] = useState('');
+  const [descriptionOverride, setDescriptionOverride] = useState('');
+  const [dragOver, setDragOver] = useState(false);
+
+  if (!isOpen) return null;
+
+  const reset = () => {
+    setUrl('');
+    setFilePath('');
+    setNameOverride('');
+    setDescriptionOverride('');
+    setMode('url');
+  };
+
+  const handleClose = () => {
+    reset();
+    onClose();
+  };
+
+  const handleCreate = () => {
+    const name = nameOverride.trim() || undefined;
+    const desc = descriptionOverride.trim() || undefined;
+    if (mode === 'url' && url.trim()) {
+      onCreate({ mode: 'url', url: url.trim(), nameOverride: name, descriptionOverride: desc });
+      handleClose();
+    } else if (mode === 'file') {
+      onCreate({ mode: 'file', filePath: filePath.trim(), nameOverride: name, descriptionOverride: desc });
+      handleClose();
+    }
+  };
+
+  const canCreate = mode === 'url' ? url.trim().length > 0 : true; // file can be empty (opens dialog) or set
+
+  const handleDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    setDragOver(false);
+    const files = Array.from(e.dataTransfer.files);
+    const mdFile = files.find(f => /\.(md|txt|markdown)$/i.test(f.name));
+    if (mdFile) {
+      const path = (mdFile as any).path || mdFile.name;
+      setFilePath(path);
+    }
+  };
+
+  return (
+    <div onClick={(e) => { if (e.target === e.currentTarget) onClose(); }} style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.72)', display: 'flex', alignItems: 'flex-start', justifyContent: 'center', zIndex: 1100, overflowY: 'auto', padding: '24px 0' }}>
+      <div ref={cardRef} style={{ backgroundColor: '#1a2030', borderRadius: 12, padding: 24, width: 460, maxWidth: '90vw', border: '1px solid rgba(99,102,241,0.25)', boxShadow: '0 16px 48px rgba(0,0,0,0.6)', display: 'flex', flexDirection: 'column' }}>
+        {/* Header */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 18 }}>
+          <div style={{ width: 32, height: 32, borderRadius: 8, backgroundColor: 'rgba(99,102,241,0.18)', border: '1px solid rgba(99,102,241,0.3)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#818cf8" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/>
+              <path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83" style={{ display: 'none' }}/>
+            </svg>
+          </div>
+          <div>
+            <h3 style={{ margin: 0, color: '#fff', fontSize: '0.95rem', fontWeight: 600 }}>Add Skill</h3>
+            <p style={{ margin: 0, color: '#6b7280', fontSize: '0.72rem' }}>Import an instruction skill from URL or file</p>
+          </div>
+        </div>
+
+        {/* Mode tabs */}
+        <div style={{ display: 'flex', gap: 4, marginBottom: 18, borderBottom: '1px solid rgba(255,255,255,0.08)', paddingBottom: 8 }}>
+          <button onClick={() => setMode('url')}
+            style={{
+              padding: '5px 12px', borderRadius: 6, border: 'none', fontSize: '0.8rem', cursor: 'pointer',
+              backgroundColor: mode === 'url' ? 'rgba(99,102,241,0.2)' : 'transparent',
+              color: mode === 'url' ? '#818cf8' : '#6b7280',
+              fontWeight: mode === 'url' ? 500 : 400,
+            }}>
+            From URL
+          </button>
+          <button onClick={() => setMode('file')}
+            style={{
+              padding: '5px 12px', borderRadius: 6, border: 'none', fontSize: '0.8rem', cursor: 'pointer',
+              backgroundColor: mode === 'file' ? 'rgba(99,102,241,0.2)' : 'transparent',
+              color: mode === 'file' ? '#818cf8' : '#6b7280',
+              fontWeight: mode === 'file' ? 500 : 400,
+            }}>
+            From File
+          </button>
+        </div>
+
+        {/* URL mode */}
+        {mode === 'url' && (
+          <div style={{ marginBottom: 18 }}>
+            <label style={SKILL_MODAL_LABEL_STYLE}>Skill URL</label>
+            <input type="url" value={url} onChange={e => setUrl(e.target.value)} onKeyDown={e => e.key === 'Enter' && handleCreate()}
+              placeholder="https://example.com/skills/SKILL.md" autoFocus style={SKILL_MODAL_INPUT_STYLE} />
+            <p style={{ margin: '5px 0 0 0', fontSize: '0.68rem', color: '#4b5563' }}>
+              Must point to a raw markdown file (SKILL.md).
+            </p>
+          </div>
+        )}
+
+        {/* File mode */}
+        {mode === 'file' && (
+          <div style={{ marginBottom: 18 }}>
+            <label style={SKILL_MODAL_LABEL_STYLE}>Skill File</label>
+            <div style={{ display: 'flex', gap: 8, marginBottom: 10 }}>
+              <input type="text" value={filePath} readOnly placeholder="Drop a file or click Browse"
+                style={{ ...SKILL_MODAL_INPUT_STYLE, flex: 1, cursor: 'default' }} />
+              <button onClick={() => { setFilePath(''); onCreate({ mode: 'file', filePath: '', nameOverride: nameOverride.trim() || undefined, descriptionOverride: descriptionOverride.trim() || undefined }); handleClose(); }}
+                style={{ padding: '9px 14px', borderRadius: 6, border: '1px solid rgba(99,102,241,0.4)', backgroundColor: 'rgba(99,102,241,0.14)', color: '#818cf8', cursor: 'pointer', fontSize: '0.8rem', fontWeight: 500 }}>
+                Browse
+              </button>
+            </div>
+            <div
+              onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
+              onDragLeave={() => setDragOver(false)}
+              onDrop={handleDrop}
+              style={{
+                border: `2px dashed ${dragOver ? '#6366f1' : 'rgba(255,255,255,0.12)'}`,
+                borderRadius: 6, padding: '18px 10px', textAlign: 'center',
+                background: dragOver ? 'rgba(99,102,241,0.08)' : 'rgba(255,255,255,0.03)',
+                transition: 'all 0.15s',
+              }}
+            >
+              <span style={{ fontSize: '0.75rem', color: dragOver ? '#818cf8' : '#6b7280' }}>
+                Drop SKILL.md here
+              </span>
+            </div>
+          </div>
+        )}
+
+        {/* Optional overrides */}
+        <div style={{ marginBottom: 14 }}>
+          <label style={SKILL_MODAL_LABEL_STYLE}>Name override <span style={{ color: '#6b7280', fontWeight: 400 }}>(optional)</span></label>
+          <input type="text" value={nameOverride} onChange={e => setNameOverride(e.target.value)}
+            placeholder="react.best.practices" style={SKILL_MODAL_INPUT_STYLE} />
+        </div>
+        <div style={{ marginBottom: 18 }}>
+          <label style={SKILL_MODAL_LABEL_STYLE}>Description override <span style={{ color: '#6b7280', fontWeight: 400 }}>(optional)</span></label>
+          <input type="text" value={descriptionOverride} onChange={e => setDescriptionOverride(e.target.value)}
+            placeholder="React best practices guidance" style={SKILL_MODAL_INPUT_STYLE} />
+        </div>
+
+        {/* Actions */}
+        <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
+          <button onClick={handleClose} style={{ padding: '8px 15px', borderRadius: 6, border: '1px solid rgba(255,255,255,0.15)', backgroundColor: 'transparent', color: '#6b7280', cursor: 'pointer', fontSize: '0.83rem' }}>
+            Cancel
+          </button>
+          <button onClick={handleCreate} disabled={!canCreate}
+            style={{ padding: '8px 18px', borderRadius: 6, border: 'none', backgroundColor: canCreate ? '#6366f1' : 'rgba(99,102,241,0.35)', color: '#fff', cursor: canCreate ? 'pointer' : 'not-allowed', fontSize: '0.83rem', fontWeight: 600 }}>
+            Add Skill
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+export function SkillsTab({ items, onSaveSecret, onOpenCode, onOAuthConnect, onScopesChange, onRepairOAuth, onDelete, onInstallFromUrl, onInstallFromFile, onRefreshSkills, onContentResize, modalCardRef }: {
   items: SkillItem[];
   onSaveSecret: (skillName: string, key: string, value: string) => void;
   onOpenCode: (filePath: string) => void;
-  onUploadSkill?: () => void;
   onOAuthConnect: (skillName: string, provider: string, tokenKey: string, scopes?: string) => void;
   onScopesChange: (skillName: string, provider: string, scopes: string) => void;
   onRepairOAuth: (skillName: string) => void;
   onDelete: (skillName: string) => void;
+  onInstallFromUrl?: (url: string, nameOverride?: string, descriptionOverride?: string) => void;
+  onInstallFromFile?: (filePath: string, nameOverride?: string, descriptionOverride?: string) => void;
+  onRefreshSkills?: () => void;
+  onContentResize?: () => void;
+  modalCardRef?: (el: HTMLDivElement | null) => void;
 }) {
+  const [installing, setInstalling] = useState(false);
+  const [installMsg, setInstallMsg] = useState<{ ok: boolean; text: string } | null>(null);
+  const [isCreateSkillModalOpen, setIsCreateSkillModalOpen] = useState(false);
+
+  // Stable ref to parent's re-measure callback. Nudges useDynamicHeight whenever
+  // this tab's visible content changes (modal open/close, install banners, list updates).
+  const onContentResizeRef = useRef(onContentResize);
+  onContentResizeRef.current = onContentResize;
+  useEffect(() => {
+    const t = setTimeout(() => onContentResizeRef.current?.(), 60);
+    return () => clearTimeout(t);
+  }, [isCreateSkillModalOpen, installing, installMsg, items]);
+
+  // Listen for skill:install-done IPC event
+  useEffect(() => {
+    const ipc = (window as any).electron?.ipcRenderer;
+    if (!ipc) return;
+    const onInstallDone = (_e: any, result: { ok: boolean; name?: string; error?: string }) => {
+      setInstalling(false);
+      if (result.ok && result.name) {
+        setInstallMsg({ ok: true, text: `Installed "${result.name}" successfully` });
+        onRefreshSkills?.();
+      } else {
+        setInstallMsg({ ok: false, text: result.error || 'Installation failed' });
+      }
+      setTimeout(() => setInstallMsg(null), 5000);
+    };
+    ipc.on('skill:install-done', onInstallDone);
+    return () => { ipc.removeListener?.('skill:install-done', onInstallDone); };
+  }, [onRefreshSkills]);
+
+  const handleCreateSkill = useCallback((payload: Parameters<CreateSkillModalProps['onCreate']>[0]) => {
+    setInstallMsg(null);
+    if (payload.mode === 'url') {
+      setInstalling(true);
+      onInstallFromUrl?.(payload.url, payload.nameOverride, payload.descriptionOverride);
+    } else if (payload.mode === 'file') {
+      if (payload.filePath) {
+        setInstalling(true);
+      }
+      // If filePath is empty, main.js opens a file dialog; don't set installing yet
+      onInstallFromFile?.(payload.filePath, payload.nameOverride, payload.descriptionOverride);
+    }
+  }, [onInstallFromUrl, onInstallFromFile]);
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-      {/* Upload Skill header button */}
-      <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 2 }}>
+      {/* Header with + New button */}
+      <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 2, alignItems: 'center' }}>
         <button
-          onClick={onUploadSkill}
+          onClick={() => setIsCreateSkillModalOpen(true)}
           style={{
-            display: 'flex', alignItems: 'center', gap: 5,
-            padding: '5px 10px', borderRadius: 6, fontSize: '0.62rem', cursor: 'pointer', fontWeight: 600,
-            background: 'rgba(249,115,22,0.1)', border: '1px solid rgba(249,115,22,0.3)', color: '#fb923c',
+            display: 'inline-flex', alignItems: 'center', gap: 4,
+            padding: '5px 11px', borderRadius: 6, fontSize: '0.75rem', fontWeight: 500,
+            border: '1px solid rgba(99,102,241,0.4)',
+            backgroundColor: 'rgba(99,102,241,0.14)', color: '#818cf8',
+            cursor: 'pointer', transition: 'all 0.15s',
           }}
         >
-          <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
-            <polyline points="17 8 12 3 7 8"/>
-            <line x1="12" y1="3" x2="12" y2="15"/>
-          </svg>
-          Upload Skill
+          <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+          New
         </button>
       </div>
 
+      {/* Install status */}
+      {installing && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '6px 10px', borderRadius: 6, background: 'rgba(99,102,241,0.08)', color: '#818cf8', fontSize: '0.75rem' }}>
+          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ animation: 'spin 1s linear infinite' }}>
+            <path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/>
+          </svg>
+          Installing…
+        </div>
+      )}
+      {!installing && installMsg && (
+        <div style={{
+          fontSize: '0.75rem', padding: '6px 10px', borderRadius: 6,
+          color: installMsg.ok ? '#86efac' : '#fca5a5',
+          background: installMsg.ok ? 'rgba(34,197,94,0.08)' : 'rgba(239,68,68,0.08)',
+        }}>
+          {installMsg.ok ? '✓ ' : '✗ '}{installMsg.text}
+        </div>
+      )}
+
       {items.length === 0 ? (
-        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '28px 16px', gap: 10, opacity: 0.5 }}>
-          <SkillsIcon active={false} />
-          <span style={{ color: '#6b7280', fontSize: '0.72rem', textAlign: 'center', lineHeight: 1.6 }}>
-            No skills installed yet.<br/>Built skills appear here with their env and secrets.
-          </span>
+        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '40px 16px', gap: 12, opacity: 0.5 }}>
+          <div style={{ width: 48, height: 48, borderRadius: 12, background: 'rgba(99,102,241,0.1)', display: 'flex', alignItems: 'center', justifyContent: 'center', border: '1px solid rgba(99,102,241,0.2)' }}>
+            <SkillsIcon active={false} />
+          </div>
+          <div style={{ textAlign: 'center' }}>
+            <div style={{ color: '#9ca3af', fontSize: '0.85rem', marginBottom: 4 }}>No skills installed yet</div>
+            <div style={{ color: '#6b7280', fontSize: '0.72rem' }}>Click + New to add a skill from URL or file.</div>
+          </div>
         </div>
       ) : (
         items.map(item => (
           <SkillItemCard key={item.name} item={item} onSaveSecret={onSaveSecret} onOpenCode={onOpenCode} onOAuthConnect={onOAuthConnect} onScopesChange={onScopesChange} onRepairOAuth={onRepairOAuth} onDelete={onDelete} />
         ))
       )}
+
+      <CreateSkillModal
+        isOpen={isCreateSkillModalOpen}
+        onClose={() => setIsCreateSkillModalOpen(false)}
+        onCreate={handleCreateSkill}
+        cardRef={modalCardRef}
+      />
     </div>
   );
 }

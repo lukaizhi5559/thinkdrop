@@ -1,5 +1,5 @@
 import React from 'react';
-import { type TabId, StoreIcon, SkillsIcon, RulesIcon, SettingsIcon } from './TabComponents';
+import { type TabId, SkillsIcon, RulesIcon, SettingsIcon } from './TabComponents';
 
 export function ThinkDropLogo({ size = 20 }: { size?: number }) {
   return (
@@ -26,7 +26,7 @@ export function SlideoutDrawer({ isOpen, onClose, onNavigate, activeTab }: Slide
     // { type: 'item', id: 'connections', label: 'Connections', icon: (active) => <ConnectionsIcon active={active} /> },
     { type: 'item', id: 'rules', label: 'Rules', icon: (active) => <RulesIcon active={active} /> },
     { type: 'item', id: 'skills', label: 'Skills', icon: (active) => <SkillsIcon active={active} /> },
-    { type: 'item', id: 'store', label: 'Store', icon: (active) => <StoreIcon active={active} /> },
+    // Store removed — skills now managed in the Skills tab
     { type: 'item', id: 'settings', label: 'Settings', icon: (active) => <SettingsIcon active={active} /> },
   ];
 

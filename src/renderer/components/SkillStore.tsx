@@ -17,6 +17,12 @@ interface SkillLibrary {
   categories: string[];
   skills: SkillEntry[];
 }
+interface InstalledSkill {
+  name: string;
+  description: string;
+  execType: string;
+  path: string;
+}
 export interface SkillBuildRequest { skill: SkillEntry; }
 interface SkillStoreProps {
   onBuildSkill?: (req: SkillBuildRequest) => void;
@@ -45,6 +51,15 @@ const CAT_COLORS: Record<string, string> = {
 };
 const catColor = (c: string) => CAT_COLORS[c] || '#6b7280';
 
+const EXEC_TYPE_COLORS: Record<string, string> = {
+  instruction: '#a78bfa',
+  node: '#3b82f6',
+  python: '#10b981',
+  shell: '#f59e0b',
+  recipe: '#ec4899',
+};
+const execTypeColor = (t: string) => EXEC_TYPE_COLORS[t] || '#6b7280';
+
 function HiMatch({ text, q }: { text: string; q: string }) {
   if (!q) return <>{text}</>;
   const i = text.toLowerCase().indexOf(q.toLowerCase());
@@ -63,12 +78,60 @@ export default function SkillStore({ onBuildSkill, initialSearch = '' }: SkillSt
   const [cat, setCat] = useState('All');
   const [page, setPage] = useState(1);
   const [building, setBuilding] = useState<string | null>(null);
+  const [view, setView] = useState<'browse' | 'installed'>('browse');
+  const [installUrl, setInstallUrl] = useState('');
+  const [installing, setInstalling] = useState(false);
+  const [installMsg, setInstallMsg] = useState<{ ok: boolean; text: string } | null>(null);
+  const [installedSkills, setInstalledSkills] = useState<InstalledSkill[]>([]);
+  const [installedLoading, setInstalledLoading] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => { inputRef.current?.focus(); }, []);
   useEffect(() => { if (initialSearch) setSearch(initialSearch); }, [initialSearch]);
   useEffect(() => { setPage(1); }, [search, cat]);
 
+  // ── Fetch installed skills when switching to "Installed" tab ──
+  const refreshInstalled = useCallback(() => {
+    if (!ipcRenderer) return;
+    setInstalledLoading(true);
+    ipcRenderer.send('skill:list');
+  }, []);
+
+  useEffect(() => {
+    if (view === 'installed') refreshInstalled();
+  }, [view, refreshInstalled]);
+
+  useEffect(() => {
+    if (!ipcRenderer) return;
+    const onListResponse = (_e: any, { skills, error }: { skills: InstalledSkill[]; error?: string }) => {
+      setInstalledLoading(false);
+      if (error) { setInstalledSkills([]); return; }
+      setInstalledSkills(skills || []);
+    };
+    ipcRenderer.on('skill:list-response', onListResponse);
+    return () => { ipcRenderer.removeListener?.('skill:list-response', onListResponse); };
+  }, []);
+
+  // ── Install-done listener ──
+  useEffect(() => {
+    if (!ipcRenderer) return;
+    const onInstallDone = (_e: any, result: { ok: boolean; name?: string; path?: string; error?: string }) => {
+      setInstalling(false);
+      if (result.ok && result.name) {
+        setInstallMsg({ ok: true, text: `Installed "${result.name}" successfully` });
+        setInstallUrl('');
+        if (view === 'installed') refreshInstalled();
+      } else {
+        setInstallMsg({ ok: false, text: result.error || 'Installation failed' });
+      }
+      // Clear message after 5s
+      setTimeout(() => setInstallMsg(null), 5000);
+    };
+    ipcRenderer.on('skill:install-done', onInstallDone);
+    return () => { ipcRenderer.removeListener?.('skill:install-done', onInstallDone); };
+  }, [view, refreshInstalled]);
+
+  // ── Build-done listener (existing) ──
   useEffect(() => {
     if (!ipcRenderer) return;
     const onDone = (_e: any, { name, ok }: { name: string; ok: boolean }) => {
@@ -77,6 +140,33 @@ export default function SkillStore({ onBuildSkill, initialSearch = '' }: SkillSt
     ipcRenderer.on('skill:build-done', onDone);
     return () => { ipcRenderer.removeListener?.('skill:build-done', onDone); };
   }, [building]);
+
+  const handleBuild = useCallback((skill: SkillEntry) => {
+    setBuilding(skill.name);
+    onBuildSkill?.({ skill });
+    ipcRenderer?.send('skill:build-start', skill);
+  }, [onBuildSkill]);
+
+  const handleInstallFromUrl = useCallback(() => {
+    const url = installUrl.trim();
+    if (!url) return;
+    setInstalling(true);
+    setInstallMsg(null);
+    ipcRenderer?.send('skill:install-from-url', { url });
+  }, [installUrl]);
+
+  const handleInstallFromFile = useCallback(() => {
+    setInstalling(true);
+    setInstallMsg(null);
+    ipcRenderer?.send('skill:install-from-file', {});
+  }, []);
+
+  const handleDeleteInstalled = useCallback((name: string) => {
+    if (!confirm(`Delete skill "${name}"? This moves it to Trash.`)) return;
+    ipcRenderer?.send('skill:delete', { name });
+    // Refresh after a short delay
+    setTimeout(refreshInstalled, 500);
+  }, [refreshInstalled]);
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -91,14 +181,94 @@ export default function SkillStore({ onBuildSkill, initialSearch = '' }: SkillSt
   const shown = filtered.slice((page - 1) * ITEMS_PER_PAGE, page * ITEMS_PER_PAGE);
   const cats = useMemo(() => ['All', ...library.categories], []);
 
-  const handleBuild = useCallback((skill: SkillEntry) => {
-    setBuilding(skill.name);
-    onBuildSkill?.({ skill });
-    ipcRenderer?.send('skill:build-start', skill);
-  }, [onBuildSkill]);
-
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 7 }}>
+
+      {/* ── View toggle: Browse | Installed ── */}
+      <div style={{ display: 'flex', gap: 4, marginBottom: 2 }}>
+        <button onClick={() => setView('browse')}
+          style={{
+            padding: '3px 10px', borderRadius: 6, fontSize: '0.7rem', fontWeight: 600,
+            cursor: 'pointer', whiteSpace: 'nowrap',
+            border: `1px solid ${view === 'browse' ? '#8b5cf6' : 'rgba(255,255,255,0.08)'}`,
+            background: view === 'browse' ? 'rgba(139,92,246,0.18)' : 'transparent',
+            color: view === 'browse' ? '#c4b5fd' : '#6b7280',
+          }}>
+          Browse
+        </button>
+        <button onClick={() => setView('installed')}
+          style={{
+            padding: '3px 10px', borderRadius: 6, fontSize: '0.7rem', fontWeight: 600,
+            cursor: 'pointer', whiteSpace: 'nowrap',
+            border: `1px solid ${view === 'installed' ? '#8b5cf6' : 'rgba(255,255,255,0.08)'}`,
+            background: view === 'installed' ? 'rgba(139,92,246,0.18)' : 'transparent',
+            color: view === 'installed' ? '#c4b5fd' : '#6b7280',
+          }}>
+          Installed
+        </button>
+      </div>
+
+      {view === 'browse' ? (
+        <>
+          {/* ── Add Skill section (URL/file import) ── */}
+          <div style={{
+            padding: '8px 9px', borderRadius: 8,
+            background: 'rgba(139,92,246,0.06)', border: '1px solid rgba(139,92,246,0.15)',
+            display: 'flex', flexDirection: 'column', gap: 6,
+          }}>
+            <div style={{ display: 'flex', gap: 5, alignItems: 'center' }}>
+              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="#a78bfa" strokeWidth="2.5"
+                strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
+                <path d="M12 5v14M5 12h14"/>
+              </svg>
+              <span style={{ color: '#c4b5fd', fontSize: '0.7rem', fontWeight: 600 }}>Add Skill from URL or File</span>
+            </div>
+            <div style={{ display: 'flex', gap: 5 }}>
+              <input type="text"
+                placeholder="https://example.com/skills/SKILL.md"
+                value={installUrl} onChange={e => setInstallUrl(e.target.value)}
+                onKeyDown={e => { if (e.key === 'Enter') handleInstallFromUrl(); }}
+                disabled={installing}
+                style={{
+                  flex: 1, padding: '4px 8px', fontSize: '0.68rem',
+                  background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.09)',
+                  borderRadius: 5, color: '#e5e7eb', outline: 'none',
+                }}
+                onFocus={e => { e.currentTarget.style.borderColor = 'rgba(139,92,246,0.5)'; }}
+                onBlur={e => { e.currentTarget.style.borderColor = 'rgba(255,255,255,0.09)'; }}
+              />
+              <button onClick={handleInstallFromUrl} disabled={installing || !installUrl.trim()}
+                style={{
+                  padding: '4px 10px', borderRadius: 5, fontSize: '0.67rem', fontWeight: 600,
+                  cursor: installing || !installUrl.trim() ? 'not-allowed' : 'pointer',
+                  border: '1px solid rgba(139,92,246,0.45)',
+                  background: installing ? 'rgba(139,92,246,0.1)' : 'rgba(139,92,246,0.15)',
+                  color: '#c4b5fd', whiteSpace: 'nowrap',
+                  opacity: installing || !installUrl.trim() ? 0.5 : 1,
+                }}>
+                {installing ? 'Installing…' : 'Install URL'}
+              </button>
+              <button onClick={handleInstallFromFile} disabled={installing}
+                style={{
+                  padding: '4px 10px', borderRadius: 5, fontSize: '0.67rem', fontWeight: 600,
+                  cursor: installing ? 'not-allowed' : 'pointer',
+                  border: '1px solid rgba(255,255,255,0.12)',
+                  background: 'rgba(255,255,255,0.04)', color: '#9ca3af', whiteSpace: 'nowrap',
+                  opacity: installing ? 0.5 : 1,
+                }}>
+                From File
+              </button>
+            </div>
+            {installMsg && (
+              <div style={{
+                fontSize: '0.65rem', padding: '3px 7px', borderRadius: 4,
+                color: installMsg.ok ? '#86efac' : '#fca5a5',
+                background: installMsg.ok ? 'rgba(34,197,94,0.08)' : 'rgba(239,68,68,0.08)',
+              }}>
+                {installMsg.ok ? '✓ ' : '✗ '}{installMsg.text}
+              </div>
+            )}
+          </div>
 
       {/* ── Search ── */}
       <div style={{ position: 'relative' }}>
@@ -248,6 +418,64 @@ export default function SkillStore({ onBuildSkill, initialSearch = '' }: SkillSt
               color: page === totalPages ? '#374151' : '#9ca3af' }}>
             Next ›
           </button>
+        </div>
+      )}
+        </>
+      ) : (
+        /* ── Installed tab ── */
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 4, maxHeight: 420, overflowY: 'auto',
+          scrollbarWidth: 'thin', scrollbarColor: 'rgba(139,92,246,0.3) transparent' }}>
+          {installedLoading ? (
+            <div style={{ color: '#6b7280', fontSize: '0.72rem', padding: '20px 0', textAlign: 'center' }}>
+              Loading installed skills…
+            </div>
+          ) : installedSkills.length === 0 ? (
+            <div style={{ color: '#4b5563', fontSize: '0.72rem', padding: '20px 0', textAlign: 'center' }}>
+              No skills installed in ~/.thinkdrop/skills/. Use "Install URL" or "From File" above to add one.
+            </div>
+          ) : (
+            installedSkills.map(skill => {
+              const col = execTypeColor(skill.execType);
+              return (
+                <div key={skill.name} style={{
+                  display: 'flex', alignItems: 'flex-start', gap: 8, padding: '7px 9px',
+                  borderRadius: 8,
+                  background: 'rgba(255,255,255,0.025)',
+                  border: '1px solid rgba(255,255,255,0.06)',
+                }}>
+                  <div style={{ width: 7, height: 7, borderRadius: '50%', flexShrink: 0, marginTop: 4,
+                    background: col, boxShadow: `0 0 5px ${col}55` }} />
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 2, flexWrap: 'wrap' }}>
+                      <span style={{ color: '#c4b5fd', fontSize: '0.73rem', fontWeight: 600,
+                        fontFamily: 'ui-monospace,monospace' }}>
+                        {skill.name}
+                      </span>
+                      {skill.execType && (
+                        <span style={{ fontSize: '0.6rem', padding: '1px 6px', borderRadius: 10,
+                          background: `${col}18`, color: col, border: `1px solid ${col}33`, flexShrink: 0 }}>
+                          {skill.execType}
+                        </span>
+                      )}
+                    </div>
+                    <div style={{ color: '#9ca3af', fontSize: '0.68rem', lineHeight: 1.4 }}>
+                      {skill.description || '(no description)'}
+                    </div>
+                  </div>
+                  <button onClick={() => handleDeleteInstalled(skill.name)}
+                    title={`Delete "${skill.name}"`}
+                    style={{
+                      flexShrink: 0, padding: '4px 9px', borderRadius: 6, fontSize: '0.67rem',
+                      fontWeight: 600, cursor: 'pointer', whiteSpace: 'nowrap',
+                      border: '1px solid rgba(239,68,68,0.3)',
+                      background: 'rgba(239,68,68,0.08)', color: '#fca5a5',
+                    }}>
+                    Delete
+                  </button>
+                </div>
+              );
+            })
+          )}
         </div>
       )}
     </div>

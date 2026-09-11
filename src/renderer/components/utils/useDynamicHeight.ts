@@ -34,6 +34,11 @@ interface UseDynamicHeightOptions {
    *  - other tabs: the tab container itself (height:auto → scrollHeight = intrinsic
    *    content height including its own padding). */
   contentRefs: Record<string, RefObject<HTMLElement>>;
+  /** When set (modal open), the hook grows the window to fit this element's full
+   *  content height (its scrollHeight reports the natural height even when maxHeight
+   *  constrains the visible area). Takes precedence over tab content measurement.
+   *  Pass a state value (not a ref) so changes trigger re-renders + re-measurement. */
+  overlayEl?: HTMLElement | null;
   /** Desired window width (drives the width sent alongside the height). */
   getWidth?: () => number;
   /** When set, all measurements report this height (used to pin MAX_HEIGHT while expanded). */
@@ -56,11 +61,17 @@ interface UseDynamicHeightOptions {
  * Sends one IPC: `unified:set-content-height`. The main process owns all
  * clamping + anchoring.
  */
+// Padding around the modal card (top + bottom viewport margin). The modal wrapper
+// uses `padding: '5vh 0'` — we approximate this with a fixed value so the measurement
+// is predictable regardless of current window height.
+const OVERLAY_PADDING = 72;
+
 export function useDynamicHeight({
   activeTab,
   headerRef,
   inputBarRef,
   contentRefs,
+  overlayEl,
   getWidth,
   forceHeight = null,
   debounceMs = 120,
@@ -75,6 +86,18 @@ export function useDynamicHeight({
     // Pinned (expanded) mode: always report the forced height regardless of content.
     if (forceHeight != null) return forceHeight;
 
+    const headerH = headerRef.current?.offsetHeight ?? 0;
+    const inputH = inputBarRef.current?.offsetHeight ?? 0;
+
+    // Modal overlay takes precedence — grow the window to fit the modal card's
+    // full content height (scrollHeight reports natural height even when maxHeight
+    // constrains the visible area). The modal is fixed and covers the whole window,
+    // so header/input are behind the backdrop and should not add extra height.
+    if (overlayEl) {
+      const total = overlayEl.scrollHeight + OVERLAY_PADDING;
+      return Math.min(Math.max(total, COLLAPSED_HEIGHT), MAX_HEIGHT);
+    }
+
     const contentEl = contentRefs[activeTab]?.current;
     let contentH = contentEl ? contentEl.scrollHeight : 0;
     if (activeTab === 'results') {
@@ -84,12 +107,10 @@ export function useDynamicHeight({
       contentH += RESULTS_CONTAINER_PADDING;
     }
 
-    const headerH = headerRef.current?.offsetHeight ?? 0;
-    const inputH = inputBarRef.current?.offsetHeight ?? 0;
     const total = headerH + inputH + contentH;
     if (total <= COLLAPSED_HEIGHT) return COLLAPSED_HEIGHT;
     return Math.min(total, MAX_HEIGHT);
-  }, [activeTab, headerRef, inputBarRef, contentRefs, forceHeight]);
+  }, [activeTab, headerRef, inputBarRef, contentRefs, forceHeight, overlayEl]);
 
   const sendResize = useCallback((height: number) => {
     if (suppress && suppress()) return;
@@ -131,6 +152,7 @@ export function useDynamicHeight({
     for (const ref of Object.values(contentRefs)) {
       if (ref.current) elements.push(ref.current);
     }
+    if (overlayEl) elements.push(overlayEl);
     if (elements.length === 0) return;
 
     if (observerRef.current) observerRef.current.disconnect();
@@ -146,7 +168,21 @@ export function useDynamicHeight({
       observerRef.current = null;
     };
     // contentRefs is memoized at the call site — stable identity across renders.
-  }, [headerRef, inputBarRef, contentRefs, measureAndResize]);
+  }, [headerRef, inputBarRef, contentRefs, measureAndResize, overlayEl]);
+
+  // MutationObserver for the overlay card: ResizeObserver can miss content growth
+  // inside a flex/card container (e.g. adding credential rows in the CLI agent modal).
+  // Watching the subtree catches childList changes and forces a re-measure.
+  useEffect(() => {
+    if (!overlayEl) return;
+    const obs = new MutationObserver(() => {
+      measureAndResize();
+    });
+    obs.observe(overlayEl, { childList: true, subtree: true });
+    return () => {
+      obs.disconnect();
+    };
+  }, [overlayEl, measureAndResize]);
 
   // Re-measure on tab switch (guarantees a fresh measurement after display:none→block).
   useEffect(() => {

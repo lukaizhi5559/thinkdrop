@@ -86,6 +86,7 @@ contextBridge.exposeInMainWorld('electron', {
         'prompt-queue:cancel',
         'prompt-queue:dismiss-alert',
         'prompt-queue:resume-pending',
+        'task:cancel',
         'plan:approve',
         'plan:cancel',
         'plan:new',
@@ -217,6 +218,9 @@ contextBridge.exposeInMainWorld('electron', {
         'app-agent:highlight',
         'agents:open-training',
         'gather:question_batch',
+        'task:created',
+        'task:progress',
+        'task:complete',
       ];
       if (validChannels.includes(channel)) {
         const wrapped = (_event, ...args) => func(...args);

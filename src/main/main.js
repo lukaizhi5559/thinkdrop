@@ -490,6 +490,105 @@ function startOverlayControlServer() {
       return;
     }
 
+    // ── POST /comms.handoff — comms-graph sends async handoff tasks ───────────
+    // Each handoff spawns an independent stategraph instance (concurrent, not serial)
+    if (req.url === '/comms.handoff') {
+      let body = '';
+      req.on('data', chunk => { body += chunk; });
+      req.on('end', () => {
+        try {
+          const { taskId, prompt, agentId, source, originalPrompt } = JSON.parse(body || '{}');
+          console.log(`[CommsGraph] Handoff received — task=${taskId} agent=${agentId || 'auto'} source=${source}`);
+
+          // Spawn concurrent stategraph run via handoffRunner
+          const handoffRunner = require('./handoffRunner');
+          handoffRunner.execute({
+            taskId,
+            prompt,
+            agentId: agentId || null,
+            source: source || 'text',
+            originalPrompt: originalPrompt || null,
+            sessionId: currentSessionId,
+          }).catch(err => {
+            console.error(`[CommsGraph] Handoff ${taskId} error:`, err.message);
+          });
+
+          res.writeHead(200).end(JSON.stringify({ ok: true, taskId }));
+        } catch (err) {
+          console.error('[CommsGraph] Handoff error:', err.message);
+          res.writeHead(500).end(JSON.stringify({ error: err.message }));
+        }
+      });
+      return;
+    }
+
+    // ── POST /comms.signal — comms-graph sends control signals (cancel/pause/resume) ──
+    if (req.url === '/comms.signal') {
+      let body = '';
+      req.on('data', chunk => { body += chunk; });
+      req.on('end', () => {
+        try {
+          const { signalType, taskId } = JSON.parse(body || '{}');
+          console.log(`[CommsGraph] Signal received — ${signalType} task=${taskId || 'n/a'}`);
+
+          const handoffRunner = require('./handoffRunner');
+          if (signalType === 'cancel' && taskId) {
+            const cancelled = handoffRunner.cancel(taskId);
+            res.writeHead(200).end(JSON.stringify({ ok: true, cancelled }));
+          } else {
+            res.writeHead(200).end(JSON.stringify({ ok: true }));
+          }
+        } catch (err) {
+          res.writeHead(400).end(JSON.stringify({ error: err.message }));
+        }
+      });
+      return;
+    }
+
+    // ── POST /comms.process — route text/voice through comms-graph pipeline ──
+    // Called by main.js itself (not external) when COMMS_GRAPH_ENABLED=true
+    // to classify text prompts before deciding whether to enqueue or handoff
+    if (req.url === '/comms.process-internal') {
+      let body = '';
+      req.on('data', chunk => { body += chunk; });
+      req.on('end', () => {
+        try {
+          const { text, language, source, speakerProfile } = JSON.parse(body || '{}');
+          // Forward to comms-graph service
+          const commsPort = parseInt(process.env.COMMS_GRAPH_PORT || '3015', 10);
+          const commsBody = JSON.stringify({ text, language, source, speakerProfile });
+          const commsReq = http.request({
+            hostname: '127.0.0.1',
+            port: commsPort,
+            path: '/comms.process',
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(commsBody) },
+            timeout: 15000,
+          }, (commsRes) => {
+            let commsRaw = '';
+            commsRes.on('data', c => { commsRaw += c; });
+            commsRes.on('end', () => {
+              try {
+                const commsData = JSON.parse(commsRaw);
+                res.writeHead(200).end(JSON.stringify(commsData));
+              } catch (_) {
+                res.writeHead(500).end(JSON.stringify({ error: 'comms-graph parse error' }));
+              }
+            });
+          });
+          commsReq.on('error', () => {
+            res.writeHead(503).end(JSON.stringify({ error: 'comms-graph unavailable' }));
+          });
+          commsReq.on('timeout', () => { commsReq.destroy(); res.writeHead(504).end(JSON.stringify({ error: 'comms-graph timeout' })); });
+          commsReq.write(commsBody);
+          commsReq.end();
+        } catch (err) {
+          res.writeHead(400).end(JSON.stringify({ error: err.message }));
+        }
+      });
+      return;
+    }
+
     // ── POST /skill.schedule — skillCreator registers a cron entry for a scheduled skill
     if (req.url === '/skill.schedule') {
       let body = '';
@@ -1268,6 +1367,28 @@ function initStateGraph() {
 
     console.log('✅ [StateGraph] Initialized with full graph (all nodes)');
     console.log('✅ [CronStateGraph] Initialized (dedicated bridge/cron instance)');
+
+    // ── Initialize handoffRunner for comms-graph concurrent handoffs ────────
+    try {
+      const handoffRunner = require('./handoffRunner');
+      handoffRunner.init({
+        mcpClient,
+        mcpAdapter,
+        llmBackend,
+        ipcBroadcast: (channel, data) => {
+          if (resultsWindow && !resultsWindow.isDestroyed()) {
+            safeSend(resultsWindow, channel, data);
+          }
+          if (unifiedWindow && !unifiedWindow.isDestroyed()) {
+            safeSend(unifiedWindow, channel, data);
+          }
+        },
+      });
+      console.log('✅ [HandoffRunner] Initialized for comms-graph concurrent handoffs');
+    } catch (err) {
+      console.error('⚠️ [HandoffRunner] Failed to initialize:', err.message);
+    }
+
   } catch (err) {
     console.error('❌ [StateGraph] Failed to initialize:', err.message);
     stateGraph = null;
@@ -2948,6 +3069,18 @@ app.whenReady().then(async () => {
     promptQueue.cancel(id);
   });
 
+  // ── comms-graph task cancel ──────────────────────────────────────────────
+  ipcMain.on('task:cancel', (_event, { taskId } = {}) => {
+    if (!taskId) return;
+    try {
+      const handoffRunner = require('./handoffRunner');
+      const cancelled = handoffRunner.cancel(taskId);
+      console.log(`[CommsGraph] Task ${taskId} cancel: ${cancelled ? 'success' : 'not found'}`);
+    } catch (err) {
+      console.error('[CommsGraph] Task cancel error:', err.message);
+    }
+  });
+
   ipcMain.on('prompt-queue:dismiss-alert', () => {
     promptQueue.dismissRestartAlert();
     if (resultsWindow && !resultsWindow.isDestroyed()) {
@@ -3906,6 +4039,73 @@ app.whenReady().then(async () => {
   // when a slot opens up.
   ipcMain.on('stategraph:process', (_event, { prompt, selectedText = '', sessionId = null, responseLanguage = null } = {}) => {
     if (!prompt?.trim()) return;
+
+    // ── comms-graph routing (feature-flagged) ──────────────────────────────
+    // When COMMS_GRAPH_ENABLED=true, text prompts route through comms-graph
+    // for classification + translation + personality. Handoffs are dispatched
+    // concurrently by comms-graph (bypassing the serial promptQueue).
+    // Falls back to serial promptQueue if comms-graph is unavailable.
+    const commsGraphEnabled = process.env.COMMS_GRAPH_ENABLED === 'true';
+    if (commsGraphEnabled) {
+      console.log('🧠 [CommsGraph] Routing prompt through comms-graph:', prompt.substring(0, 80));
+      const commsPort = parseInt(process.env.COMMS_GRAPH_PORT || '3015', 10);
+      const commsBody = JSON.stringify({ text: prompt, source: 'text', language: responseLanguage || null });
+      const commsReq = http.request({
+        hostname: '127.0.0.1',
+        port: commsPort,
+        path: '/comms.process',
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(commsBody) },
+        timeout: 15000,
+      }, (commsRes) => {
+        let commsRaw = '';
+        commsRes.on('data', c => { commsRaw += c; });
+        commsRes.on('end', () => {
+          try {
+            const commsData = JSON.parse(commsRaw);
+            if (commsData.ok && commsData.data) {
+              const { text: responseText, intent, intentName, metadata } = commsData.data;
+
+              console.log(`[CommsGraph] Response — intent=${intent} (${intentName}) latency=${metadata?.latencyMs}ms`);
+
+              // Stream the response to the renderer
+              safeSendUnified('unified:set-prompt', prompt);
+              safeSendUnified('ws-bridge:message', { type: 'chunk', text: responseText });
+              safeSendUnified('ws-bridge:message', { type: 'done' });
+
+              // If it was a handoff, the task is already being dispatched by comms-graph
+              // via /comms.handoff — no need to enqueue in promptQueue
+              if (intent === 0 && metadata?.taskId) {
+                safeSendUnified('task:created', {
+                  taskId: metadata.taskId,
+                  prompt,
+                  agentId: metadata.agentId,
+                  parked: metadata.parked,
+                });
+              }
+              return;
+            }
+          } catch (_) {}
+          // Fallback to serial queue if comms-graph response was malformed
+          console.log('[CommsGraph] Malformed response — falling back to serial queue');
+          promptQueue.enqueue(prompt.trim(), { selectedText: selectedText || '', responseLanguage: responseLanguage || null, sessionId: sessionId || currentSessionId });
+        });
+      });
+      commsReq.on('error', () => {
+        console.log('[CommsGraph] Unavailable — falling back to serial queue');
+        promptQueue.enqueue(prompt.trim(), { selectedText: selectedText || '', responseLanguage: responseLanguage || null, sessionId: sessionId || currentSessionId });
+      });
+      commsReq.on('timeout', () => {
+        commsReq.destroy();
+        console.log('[CommsGraph] Timeout — falling back to serial queue');
+        promptQueue.enqueue(prompt.trim(), { selectedText: selectedText || '', responseLanguage: responseLanguage || null, sessionId: sessionId || currentSessionId });
+      });
+      commsReq.write(commsBody);
+      commsReq.end();
+      return;
+    }
+
+    // ── Default: serial prompt queue (existing behavior) ───────────────────
     console.log('🧠 [StateGraph] Enqueuing prompt via prompt-queue:', prompt.substring(0, 80));
     promptQueue.enqueue(prompt.trim(), { selectedText: selectedText || '', responseLanguage: responseLanguage || null, sessionId: sessionId || currentSessionId });
   });
@@ -6361,12 +6561,18 @@ app.whenReady().then(async () => {
           const skillPath = path.join(skillsDir, e.name);
           const mdPath = path.join(skillPath, 'skill.md');
           let description = '';
+          let execType = '';
           try {
             const md = fs.readFileSync(mdPath, 'utf8');
-            const descMatch = md.match(/^description:\s*(.+)$/m);
-            description = descMatch ? descMatch[1].trim() : '';
+            const fmMatch = md.match(/^---\s*\n([\s\S]*?)\n---/);
+            if (fmMatch) {
+              const descMatch = fmMatch[1].match(/^description:\s*(.+)$/m);
+              description = descMatch ? descMatch[1].trim() : '';
+              const typeMatch = fmMatch[1].match(/^exec_type:\s*(.+)$/m);
+              execType = typeMatch ? typeMatch[1].trim() : '';
+            }
           } catch (_) {}
-          return { name: e.name, description, path: skillPath };
+          return { name: e.name, description, execType, path: skillPath };
         });
       event.sender.send('skill:list-response', { skills });
     } catch (err) {
@@ -6474,6 +6680,300 @@ app.whenReady().then(async () => {
       safeSend(promptCaptureWindow, 'skill:build-done', { name, ok: false, error: err.message });
     }
   });
+
+  // ─── Skill Store: install instruction skill from URL ──────────────────────
+  // Fetches SKILL.md content from a URL, normalizes it to ThinkDrop's
+  // instruction exec_type format, saves to ~/.thinkdrop/skills/, and registers
+  // in user-memory. Only instruction (knowledge/prompt-only) skills are accepted.
+  ipcMain.on('skill:install-from-url', async (event, { url, nameOverride, descriptionOverride }) => {
+    const https = require('https');
+    const http = require('http');
+    const fs = require('fs');
+    const path = require('path');
+    const os = require('os');
+
+    console.log(`[SkillInstall] Installing from URL: ${url}`);
+
+    if (!url || typeof url !== 'string' || !/^https?:\/\//i.test(url)) {
+      safeSend(promptCaptureWindow, 'skill:install-done', { ok: false, error: 'Invalid URL. Must start with http:// or https://' });
+      return;
+    }
+
+    try {
+      // Fetch content with redirect following and size limit
+      const MAX_SIZE = 5 * 1024 * 1024; // 5MB
+      const MAX_REDIRECTS = 5;
+      const TIMEOUT_MS = 15000;
+
+      const fetchWithRedirects = (fetchUrl, redirectsLeft) => new Promise((resolve, reject) => {
+        const lib = fetchUrl.startsWith('https') ? https : http;
+        const req = lib.get(fetchUrl, {
+          headers: { 'User-Agent': 'ThinkDrop-SkillImporter/1.0', 'Accept': 'text/markdown,text/plain,*/*' },
+          timeout: TIMEOUT_MS,
+        }, (res) => {
+          // Follow redirects
+          if ((res.statusCode === 301 || res.statusCode === 302 || res.statusCode === 307 || res.statusCode === 308) && res.headers.location && redirectsLeft > 0) {
+            res.resume();
+            const redirectUrl = res.headers.location.startsWith('http') ? res.headers.location : new URL(res.headers.location, fetchUrl).href;
+            resolve(fetchWithRedirects(redirectUrl, redirectsLeft - 1));
+            return;
+          }
+          if (res.statusCode !== 200) {
+            res.resume();
+            reject(new Error(`HTTP ${res.statusCode} fetching ${fetchUrl}`));
+            return;
+          }
+          // Validate content-type is text/markdown/plain
+          const contentType = (res.headers['content-type'] || '').toLowerCase();
+          if (contentType && !contentType.includes('text') && !contentType.includes('markdown') && !contentType.includes('plain') && !contentType.includes('octet-stream') && !contentType.includes('*/*')) {
+            res.resume();
+            reject(new Error(`Unsupported content-type: ${contentType}. Expected text/markdown.`));
+            return;
+          }
+          let body = '';
+          let tooLarge = false;
+          res.on('data', (chunk) => {
+            body += chunk.toString();
+            if (body.length > MAX_SIZE) {
+              tooLarge = true;
+              res.destroy();
+            }
+          });
+          res.on('end', () => {
+            if (tooLarge) reject(new Error('Response exceeded 5MB limit'));
+            else resolve(body);
+          });
+          res.on('error', reject);
+        });
+        req.on('error', reject);
+        req.on('timeout', () => { req.destroy(); reject(new Error('Request timed out')); });
+      });
+
+      const content = await fetchWithRedirects(url, MAX_REDIRECTS);
+      const result = await _normalizeAndInstallInstructionSkill(content, url, nameOverride, descriptionOverride);
+      safeSend(promptCaptureWindow, 'skill:install-done', result);
+    } catch (err) {
+      console.error(`[SkillInstall] URL import failed:`, err.message);
+      safeSend(promptCaptureWindow, 'skill:install-done', { ok: false, error: err.message });
+    }
+  });
+
+  // ─── Skill Store: install instruction skill from local file ───────────────
+  ipcMain.on('skill:install-from-file', async (event, { filePath, nameOverride, descriptionOverride }) => {
+    const fs = require('fs');
+    const path = require('path');
+    const { dialog } = require('electron');
+
+    console.log(`[SkillInstall] Installing from file: ${filePath || '(dialog)'}`);
+
+    try {
+      let selectedPath = filePath;
+      if (!selectedPath) {
+        const { canceled, filePaths } = await dialog.showOpenDialog(resultsWindow || undefined, {
+          title: 'Select Skill File',
+          properties: ['openFile'],
+          filters: [{ name: 'Markdown / Text', extensions: ['md', 'txt', 'markdown'] }],
+          buttonLabel: 'Install Skill',
+        });
+        if (canceled || !filePaths.length) {
+          safeSend(promptCaptureWindow, 'skill:install-done', { ok: false, error: 'No file selected' });
+          return;
+        }
+        selectedPath = filePaths[0];
+      }
+
+      const content = fs.readFileSync(selectedPath, 'utf8');
+      const result = await _normalizeAndInstallInstructionSkill(content, selectedPath, nameOverride, descriptionOverride);
+      safeSend(promptCaptureWindow, 'skill:install-done', result);
+    } catch (err) {
+      console.error(`[SkillInstall] File import failed:`, err.message);
+      safeSend(promptCaptureWindow, 'skill:install-done', { ok: false, error: err.message });
+    }
+  });
+
+  /**
+   * Shared helper: normalize downloaded/picked content into a ThinkDrop
+   * instruction skill and install it into ~/.thinkdrop/skills/ + user-memory.
+   * Only instruction exec_type is accepted — executable skills from external
+   * sources are rejected (Docker sandbox deferred to future work).
+   *
+   * @param {string} content - raw SKILL.md / markdown content
+   * @param {string} sourceUrl - URL or file path (for metadata)
+   * @param {string?} nameOverride - optional dot-notation skill name
+   * @param {string?} descriptionOverride - optional description
+   * @returns {Promise<{ok:boolean, name?:string, path?:string, error?:string}>}
+   */
+  async function _normalizeAndInstallInstructionSkill(content, sourceUrl, nameOverride, descriptionOverride) {
+    const fs = require('fs');
+    const path = require('path');
+    const os = require('os');
+    const http = require('http');
+    const https = require('https');
+
+    const SKILLS_BASE = path.join(os.homedir(), '.thinkdrop', 'skills');
+    const SKILL_NAME_RE = /^[a-z][a-z0-9]*(\.[a-z][a-z0-9]*)+$/;
+
+    // 1. Parse existing frontmatter if present
+    let fmObj = {};
+    let body = content;
+    const fmMatch = content.match(/^---\s*\n([\s\S]*?)\n---/);
+    if (fmMatch) {
+      const fmText = fmMatch[1];
+      for (const line of fmText.split('\n')) {
+        const colonIdx = line.indexOf(':');
+        if (colonIdx === -1) continue;
+        const key = line.slice(0, colonIdx).trim();
+        const value = line.slice(colonIdx + 1).trim().replace(/^['"]|['"]$/g, '');
+        if (key) fmObj[key] = value;
+      }
+      body = content.slice(fmMatch[0].length).trim();
+    }
+
+    // 2. Reject executable skills — only instruction type is accepted from external sources
+    const existingExecType = (fmObj.exec_type || '').toLowerCase();
+    if (existingExecType && ['node', 'python', 'shell'].includes(existingExecType)) {
+      return {
+        ok: false,
+        error: `Executable skills (exec_type: ${existingExecType}) from external sources are not yet supported. Only knowledge/instruction skills (SKILL.md) can be imported via URL. Docker sandboxing for executable skills is planned for future work.`,
+      };
+    }
+
+    // 3. Derive dot-notation skill name
+    let skillName = nameOverride || fmObj.name || '';
+    if (!skillName) {
+      // Try first markdown heading
+      const headingMatch = body.match(/^#\s+(.+)$/m);
+      if (headingMatch) {
+        skillName = headingMatch[1].trim();
+      }
+    }
+    if (!skillName) {
+      // Derive from URL path / filename
+      try {
+        const urlObj = new URL(sourceUrl);
+        const pathParts = urlObj.pathname.split('/').filter(Boolean);
+        skillName = pathParts[pathParts.length - 1] || pathParts[pathParts.length - 2] || urlObj.hostname.split('.')[0];
+      } catch (_) {
+        // It's a file path
+        skillName = path.basename(sourceUrl, path.extname(sourceUrl));
+      }
+    }
+
+    // 4. Normalize name to dot-notation
+    skillName = skillName
+      .toLowerCase()
+      .replace(/[^a-z0-9.]+/g, '.')  // replace non-alphanumeric with dots
+      .replace(/\.+/g, '.')          // collapse consecutive dots
+      .replace(/^\.|\.$/g, '')       // strip leading/trailing dots
+      .split('.')
+      .filter(seg => seg.length > 0 && !/^\d/.test(seg))  // remove empty/digit-start segments
+      .join('.');
+
+    // Ensure at least 2 dot-separated segments
+    if (!skillName.includes('.')) {
+      skillName = skillName + '.skill';
+    }
+
+    if (!SKILL_NAME_RE.test(skillName)) {
+      return { ok: false, error: `Could not derive a valid skill name from the content. Got "${skillName}". Must match ${SKILL_NAME_RE}. Use nameOverride to specify a valid name.` };
+    }
+
+    // Security: reject path traversal
+    if (skillName.includes('..') || skillName.includes('/') || skillName.includes('\\') || skillName.includes('\0')) {
+      return { ok: false, error: 'Invalid skill name — contains forbidden characters' };
+    }
+
+    // 5. Derive description
+    let description = descriptionOverride || fmObj.description || '';
+    if (!description) {
+      // Use first paragraph of body
+      const paraMatch = body.match(/^(?!#)(.+)$/m);
+      if (paraMatch) description = paraMatch[1].trim().slice(0, 200);
+    }
+    if (!description) description = skillName.replace(/\./g, ' ');
+
+    // 6. Create directory (handle name collisions)
+    const underscoreName = skillName.replace(/\./g, '_');
+    let destDirName = underscoreName;
+    let suffix = 2;
+    while (fs.existsSync(path.join(SKILLS_BASE, destDirName))) {
+      destDirName = `${underscoreName}_${suffix}`;
+      suffix++;
+    }
+    const skillDir = path.join(SKILLS_BASE, destDirName);
+    fs.mkdirSync(skillDir, { recursive: true });
+
+    // 7. Build normalized skill.md with frontmatter
+    const contractMd = [
+      '---',
+      `name: ${skillName}`,
+      `description: ${description}`,
+      `exec_path: ~/.thinkdrop/skills/${destDirName}/skill.md`,
+      'exec_type: instruction',
+      `version: ${fmObj.version || '1.0.0'}`,
+      `source: ${sourceUrl.startsWith('http') ? 'url' : 'file'}`,
+      `source_url: ${sourceUrl}`,
+      `installed_at: ${new Date().toISOString()}`,
+      '---',
+      '',
+      body,
+    ].join('\n');
+
+    const skillMdPath = path.join(skillDir, 'skill.md');
+    fs.writeFileSync(skillMdPath, contractMd, 'utf8');
+
+    // 8. Write skill.json metadata
+    const skillJson = {
+      name: skillName,
+      description,
+      exec_type: 'instruction',
+      source: sourceUrl.startsWith('http') ? 'url' : 'file',
+      source_url: sourceUrl,
+      installed_at: new Date().toISOString(),
+      trusted: false,
+    };
+    fs.writeFileSync(path.join(skillDir, 'skill.json'), JSON.stringify(skillJson, null, 2), 'utf8');
+
+    // 9. Register in user-memory via skill.install MCP action
+    const memPort = parseInt(process.env.MEMORY_SERVICE_PORT || '3001', 10);
+    const memApiKey = process.env.MCP_USER_MEMORY_API_KEY || process.env.USER_MEMORY_API_KEY || process.env.MCP_API_KEY || process.env.API_KEY || '';
+    const regBody = JSON.stringify({
+      version: 'mcp.v1', service: 'user-memory', action: 'skill.install',
+      payload: { contractMd },
+      requestId: 'skill-import-' + Date.now(),
+    });
+    await new Promise((resolve) => {
+      const req = http.request({
+        hostname: '127.0.0.1', port: memPort, path: '/skill.install', method: 'POST',
+        headers: {
+          'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(regBody),
+          ...(memApiKey ? { 'Authorization': `Bearer ${memApiKey}` } : {}),
+        },
+        timeout: 8000,
+      }, (res) => {
+        let data = '';
+        res.on('data', (c) => { data += c; });
+        res.on('end', () => {
+          try {
+            const parsed = JSON.parse(data);
+            if (parsed?.status === 'ok') {
+              console.log(`[SkillInstall] Registered "${skillName}" in user-memory`);
+            } else {
+              console.warn(`[SkillInstall] user-memory skill.install response:`, data.slice(0, 200));
+            }
+          } catch (_) {}
+          resolve();
+        });
+      });
+      req.on('error', (e) => { console.warn(`[SkillInstall] user-memory registration failed (non-fatal): ${e.message}`); resolve(); });
+      req.on('timeout', () => { req.destroy(); resolve(); });
+      req.write(regBody);
+      req.end();
+    });
+
+    console.log(`[SkillInstall] Installed instruction skill: ${skillName} → ${skillDir}`);
+    return { ok: true, name: skillName, path: skillDir };
+  }
 
 
   // ─── Skill Store: resume build after user answers a secret prompt ─────────

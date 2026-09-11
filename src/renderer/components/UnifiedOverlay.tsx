@@ -10,12 +10,12 @@ import {
   CronTab,
   SkillsTab,
   ConnectionsTab,
-  StoreTab,
   AgentsTab,
   type TabId,
 } from './TabComponents';
 import VoiceButton from './VoiceButton';
 import AutomationProgress from './AutomationProgress';
+import { QueueTaskList, TaskCompleteBanner, type CommsTask } from './QueueTaskCard';
 import { RichContentRenderer } from './rich-content';
 import SkillBuildProgress from './SkillBuildProgress';
 import { SlideoutDrawer, ThinkDropLogo } from './SlideoutDrawer';
@@ -82,6 +82,10 @@ export function UnifiedOverlay() {
   const [isSlideoutOpen, setIsSlideoutOpen] = useState(false);
   const [isExpanded, setIsExpanded] = useState(false);
   const [unreadTabs, setUnreadTabs] = useState<Set<TabId>>(new Set());
+
+  // Modal card element — when set (modal open), useDynamicHeight grows the window
+  // to fit the modal's full content. Cleared automatically when the modal unmounts.
+  const [modalCardEl, setModalCardEl] = useState<HTMLDivElement | null>(null);
 
   // --- Prompt Input State ---
   const [promptText, setPromptText] = useState('');
@@ -166,6 +170,10 @@ export function UnifiedOverlay() {
   const [promptQueueItems, setPromptQueueItems] = useState<PromptQueueItem[]>([]);
   const [restartAlert, setRestartAlert] = useState<{ items: PromptQueueItem[] } | null>(null);
 
+  // --- comms-graph task state (concurrent handoff tasks) ---
+  const [commsTasks, setCommsTasks] = useState<CommsTask[]>([]);
+  const [taskNotification, setTaskNotification] = useState<{ taskId: string; prompt: string; answer?: string; error?: string; status?: string } | null>(null);
+
   // --- Skill Build State ---
   const [skillBuild, setSkillBuild] = useState<SkillBuildState | null>(null);
   const pendingInstallRef = useRef<((confirmed: boolean) => void) | null>(null);
@@ -218,7 +226,7 @@ export function UnifiedOverlay() {
   const agentsTabRef = useRef<HTMLDivElement>(null);
   const skillsTabRef = useRef<HTMLDivElement>(null);
   const connectionsTabRef = useRef<HTMLDivElement>(null);
-  const storeTabRef = useRef<HTMLDivElement>(null);
+  // const storeTabRef = useRef<HTMLDivElement>(null); // Store tab removed
   const settingsTabRef = useRef<HTMLDivElement>(null);
   const rulesTabRef = useRef<HTMLDivElement>(null);
 
@@ -270,7 +278,7 @@ export function UnifiedOverlay() {
     agents: agentsTabRef,
     skills: skillsTabRef,
     connections: connectionsTabRef,
-    store: storeTabRef,
+    // store: storeTabRef, // Store tab removed
     settings: settingsTabRef,
     rules: rulesTabRef,
   }), []);
@@ -280,6 +288,7 @@ export function UnifiedOverlay() {
     headerRef,
     inputBarRef,
     contentRefs,
+    overlayEl: modalCardEl,
     getWidth: () => (isExpanded ? 900 : 400),
     // While expanded, pin the window at MAX_HEIGHT (expand = 900xMAX).
     forceHeight: isExpanded ? MAX_HEIGHT : null,
@@ -1783,6 +1792,73 @@ export function UnifiedOverlay() {
     ipcRenderer.on('gather:pending', handleGatherPending, token);
     ipcRenderer.on('queue:enqueued', handleQueueEnqueued, token);
 
+    // ── comms-graph task events ──────────────────────────────────────────────
+    ipcRenderer.on('task:created', (data: any) => {
+      if (data?.taskId) {
+        setCommsTasks(prev => {
+          if (prev.some(t => t.id === data.taskId)) return prev;
+          return [...prev, {
+            id: data.taskId,
+            prompt: data.prompt || '',
+            agentId: data.agentId || null,
+            status: 'queued' as const,
+            createdAt: Date.now(),
+            startedAt: null,
+            doneAt: null,
+            error: null,
+            progress: { step: 0, totalSteps: 0, currentStep: null, eta: null },
+            result: null,
+            intent: 'handoff',
+            source: data.source || 'text',
+          }];
+        });
+        setUnreadTabs(prev => { const n = new Set(prev); n.add('queue'); return n; });
+      }
+    }, token);
+
+    ipcRenderer.on('task:progress', (data: any) => {
+      if (data?.taskId) {
+        setCommsTasks(prev => prev.map(t => {
+          if (t.id !== data.taskId) return t;
+          return {
+            ...t,
+            status: 'running',
+            progress: {
+              step: data.step || t.progress.step,
+              totalSteps: data.totalSteps || t.progress.totalSteps,
+              currentStep: data.node || data.currentStep || t.progress.currentStep,
+              eta: t.progress.eta,
+            },
+          };
+        }));
+      }
+    }, token);
+
+    ipcRenderer.on('task:complete', (data: any) => {
+      if (data?.taskId) {
+        const status = data.status || (data.error ? 'failed' : 'done');
+        setCommsTasks(prev => prev.map(t => {
+          if (t.id !== data.taskId) return t;
+          return {
+            ...t,
+            status: status as any,
+            doneAt: Date.now(),
+            result: data.answer || t.result,
+            error: data.error || null,
+          };
+        }));
+        // Show completion banner
+        setTaskNotification({
+          taskId: data.taskId,
+          prompt: data.prompt || '',
+          answer: data.answer,
+          error: data.error,
+          status,
+        });
+        setUnreadTabs(prev => { const n = new Set(prev); n.add('queue'); return n; });
+      }
+    }, token);
+
     // Request initial data
     ipcRenderer.send('queue:list');
     ipcRenderer.send('cron:list');
@@ -2605,6 +2681,24 @@ export function UnifiedOverlay() {
                 onRerun={(item) => ipcRenderer?.send('queue:rerun', { id: item.id })}
                 onCancel={(item) => ipcRenderer?.send('queue:cancel', { id: item.id })}
               />
+
+              {/* comms-graph background tasks (concurrent handoffs) */}
+              {commsTasks.length > 0 && (
+                <div style={{ marginTop: 8 }}>
+                  <div style={{ fontSize: '0.62rem', color: '#6b7280', marginBottom: 6, fontWeight: 600, textTransform: 'uppercase', letterSpacing: 0.5 }}>
+                    Background Tasks
+                  </div>
+                  <QueueTaskList
+                    tasks={commsTasks}
+                    onShowResult={(task) => {
+                      if (task.result) {
+                        setStreamingResponse(task.result);
+                        setActiveTab('results');
+                      }
+                    }}
+                  />
+                </div>
+              )}
             </div>
 
           {/* Cron Tab */}
@@ -2630,6 +2724,8 @@ export function UnifiedOverlay() {
               <AgentsTab
                 items={agentItems}
                 onRefresh={() => ipcRenderer?.send('agents:list')}
+                onContentResize={measureNow}
+                modalCardRef={setModalCardEl}
               />
             </div>
 
@@ -2643,11 +2739,15 @@ export function UnifiedOverlay() {
                 items={skillItems}
                 onSaveSecret={(skillName, key, value) => ipcRenderer?.send('skills:save-secret', { skillName, key, value })}
                 onOpenCode={(filePath) => ipcRenderer?.send('skills:open-code', { filePath })}
-                onUploadSkill={() => ipcRenderer?.send('skills:upload')}
                 onOAuthConnect={(skillName, provider, tokenKey, scopes) => ipcRenderer?.send('skills:oauth-connect', { skillName, provider, tokenKey, scopes })}
                 onScopesChange={(skillName, provider, scopes) => ipcRenderer?.send('skills:update-oauth-scopes', { skillName, provider, scopes })}
                 onRepairOAuth={(skillName) => ipcRenderer?.send('skills:repair-oauth', { skillName })}
                 onDelete={(skillName) => ipcRenderer?.send('skills:delete', { skillName })}
+                onInstallFromUrl={(url, nameOverride, descriptionOverride) => ipcRenderer?.send('skill:install-from-url', { url, nameOverride, descriptionOverride })}
+                onInstallFromFile={(filePath, nameOverride, descriptionOverride) => ipcRenderer?.send('skill:install-from-file', { filePath, nameOverride, descriptionOverride })}
+                onRefreshSkills={() => ipcRenderer?.send('skills:list')}
+                onContentResize={measureNow}
+                modalCardRef={setModalCardEl}
               />
             </div>
 
@@ -2665,14 +2765,14 @@ export function UnifiedOverlay() {
               />
             </div>
 
-          {/* Store Tab */}
-          <div 
+          {/* Store Tab — removed (skills now managed in Skills tab) */}
+          {/* <div
             ref={storeTabRef}
             className="overflow-y-auto overflow-x-hidden p-4"
             style={{ display: activeTab === 'store' ? 'block' : 'none', height: 'auto', maxHeight: '100%' }}
           >
               <StoreTab onBuildSkill={() => setActiveTab('results')} />
-            </div>
+          </div> */}
 
           {/* Settings Tab */}
           <div 
@@ -3240,6 +3340,25 @@ export function UnifiedOverlay() {
           )}
         </>
       )}
+
+      {/* comms-graph task completion banner */}
+      <TaskCompleteBanner
+        notification={taskNotification}
+        onDismiss={() => setTaskNotification(null)}
+        onShowResult={(taskId) => {
+          const task = commsTasks.find(t => t.id === taskId);
+          if (task?.result) {
+            setStreamingResponse(task.result);
+            setActiveTab('results');
+          }
+          setTaskNotification(null);
+        }}
+        onGoToQueue={() => {
+          setActiveTab('queue');
+          setUnreadTabs(prev => { const n = new Set(prev); n.delete('queue'); return n; });
+          setTaskNotification(null);
+        }}
+      />
     </div>
   );
 }

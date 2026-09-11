@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import type { AgentItem, AgentSkill } from './TabComponents';
 import { TrainingPanel } from './TrainingPanel';
 import { Favicon } from './DefaultFaviconIcon';
@@ -8,6 +8,12 @@ const ipcRenderer = (window as any).electron?.ipcRenderer;
 interface AgentsTabProps {
   items: AgentItem[];
   onRefresh: () => void;
+  /** Notify the parent overlay to re-measure its height. The agentsTabRef div is
+   *  capped at maxHeight:100%, so when switching subtabs the border-box may not
+   *  change and the parent's ResizeObserver won't fire — this nudge ensures it. */
+  onContentResize?: () => void;
+  /** Callback ref for the active modal's inner card — used by useDynamicHeight to auto-grow the window. */
+  modalCardRef?: (el: HTMLDivElement | null) => void;
 }
 
 // Agent category colors
@@ -985,10 +991,12 @@ function CreateBrowserAgentModal({
   isOpen,
   onClose,
   onCreate,
+  cardRef,
 }: {
   isOpen: boolean;
   onClose: () => void;
   onCreate: (url: string) => void;
+  cardRef?: (el: HTMLDivElement | null) => void;
 }) {
   const [url, setUrl] = useState('');
 
@@ -1003,8 +1011,8 @@ function CreateBrowserAgentModal({
   };
 
   return (
-    <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.72)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1100 }}>
-      <div style={{ backgroundColor: '#1a2030', borderRadius: 12, padding: 24, width: 420, maxWidth: '90vw', border: '1px solid rgba(99,102,241,0.25)', boxShadow: '0 16px 48px rgba(0,0,0,0.6)' }}>
+    <div onClick={(e) => { if (e.target === e.currentTarget) onClose(); }} style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.72)', display: 'flex', alignItems: 'flex-start', justifyContent: 'center', zIndex: 1100, overflowY: 'auto', padding: '24px 0' }}>
+      <div ref={cardRef} style={{ backgroundColor: '#1a2030', borderRadius: 12, padding: 24, width: 420, maxWidth: '90vw', border: '1px solid rgba(99,102,241,0.25)', boxShadow: '0 16px 48px rgba(0,0,0,0.6)', display: 'flex', flexDirection: 'column' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 18 }}>
           <div style={{ width: 32, height: 32, borderRadius: 8, backgroundColor: 'rgba(99,102,241,0.18)', border: '1px solid rgba(99,102,241,0.3)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#818cf8" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -1062,10 +1070,12 @@ function CreateCliAgentModal({
   isOpen,
   onClose,
   onCreate,
+  cardRef,
 }: {
   isOpen: boolean;
   onClose: () => void;
   onCreate: (service: string, cliTool: string, credentials: CliCredRow[]) => void;
+  cardRef?: (el: HTMLDivElement | null) => void;
 }) {
   const [service, setService] = useState('');
   const [cliTool, setCliTool] = useState('');
@@ -1098,8 +1108,8 @@ function CreateCliAgentModal({
   };
 
   return (
-    <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.72)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1100 }}>
-      <div style={{ backgroundColor: '#1a2030', borderRadius: 12, padding: 24, width: 480, maxWidth: '92vw', maxHeight: '86vh', overflowY: 'auto', border: '1px solid rgba(16,185,129,0.22)', boxShadow: '0 16px 48px rgba(0,0,0,0.6)' }}>
+    <div onClick={(e) => { if (e.target === e.currentTarget) onClose(); }} style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.72)', display: 'flex', alignItems: 'flex-start', justifyContent: 'center', zIndex: 1100, overflowY: 'auto', padding: '24px 0' }}>
+      <div ref={cardRef} style={{ backgroundColor: '#1a2030', borderRadius: 12, padding: 24, width: 480, maxWidth: '92vw', border: '1px solid rgba(16,185,129,0.22)', boxShadow: '0 16px 48px rgba(0,0,0,0.6)', display: 'flex', flexDirection: 'column' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 18 }}>
           <div style={{ width: 32, height: 32, borderRadius: 8, backgroundColor: 'rgba(16,185,129,0.15)', border: '1px solid rgba(16,185,129,0.3)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#10b981" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -1198,7 +1208,7 @@ function CreateCliAgentModal({
 }
 
 // Main Agents Tab component
-export function AgentsTab({ items, onRefresh }: AgentsTabProps) {
+export function AgentsTab({ items, onRefresh, onContentResize, modalCardRef }: AgentsTabProps) {
   const [expandedAgent, setExpandedAgent] = useState<string | null>(null);
   const [isCreateBrowserModalOpen, setIsCreateBrowserModalOpen] = useState(false);
   const [isCreateCliModalOpen, setIsCreateCliModalOpen] = useState(false);
@@ -1219,8 +1229,19 @@ export function AgentsTab({ items, onRefresh }: AgentsTabProps) {
   // failedSkills: key = "agentId::skillName" → { reason, ts } — auto-clears after 30s
   const [failedSkills, setFailedSkills] = useState<Record<string, { reason: string; ts: number; errorText?: string }>>({});
 
-  // Subtab state: 'browser' | 'cli' | 'app'
-  const [activeSubtab, setActiveSubtab] = useState<'browser' | 'cli' | 'app'>('browser');
+  // Subtab state: 'browser' | 'cli' (app removed)
+  const [activeSubtab, setActiveSubtab] = useState<'browser' | 'cli'>('browser');
+
+  // Stable ref to the parent's re-measure callback. The agentsTabRef div is
+  // capped at maxHeight:100%, so switching subtabs may not change its
+  // border-box (the parent ResizeObserver won't fire). We nudge the parent's
+  // measurement pipeline explicitly whenever the subtab changes.
+  const onContentResizeRef = useRef(onContentResize);
+  onContentResizeRef.current = onContentResize;
+  useEffect(() => {
+    const t = setTimeout(() => onContentResizeRef.current?.(), 60);
+    return () => clearTimeout(t);
+  }, [activeSubtab]);
 
   // CLI Agents state
   const [cliValidating, setCliValidating] = useState<Record<string, boolean>>({});
@@ -1262,7 +1283,7 @@ export function AgentsTab({ items, onRefresh }: AgentsTabProps) {
   // Filter agents by type from props (items now includes ALL agents with type field from DB)
   const browserAgents = items.filter(agent => agent.type === 'browser');
   const cliAgents = items.filter(agent => agent.type === 'cli' || agent.type === 'api_key');
-  const appAgents = items.filter(agent => agent.type === 'app');
+  // const appAgents = items.filter(agent => agent.type === 'app'); // App agents removed
 
   // Sync props to localItems (fallback for non-DB flow)
   useEffect(() => {
@@ -1277,8 +1298,8 @@ export function AgentsTab({ items, onRefresh }: AgentsTabProps) {
     if (setupData) setPreflightSetupData(setupData);
     setExpandedAgent(agentId);
     const isCli = cliAgents.some(a => a.id === agentId);
-    const isApp = appAgents.some(a => a.id === agentId);
-    setActiveSubtab(isCli ? 'cli' : isApp ? 'app' : 'browser');
+    // const isApp = appAgents.some(a => a.id === agentId); // App agents removed
+    setActiveSubtab(isCli ? 'cli' : 'browser');
     if (isCli) {
       const cliAgent = cliAgents.find(a => a.id === agentId);
       if (cliAgent) {
@@ -1315,8 +1336,8 @@ export function AgentsTab({ items, onRefresh }: AgentsTabProps) {
         } catch (_) {}
         setExpandedAgent(trainAgentId);
         const isCli = cliAgents.some(a => a.id === trainAgentId);
-        const isApp = appAgents.some(a => a.id === trainAgentId);
-        setActiveSubtab(isCli ? 'cli' : isApp ? 'app' : 'browser');
+        // const isApp = appAgents.some(a => a.id === trainAgentId); // App agents removed
+        setActiveSubtab(isCli ? 'cli' : 'browser');
         setTimeout(() => handleTrain(trainAgentId, trainContext), 300);
       }
     } catch (_) {}
@@ -1341,8 +1362,8 @@ export function AgentsTab({ items, onRefresh }: AgentsTabProps) {
       try { sessionStorage.removeItem('takeover:train-agent'); } catch (_) {}
       setExpandedAgent(trainAgentId);
       const isCli = cliAgents.some(a => a.id === trainAgentId);
-      const isApp = appAgents.some(a => a.id === trainAgentId);
-      setActiveSubtab(isCli ? 'cli' : isApp ? 'app' : 'browser');
+      // const isApp = appAgents.some(a => a.id === trainAgentId); // App agents removed
+      setActiveSubtab(isCli ? 'cli' : 'browser');
       // Pass through train context (mode, task, startUrl, keepSession, plan) from the
       // failure handoff so the trainer attaches to the live session or starts fresh.
       // For guided training, the training is already started in main.js; just open the panel.
@@ -1399,8 +1420,8 @@ export function AgentsTab({ items, onRefresh }: AgentsTabProps) {
         // Switch to the right subtab so the new agent is visible
         if (agent.type === 'cli' || agent.type === 'api_key') {
           setActiveSubtab('cli');
-        } else if (agent.type === 'app') {
-          setActiveSubtab('app');
+        // } else if (agent.type === 'app') { // App agents removed
+        //   setActiveSubtab('app');
         } else {
           setActiveSubtab('browser');
         }
@@ -2062,7 +2083,8 @@ export function AgentsTab({ items, onRefresh }: AgentsTabProps) {
         >
           CLI Agents
         </button>
-        <button
+        {/* App Agents subtab removed */}
+        {/* <button
           onClick={() => setActiveSubtab('app')}
           style={{
             padding: '6px 14px',
@@ -2077,11 +2099,10 @@ export function AgentsTab({ items, onRefresh }: AgentsTabProps) {
           }}
         >
           App Agents {appAgents.length > 0 && `(${appAgents.length})`}
-        </button>
+        </button> */}
 
         {/* Spacer + Create button */}
         <div style={{ flex: 1 }} />
-        {activeSubtab !== 'app' && (
         <button
           onClick={() => {
             if (activeSubtab === 'browser') setIsCreateBrowserModalOpen(true);
@@ -2106,7 +2127,6 @@ export function AgentsTab({ items, onRefresh }: AgentsTabProps) {
           <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
           New
         </button>
-        )}
       </div>
 
       {/* Browser Agents Tab */}
@@ -2848,10 +2868,9 @@ export function AgentsTab({ items, onRefresh }: AgentsTabProps) {
         </div>
       )}
 
-      {/* App Agents Tab */}
-      {activeSubtab === 'app' && (
+      {/* App Agents Tab — removed */}
+      {/* {activeSubtab === 'app' && (
         <div style={{ marginTop: 8 }}>
-          {/* Empty state */}
           {appAgents.length === 0 && (
             <div style={{ textAlign: 'center', padding: 50, color: '#6b7280' }}>
               <div style={{ marginBottom: 16, display: 'flex', justifyContent: 'center' }}>
@@ -2865,7 +2884,6 @@ export function AgentsTab({ items, onRefresh }: AgentsTabProps) {
               </div>
             </div>
           )}
-          {/* App agent cards */}
           {appAgents.length > 0 && (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
               {appAgents.map(agent => (
@@ -2880,7 +2898,6 @@ export function AgentsTab({ items, onRefresh }: AgentsTabProps) {
                     transition: 'border-color 0.15s, box-shadow 0.3s',
                   }}
                 >
-                  {/* Top row: icon + name + status */}
                   <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8 }}>
                     <div style={{
                       width: 32, height: 32, borderRadius: 8,
@@ -2912,7 +2929,6 @@ export function AgentsTab({ items, onRefresh }: AgentsTabProps) {
                       App
                     </span>
                   </div>
-                  {/* Capabilities */}
                   {agent.capabilities && agent.capabilities.length > 0 && (
                     <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginTop: 4 }}>
                       {agent.capabilities.map(cap => (
@@ -2931,13 +2947,14 @@ export function AgentsTab({ items, onRefresh }: AgentsTabProps) {
             </div>
           )}
         </div>
-      )}
+      )} */}
 
       {/* Create Browser Agent modal */}
       <CreateBrowserAgentModal
         isOpen={isCreateBrowserModalOpen}
         onClose={() => setIsCreateBrowserModalOpen(false)}
         onCreate={handleCreateBrowserAgent}
+        cardRef={modalCardRef}
       />
 
       {/* Create CLI Agent modal */}
@@ -2945,6 +2962,7 @@ export function AgentsTab({ items, onRefresh }: AgentsTabProps) {
         isOpen={isCreateCliModalOpen}
         onClose={() => setIsCreateCliModalOpen(false)}
         onCreate={handleCreateCliAgent}
+        cardRef={modalCardRef}
       />
 
       {/* Training Panel — shown when user clicks Train */}
