@@ -207,6 +207,26 @@ async function _cmdHttp(urlPath, body = {}) {
   });
 }
 
+// Helper: POST to comms-graph (port 3015)
+const COMMS_GRAPH_PORT = parseInt(process.env.COMMS_GRAPH_PORT || '3015', 10);
+async function _commsHttp(urlPath, body = {}) {
+  return new Promise((resolve, reject) => {
+    const payload = JSON.stringify(body);
+    const req = http.request(
+      { hostname: '127.0.0.1', port: COMMS_GRAPH_PORT, path: urlPath, method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(payload) } },
+      (res) => {
+        let data = '';
+        res.on('data', chunk => { data += chunk; });
+        res.on('end', () => { try { resolve(JSON.parse(data)); } catch (_) { resolve({}); } });
+      }
+    );
+    req.on('error', reject);
+    req.setTimeout(5000, () => reject(new Error('commsHttp timeout')));
+    req.end(payload);
+  });
+}
+
 // Helper: GET from command-service (port 3007)
 async function _cmdGet(urlPath) {
   return new Promise((resolve, reject) => {
@@ -1170,6 +1190,7 @@ let _activeBrowserAgentSessionId = null; // Tracks browser session opened during
 let _gatherAuthSessionId = null; // Tracks browser session opened by GatherAuth sign-in (survives stategraph completion)
 let _gatherAuthInFlight = false; // Tracks whether a background browser.agent:auth request is currently running
 let _pendingPreflightPrompt = null; // { prompt, selectedText, responseLanguage, sessionId } — stored when preflight auth required, re-enqueued after auth succeeds
+let _pendingPreflightPromptsByTask = new Map(); // Per-task pending preflight prompts for handoff tasks: taskId → { prompt, agentId, source, originalPrompt, sessionId }
 let _pendingNewlyBuiltAgents = new Set(); // Tracks newly built agents pending auth — retained on cancel for retry
 let _takeOverContext = null; // Phase 10: { agentId, task, pageType, service } — set when user takes over, used for distillHumanCorrection
 let _currentAutomationPrompt = null; // Phase 10: tracks the active prompt for take-over context
@@ -2996,6 +3017,75 @@ app.whenReady().then(async () => {
 
   const PLAN_MODE_CANCEL_RE = /^(?:\/)?(?:cancel|cancel\s+plan|exit\s+plan\s+mode|leave\s+plan\s+mode)\b/i;
 
+  // ── Shared comms-graph routing (used by both prompt-queue:submit and stategraph:process) ──
+  // When COMMS_GRAPH_ENABLED=true, sends the prompt to comms-graph /comms.process.
+  // On success: streams the response to the renderer and returns true (skip promptQueue).
+  // On failure/timeout: returns false so the caller can fall back to promptQueue.
+  function routeThroughCommsGraph(prompt, { selectedText = '', responseLanguage = null, sessionId = null } = {}) {
+    if (process.env.COMMS_GRAPH_ENABLED !== 'true') return false;
+
+    const commsPort = parseInt(process.env.COMMS_GRAPH_PORT || '3015', 10);
+    console.log('🧠 [CommsGraph] Routing prompt through comms-graph:', prompt.substring(0, 80));
+    const commsBody = JSON.stringify({ text: prompt, source: 'text', language: responseLanguage || null });
+    const commsReq = http.request({
+      hostname: '127.0.0.1',
+      port: commsPort,
+      path: '/comms.process',
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(commsBody) },
+      timeout: 15000,
+    }, (commsRes) => {
+      let commsRaw = '';
+      commsRes.on('data', c => { commsRaw += c; });
+      commsRes.on('end', () => {
+        try {
+          const commsData = JSON.parse(commsRaw);
+          if (commsData.ok && commsData.data) {
+            const { text: responseText, intent, intentName, metadata } = commsData.data;
+
+            console.log(`[CommsGraph] Response — intent=${intent} (${intentName}) latency=${metadata?.latencyMs}ms`);
+
+            // Stream the response to the renderer
+            safeSendUnified('unified:set-prompt', prompt);
+            safeSendUnified('ws-bridge:message', { type: 'chunk', text: responseText });
+            safeSendUnified('ws-bridge:message', { type: 'done' });
+
+            // If it was a handoff, the task is already being dispatched by comms-graph
+            // via /comms.handoff — no need to enqueue in promptQueue
+            if (intent === 0 && metadata?.taskId) {
+              safeSendUnified('task:created', {
+                taskId: metadata.taskId,
+                prompt,
+                agentId: metadata.agentId,
+                parked: metadata.parked,
+              });
+            }
+            return;
+          }
+        } catch (_) {}
+        // Fallback to serial queue if comms-graph response was malformed
+        console.log('[CommsGraph] Malformed response — falling back to serial queue');
+        promptQueue.enqueue(prompt.trim(), { selectedText: selectedText || '', responseLanguage: responseLanguage || null, sessionId: sessionId || currentSessionId });
+      });
+    });
+    commsReq.on('error', (err) => {
+      if (err?.code === 'ECONNREFUSED') {
+        console.log(`[CommsGraph] ECONNREFUSED on 127.0.0.1:${commsPort} — is the comms-graph service running? Falling back to serial promptQueue.`);
+      } else {
+        console.log('[CommsGraph] Unreachable:', err?.message || err, '— falling back to serial promptQueue.');
+      }
+      promptQueue.enqueue(prompt.trim(), { selectedText: selectedText || '', responseLanguage: responseLanguage || null, sessionId: sessionId || currentSessionId });
+    });
+    commsReq.on('timeout', () => {
+      commsReq.destroy();
+      console.log(`[CommsGraph] Timeout (15s) to 127.0.0.1:${commsPort} — falling back to serial promptQueue.`);
+      promptQueue.enqueue(prompt.trim(), { selectedText: selectedText || '', responseLanguage: responseLanguage || null, sessionId: sessionId || currentSessionId });
+    });
+    commsReq.write(commsBody);
+    commsReq.end();
+    return true; // request dispatched — caller should NOT also enqueue
+  }
+
   ipcMain.on('prompt-queue:submit', (_event, { prompt, selectedText = '', responseLanguage = null, isAskUserAnswer = false } = {}) => {
     const trimmedPrompt = prompt?.trim();
     if (!trimmedPrompt) return;
@@ -3027,6 +3117,18 @@ app.whenReady().then(async () => {
         safeSend(promptCaptureWindow, 'automation:progress', { type: 'plan:mode:cleared', source: 'prompt' });
       }
       return;
+    }
+
+    // ── comms-graph routing (feature-flagged) ──────────────────────────────
+    // When COMMS_GRAPH_ENABLED=true, route through comms-graph for fast
+    // classification + translation + personality. Falls back to promptQueue
+    // if comms-graph is unavailable or disabled.
+    // Skip comms-graph for plan-correction prompts and ask-user answers —
+    // those need to go through the existing promptQueue path.
+    if (!pendingPlanContext && !isAskUserAnswer) {
+      if (routeThroughCommsGraph(trimmedPrompt, { selectedText, responseLanguage, sessionId: currentSessionId })) {
+        return; // comms-graph dispatched — don't also enqueue
+      }
     }
 
     const enqueueOpts = { selectedText, responseLanguage, sessionId: currentSessionId, isAskUserAnswer };
@@ -3078,6 +3180,23 @@ app.whenReady().then(async () => {
       console.log(`[CommsGraph] Task ${taskId} cancel: ${cancelled ? 'success' : 'not found'}`);
     } catch (err) {
       console.error('[CommsGraph] Task cancel error:', err.message);
+    }
+  });
+
+  ipcMain.on('task:delete', async (_event, { taskId } = {}) => {
+    if (!taskId) return;
+    try {
+      // 1. If the handoff is still running, cancel it first
+      const handoffRunner = require('./handoffRunner');
+      handoffRunner.cancel(taskId);
+      // 2. Remove from comms-graph journal
+      const result = await _commsHttp('/comms.remove', { taskId });
+      const ok = result?.ok === true;
+      console.log(`[CommsGraph] Task ${taskId} delete: ${ok ? 'success' : 'failed'}`);
+      // 3. Notify renderer
+      safeSendUnified('task:removed', { taskId });
+    } catch (err) {
+      console.error('[CommsGraph] Task delete error:', err.message);
     }
   });
 
@@ -3186,7 +3305,19 @@ app.whenReady().then(async () => {
   //  here we just capture context for the re-run.)
 
   // plan:approve — user clicked "Run Plan" in PlanPanel
-  ipcMain.on('plan:approve', async (_event, { planFile, scanBeforeRun = true } = {}) => {
+  ipcMain.on('plan:approve', async (_event, { planFile, taskId, scanBeforeRun = true } = {}) => {
+    // ── Handoff path: resume via handoffRunner ──────────────────────────────
+    if (taskId) {
+      const handoffRunner = require('./handoffRunner');
+      console.log(`[Plan:DEBUG] plan:approve — handoff task ${taskId} resuming with plan ${planFile}`);
+      safeSendUnified('automation:progress', { type: 'plan:approved', planFile, taskId });
+      handoffRunner.resume(taskId, planFile).catch(err => {
+        console.error(`[Plan] Handoff resume ${taskId} failed:`, err.message);
+      });
+      return;
+    }
+
+    // ── Serial promptQueue path (existing) ──────────────────────────────────
     const resolvedPlanFile = planFile || pendingPlanContext?.planFile;
     if (!resolvedPlanFile) {
       console.warn('[Plan] plan:approve received but no planFile available');
@@ -3292,7 +3423,17 @@ app.whenReady().then(async () => {
   });
 
   // plan:cancel — user dismissed the plan
-  ipcMain.on('plan:cancel', (_event, { planFile } = {}) => {
+  ipcMain.on('plan:cancel', (_event, { planFile, taskId } = {}) => {
+    // ── Handoff path: cancel via handoffRunner ──────────────────────────────
+    if (taskId) {
+      const handoffRunner = require('./handoffRunner');
+      console.log(`[Plan] Handoff task ${taskId} cancelled by user`);
+      handoffRunner.cancel(taskId);
+      safeSendUnified('automation:progress', { type: 'plan:mode:cleared', source: 'cancel', taskId });
+      return;
+    }
+
+    // ── Serial promptQueue path (existing) ──────────────────────────────────
     console.log('[Plan] Plan cancelled by user');
     pendingPlanContext = null;
     if (resultsWindow && !resultsWindow.isDestroyed()) {
@@ -4045,63 +4186,7 @@ app.whenReady().then(async () => {
     // for classification + translation + personality. Handoffs are dispatched
     // concurrently by comms-graph (bypassing the serial promptQueue).
     // Falls back to serial promptQueue if comms-graph is unavailable.
-    const commsGraphEnabled = process.env.COMMS_GRAPH_ENABLED === 'true';
-    if (commsGraphEnabled) {
-      console.log('🧠 [CommsGraph] Routing prompt through comms-graph:', prompt.substring(0, 80));
-      const commsPort = parseInt(process.env.COMMS_GRAPH_PORT || '3015', 10);
-      const commsBody = JSON.stringify({ text: prompt, source: 'text', language: responseLanguage || null });
-      const commsReq = http.request({
-        hostname: '127.0.0.1',
-        port: commsPort,
-        path: '/comms.process',
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(commsBody) },
-        timeout: 15000,
-      }, (commsRes) => {
-        let commsRaw = '';
-        commsRes.on('data', c => { commsRaw += c; });
-        commsRes.on('end', () => {
-          try {
-            const commsData = JSON.parse(commsRaw);
-            if (commsData.ok && commsData.data) {
-              const { text: responseText, intent, intentName, metadata } = commsData.data;
-
-              console.log(`[CommsGraph] Response — intent=${intent} (${intentName}) latency=${metadata?.latencyMs}ms`);
-
-              // Stream the response to the renderer
-              safeSendUnified('unified:set-prompt', prompt);
-              safeSendUnified('ws-bridge:message', { type: 'chunk', text: responseText });
-              safeSendUnified('ws-bridge:message', { type: 'done' });
-
-              // If it was a handoff, the task is already being dispatched by comms-graph
-              // via /comms.handoff — no need to enqueue in promptQueue
-              if (intent === 0 && metadata?.taskId) {
-                safeSendUnified('task:created', {
-                  taskId: metadata.taskId,
-                  prompt,
-                  agentId: metadata.agentId,
-                  parked: metadata.parked,
-                });
-              }
-              return;
-            }
-          } catch (_) {}
-          // Fallback to serial queue if comms-graph response was malformed
-          console.log('[CommsGraph] Malformed response — falling back to serial queue');
-          promptQueue.enqueue(prompt.trim(), { selectedText: selectedText || '', responseLanguage: responseLanguage || null, sessionId: sessionId || currentSessionId });
-        });
-      });
-      commsReq.on('error', () => {
-        console.log('[CommsGraph] Unavailable — falling back to serial queue');
-        promptQueue.enqueue(prompt.trim(), { selectedText: selectedText || '', responseLanguage: responseLanguage || null, sessionId: sessionId || currentSessionId });
-      });
-      commsReq.on('timeout', () => {
-        commsReq.destroy();
-        console.log('[CommsGraph] Timeout — falling back to serial queue');
-        promptQueue.enqueue(prompt.trim(), { selectedText: selectedText || '', responseLanguage: responseLanguage || null, sessionId: sessionId || currentSessionId });
-      });
-      commsReq.write(commsBody);
-      commsReq.end();
+    if (routeThroughCommsGraph(prompt, { selectedText, responseLanguage, sessionId: sessionId || currentSessionId })) {
       return;
     }
 
@@ -7954,10 +8039,93 @@ app.whenReady().then(async () => {
   // browser.agent:auth so a fresh waitForAuth can verify and re-enqueue the prompt.
   // This prevents the second run's preflight from closing the browser session the user
   // is actively signing in on (which killed the auth flow in the Google Calendar bug).
-  ipcMain.on('preflight:auth_continue', (_event, { agentId } = {}) => {
-    console.log(`[StateGraph] preflight:auth_continue — agentId=${agentId} (waiting for background auth verification)`);
+  ipcMain.on('preflight:auth_continue', (_event, { agentId, taskId } = {}) => {
+    console.log(`[StateGraph] preflight:auth_continue — agentId=${agentId} taskId=${taskId || 'none'} (waiting for background auth verification)`);
     const normalizedAgentId = agentId ? (agentId.endsWith('.agent') ? agentId : `${agentId}.agent`) : null;
     if (normalizedAgentId) _pendingNewlyBuiltAgents.delete(normalizedAgentId);
+
+    // ── Handoff path: per-task pending preflight prompt ──────────────────────
+    if (taskId && _pendingPreflightPromptsByTask.has(taskId)) {
+      const tp = _pendingPreflightPromptsByTask.get(taskId);
+      safeSendUnified('automation:progress', {
+        type: 'preflight:auth_verifying',
+        agentId: normalizedAgentId,
+        taskId,
+        message: 'Verifying sign-in...',
+      });
+      // Re-trigger auth via handoffRunner resume after verification
+      if (normalizedAgentId) {
+        _gatherAuthInFlight = true;
+        const _rePayload = JSON.stringify({
+          payload: {
+            skill: 'browser.agent',
+            args: {
+              action: 'authenticate',
+              agentId: normalizedAgentId,
+              task: 'navigate to the sign-in page and wait for the user to authenticate',
+              manualLogin: true,
+            },
+          },
+        });
+        const _reReq = http.request(
+          { hostname: '127.0.0.1', port: 3007, path: '/command.automate', method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(_rePayload) } },
+          (res) => {
+            let _data = '';
+            res.on('data', chunk => { _data += chunk; });
+            res.on('end', async () => {
+              _gatherAuthInFlight = false;
+              try {
+                const result = JSON.parse(_data);
+                if (result?.data?.ok && result?.data?.authVerified === true) {
+                  _pendingPreflightPromptsByTask.delete(taskId);
+                  _pendingNewlyBuiltAgents.delete(normalizedAgentId);
+                  const _now = new Date().toISOString();
+                  const _expires = new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString();
+                  try {
+                    await _cmdHttp('/agent.update', { id: normalizedAgentId, authed_at: _now, auth_expires_at: _expires });
+                  } catch (err) {
+                    console.warn(`[PreflightAuth] Could not update authed_at for ${normalizedAgentId}:`, err.message);
+                  }
+                  safeSendUnified('automation:progress', {
+                    type: 'preflight:auth_succeeded',
+                    agentId: normalizedAgentId,
+                    taskId,
+                    message: 'Sign-in verified — resuming task...',
+                  });
+                  // Resume the handoff task via handoffRunner
+                  const handoffRunner = require('./handoffRunner');
+                  handoffRunner.execute({
+                    taskId,
+                    prompt: tp.prompt,
+                    agentId: tp.agentId,
+                    source: tp.source,
+                    originalPrompt: tp.originalPrompt,
+                    sessionId: tp.sessionId,
+                  }).catch(err => {
+                    console.error(`[PreflightAuth] Handoff resume ${taskId} failed:`, err.message);
+                  });
+                } else {
+                  safeSendUnified('automation:progress', {
+                    type: 'preflight:auth_background_failed',
+                    agentId: normalizedAgentId,
+                    taskId,
+                    message: result?.data?.error || 'Background auth check did not confirm login.',
+                  });
+                }
+              } catch (_) {}
+            });
+          }
+        );
+        _reReq.on('error', () => { _gatherAuthInFlight = false; });
+        _reReq.setTimeout(5 * 60 * 1000);
+        _reReq.on('timeout', () => { _gatherAuthInFlight = false; _reReq.destroy(); });
+        _reReq.end(_rePayload);
+      }
+      return;
+    }
+
+    // ── Serial promptQueue path (existing) ──────────────────────────────────
     // Tell the UI we're verifying — the background browser.agent:auth task will
     // either re-enqueue the prompt (success) or send preflight:auth_background_failed.
     if (_pendingPreflightPrompt) {

@@ -9,6 +9,12 @@ import { ImageCarousel } from './ImageCarousel';
 
 const SyntaxHighlighter = SyntaxHighlighterBase as any;
 
+// ── Overlay-safe colors ────────────────────────────────────────────────────────
+// The UnifiedOverlay has a dark background. prose-invert is present but
+// the explicit Tailwind classes below take precedence. We keep body text
+// high-contrast (near-white) so thinking traces, plans, and answers are
+// uniformly legible. Avoid low-opacity greys that disappear on dark glass.
+
 // Factory: builds the custom `a` component for ReactMarkdown, bound to the
 // caller's onFileLinkClick handler. Bare URLs are autolinked by remark-gfm's
 // autolink-literal feature, so no manual linkify pre-processing is needed —
@@ -35,7 +41,7 @@ const makeLinkComponent = (onFileLinkClick?: (filePath: string) => void) => {
         }}
         className={isFilePath
           ? 'inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-xs font-mono cursor-pointer transition-colors'
-          : 'text-blue-400 hover:text-blue-300 underline cursor-pointer transition-colors'
+          : 'text-blue-300 hover:text-blue-200 underline cursor-pointer transition-colors'
         }
         style={isFilePath ? {
           backgroundColor: 'rgba(59,130,246,0.12)',
@@ -124,31 +130,6 @@ interface RichContentRendererProps {
   searchResults?: SearchResultItem[]; // Optional search results for image metadata lookup
 }
 
-// Extract all images from markdown content for carousel detection
-const extractImagesFromMarkdown = (content: string): { src: string; alt: string; title?: string }[] => {
-  const images: { src: string; alt: string; title?: string }[] = [];
-  // Match markdown image syntax: ![alt](url "title") or ![alt](url)
-  const imgRegex = /!\[([^\]]*)\]\(([^\s"]+)(?:\s+"([^"]*)")?\)/g;
-  let match;
-  while ((match = imgRegex.exec(content)) !== null) {
-    images.push({
-      alt: match[1] || '',
-      src: match[2],
-      title: match[3],
-    });
-  }
-  return images;
-};
-
-// Component to render image groups as carousel
-const ImageGroupRenderer: React.FC<{ content: string; maxHeight?: number }> = ({ content, maxHeight = 280 }) => {
-  const images = useMemo(() => extractImagesFromMarkdown(content), [content]);
-  
-  if (images.length === 0) return null;
-  
-  return <ImageCarousel images={images} maxHeight={maxHeight} />;
-};
-
 // Split content by image groups and render with carousel for multiple images
 const renderContentWithCarousels = (
   content: string,
@@ -200,13 +181,13 @@ const renderContentWithCarousels = (
               return !inline && match ? (
                 <CodeBlockWithCopy code={codeString} language={match[1]} />
               ) : (
-                <code className="bg-gray-800 px-2 py-1 rounded text-sm font-mono text-blue-300" {...props}>
+                <code className="bg-gray-800 px-2 py-1 rounded text-sm font-mono text-blue-200" {...props}>
                   {children}
                 </code>
               );
             },
             a: Link,
-            p: ({ children }: any) => <p className="mb-3 leading-relaxed text-white/70">{children}</p>,
+            p: ({ children }: any) => <p className="mb-3 leading-relaxed text-white/95">{children}</p>,
           }}
         >
           {processedContent}
@@ -241,13 +222,13 @@ const renderContentWithCarousels = (
           return !inline && match ? (
             <CodeBlockWithCopy code={codeString} language={match[1]} />
           ) : (
-            <code className="bg-gray-800 px-2 py-1 rounded text-sm font-mono text-blue-300" {...props}>
+            <code className="bg-gray-800 px-2 py-1 rounded text-sm font-mono text-blue-200" {...props}>
               {children}
             </code>
           );
         },
         a: Link,
-        p: ({ children }: any) => <p className="mb-3 leading-relaxed text-white/70">{children}</p>,
+        p: ({ children }: any) => <p className="mb-3 leading-relaxed text-white/95">{children}</p>,
       }}
     >
       {content}
@@ -287,7 +268,7 @@ const RichContentRenderer: React.FC<RichContentRendererProps> = ({
   if (hasImageGroups) {
     return (
       <div
-        className={`rich-content-container prose prose-invert prose-sm max-w-none ${animated ? 'animate-fade-in' : ''} ${className}`}
+        className={`rich-content-container prose-sm max-w-none ${animated ? 'animate-fade-in' : ''} ${className}`}
         style={{ overflowWrap: 'break-word', wordBreak: 'break-word', minWidth: 0, ...(animated ? { animation: 'fadeIn 0.3s ease-in-out' } : {}) }}
       >
         {renderContentWithCarousels(processedContent, imageUrlToOriginal, onFileLinkClick)}
@@ -299,7 +280,7 @@ const RichContentRenderer: React.FC<RichContentRendererProps> = ({
 
   return (
     <div
-      className={`rich-content-container prose prose-invert prose-sm max-w-none ${animated ? 'animate-fade-in' : ''} ${className}`}
+      className={`rich-content-container prose-sm max-w-none ${animated ? 'animate-fade-in' : ''} ${className}`}
       style={{ overflowWrap: 'break-word', wordBreak: 'break-word', minWidth: 0, ...(animated ? { animation: 'fadeIn 0.3s ease-in-out' } : {}) }}
     >
       <ReactMarkdown
@@ -313,7 +294,7 @@ const RichContentRenderer: React.FC<RichContentRendererProps> = ({
             return !inline && match ? (
               <CodeBlockWithCopy code={codeString} language={match[1]} />
             ) : (
-              <code className="bg-gray-800 px-2 py-1 rounded text-sm font-mono text-blue-300" {...props}>
+              <code className="bg-gray-800 px-2 py-1 rounded text-sm font-mono text-blue-200" {...props}>
                 {children}
               </code>
             );
@@ -384,7 +365,7 @@ const RichContentRenderer: React.FC<RichContentRendererProps> = ({
                   {...props}
                 />
                 {(alt || title) && (
-                  <span style={{ display: 'block' }} className="text-xs text-gray-400 mt-1 italic text-center">
+                  <span style={{ display: 'block' }} className="text-xs text-gray-300 mt-1 italic text-center">
                     {alt || title}
                   </span>
                 )}
@@ -395,50 +376,50 @@ const RichContentRenderer: React.FC<RichContentRendererProps> = ({
             return <h1 className="text-2xl font-bold mb-4 mt-6 text-white" {...props}>{children}</h1>;
           },
           h2({ node, children, ...props }: any) {
-            return <h2 className="text-xl font-semibold mb-3 mt-5 text-white/90" {...props}>{children}</h2>;
+            return <h2 className="text-xl font-semibold mb-3 mt-5 text-white" {...props}>{children}</h2>;
           },
           h3({ node, children, ...props }: any) {
-            return <h3 className="text-lg font-medium mb-2 mt-4 text-white/80" {...props}>{children}</h3>;
+            return <h3 className="text-lg font-medium mb-2 mt-4 text-white" {...props}>{children}</h3>;
           },
           p({ node, children, ...props }: any) {
-            return <p className="mb-3 leading-relaxed text-white/70" {...props}>{children}</p>;
+            return <p className="mb-3 leading-relaxed text-white/95" {...props}>{children}</p>;
           },
           ul({ node, children, ...props }: any) {
-            return <ul className="list-disc list-inside mb-3 space-y-1 text-white/70 ml-4" {...props}>{children}</ul>;
+            return <ul className="list-disc list-inside mb-3 space-y-1 text-white/95 ml-4" {...props}>{children}</ul>;
           },
           ol({ node, children, ...props }: any) {
-            return <ol className="list-decimal list-inside mb-3 space-y-1 text-white/70 ml-4" {...props}>{children}</ol>;
+            return <ol className="list-decimal list-inside mb-3 space-y-1 text-white/95 ml-4" {...props}>{children}</ol>;
           },
           li({ node, children, ...props }: any) {
-            return <li className="text-white/70" {...props}>{children}</li>;
+            return <li className="text-white/95" {...props}>{children}</li>;
           },
           blockquote({ node, children, ...props }: any) {
             return (
-              <blockquote className="border-l-4 border-blue-400 pl-4 italic mb-3 text-white/60 bg-blue-500/10 py-2 rounded-r-lg" {...props}>
+              <blockquote className="border-l-4 border-blue-300 pl-4 italic mb-3 text-white/85 bg-blue-500/10 py-2 rounded-r-lg" {...props}>
                 {children}
               </blockquote>
             );
           },
           table({ node, children, ...props }: any) {
-            return <table className="min-w-full border border-gray-700 mb-4" {...props}>{children}</table>;
+            return <table className="min-w-full border border-gray-600 mb-4" {...props}>{children}</table>;
           },
           thead({ node, children, ...props }: any) {
             return <thead className="bg-gray-800" {...props}>{children}</thead>;
           },
           th({ node, children, ...props }: any) {
-            return <th className="border border-gray-700 px-4 py-2 text-left text-white/90" {...props}>{children}</th>;
+            return <th className="border border-gray-600 px-4 py-2 text-left text-white" {...props}>{children}</th>;
           },
           td({ node, children, ...props }: any) {
-            return <td className="border border-gray-700 px-4 py-2 text-white/70" {...props}>{children}</td>;
+            return <td className="border border-gray-600 px-4 py-2 text-white/95" {...props}>{children}</td>;
           },
           hr({ node, ...props }: any) {
-            return <hr className="border-gray-700 my-4" {...props} />;
+            return <hr className="border-gray-600 my-4" {...props} />;
           },
           strong({ node, children, ...props }: any) {
             return <strong className="font-bold text-white" {...props}>{children}</strong>;
           },
           em({ node, children, ...props }: any) {
-            return <em className="italic text-white/80" {...props}>{children}</em>;
+            return <em className="italic text-white/95" {...props}>{children}</em>;
           },
         }}
       >

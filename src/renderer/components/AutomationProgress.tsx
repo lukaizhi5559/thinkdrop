@@ -247,6 +247,9 @@ interface AutomationProgressProps {
   onAuthPending?: (pending: boolean) => void;
   suppressIfScheduled?: boolean;
   activeTab?: string;
+  /** When set, this instance only processes events tagged with this taskId (queue card mode).
+   *  When unset, this instance processes global events (Results tab) and ignores task-scoped events. */
+  taskId?: string;
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -879,7 +882,7 @@ function parsePlanStepTitles(content: string): string[] {
   return titles;
 }
 
-export default function AutomationProgress({ onHeightChange, onActiveChange, onOpenRules, onAskUserShown, setIsSubmitting, onAuthPending, suppressIfScheduled, activeTab }: AutomationProgressProps) {
+export default function AutomationProgress({ onHeightChange, onActiveChange, onOpenRules, onAskUserShown, setIsSubmitting, onAuthPending, suppressIfScheduled, activeTab, taskId }: AutomationProgressProps) {
   const [phase, setPhase] = useState<AutomationPhase>('idle');
   const planReviewRef = useRef<HTMLDivElement>(null);
   const [steps, setSteps] = useState<Step[]>([]);
@@ -1249,6 +1252,20 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
 
     // Reset when a new prompt starts (skip for resume answers so step cards stay visible)
     const handleNewPrompt = (data?: any) => {
+      // ── Task-scoped instances only reset for their own task ────────────────
+      // The global unified:set-prompt / queue:enqueued events do not carry a taskId,
+      // so queue-card instances should ignore them. Resume/reset must come through
+      // task-tagged automation:progress events (or an explicit taskId in data).
+      if (taskId) {
+        if (!data?.taskId || data.taskId !== taskId) return;
+        if (data?.isResume) {
+          setAskUserPrompt(null);
+          return;
+        }
+        resetToIdle();
+        return;
+      }
+
       if (data?.isResume || (typeof data === 'object' && data?.isResume)) {
         // Resume answer: clear only the prompt card, keep the step list/spinner intact
         setAskUserPrompt(null);
@@ -1257,6 +1274,7 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
       resetToIdle();
     };
     const handleScanProgress = (data: any) => {
+      if (taskId) return; // Scan events are global; not relevant to queue cards
       if (!active) return;
       switch (data.type) {
         case 'maintenance_scan_start':
@@ -1289,12 +1307,22 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
       }
     };
     const handleScanDiscovery = (data: any) => {
+      if (taskId) return; // Scan discovery is global; not relevant to queue cards
       if (!active || !Array.isArray(data?.suggestions) || data.suggestions.length === 0) return;
       setScanDiscovery(data.suggestions);
     };
     const handleProgress = (data: any) => {
       if (suppressIfScheduledRef.current) return;
       if (!active) return;
+      // ── Task-scoped event filtering ──────────────────────────────────────────
+      // When this instance has a taskId (queue card mode), it ONLY accepts events
+      // explicitly tagged with that taskId. When this instance has no taskId
+      // (Results tab), it ignores all task-scoped events.
+      if (taskId) {
+        if (!data?.taskId || data.taskId !== taskId) return;
+      } else {
+        if (data?.taskId) return;
+      }
       // ── Helper: append an entry to the live agent sub-step log ──────────────
       const _appendAgentStepLog = (stepIdx: number, entry: Omit<AgentStepLogEntry, 'id' | 'timestamp'>) => {
         const seq = (agentStepLogSeq.current.get(stepIdx) || 0) + 1;
@@ -2856,6 +2884,7 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
 
     // Capture streaming synthesis answer chunks
     const handleBridgeMessage = (message: any) => {
+      if (taskId) return; // Bridge messages are global; queue cards get answer via task:complete
       if (!message) return;
       if (message.type === 'chunk' || message.type === 'llm_stream_chunk') {
         const text = message?.text || message.payload?.text || '';
@@ -2864,16 +2893,20 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
     };
 
     const handleControlModeChange = (data: any) => {
+      if (taskId) return; // Control mode is global; not relevant to queue cards
       setControlMode({ active: !!data.active, app: data.app || null });
     };
 
-    const handlePlanApproved = () => {
+    const handlePlanApproved = (data: any) => {
+      // ── Task-scoped approval: only react to our own task ────────────────────
+      if (taskId && data?.taskId !== taskId) return;
       setPlanReview(null);
       setPhase('executing');
     };
 
     // Grill-Me Phase D: batched question card handler
     const handleQuestionBatch = (data: any) => {
+      if (taskId) return; // Question batch is global; task questions come via automation:progress ask_user
       if (data?.active && data?.questions) {
         setGrillProcessing(false);
         // Switch to gathering so the planning/gathering spinner header is hidden
@@ -3081,7 +3114,7 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
 
   const handlePlanApprove = () => {
     if (!planReview) return;
-    ipcRenderer?.send('plan:approve', { planFile: planReview.planFile });
+    ipcRenderer?.send('plan:approve', { planFile: planReview.planFile, taskId });
     // Optimistic UI: transition immediately without waiting for plan:approved IPC echo
     setPlanReview(null);
     setPhase('executing');
@@ -3091,7 +3124,7 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
 
   const handlePlanCancel = () => {
     if (!planReview) return;
-    ipcRenderer?.send('plan:cancel', { planFile: planReview.planFile });
+    ipcRenderer?.send('plan:cancel', { planFile: planReview.planFile, taskId });
     setPlanReview(null);
     setPhase('idle');
     setSteps([]);
@@ -5314,7 +5347,7 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
                   {authContinueVisible || preflightAuthBackgroundFailed ? (
                     <button
                       onClick={() => {
-                        ipcRenderer?.send('preflight:auth_continue', { agentId: preflightAuthRequired.agentId });
+                        ipcRenderer?.send('preflight:auth_continue', { agentId: preflightAuthRequired.agentId, taskId });
                         // Do NOT clear preflightAuthRequired — the background browser.agent
                         // task is the single source of truth. It will send
                         // preflight:auth_succeeded (clears card) or preflight:auth_background_failed.

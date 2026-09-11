@@ -8,12 +8,18 @@
  * tasks without blocking each other.
  *
  * Per-agent locking is handled by comms-graph's agentLock module.
- * This runner just:
+ * This runner:
  *   1. Creates a new StateGraphBuilder.full() instance per task
- *   2. Executes it with its own AbortController
- *   3. Streams progress back to comms-graph (via /comms.progress)
- *   4. Notifies comms-graph on completion (via /comms.complete)
- *   5. Sends results to the renderer (via IPC)
+ *   2. Sets initialState.progressCallback so rich events (plan:generated,
+ *      preflight:*, plan:step_start, ask_user) reach the renderer
+ *   3. Executes it with its own AbortController
+ *   4. Detects the real final state (awaiting-approval / plan-error /
+ *      pending-question / done) instead of treating every exit as "done"
+ *   5. Streams progress back to comms-graph (via /comms.progress)
+ *   6. Notifies comms-graph on completion (via /comms.complete)
+ *   7. Sends results to the renderer (via IPC)
+ *   8. Supports resume(taskId, planFile) for plan approval and
+ *      answerQuestion(taskId, answer) for ask_user responses
  */
 
 const http = require('http');
@@ -22,8 +28,16 @@ const { StateGraphBuilder, RealMCPAdapter, ThinkDropLLMBackend } = require('@thi
 const COMMS_GRAPH_PORT = parseInt(process.env.COMMS_GRAPH_PORT || '3015', 10);
 
 // ── Active runs ────────────────────────────────────────────────────────────────
-/** @type {Map<string, { abortController: AbortController, stateGraph: any }>} */
+/** @type {Map<string, { abortController: AbortController, stateGraph: any, progressCallback: Function }>} */
 const _activeRuns = new Map();
+
+// ── Pending plan contexts (per task) ───────────────────────────────────────────
+/** @type {Map<string, { planFile: string, prompt: string, agentId: string|null, source: string, originalPrompt: string|null, sessionId: string|null }>} */
+const _pendingPlanContexts = new Map();
+
+// ── Pending question resolvers (per task) ──────────────────────────────────────
+/** @type {Map<string, { resolve: (answer: string) => void }>} */
+const _pendingQuestionResolvers = new Map();
 
 // ── IPC broadcast (set by main.js) ─────────────────────────────────────────────
 let _ipcBroadcast = null;
@@ -70,10 +84,59 @@ function _notifyComplete(taskId, agentId, status, result) {
 
 // ── Create a fresh stategraph instance for a handoff task ──────────────────────
 function _createStateGraph() {
-  // Each handoff gets its own builder + graph instance
-  // This allows true concurrency — no shared state between tasks
-  const builder = new StateGraphBuilder();
-  return builder.full(_mcpAdapter, _llmBackend);
+  return StateGraphBuilder.full({
+    mcpAdapter: _mcpAdapter,
+    llmBackend: _llmBackend,
+    logger: console,
+  });
+}
+
+// ── Build a progressCallback that forwards events to renderer + comms-graph ──
+function _makeProgressCallback(taskId, agentId) {
+  return (event) => {
+    if (!event || typeof event !== 'object') return;
+
+    // Tag the event with taskId so the renderer can route it to the right queue card
+    const taggedEvent = { ...event, taskId };
+
+    // Forward all rich events to the renderer (plan:generated, preflight:*, plan:step_start, etc.)
+    if (_ipcBroadcast) {
+      _ipcBroadcast('automation:progress', taggedEvent);
+    }
+
+    // Forward step-level info to comms-graph (for the basic queue card status)
+    if (event.type === 'step_start' || event.type === 'step_done' || event.type === 'step_failed') {
+      _notifyProgress(taskId, agentId, {
+        step: event.stepIndex || 0,
+        totalSteps: event.totalSteps || 0,
+        currentStep: event.description || event.title || event.skill || event.type,
+      });
+    } else if (event.type === 'plan:generated' || event.type === 'plan:found_existing') {
+      _notifyProgress(taskId, agentId, {
+        step: 0,
+        totalSteps: 0,
+        currentStep: 'Plan ready — awaiting approval',
+      });
+    } else if (event.type === 'planning') {
+      _notifyProgress(taskId, agentId, {
+        step: 0,
+        totalSteps: 0,
+        currentStep: event.message || 'Planning…',
+      });
+    } else if (event.type === 'preflight:start') {
+      _notifyProgress(taskId, agentId, {
+        step: 0,
+        totalSteps: 0,
+        currentStep: event.message || 'Preparing agents…',
+      });
+    } else if (event.type === 'all_done') {
+      _notifyProgress(taskId, agentId, {
+        step: event.completedCount || 0,
+        totalSteps: event.totalCount || 0,
+        currentStep: 'Complete',
+      });
+    }
+  };
 }
 
 // ── Execute a handoff task ─────────────────────────────────────────────────────
@@ -85,8 +148,9 @@ function _createStateGraph() {
  * @param {string} [args.source]     - 'voice' or 'text'
  * @param {string|null} [args.originalPrompt] - Non-English original
  * @param {string|null} [args.sessionId] - Existing session ID
+ * @param {string|null} [args.planFile] - Plan file to execute (for resume after approval)
  */
-async function execute({ taskId, prompt, agentId, source, originalPrompt, sessionId }) {
+async function execute({ taskId, prompt, agentId, source, originalPrompt, sessionId, planFile }) {
   if (!_mcpAdapter || !_llmBackend) {
     console.error('[HandoffRunner] Not initialized — call init() first');
     _notifyComplete(taskId, agentId, 'failed', 'HandoffRunner not initialized');
@@ -94,13 +158,14 @@ async function execute({ taskId, prompt, agentId, source, originalPrompt, sessio
   }
 
   const abortController = new AbortController();
+  const progressCallback = _makeProgressCallback(taskId, agentId);
   let stateGraph = null;
 
   try {
     stateGraph = _createStateGraph();
-    _activeRuns.set(taskId, { abortController, stateGraph });
+    _activeRuns.set(taskId, { abortController, stateGraph, progressCallback });
 
-    console.log(`[HandoffRunner] Starting task ${taskId}: ${prompt.substring(0, 80)}`);
+    console.log(`[HandoffRunner] Starting task ${taskId}: ${prompt.substring(0, 80)}${planFile ? ' (with plan)' : ''}`);
 
     // Notify comms-graph that the task is running
     _notifyProgress(taskId, agentId, { step: 0, totalSteps: 0, currentStep: 'Initializing' });
@@ -116,58 +181,101 @@ async function execute({ taskId, prompt, agentId, source, originalPrompt, sessio
       llmBackend: _llmBackend,
       _handoffTaskId: taskId,
       _handoffSource: source,
-    };
-
-    // Progress callback — streams to comms-graph + renderer
-    const onProgress = async (nodeName, state, durationMs, phase) => {
-      if (phase === 'completed') {
-        const stepInfo = {
-          step: state._stepIndex || 0,
-          totalSteps: state._totalSteps || 0,
-          currentStep: nodeName,
-        };
-        _notifyProgress(taskId, agentId, stepInfo);
-
-        // Also broadcast to renderer for queue card updates
-        if (_ipcBroadcast) {
-          _ipcBroadcast('task:progress', {
-            taskId,
-            node: nodeName,
-            ...stepInfo,
-          });
-        }
-      }
+      // CRITICAL: set progressCallback so rich events reach the renderer
+      progressCallback,
+      // If resuming with an approved plan, set _planFile so planExecutor runs it
+      ...(planFile ? { _planFile: planFile } : {}),
     };
 
     // Execute the stategraph
-    const finalState = await stateGraph.execute(initialState, onProgress, abortController.signal);
+    const finalState = await stateGraph.execute(initialState, null, abortController.signal);
 
     const answer = finalState.answer || '';
     const intent = finalState?.intent?.type || 'command_automate';
 
-    console.log(`[HandoffRunner] Task ${taskId} completed — ${answer.length} chars`);
-
-    // Notify comms-graph of completion
-    _notifyComplete(taskId, agentId, 'done', answer);
-
-    // Broadcast completion to renderer (for task-complete banner)
-    if (_ipcBroadcast) {
-      _ipcBroadcast('task:complete', {
-        taskId,
-        prompt: originalPrompt || prompt,
-        answer,
-        intent,
+    // ── Detect the real final state ────────────────────────────────────────────
+    if (finalState.awaitingPlanApproval) {
+      // StateGraph paused for plan approval — store context for resume()
+      const planFileFromState = finalState._skillPlanFile || finalState._planFile || finalState.planFile || null;
+      _pendingPlanContexts.set(taskId, {
+        planFile: planFileFromState,
+        prompt,
         agentId,
         source,
+        originalPrompt,
+        sessionId: finalState.resolvedSessionId || sessionId || null,
       });
-    }
+      console.log(`[HandoffRunner] Task ${taskId} awaiting plan approval — planFile=${planFileFromState}`);
+      _notifyComplete(taskId, agentId, 'awaiting-approval', '');
+      if (_ipcBroadcast) {
+        _ipcBroadcast('task:complete', {
+          taskId,
+          prompt: originalPrompt || prompt,
+          answer: '',
+          status: 'awaiting-approval',
+          planFile: planFileFromState,
+          agentId,
+          source,
+        });
+      }
+      return { ok: true, status: 'awaiting-approval', planFile: planFileFromState };
 
-    return { ok: true, answer, intent };
+    } else if (finalState.planError) {
+      // Preflight or plan generation failed
+      console.error(`[HandoffRunner] Task ${taskId} plan error: ${finalState.planError}`);
+      _notifyComplete(taskId, agentId, 'failed', finalState.planError);
+      if (_ipcBroadcast) {
+        _ipcBroadcast('task:complete', {
+          taskId,
+          prompt: originalPrompt || prompt,
+          answer: '',
+          error: finalState.planError,
+          status: 'failed',
+          agentId,
+          source,
+        });
+      }
+      return { ok: false, status: 'failed', error: finalState.planError };
+
+    } else if (finalState.pendingQuestion) {
+      // StateGraph is waiting for user input (ask_user)
+      // The question event was already forwarded via progressCallback
+      // Store a resolver so answerQuestion() can resolve it
+      console.log(`[HandoffRunner] Task ${taskId} waiting for user input`);
+      _notifyComplete(taskId, agentId, 'waiting-for-input', '');
+      if (_ipcBroadcast) {
+        _ipcBroadcast('task:complete', {
+          taskId,
+          prompt: originalPrompt || prompt,
+          answer: '',
+          status: 'waiting-for-input',
+          agentId,
+          source,
+        });
+      }
+      return { ok: true, status: 'waiting-for-input' };
+
+    } else {
+      // Normal completion
+      console.log(`[HandoffRunner] Task ${taskId} completed — ${answer.length} chars`);
+      _notifyComplete(taskId, agentId, 'done', answer);
+      if (_ipcBroadcast) {
+        _ipcBroadcast('task:complete', {
+          taskId,
+          prompt: originalPrompt || prompt,
+          answer,
+          intent,
+          status: 'done',
+          agentId,
+          source,
+        });
+      }
+      return { ok: true, status: 'done', answer, intent };
+    }
 
   } catch (err) {
     console.error(`[HandoffRunner] Task ${taskId} failed:`, err.message);
 
-    // Check if it was aborted
     const status = abortController.signal.aborted ? 'cancelled' : 'failed';
     _notifyComplete(taskId, agentId, status, err.message);
 
@@ -183,11 +291,57 @@ async function execute({ taskId, prompt, agentId, source, originalPrompt, sessio
       });
     }
 
-    return { ok: false, error: err.message };
+    return { ok: false, status, error: err.message };
 
   } finally {
     _activeRuns.delete(taskId);
   }
+}
+
+// ── Resume a task after plan approval ──────────────────────────────────────────
+/**
+ * Re-executes a handoff task with the approved plan file.
+ * @param {string} taskId
+ * @param {string} planFile
+ */
+async function resume(taskId, planFile) {
+  const ctx = _pendingPlanContexts.get(taskId);
+  if (!ctx) {
+    console.warn(`[HandoffRunner] resume: no pending plan context for task ${taskId}`);
+    return { ok: false, error: 'No pending plan context' };
+  }
+  _pendingPlanContexts.delete(taskId);
+
+  console.log(`[HandoffRunner] Resuming task ${taskId} with plan ${planFile}`);
+  return execute({
+    taskId,
+    prompt: ctx.prompt,
+    agentId: ctx.agentId,
+    source: ctx.source,
+    originalPrompt: ctx.originalPrompt,
+    sessionId: ctx.sessionId,
+    planFile,
+  });
+}
+
+// ── Answer a pending question for a task ──────────────────────────────────────
+/**
+ * Resolves a pending ask_user question for a task.
+ * Currently a placeholder — the actual question resolution mechanism
+ * depends on how the StateGraph handles pending questions. For now,
+ * we re-run the StateGraph with the answer injected.
+ * @param {string} taskId
+ * @param {string} answer
+ */
+async function answerQuestion(taskId, answer) {
+  const resolver = _pendingQuestionResolvers.get(taskId);
+  if (resolver) {
+    resolver.resolve(answer);
+    _pendingQuestionResolvers.delete(taskId);
+    return { ok: true };
+  }
+  console.warn(`[HandoffRunner] answerQuestion: no pending question for task ${taskId}`);
+  return { ok: false, error: 'No pending question' };
 }
 
 // ── Cancel a running task ──────────────────────────────────────────────────────
@@ -209,4 +363,4 @@ function getActiveTaskIds() {
   return Array.from(_activeRuns.keys());
 }
 
-module.exports = { init, execute, cancel, getActiveCount, getActiveTaskIds };
+module.exports = { init, execute, resume, answerQuestion, cancel, getActiveCount, getActiveTaskIds };

@@ -6,7 +6,6 @@ const ipcRenderer = (window as any).electron?.ipcRenderer;
 import { playThinkDropSound, playDropSound } from '../utils/thinkDropSound';
 import {
   TabBar,
-  QueueTab,
   CronTab,
   SkillsTab,
   ConnectionsTab,
@@ -916,6 +915,10 @@ export function UnifiedOverlay() {
       setIsSubmitting(true); // Task starting - set submitting state
       setActiveTab('results'); // Auto-switch to results panel
       setIsAutomationMode(false); // AutomationProgress will self-activate on 'planning' event
+      // Keep refs in sync immediately — the 'done' handler checks these refs and
+      // must see the fresh values when the response completes, not after a render cycle.
+      isAutomationModeRef.current = false;
+      preflightAuthPendingRef.current = false;
       setInstallPrompt(null);
       setActionChips([]);
       setInstallOutput([]);
@@ -950,7 +953,11 @@ export function UnifiedOverlay() {
         return; // Don't trigger planning flow for scheduled runs
       } else if (data?.type === 'planning') {
         setIsThinking(false);
-        setIsAutomationMode(true);
+        // NOTE: Do NOT set isAutomationMode here. The 'planning' event fires for
+        // ALL queries (including simple ones like "what time is it"). Setting
+        // isAutomationMode=true here would prevent the 'done' handler from
+        // resetting isSubmitting, leaving the red cancel button stuck.
+        // Real automation mode is set by 'plan:generated' / 'plan:found_existing'.
         setActiveTab('results');
         setInstallPrompt(null);
         setActionChips([]);
@@ -1842,20 +1849,29 @@ export function UnifiedOverlay() {
           return {
             ...t,
             status: status as any,
-            doneAt: Date.now(),
+            doneAt: (status === 'done' || status === 'failed' || status === 'cancelled') ? Date.now() : t.doneAt,
             result: data.answer || t.result,
             error: data.error || null,
           };
         }));
-        // Show completion banner
-        setTaskNotification({
-          taskId: data.taskId,
-          prompt: data.prompt || '',
-          answer: data.answer,
-          error: data.error,
-          status,
-        });
+        // Only show completion banner for done/failed (not awaiting-approval or waiting-for-input)
+        if (status === 'done' || status === 'failed' || status === 'cancelled') {
+          setTaskNotification({
+            taskId: data.taskId,
+            prompt: data.prompt || '',
+            answer: data.answer,
+            error: data.error,
+            status,
+          });
+        }
         setUnreadTabs(prev => { const n = new Set(prev); n.add('queue'); return n; });
+      }
+    }, token);
+
+    // Remove task from UI when user deletes it
+    ipcRenderer.on('task:removed', (data: any) => {
+      if (data?.taskId) {
+        setCommsTasks(prev => prev.filter(t => t.id !== data.taskId));
       }
     }, token);
 
@@ -2665,40 +2681,16 @@ export function UnifiedOverlay() {
                 </div>
               )}
 
-              {promptQueueItems.map(item => (
-                <div key={item.id} className="p-3 rounded-lg border" style={{ backgroundColor: 'rgba(255,255,255,0.03)', borderColor: 'rgba(255,255,255,0.1)' }}>
-                  <div className="flex items-center justify-between">
-                    <span className="text-sm text-gray-300 truncate flex-1">{item.message}</span>
-                    <span className={`text-xs px-2 py-1 rounded ${item.status === 'running' ? 'bg-blue-500/20 text-blue-400' : item.status === 'error' ? 'bg-red-500/20 text-red-400' : 'bg-green-500/20 text-green-400'}`}>
-                      {item.status}
-                    </span>
-                  </div>
-                </div>
-              ))}
-
-              <QueueTab
-                items={queueItems}
-                onRerun={(item) => ipcRenderer?.send('queue:rerun', { id: item.id })}
-                onCancel={(item) => ipcRenderer?.send('queue:cancel', { id: item.id })}
+              {/* comms-graph background tasks (concurrent handoffs) — at top */}
+              <QueueTaskList
+                tasks={commsTasks}
+                onShowResult={(task) => {
+                  if (task.result) {
+                    setStreamingResponse(task.result);
+                    setActiveTab('results');
+                  }
+                }}
               />
-
-              {/* comms-graph background tasks (concurrent handoffs) */}
-              {commsTasks.length > 0 && (
-                <div style={{ marginTop: 8 }}>
-                  <div style={{ fontSize: '0.62rem', color: '#6b7280', marginBottom: 6, fontWeight: 600, textTransform: 'uppercase', letterSpacing: 0.5 }}>
-                    Background Tasks
-                  </div>
-                  <QueueTaskList
-                    tasks={commsTasks}
-                    onShowResult={(task) => {
-                      if (task.result) {
-                        setStreamingResponse(task.result);
-                        setActiveTab('results');
-                      }
-                    }}
-                  />
-                </div>
-              )}
             </div>
 
           {/* Cron Tab */}

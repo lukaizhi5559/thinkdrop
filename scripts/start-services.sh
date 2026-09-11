@@ -234,6 +234,24 @@ sleep 2
 start_npm_start_service "personality-service" "$PROJECT_ROOT/mcp-services/personality-service" 256
 sleep 2
 
+# 10. comms-graph — port 3015 (small state graph for fast voice/text dialogue)
+#     Logs to $PROJECT_ROOT/logs like other services.
+echo "📦 Starting comms-graph..."
+cd "$PROJECT_ROOT/comms-graph"
+export NODE_OPTIONS="--max-old-space-size=256"
+export THINKDROP_PROJECT_ROOT="$PROJECT_ROOT"
+node src/server.cjs > "$PROJECT_ROOT/logs/comms-graph.log" 2>&1 &
+comms_pid=$!
+echo "comms-graph:$comms_pid" >> "$PIDS_FILE"
+sleep 1
+if kill -0 $comms_pid 2>/dev/null; then
+    echo "   ✅ PID $comms_pid"
+else
+    echo "   ❌ Failed to start — check logs/comms-graph.log"
+fi
+echo ""
+cd "$PROJECT_ROOT"
+
 # ── Summary ─────────────────────────────────────────────────────────────────
 
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
@@ -249,6 +267,7 @@ echo "   • Command:             http://localhost:3007/health"
 echo "   • Screen Intelligence: http://localhost:3008/service.health"
 echo "   • Voice Service:       http://localhost:3006/health"
 echo "   • Personality Service:  http://localhost:3012/health"
+echo "   • comms-graph:          http://localhost:3015/health"
 echo ""
 echo "📝 Logs:"
 echo "   tail -f logs/*.log"
