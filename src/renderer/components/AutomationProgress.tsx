@@ -459,14 +459,6 @@ function humanizeError(error: string): string {
   return msg.length > 100 ? msg.slice(0, 100) + '…' : msg;
 }
 
-function getAgentStatusLabel(elapsedMs: number): string {
-  if (elapsedMs < 8000) return 'working…';
-  if (elapsedMs < 20000) return 'running command…';
-  if (elapsedMs < 40000) return 'still working…';
-  if (elapsedMs < 60000) return 'taking a moment…';
-  return 'taking longer than expected…';
-}
-
 function formatActionLabel(action: { action?: string; url?: string; selector?: string; key?: string; [key: string]: any } | undefined | null): string {
   if (!action || typeof action !== 'object') return String(action || '');
   switch (action.action) {
@@ -1121,9 +1113,9 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
   }, [onHeightChange, activeTab]);
 
   // Notify parent when we become active/inactive
-  // Only active during planning/executing — done/failed/idle should NOT keep the glow on
+  // Only active during planning/executing/preflight/plan_review — done/failed/idle/awaiting-approval should NOT keep the glow on
   useEffect(() => {
-    onActiveChange?.(phase !== 'idle');
+    onActiveChange?.(phase === 'planning' || phase === 'executing' || phase === 'preflight' || phase === 'plan_review');
   }, [phase]);
 
   // Live countdown tick for monitoring entries — re-renders every 1s while
@@ -2051,7 +2043,6 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
             return next;
           });
           // Append thought to live step log with phase label
-          const _phaseLabel = data.phase === 'replan' ? 'Replan' : data.phase === 'repair' ? 'Repair' : data.phase === 'plan' ? 'Plan' : 'Thought';
           _appendAgentStepLog(stepIdx, {
             turn: 0,
             type: 'thought',
@@ -4625,12 +4616,6 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
                   const _hasTabFlow = (tabFlow.get(step.index) || []).length > 0;
                   const _hasStepLog = (agentStepLog.get(step.index) || []).length > 0;
                   if (!liveTurn && !isDone && !_hasTabFlow && !_hasStepLog) return null;
-
-                  const _actionVerbs: Record<string, string> = {
-                    run_cmd: 'running command', run_shell: 'probing',
-                    run_help: 'reading help', web_search: 'searching',
-                    web_fetch: 'fetching docs', run_update: 'updating CLI',
-                  };
 
                   const isExpanded = expandedAgentSteps.has(step.index);
                   const allSteps = agentTurns.get(step.index) || [];

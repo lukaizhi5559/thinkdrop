@@ -143,9 +143,10 @@ function _timeAgo(ms: number): string {
 }
 
 // ── QueueTaskCard — wraps AutomationProgress in an expandable card ────────────
-export function QueueTaskCard({ task, onShowResult }: {
+export function QueueTaskCard({ task, onShowResult, onHeightChange }: {
   task: CommsTask;
   onShowResult?: (task: CommsTask) => void;
+  onHeightChange?: () => void;
 }) {
   const [expanded, setExpanded] = React.useState(false);
   const [thinkingExpanded, setThinkingExpanded] = React.useState(false);
@@ -159,14 +160,25 @@ export function QueueTaskCard({ task, onShowResult }: {
   const agoStr = _timeAgo(diff);
   const agentName = task.agentId ? task.agentId.replace(/\.agent$/, '') : 'auto';
 
+  // Notify parent of height changes after DOM updates (expand/collapse, auto-expand)
+  const notifyHeightChange = React.useCallback(() => {
+    if (onHeightChange) {
+      requestAnimationFrame(() => onHeightChange());
+    }
+  }, [onHeightChange]);
+
   // Auto-expand when task is active or needs attention
   React.useEffect(() => {
     if (isActive || needsAttention) {
       setExpanded(true);
+      notifyHeightChange();
     }
-  }, [task.status]);
+  }, [task.status, notifyHeightChange]);
 
-  const handleExpand = () => setExpanded(e => !e);
+  const handleExpand = () => {
+    setExpanded(e => !e);
+    notifyHeightChange();
+  };
   const handleShowResult = () => { if (onShowResult) onShowResult(task); };
 
   return (
@@ -323,7 +335,7 @@ export function QueueTaskCard({ task, onShowResult }: {
             setIsSubmitting={() => {}}
             onAuthPending={() => {}}
             activeTab="queue"
-            onHeightChange={() => {}}
+            onHeightChange={notifyHeightChange}
             onActiveChange={() => {}}
           />
         </div>
@@ -420,9 +432,10 @@ export function QueueTaskCard({ task, onShowResult }: {
 }
 
 // ── QueueTaskList — renders all comms-graph tasks ──────────────────────────────
-export function QueueTaskList({ tasks, onShowResult }: {
+export function QueueTaskList({ tasks, onShowResult, onHeightChange }: {
   tasks: CommsTask[];
   onShowResult?: (task: CommsTask) => void;
+  onHeightChange?: () => void;
 }) {
   if (tasks.length === 0) {
     return (
@@ -438,7 +451,7 @@ export function QueueTaskList({ tasks, onShowResult }: {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
       {tasks.map(task => (
-        <QueueTaskCard key={task.id} task={task} onShowResult={onShowResult} />
+        <QueueTaskCard key={task.id} task={task} onShowResult={onShowResult} onHeightChange={onHeightChange} />
       ))}
     </div>
   );
@@ -649,6 +662,24 @@ export function TaskCompleteBanner({ notification, onDismiss, onShowResult, onGo
           ? 'td-notif-slide-out 0.3s cubic-bezier(0.4, 0, 1, 1) forwards'
           : 'td-notif-slide-in 0.45s cubic-bezier(0.16, 1, 0.3, 1), td-notif-pulse 1.5s ease-in-out 0.5s 2',
       }}>
+        {/* X close button — top-right corner */}
+        <button
+          onClick={handleDismiss}
+          aria-label="Close"
+          style={{
+            position: 'absolute', top: 8, right: 8,
+            width: 20, height: 20, padding: 0, borderRadius: 6,
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            background: 'transparent', border: 'none', cursor: 'pointer',
+            color: 'rgba(255,255,255,0.4)', transition: 'color 0.15s, background 0.15s',
+          }}
+          onMouseEnter={e => { e.currentTarget.style.color = 'rgba(255,255,255,0.85)'; e.currentTarget.style.background = 'rgba(255,255,255,0.08)'; }}
+          onMouseLeave={e => { e.currentTarget.style.color = 'rgba(255,255,255,0.4)'; e.currentTarget.style.background = 'transparent'; }}
+        >
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+            <line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line>
+          </svg>
+        </button>
         <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10 }}>
           {/* SVG icon */}
           <div style={{ flexShrink: 0, paddingTop: 1 }}>
@@ -661,6 +692,7 @@ export function TaskCompleteBanner({ notification, onDismiss, onShowResult, onGo
               fontSize: '0.74rem', fontWeight: 700, marginBottom: 3,
               color: accentColor,
               letterSpacing: 0.2,
+              paddingRight: 24,
             }}>
               {isFailed ? 'Task Failed' : isAuthRequired ? 'Sign-in Needed' : isAwaitingApproval ? 'Plan Ready — Approve?' : 'Task Complete'}
             </div>
@@ -693,36 +725,40 @@ export function TaskCompleteBanner({ notification, onDismiss, onShowResult, onGo
               </div>
             )}
 
-            {/* Action buttons */}
-            <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-              {/* Approve button for awaiting-approval */}
+            {/* Action buttons — right-justified for awaiting-approval, left for others */}
+            <div style={{
+              display: 'flex', gap: 6, alignItems: 'center',
+              justifyContent: isAwaitingApproval ? 'flex-end' : 'flex-start',
+            }}>
+              {/* For awaiting-approval: Approve + Cancel on the right */}
               {isAwaitingApproval && onApprove && (
                 <button onClick={() => onApprove(notification.taskId, (notification as any).planFile)} style={{
-                  padding: '4px 14px', borderRadius: 6, fontSize: '0.64rem', cursor: 'pointer',
-                  background: 'rgba(96,165,250,0.18)', border: '1px solid rgba(96,165,250,0.35)',
-                  color: '#60a5fa', fontWeight: 600,
+                  padding: '5px 16px', borderRadius: 6, fontSize: '0.64rem', cursor: 'pointer',
+                  background: 'rgba(96,165,250,0.22)', border: '1px solid rgba(96,165,250,0.45)',
+                  color: '#93c5fd', fontWeight: 600,
                   transition: 'background 0.15s',
                 }}
-                onMouseEnter={e => (e.currentTarget.style.background = 'rgba(96,165,250,0.28)')}
-                onMouseLeave={e => (e.currentTarget.style.background = 'rgba(96,165,250,0.18)')}
+                onMouseEnter={e => (e.currentTarget.style.background = 'rgba(96,165,250,0.35)')}
+                onMouseLeave={e => (e.currentTarget.style.background = 'rgba(96,165,250,0.22)')}
                 >
-                  Approve Plan
+                  Approve
                 </button>
               )}
               {isAwaitingApproval && (
                 <button onClick={handleDismiss} style={{
-                  padding: '4px 12px', borderRadius: 6, fontSize: '0.64rem', cursor: 'pointer',
-                  background: 'rgba(248,113,113,0.12)', border: '1px solid rgba(248,113,113,0.3)',
+                  padding: '5px 14px', borderRadius: 6, fontSize: '0.64rem', cursor: 'pointer',
+                  background: 'rgba(248,113,113,0.14)', border: '1px solid rgba(248,113,113,0.32)',
                   color: '#f87171', fontWeight: 500,
                   transition: 'background 0.15s',
                 }}
-                onMouseEnter={e => (e.currentTarget.style.background = 'rgba(248,113,113,0.22)')}
-                onMouseLeave={e => (e.currentTarget.style.background = 'rgba(248,113,113,0.12)')}
+                onMouseEnter={e => (e.currentTarget.style.background = 'rgba(248,113,113,0.24)')}
+                onMouseLeave={e => (e.currentTarget.style.background = 'rgba(248,113,113,0.14)')}
                 >
                   Cancel
                 </button>
               )}
-              {!isFailed && !isAuthRequired && !isAwaitingApproval && notification.answer && onShowResult && (
+              {/* For non-approval: View Result + Go to Queue on the left */}
+              {!isAwaitingApproval && !isFailed && !isAuthRequired && notification.answer && onShowResult && (
                 <button onClick={() => onShowResult(notification.taskId)} style={{
                   padding: '4px 12px', borderRadius: 6, fontSize: '0.64rem', cursor: 'pointer',
                   background: 'rgba(74,222,128,0.18)', border: '1px solid rgba(74,222,128,0.35)',
@@ -735,7 +771,7 @@ export function TaskCompleteBanner({ notification, onDismiss, onShowResult, onGo
                   View Result
                 </button>
               )}
-              {onGoToQueue && (
+              {!isAwaitingApproval && onGoToQueue && (
                 <button onClick={onGoToQueue} style={{
                   padding: '4px 12px', borderRadius: 6, fontSize: '0.64rem', cursor: 'pointer',
                   background: isAuthRequired ? 'rgba(251,191,36,0.18)' : 'rgba(255,255,255,0.06)',
@@ -749,17 +785,6 @@ export function TaskCompleteBanner({ notification, onDismiss, onShowResult, onGo
                   Go to Queue
                 </button>
               )}
-              <button onClick={handleDismiss} style={{
-                padding: '4px 10px', borderRadius: 6, fontSize: '0.64rem', cursor: 'pointer',
-                background: 'transparent', border: '1px solid rgba(255,255,255,0.08)',
-                color: '#6b7280', fontWeight: 500, marginLeft: 'auto',
-                transition: 'color 0.15s, border-color 0.15s',
-              }}
-              onMouseEnter={e => { e.currentTarget.style.color = '#9ca3af'; e.currentTarget.style.borderColor = 'rgba(255,255,255,0.15)'; }}
-              onMouseLeave={e => { e.currentTarget.style.color = '#6b7280'; e.currentTarget.style.borderColor = 'rgba(255,255,255,0.08)'; }}
-              >
-                Dismiss
-              </button>
             </div>
           </div>
         </div>

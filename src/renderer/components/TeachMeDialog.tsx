@@ -1,6 +1,4 @@
-import React, { useState } from 'react';
-
-const ipcRenderer = (window as any).electron?.ipcRenderer;
+import { useState } from 'react';
 
 interface TeachMeDialogProps {
   agentId: string;
@@ -11,7 +9,7 @@ interface TeachMeDialogProps {
   onSkip: () => void;
 }
 
-export function TeachMeDialog({ agentId, question, options, snapshot, onAnswer, onSkip }: TeachMeDialogProps) {
+export function TeachMeDialog({ question, options, snapshot, onAnswer, onSkip }: TeachMeDialogProps) {
   const [selectedOption, setSelectedOption] = useState<string | null>(null);
   const [explanation, setExplanation] = useState('');
   const [showExplanation, setShowExplanation] = useState(false);

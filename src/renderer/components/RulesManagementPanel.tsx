@@ -76,7 +76,7 @@ export function RulesManagementPanel() {
   const [domainToDelete, setDomainToDelete] = useState<string | null>(null);
   const [domainDeleteCount, setDomainDeleteCount] = useState(0);
   const [showCreateModal, setShowCreateModal] = useState(false);
-  const [createType, setCreateType] = useState<'context' | 'constraint'>('context');
+  const [createType] = useState<'context' | 'constraint'>('context');
 
   // Load rules
   const loadRules = useCallback(async () => {
@@ -181,21 +181,6 @@ export function RulesManagementPanel() {
       await loadRules();
     } catch (error) {
       console.error('[RulesManagementPanel] Failed to update priority:', error);
-    }
-  };
-
-  // Analyze domain for cleanup
-  const analyzeDomain = async (domain: string) => {
-    if (!ipcRenderer) return;
-    setIsLoading(true);
-    try {
-      const result = await ipcRenderer.invoke('rules:context:cleanup', { contextKey: domain });
-      setCleanupAnalysis(result);
-      setCleanupDomain(domain);
-    } catch (error) {
-      console.error('[RulesManagementPanel] Failed to analyze domain:', error);
-    } finally {
-      setIsLoading(false);
     }
   };
 
@@ -811,7 +796,7 @@ export function RulesManagementPanel() {
             setCleanupDomain(null);
             setCleanupAnalysis(null);
           }}
-          onApply={async (changes) => {
+          onApply={async (_changes) => {
             // Apply cleanup changes
             await loadRules();
             setCleanupDomain(null);

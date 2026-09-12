@@ -244,7 +244,7 @@ export const ImageCarousel: React.FC<ImageCarouselProps> = ({
       {/* Thumbnail navigation */}
       {images.length > 1 && (
         <div className="flex justify-center gap-1.5 mt-3">
-          {images.map((img, index) => (
+          {images.map((_img, index) => (
             <button
               key={`thumb-${index}`}
               onClick={() => scrollToImage(index)}

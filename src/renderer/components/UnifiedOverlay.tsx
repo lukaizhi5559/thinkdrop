@@ -22,7 +22,6 @@ import { SettingsTab } from './SettingsTab';
 import { RulesManagementPanel } from './RulesManagementPanel';
 // TrainingBanner removed — training now handled by TrainingPanel in AgentsTab
 import { TeachMeDialog } from './TeachMeDialog';
-import { AIActivityPanel } from './AIActivityPanel';
 import type { AIActivityPanelHandle } from './AIActivityPanel';
 
 // --- Types (imported from TabComponents for compatibility) ---
@@ -106,9 +105,18 @@ export function UnifiedOverlay() {
   const [streamingResponse, setStreamingResponse] = useState('');
   const [isStreaming, setIsStreaming] = useState(false);
   const [isThinking, setIsThinking] = useState(false);
+  const [thinkingElapsed, setThinkingElapsed] = useState(0);
   const [isAutomationMode, setIsAutomationMode] = useState(false);
   const isAutomationModeRef = useRef(false);
   useEffect(() => { isAutomationModeRef.current = isAutomationMode; }, [isAutomationMode]);
+  // Track elapsed time while thinking — for progressive status messages
+  useEffect(() => {
+    if (!isThinking) { setThinkingElapsed(0); return; }
+    const interval = setInterval(() => {
+      setThinkingElapsed(s => s + 1);
+    }, 1000);
+    return () => clearInterval(interval);
+  }, [isThinking]);
   const [streamingStartedRef, setStreamingStartedRef] = useState(false);
   const [actionChips, setActionChips] = useState<ActionChip[]>([]);
   const [searchSources, setSearchSources] = useState<SearchSource[]>([]);
@@ -126,14 +134,14 @@ export function UnifiedOverlay() {
   const [isDragOver, setIsDragOver] = useState(false);
   
   // --- Debug Terminal State ---
-  const [isDebugMode, setIsDebugMode] = useState(false);
+  const [isDebugMode] = useState(false);
   const [terminalHistory, setTerminalHistory] = useState<string[]>([]);
   const [terminalHistoryIndex, setTerminalHistoryIndex] = useState(-1);
   
   // --- Highlight Debug State ---
   const [showHighlightDebug, setShowHighlightDebug] = useState(false);
   const [highlightQuery, setHighlightQuery] = useState('');
-  const [activeHighlight, setActiveHighlight] = useState<string | null>(null);
+  const [, setActiveHighlight] = useState<string | null>(null);
   
   // Ref to AIActivityPanel for executing terminal commands
   const aiActivityPanelRef = useRef<AIActivityPanelHandle>(null);
@@ -148,17 +156,6 @@ export function UnifiedOverlay() {
 
   // --- AI Activity Panel Status ---
   // const isRunning = isSubmitting || isStreaming || isThinking || isAutomationMode || isInstalling || gatherPending;
-  const statusText = isThinking
-    ? 'Thinking...'
-    : isStreaming
-      ? 'Generating response...'
-      : isAutomationMode
-        ? 'Running automation...'
-        : isInstalling
-          ? 'Installing tool...'
-          : gatherPending
-            ? 'Waiting for your answer…'
-            : '';
 
   // --- Queue/Cron/Skills/Connections/Agents State ---
   const [queueItems, setQueueItems] = useState<QueueItem[]>([]);
@@ -2181,6 +2178,12 @@ export function UnifiedOverlay() {
     if (isAutomationMode && !streamingResponse && !installPrompt && !isInstalling) return null;
 
     if (isThinking) {
+      // Progressive status messages based on elapsed time
+      const thinkingText =
+        thinkingElapsed >= 15 ? 'This is taking longer than usual...'
+        : thinkingElapsed >= 10 ? 'Still working on it...'
+        : thinkingElapsed >= 5 ? 'Thinking...'
+        : '';
       return (
         <div className="flex items-center gap-3">
           <div className="flex gap-1">
@@ -2188,7 +2191,7 @@ export function UnifiedOverlay() {
             <div className="w-2 h-2 rounded-full bg-blue-500 animate-pulse" style={{ animationDelay: '150ms' }} />
             <div className="w-2 h-2 rounded-full bg-blue-500 animate-pulse" style={{ animationDelay: '300ms' }} />
           </div>
-          {/* <span className="text-gray-400 text-sm">Thinking...</span> */}
+          {thinkingText && <span className="text-gray-400 text-sm">{thinkingText}</span>}
         </div>
       );
     }
@@ -2700,6 +2703,10 @@ export function UnifiedOverlay() {
                     setStreamingResponse(task.result);
                     setActiveTab('results');
                   }
+                }}
+                onHeightChange={() => {
+                  if (shouldSuppressResize()) return;
+                  measureNow();
                 }}
               />
             </div>

@@ -1,10 +1,9 @@
-import React, { useState, useRef, useEffect, useCallback, forwardRef, useImperativeHandle } from 'react';
+import { useState, useRef, useEffect, useCallback, forwardRef, useImperativeHandle } from 'react';
 
 const { ipcRenderer } = window.electron;
 
 interface AIActivityPanelProps {
   isDebugMode: boolean;
-  activeTab: string;
   isRunning: boolean;
   currentOperation?: string;
 }
@@ -24,7 +23,7 @@ interface LogEntry {
 }
 
 export const AIActivityPanel = forwardRef<AIActivityPanelHandle, AIActivityPanelProps>(
-  ({ isDebugMode, activeTab, isRunning, currentOperation }, ref) => {
+  ({ isDebugMode, isRunning, currentOperation }, ref) => {
     const [isExpanded, setIsExpanded] = useState(false);
     const [logs, setLogs] = useState<LogEntry[]>([]);
     const [autoDebug, setAutoDebug] = useState(false);
@@ -246,7 +245,7 @@ export const AIActivityPanel = forwardRef<AIActivityPanelHandle, AIActivityPanel
     }, [addLog]);
 
     // Navigate command history
-    const navigateHistory = useCallback((direction: 'up' | 'down', currentInput: string) => {
+    const navigateHistory = useCallback((direction: 'up' | 'down', _currentInput: string) => {
       if (commandHistory.length === 0) {
         return { command: null, newIndex: -1 };
       }
@@ -312,11 +311,6 @@ export const AIActivityPanel = forwardRef<AIActivityPanelHandle, AIActivityPanel
     setAutoDebug(false);
     setIsCommandRunning(false);
   }, [autoDebug, addLog]);
-
-  const applyFix = useCallback(() => {
-    addLog('status', '🔧 Analyzing for fixes... (placeholder)');
-    // TODO: Implement AI fix analysis
-  }, [addLog]);
 
   // Show on all tabs when there's activity - no more hiding
   
@@ -462,6 +456,3 @@ export const AIActivityPanel = forwardRef<AIActivityPanelHandle, AIActivityPanel
 );
 
 AIActivityPanel.displayName = 'AIActivityPanel';
-
-// Mark unused props intentionally - visible on all tabs
-void ((props: AIActivityPanelProps) => props.activeTab);

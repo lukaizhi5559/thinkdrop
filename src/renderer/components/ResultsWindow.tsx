@@ -1239,27 +1239,24 @@ export default function ResultsWindow() {
       >
         <SkillsTab
           items={skillItems}
-          onSaveSecret={(skillName, key, value) =>
-            ipcRenderer?.send('skills:save-secret', { skillName, key, value })
-          }
-          onOpenCode={(filePath) =>
-            ipcRenderer?.send('skills:open-code', { filePath })
-          }
-          onUploadSkill={() =>
-            ipcRenderer?.send('skills:upload')
-          }
-          onOAuthConnect={(skillName, provider, tokenKey, scopes) =>
-            ipcRenderer?.send('skills:oauth-connect', { skillName, provider, tokenKey, scopes })
-          }
-          onScopesChange={(skillName, provider, scopes) =>
-            ipcRenderer?.send('skills:update-oauth-scopes', { skillName, provider, scopes })
-          }
-          onRepairOAuth={(skillName) =>
-            ipcRenderer?.send('skills:repair-oauth', { skillName })
-          }
-          onDelete={(skillName) =>
-            ipcRenderer?.send('skills:delete', { skillName })
-          }
+          onSaveSecret={(skillName, key, value) => {
+            ipcRenderer?.send('skills:save-secret', { skillName, key, value });
+          }}
+          onOpenCode={(filePath) => {
+            ipcRenderer?.send('skills:open-code', { filePath });
+          }}
+          onOAuthConnect={(skillName, provider, tokenKey, scopes) => {
+            ipcRenderer?.send('skills:oauth-connect', { skillName, provider, tokenKey, scopes });
+          }}
+          onScopesChange={(skillName, provider, scopes) => {
+            ipcRenderer?.send('skills:update-oauth-scopes', { skillName, provider, scopes });
+          }}
+          onRepairOAuth={(skillName) => {
+            ipcRenderer?.send('skills:repair-oauth', { skillName });
+          }}
+          onDelete={(skillName) => {
+            ipcRenderer?.send('skills:delete', { skillName });
+          }}
         />
       </div>
 
