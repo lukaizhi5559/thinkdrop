@@ -44,12 +44,14 @@ let _ipcBroadcast = null;
 let _mcpClient = null;
 let _mcpAdapter = null;
 let _llmBackend = null;
+let _setPendingPreflightPrompt = null;
 
-function init({ mcpClient, mcpAdapter, llmBackend, ipcBroadcast }) {
+function init({ mcpClient, mcpAdapter, llmBackend, ipcBroadcast, setPendingPreflightPrompt }) {
   _mcpClient = mcpClient;
   _mcpAdapter = mcpAdapter;
   _llmBackend = llmBackend;
   _ipcBroadcast = ipcBroadcast;
+  _setPendingPreflightPrompt = setPendingPreflightPrompt;
 }
 
 // ── HTTP helpers (notify comms-graph) ──────────────────────────────────────────
@@ -193,6 +195,19 @@ async function execute({ taskId, prompt, agentId, source, originalPrompt, sessio
     const answer = finalState.answer || '';
     const intent = finalState?.intent?.type || 'command_automate';
 
+    // Extract web search sources from finalState.contextDocs so the queue card
+    // can render the Perplexity-style favicon pill + dropdown.
+    const sources = Array.isArray(finalState.contextDocs)
+      ? finalState.contextDocs
+          .filter(d => d && d.url && d.url.startsWith('http'))
+          .slice(0, 10)
+          .map(d => {
+            let hostname = '';
+            try { hostname = new URL(d.url).hostname.replace(/^www\./, ''); } catch (_) {}
+            return { url: d.url, title: (d.text || d.title || hostname).split('\n')[0].trim() || hostname, hostname };
+          })
+      : [];
+
     // ── Detect the real final state ────────────────────────────────────────────
     if (finalState.awaitingPlanApproval) {
       // StateGraph paused for plan approval — store context for resume()
@@ -206,12 +221,15 @@ async function execute({ taskId, prompt, agentId, source, originalPrompt, sessio
         sessionId: finalState.resolvedSessionId || sessionId || null,
       });
       console.log(`[HandoffRunner] Task ${taskId} awaiting plan approval — planFile=${planFileFromState}`);
+      // Emit pipeline:done so AutomationProgress clears any planning spinner
+      progressCallback({ type: 'pipeline:done', contract: finalState._contract });
       _notifyComplete(taskId, agentId, 'awaiting-approval', '');
       if (_ipcBroadcast) {
         _ipcBroadcast('task:complete', {
           taskId,
           prompt: originalPrompt || prompt,
           answer: '',
+          sources,
           status: 'awaiting-approval',
           planFile: planFileFromState,
           agentId,
@@ -220,15 +238,50 @@ async function execute({ taskId, prompt, agentId, source, originalPrompt, sessio
       }
       return { ok: true, status: 'awaiting-approval', planFile: planFileFromState };
 
+    } else if (finalState.planError && finalState.preflightAuthRequired) {
+      // Preflight auth required — resumable warning state, NOT a terminal failure.
+      // The user needs to sign in; the task will resume after auth succeeds.
+      console.log(`[HandoffRunner] Task ${taskId} auth required: ${finalState.planError}`);
+      // Emit pipeline:done so AutomationProgress clears any planning spinner
+      progressCallback({ type: 'pipeline:done', contract: finalState._contract });
+      _notifyComplete(taskId, agentId, 'auth-required', finalState.planError);
+      if (_ipcBroadcast) {
+        _ipcBroadcast('task:complete', {
+          taskId,
+          prompt: originalPrompt || prompt,
+          answer: '',
+          sources,
+          error: finalState.planError,
+          status: 'auth-required',
+          agentId,
+          source,
+        });
+      }
+      // Populate the per-task pending map so the preflight:auth_continue
+      // handler in main.js can resume this task after sign-in.
+      if (typeof _setPendingPreflightPrompt === 'function') {
+        _setPendingPreflightPrompt(taskId, {
+          prompt,
+          agentId: agentId || null,
+          source: source || 'text',
+          originalPrompt: originalPrompt || null,
+          sessionId: finalState.resolvedSessionId || sessionId || null,
+        });
+      }
+      return { ok: false, status: 'auth-required', error: finalState.planError };
+
     } else if (finalState.planError) {
       // Preflight or plan generation failed
       console.error(`[HandoffRunner] Task ${taskId} plan error: ${finalState.planError}`);
+      // Emit pipeline:done so AutomationProgress clears any planning spinner
+      progressCallback({ type: 'pipeline:done', contract: finalState._contract });
       _notifyComplete(taskId, agentId, 'failed', finalState.planError);
       if (_ipcBroadcast) {
         _ipcBroadcast('task:complete', {
           taskId,
           prompt: originalPrompt || prompt,
           answer: '',
+          sources,
           error: finalState.planError,
           status: 'failed',
           agentId,
@@ -242,12 +295,15 @@ async function execute({ taskId, prompt, agentId, source, originalPrompt, sessio
       // The question event was already forwarded via progressCallback
       // Store a resolver so answerQuestion() can resolve it
       console.log(`[HandoffRunner] Task ${taskId} waiting for user input`);
+      // Emit pipeline:done so AutomationProgress clears any planning spinner
+      progressCallback({ type: 'pipeline:done', contract: finalState._contract });
       _notifyComplete(taskId, agentId, 'waiting-for-input', '');
       if (_ipcBroadcast) {
         _ipcBroadcast('task:complete', {
           taskId,
           prompt: originalPrompt || prompt,
           answer: '',
+          sources,
           status: 'waiting-for-input',
           agentId,
           source,
@@ -257,20 +313,28 @@ async function execute({ taskId, prompt, agentId, source, originalPrompt, sessio
 
     } else {
       // Normal completion
-      console.log(`[HandoffRunner] Task ${taskId} completed — ${answer.length} chars`);
+      const thinking = finalState.thinking || null;
+      console.log(`[HandoffRunner] Task ${taskId} completed — ${answer.length} chars${thinking ? ` (thinking: ${thinking.length} chars)` : ''}${sources.length ? ` (sources: ${sources.length})` : ''}`);
+      // Emit pipeline:done so AutomationProgress clears the planning spinner.
+      // This is critical for tasks that skip executeCommand (e.g. general_knowledge
+      // intent) — without it, the "Breaking down your request..." spinner stays
+      // forever because all_done never fires.
+      progressCallback({ type: 'pipeline:done', contract: finalState._contract });
       _notifyComplete(taskId, agentId, 'done', answer);
       if (_ipcBroadcast) {
         _ipcBroadcast('task:complete', {
           taskId,
           prompt: originalPrompt || prompt,
           answer,
+          thinking,
+          sources,
           intent,
           status: 'done',
           agentId,
           source,
         });
       }
-      return { ok: true, status: 'done', answer, intent };
+      return { ok: true, status: 'done', answer, thinking, intent };
     }
 
   } catch (err) {

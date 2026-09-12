@@ -1,11 +1,13 @@
 import React from 'react';
 import AutomationProgress from './AutomationProgress';
 import { playDropSound } from '../utils/thinkDropSound';
+import { Favicon } from './DefaultFaviconIcon';
+import RichContentRenderer from './rich-content/RichContentRenderer';
 
 const ipcRenderer = (window as any).electron?.ipcRenderer;
 
 // ── Types ──────────────────────────────────────────────────────────────────────
-export type TaskStatus = 'waiting-for-agent' | 'queued' | 'running' | 'awaiting-approval' | 'waiting-for-input' | 'done' | 'failed' | 'cancelled';
+export type TaskStatus = 'waiting-for-agent' | 'queued' | 'running' | 'auth-required' | 'awaiting-approval' | 'waiting-for-input' | 'done' | 'failed' | 'cancelled';
 
 export interface CommsTask {
   id: string;
@@ -23,6 +25,8 @@ export interface CommsTask {
     eta: { lo: number; hi: number } | null;
   };
   result: string | null;
+  thinking?: string | null;
+  sources?: { url: string; title: string; hostname: string }[] | null;
   intent: string;
   source: string;
 }
@@ -32,6 +36,7 @@ const TASK_STATUS_CONFIG: Record<TaskStatus, { label: string; color: string; bg:
   'waiting-for-agent':  { label: 'Waiting',          color: '#fbbf24', bg: 'rgba(251,191,36,0.06)',  border: 'rgba(251,191,36,0.18)' },
   'queued':             { label: 'Queued',           color: '#9ca3af', bg: 'rgba(255,255,255,0.03)', border: 'rgba(255,255,255,0.07)' },
   'running':            { label: 'Running',          color: '#60a5fa', bg: 'rgba(96,165,250,0.06)',  border: 'rgba(96,165,250,0.18)',  spin: true },
+  'auth-required':     { label: 'Sign-in needed',    color: '#fbbf24', bg: 'rgba(251,191,36,0.08)',  border: 'rgba(251,191,36,0.3)' },
   'awaiting-approval':  { label: 'Approval needed',  color: '#fbbf24', bg: 'rgba(251,191,36,0.08)',  border: 'rgba(251,191,36,0.3)' },
   'waiting-for-input':  { label: 'Needs input',      color: '#fbbf24', bg: 'rgba(251,191,36,0.08)',  border: 'rgba(251,191,36,0.3)' },
   'done':               { label: 'Done',             color: '#4ade80', bg: 'rgba(74,222,128,0.06)',   border: 'rgba(74,222,128,0.18)' },
@@ -53,6 +58,14 @@ const StatusIcon = ({ status, color, size = 14 }: { status: TaskStatus; color: s
           animation: 'spin 0.9s linear infinite',
         }} />
       </div>
+    );
+  }
+  if (status === 'auth-required') {
+    return (
+      <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/>
+        <path d="M7 11V7a5 5 0 0 1 10 0v4"/>
+      </svg>
     );
   }
   if (status === 'awaiting-approval' || status === 'waiting-for-input') {
@@ -135,9 +148,10 @@ export function QueueTaskCard({ task, onShowResult }: {
   onShowResult?: (task: CommsTask) => void;
 }) {
   const [expanded, setExpanded] = React.useState(false);
+  const [thinkingExpanded, setThinkingExpanded] = React.useState(false);
   const cfg = TASK_STATUS_CONFIG[task.status] || TASK_STATUS_CONFIG.queued;
-  const isActive = task.status === 'running' || task.status === 'queued' || task.status === 'waiting-for-agent' || task.status === 'awaiting-approval' || task.status === 'waiting-for-input';
-  const needsAttention = task.status === 'awaiting-approval' || task.status === 'waiting-for-input';
+  const isActive = task.status === 'running' || task.status === 'queued' || task.status === 'waiting-for-agent' || task.status === 'auth-required' || task.status === 'awaiting-approval' || task.status === 'waiting-for-input';
+  const needsAttention = task.status === 'auth-required' || task.status === 'awaiting-approval' || task.status === 'waiting-for-input';
   const preview = task.prompt.length > 80 ? task.prompt.slice(0, 80) + '…' : task.prompt;
   const elapsed = useElapsed(task.startedAt || task.createdAt, isActive);
   const elapsedStr = _formatTime(elapsed);
@@ -314,18 +328,65 @@ export function QueueTaskCard({ task, onShowResult }: {
           />
         </div>
 
-        {/* Result (if done) */}
+        {/* Thinking (collapsible, if present) */}
+        {task.thinking && (
+          <div style={{ margin: '0 12px 8px' }}>
+            <button
+              onClick={(e) => { e.stopPropagation(); setThinkingExpanded(!thinkingExpanded); }}
+              style={{
+                display: 'flex', alignItems: 'center', gap: 6, width: '100%',
+                padding: '6px 10px', borderRadius: 6, cursor: 'pointer',
+                background: 'rgba(129,140,248,0.06)', border: '1px solid rgba(129,140,248,0.15)',
+                color: '#818cf8', fontSize: '0.66rem', fontWeight: 600,
+                transition: 'background 0.15s',
+              }}
+              onMouseEnter={e => (e.currentTarget.style.background = 'rgba(129,140,248,0.12)')}
+              onMouseLeave={e => (e.currentTarget.style.background = 'rgba(129,140,248,0.06)')}
+            >
+              <BrainIcon size={13} color="#818cf8" />
+              <span>Thinking</span>
+              <svg width={10} height={10} viewBox="0 0 24 24" fill="none" stroke="#818cf8" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ marginLeft: 'auto', transform: thinkingExpanded ? 'rotate(180deg)' : 'none', transition: 'transform 0.15s' }}>
+                <polyline points="6,9 12,15 18,9"/>
+              </svg>
+            </button>
+            {thinkingExpanded && (
+              <div style={{
+                marginTop: 4, padding: '8px 10px', borderRadius: 6,
+                fontSize: '0.64rem', color: '#9ca3af', lineHeight: 1.5,
+                fontFamily: 'ui-monospace, "SF Mono", Menlo, monospace',
+                background: 'rgba(0,0,0,0.2)',
+                border: '1px solid rgba(129,140,248,0.1)',
+                maxHeight: 200, overflowY: 'auto', whiteSpace: 'pre-wrap',
+              }}>
+                {task.thinking}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Source pill (favicon stack + dropdown) — shown when sources exist */}
+        {task.sources && task.sources.length > 0 && (
+          <div style={{ margin: '0 12px 8px' }}>
+            <SourcePill sources={task.sources} />
+          </div>
+        )}
+
+        {/* Result (if done) — rendered via RichContentRenderer for markdown + citation strip */}
         {task.result && (
           <div style={{
             margin: '0 12px 8px',
-            fontSize: '0.68rem', color: '#d1d5db', lineHeight: 1.5,
             padding: '8px 10px', borderRadius: 6,
             background: 'rgba(255,255,255,0.03)',
             border: '1px solid rgba(255,255,255,0.06)',
             maxHeight: 200, overflowY: 'auto',
+            scrollbarWidth: 'thin',
+            scrollbarColor: 'rgba(255,255,255,0.15) transparent',
           }}>
-            {task.result.substring(0, 500)}
-            {task.result.length > 500 ? '…' : ''}
+            <RichContentRenderer
+              content={task.result.replace(/【[^】]*】/g, '')}
+              animated={false}
+              className="text-xs"
+            />
           </div>
         )}
 
@@ -399,12 +460,106 @@ const FailureAlertIcon = ({ size = 22 }: { size?: number }) => (
   </svg>
 );
 
+const AuthRequiredIcon = ({ size = 22 }: { size?: number }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none">
+    <rect x="3" y="11" width="18" height="11" rx="2" ry="2" fill="rgba(251,191,36,0.12)" stroke="#fbbf24" strokeWidth="1.5" strokeLinejoin="round"/>
+    <path d="M7 11V7a5 5 0 0 1 10 0v4" fill="none" stroke="#fbbf24" strokeWidth="1.5" strokeLinecap="round"/>
+    <circle cx="12" cy="16" r="1.5" fill="#fbbf24"/>
+  </svg>
+);
+
+const ApprovalIcon = ({ size = 22 }: { size?: number }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none">
+    <rect x="3" y="3" width="18" height="18" rx="3" fill="rgba(96,165,250,0.12)" stroke="#60a5fa" strokeWidth="1.5"/>
+    <path d="M9 12l2 2 4-4" fill="none" stroke="#60a5fa" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+  </svg>
+);
+
+const BrainIcon = ({ size = 14, color = '#818cf8' }: { size?: number; color?: string }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+    <path d="M9.5 2a2.5 2.5 0 0 0-2.45 2.5A2.5 2.5 0 0 0 5 7a2.5 2.5 0 0 0-1 4.5A2.5 2.5 0 0 0 5 16a2.5 2.5 0 0 0 2.5 2.5A2.5 2.5 0 0 0 10 21V4a2 2 0 0 0-.5-2z"/>
+    <path d="M14.5 2a2.5 2.5 0 0 1 2.45 2.5A2.5 2.5 0 0 1 19 7a2.5 2.5 0 0 1 1 4.5A2.5 2.5 0 0 1 19 16a2.5 2.5 0 0 1-2.5 2.5A2.5 2.5 0 0 1 14 21V4a2 2 0 0 1 .5-2z"/>
+  </svg>
+);
+
+// ── SourcePill — Perplexity-style favicon stack + dropdown (extracted from ResultsWindow) ──
+const SourcePill = ({ sources }: { sources: { url: string; title: string; hostname: string }[] }) => {
+  const [showPanel, setShowPanel] = React.useState(false);
+  if (!sources || sources.length === 0) return null;
+  const visible = sources.slice(0, 4);
+  const OVERLAP = 10;
+  const CIRCLE = 22;
+  return (
+    <div style={{ position: 'relative', marginBottom: 8 }}>
+      <button
+        onClick={(e) => { e.stopPropagation(); setShowPanel(!showPanel); }}
+        style={{ display: 'flex', alignItems: 'center', gap: 8, background: 'none', border: 'none', padding: 0, cursor: 'pointer', userSelect: 'none' }}
+      >
+        <div style={{ position: 'relative', width: CIRCLE + (visible.length - 1) * (CIRCLE - OVERLAP), height: CIRCLE, flexShrink: 0 }}>
+          {visible.map((src, i) => (
+            <div key={src.url + i} style={{
+              position: 'absolute', left: i * (CIRCLE - OVERLAP), top: 0, width: CIRCLE, height: CIRCLE,
+              borderRadius: '50%', overflow: 'hidden', border: '1.5px solid rgba(255,255,255,0.12)',
+              backgroundColor: '#1a1a1a', display: 'flex', alignItems: 'center', justifyContent: 'center',
+              zIndex: visible.length - i, flexShrink: 0,
+            }}>
+              <Favicon domain={src.hostname} size={14} alt={src.hostname} />
+            </div>
+          ))}
+        </div>
+        <span style={{ color: '#9ca3af', fontSize: '0.66rem', fontWeight: 500, display: 'flex', alignItems: 'center', gap: 3 }}>
+          {sources.length} {sources.length === 1 ? 'site' : 'sites'}
+          <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"
+            style={{ color: '#6b7280', transform: showPanel ? 'rotate(180deg)' : 'rotate(0deg)', transition: 'transform 0.15s' }}>
+            <polyline points="6 9 12 15 18 9" />
+          </svg>
+        </span>
+      </button>
+      {showPanel && (
+        <div style={{
+          position: 'absolute', top: 'calc(100% + 6px)', left: 0, zIndex: 50, width: 280, maxHeight: 320, overflowY: 'auto',
+          backgroundColor: '#1c1c1e', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 10,
+          boxShadow: '0 8px 32px rgba(0,0,0,0.5)', padding: '6px 0',
+        }}>
+          <div style={{ padding: '6px 12px 4px', fontSize: '0.65rem', fontWeight: 600, color: '#6b7280', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+            Sources
+          </div>
+          {sources.map((src, i) => (
+            <div key={src.url + i} onClick={(e) => { e.stopPropagation(); if (ipcRenderer) ipcRenderer.send('shell:open-url', src.url); }}
+              style={{ display: 'flex', alignItems: 'center', gap: 9, padding: '7px 12px', cursor: 'pointer', transition: 'background 0.1s' }}
+              onMouseEnter={e => (e.currentTarget.style.backgroundColor = 'rgba(255,255,255,0.06)')}
+              onMouseLeave={e => (e.currentTarget.style.backgroundColor = 'transparent')}
+            >
+              <div style={{ width: 20, height: 20, borderRadius: '50%', backgroundColor: '#2a2a2c', border: '1px solid rgba(255,255,255,0.08)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                <Favicon domain={src.hostname} size={12} alt="" />
+              </div>
+              <div style={{ minWidth: 0, flex: 1 }}>
+                <div style={{ fontSize: '0.72rem', fontWeight: 500, color: '#e5e7eb', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                  {src.title || src.hostname}
+                </div>
+                <div style={{ fontSize: '0.62rem', color: '#6b7280', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                  {src.hostname}
+                </div>
+              </div>
+              <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="#4b5563" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
+                <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>
+                <polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/>
+              </svg>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+};
+
 // ── TaskCompleteBanner — top-right toast with slide-out animation + sound ──────
-export function TaskCompleteBanner({ notification, onDismiss, onShowResult, onGoToQueue }: {
-  notification: { taskId: string; prompt: string; answer?: string; error?: string; status?: string } | null;
+export function TaskCompleteBanner({ notification, onDismiss, onShowResult, onGoToQueue, onApprove }: {
+  notification: { taskId: string; prompt: string; answer?: string; error?: string; status?: string; planFile?: string | null } | null;
   onDismiss: () => void;
   onShowResult?: (taskId: string) => void;
   onGoToQueue?: () => void;
+  onApprove?: (taskId: string, planFile?: string | null) => void;
 }) {
   const [exiting, setExiting] = React.useState(false);
 
@@ -416,9 +571,10 @@ export function TaskCompleteBanner({ notification, onDismiss, onShowResult, onGo
     }
   }, [notification]);
 
-  // Auto-dismiss after 10s
+  // Auto-dismiss after 10s (but not for awaiting-approval — user needs to act)
   React.useEffect(() => {
     if (!notification) return;
+    if (notification.status === 'awaiting-approval') return; // Don't auto-dismiss approval notifications
     const t = setTimeout(() => {
       setExiting(true);
       setTimeout(onDismiss, 300);
@@ -428,10 +584,31 @@ export function TaskCompleteBanner({ notification, onDismiss, onShowResult, onGo
 
   if (!notification) return null;
 
-  const isFailed = notification.status === 'failed' || notification.error;
+  const isFailed = notification.status === 'failed' || (!!notification.error && notification.status !== 'auth-required' && notification.status !== 'awaiting-approval');
+  const isAuthRequired = notification.status === 'auth-required';
+  const isAwaitingApproval = notification.status === 'awaiting-approval';
   const preview = notification.prompt.length > 60
     ? notification.prompt.slice(0, 60) + '…'
     : notification.prompt;
+  // Response preview footer — truncated, defensive strip of any residual think tags
+  const _stripThink = (t: string) => t.replace(/<think(?:ing)?>[\s\S]*?<\/think(?:ing)?>/gi, '').replace(/<\/think(?:ing)?>/g, '').trim();
+  const cleanAnswer = notification.answer ? _stripThink(notification.answer) : '';
+  const responsePreview = cleanAnswer.length > 80
+    ? cleanAnswer.slice(0, 80) + '…'
+    : cleanAnswer;
+
+  // Color scheme: green for done, red for failed, amber for auth-required, blue for awaiting-approval
+  const accentColor = isFailed ? '#f87171' : isAuthRequired ? '#fbbf24' : isAwaitingApproval ? '#60a5fa' : '#4ade80';
+  const accentBg = isFailed
+    ? 'linear-gradient(135deg, rgba(248,113,113,0.12), rgba(15,15,25,0.85))'
+    : isAuthRequired
+      ? 'linear-gradient(135deg, rgba(251,191,36,0.12), rgba(15,15,25,0.85))'
+      : isAwaitingApproval
+        ? 'linear-gradient(135deg, rgba(96,165,250,0.12), rgba(15,15,25,0.85))'
+        : 'linear-gradient(135deg, rgba(74,222,128,0.10), rgba(15,15,25,0.85))';
+  const accentBorder = isFailed ? 'rgba(248,113,113,0.3)' : isAuthRequired ? 'rgba(251,191,36,0.3)' : isAwaitingApproval ? 'rgba(96,165,250,0.3)' : 'rgba(74,222,128,0.3)';
+  const pulseColor = isFailed ? 'rgba(248,113,113,0.3)' : isAuthRequired ? 'rgba(251,191,36,0.3)' : isAwaitingApproval ? 'rgba(96,165,250,0.3)' : 'rgba(74,222,128,0.3)';
+  const pulseFade = isFailed ? 'rgba(248,113,113,0.08)' : isAuthRequired ? 'rgba(251,191,36,0.08)' : isAwaitingApproval ? 'rgba(96,165,250,0.08)' : 'rgba(74,222,128,0.08)';
 
   const handleDismiss = () => {
     setExiting(true);
@@ -451,8 +628,8 @@ export function TaskCompleteBanner({ notification, onDismiss, onShowResult, onGo
           100% { transform: translateX(120%) scale(0.95); opacity: 0; }
         }
         @keyframes td-notif-pulse {
-          0%, 100% { box-shadow: 0 8px 24px rgba(0,0,0,0.3), 0 0 0 0 ${isFailed ? 'rgba(248,113,113,0.3)' : 'rgba(74,222,128,0.3)'}; }
-          50%      { box-shadow: 0 8px 24px rgba(0,0,0,0.3), 0 0 0 6px ${isFailed ? 'rgba(248,113,113,0.08)' : 'rgba(74,222,128,0.08)'}; }
+          0%, 100% { box-shadow: 0 8px 24px rgba(0,0,0,0.3), 0 0 0 0 ${pulseColor}; }
+          50%      { box-shadow: 0 8px 24px rgba(0,0,0,0.3), 0 0 0 6px ${pulseFade}; }
         }
       `}</style>
       <div style={{
@@ -463,10 +640,8 @@ export function TaskCompleteBanner({ notification, onDismiss, onShowResult, onGo
         maxWidth: 380,
         minWidth: 300,
         borderRadius: 12,
-        background: isFailed
-          ? 'linear-gradient(135deg, rgba(248,113,113,0.12), rgba(15,15,25,0.85))'
-          : 'linear-gradient(135deg, rgba(74,222,128,0.10), rgba(15,15,25,0.85))',
-        border: `1px solid ${isFailed ? 'rgba(248,113,113,0.3)' : 'rgba(74,222,128,0.3)'}`,
+        background: accentBg,
+        border: `1px solid ${accentBorder}`,
         backdropFilter: 'blur(16px)',
         WebkitBackdropFilter: 'blur(16px)',
         padding: '14px 16px',
@@ -477,30 +652,77 @@ export function TaskCompleteBanner({ notification, onDismiss, onShowResult, onGo
         <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10 }}>
           {/* SVG icon */}
           <div style={{ flexShrink: 0, paddingTop: 1 }}>
-            {isFailed ? <FailureAlertIcon size={22} /> : <SuccessDropletIcon size={22} />}
+            {isFailed ? <FailureAlertIcon size={22} /> : isAuthRequired ? <AuthRequiredIcon size={22} /> : isAwaitingApproval ? <ApprovalIcon size={22} /> : <SuccessDropletIcon size={22} />}
           </div>
 
           <div style={{ flex: 1, minWidth: 0 }}>
             {/* Title */}
             <div style={{
               fontSize: '0.74rem', fontWeight: 700, marginBottom: 3,
-              color: isFailed ? '#f87171' : '#4ade80',
+              color: accentColor,
               letterSpacing: 0.2,
             }}>
-              {isFailed ? 'Task Failed' : 'Task Complete'}
+              {isFailed ? 'Task Failed' : isAuthRequired ? 'Sign-in Needed' : isAwaitingApproval ? 'Plan Ready — Approve?' : 'Task Complete'}
             </div>
 
-            {/* Prompt preview */}
+            {/* Prompt preview (header) */}
             <div style={{
-              fontSize: '0.69rem', color: '#d1d5db', lineHeight: 1.45, marginBottom: 8,
+              fontSize: '0.69rem', color: '#d1d5db', lineHeight: 1.45, marginBottom: 6,
               overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
             }}>
               {isFailed ? (notification.error || 'Something went wrong') : `"${preview}"`}
             </div>
 
+            {/* Response preview footer — only for done tasks with an answer */}
+            {!isFailed && !isAuthRequired && responsePreview && (
+              <div style={{
+                fontSize: '0.66rem', color: '#9ca3af', lineHeight: 1.4, marginBottom: 8,
+                fontStyle: 'italic',
+                overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+              }}>
+                {responsePreview}
+              </div>
+            )}
+
+            {/* Auth-required hint */}
+            {isAuthRequired && (
+              <div style={{
+                fontSize: '0.66rem', color: '#fbbf24', lineHeight: 1.4, marginBottom: 8,
+              }}>
+                Complete sign-in in the Queue to continue.
+              </div>
+            )}
+
             {/* Action buttons */}
             <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-              {!isFailed && notification.answer && onShowResult && (
+              {/* Approve button for awaiting-approval */}
+              {isAwaitingApproval && onApprove && (
+                <button onClick={() => onApprove(notification.taskId, (notification as any).planFile)} style={{
+                  padding: '4px 14px', borderRadius: 6, fontSize: '0.64rem', cursor: 'pointer',
+                  background: 'rgba(96,165,250,0.18)', border: '1px solid rgba(96,165,250,0.35)',
+                  color: '#60a5fa', fontWeight: 600,
+                  transition: 'background 0.15s',
+                }}
+                onMouseEnter={e => (e.currentTarget.style.background = 'rgba(96,165,250,0.28)')}
+                onMouseLeave={e => (e.currentTarget.style.background = 'rgba(96,165,250,0.18)')}
+                >
+                  Approve Plan
+                </button>
+              )}
+              {isAwaitingApproval && (
+                <button onClick={handleDismiss} style={{
+                  padding: '4px 12px', borderRadius: 6, fontSize: '0.64rem', cursor: 'pointer',
+                  background: 'rgba(248,113,113,0.12)', border: '1px solid rgba(248,113,113,0.3)',
+                  color: '#f87171', fontWeight: 500,
+                  transition: 'background 0.15s',
+                }}
+                onMouseEnter={e => (e.currentTarget.style.background = 'rgba(248,113,113,0.22)')}
+                onMouseLeave={e => (e.currentTarget.style.background = 'rgba(248,113,113,0.12)')}
+                >
+                  Cancel
+                </button>
+              )}
+              {!isFailed && !isAuthRequired && !isAwaitingApproval && notification.answer && onShowResult && (
                 <button onClick={() => onShowResult(notification.taskId)} style={{
                   padding: '4px 12px', borderRadius: 6, fontSize: '0.64rem', cursor: 'pointer',
                   background: 'rgba(74,222,128,0.18)', border: '1px solid rgba(74,222,128,0.35)',
@@ -516,12 +738,13 @@ export function TaskCompleteBanner({ notification, onDismiss, onShowResult, onGo
               {onGoToQueue && (
                 <button onClick={onGoToQueue} style={{
                   padding: '4px 12px', borderRadius: 6, fontSize: '0.64rem', cursor: 'pointer',
-                  background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.12)',
-                  color: '#9ca3af', fontWeight: 500,
+                  background: isAuthRequired ? 'rgba(251,191,36,0.18)' : 'rgba(255,255,255,0.06)',
+                  border: `1px solid ${isAuthRequired ? 'rgba(251,191,36,0.35)' : 'rgba(255,255,255,0.12)'}`,
+                  color: isAuthRequired ? '#fbbf24' : '#9ca3af', fontWeight: 500,
                   transition: 'background 0.15s',
                 }}
-                onMouseEnter={e => (e.currentTarget.style.background = 'rgba(255,255,255,0.12)')}
-                onMouseLeave={e => (e.currentTarget.style.background = 'rgba(255,255,255,0.06)')}
+                onMouseEnter={e => (e.currentTarget.style.background = isAuthRequired ? 'rgba(251,191,36,0.28)' : 'rgba(255,255,255,0.12)')}
+                onMouseLeave={e => (e.currentTarget.style.background = isAuthRequired ? 'rgba(251,191,36,0.18)' : 'rgba(255,255,255,0.06)')}
                 >
                   Go to Queue
                 </button>

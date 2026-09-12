@@ -2646,11 +2646,12 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
         }
 
         case 'pipeline:done': {
-          // Safety net for non-automate intents (memory_retrieve, etc.) where all_done
-          // never fires because executeCommand never runs. For command_automate, all_done
-          // is the proper completion signal — skip here to avoid racing with plan:generated.
-          const intent = data?.contract?.intent;
-          if (intent === 'command_automate') break;
+          // The pipeline has exited (stateGraph.execute returned). Clear the
+          // planning/executing spinner. This is critical for tasks that skip
+          // executeCommand (e.g. general_knowledge intent routed through
+          // WebSearch → Answer) — without this, the "Breaking down your
+          // request..." spinner stays forever because all_done never fires.
+          // The phase guard below prevents overriding plan_review.
           const p = phaseRef.current;
           if (p === 'planning' || p === 'executing') {
             setPhase('done');

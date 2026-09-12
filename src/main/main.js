@@ -520,6 +520,16 @@ function startOverlayControlServer() {
           const { taskId, prompt, agentId, source, originalPrompt } = JSON.parse(body || '{}');
           console.log(`[CommsGraph] Handoff received — task=${taskId} agent=${agentId || 'auto'} source=${source}`);
 
+          // Emit task:created BEFORE starting the stategraph run so the queue card
+          // is mounted and ready to receive plan:generated / preflight events.
+          // Without this, plan:generated can fire before the card exists and be lost.
+          safeSendUnified('task:created', {
+            taskId,
+            prompt: originalPrompt || prompt,
+            agentId: agentId || null,
+            parked: false,
+          });
+
           // Spawn concurrent stategraph run via handoffRunner
           const handoffRunner = require('./handoffRunner');
           handoffRunner.execute({
@@ -1404,6 +1414,7 @@ function initStateGraph() {
             safeSend(unifiedWindow, channel, data);
           }
         },
+        setPendingPreflightPrompt: (taskId, ctx) => _pendingPreflightPromptsByTask.set(taskId, ctx),
       });
       console.log('✅ [HandoffRunner] Initialized for comms-graph concurrent handoffs');
     } catch (err) {
@@ -3051,8 +3062,10 @@ app.whenReady().then(async () => {
             safeSendUnified('ws-bridge:message', { type: 'done' });
 
             // If it was a handoff, the task is already being dispatched by comms-graph
-            // via /comms.handoff — no need to enqueue in promptQueue
-            if (intent === 0 && metadata?.taskId) {
+            // via /comms.handoff — no need to enqueue in promptQueue.
+            // For non-parked tasks, task:created was already emitted in /comms.handoff.
+            // For parked tasks (agent locked), /comms.handoff was never called, so emit here.
+            if (intent === 0 && metadata?.taskId && metadata?.parked) {
               safeSendUnified('task:created', {
                 taskId: metadata.taskId,
                 prompt,
@@ -3177,6 +3190,7 @@ app.whenReady().then(async () => {
     try {
       const handoffRunner = require('./handoffRunner');
       const cancelled = handoffRunner.cancel(taskId);
+      _pendingPreflightPromptsByTask.delete(taskId);
       console.log(`[CommsGraph] Task ${taskId} cancel: ${cancelled ? 'success' : 'not found'}`);
     } catch (err) {
       console.error('[CommsGraph] Task cancel error:', err.message);
@@ -3189,6 +3203,7 @@ app.whenReady().then(async () => {
       // 1. If the handoff is still running, cancel it first
       const handoffRunner = require('./handoffRunner');
       handoffRunner.cancel(taskId);
+      _pendingPreflightPromptsByTask.delete(taskId);
       // 2. Remove from comms-graph journal
       const result = await _commsHttp('/comms.remove', { taskId });
       const ok = result?.ok === true;
@@ -8092,6 +8107,15 @@ app.whenReady().then(async () => {
                     agentId: normalizedAgentId,
                     taskId,
                     message: 'Sign-in verified — resuming task...',
+                  });
+                  // Emit a running status so the queue card transitions out of auth-required
+                  safeSendUnified('task:complete', {
+                    taskId,
+                    prompt: tp.originalPrompt || tp.prompt,
+                    answer: '',
+                    status: 'running',
+                    agentId: tp.agentId,
+                    source: tp.source,
                   });
                   // Resume the handoff task via handoffRunner
                   const handoffRunner = require('./handoffRunner');

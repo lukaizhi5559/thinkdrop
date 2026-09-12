@@ -171,7 +171,7 @@ export function UnifiedOverlay() {
 
   // --- comms-graph task state (concurrent handoff tasks) ---
   const [commsTasks, setCommsTasks] = useState<CommsTask[]>([]);
-  const [taskNotification, setTaskNotification] = useState<{ taskId: string; prompt: string; answer?: string; error?: string; status?: string } | null>(null);
+  const [taskNotification, setTaskNotification] = useState<{ taskId: string; prompt: string; answer?: string; error?: string; status?: string; planFile?: string | null } | null>(null);
 
   // --- Skill Build State ---
   const [skillBuild, setSkillBuild] = useState<SkillBuildState | null>(null);
@@ -247,6 +247,7 @@ export function UnifiedOverlay() {
   // --- Stable token for token-based IPC deduplication ---
   // Stable across renders; preload uses it to ensure exactly one listener per channel.
   const listenerToken = useRef('unified-overlay');
+  const _lastHandoffSoundRef = useRef(0);  // Debounce for handoff sound
 
   // --- Dragging State ---
   const [isDragging, setIsDragging] = useState(false);
@@ -1802,6 +1803,12 @@ export function UnifiedOverlay() {
     // ── comms-graph task events ──────────────────────────────────────────────
     ipcRenderer.on('task:created', (data: any) => {
       if (data?.taskId) {
+        // Play handoff sound (debounced — skip if a handoff sound played within 3s)
+        const now = Date.now();
+        if (now - _lastHandoffSoundRef.current > 3000) {
+          _lastHandoffSoundRef.current = now;
+          playThinkDropSound();
+        }
         setCommsTasks(prev => {
           if (prev.some(t => t.id === data.taskId)) return prev;
           return [...prev, {
@@ -1851,17 +1858,21 @@ export function UnifiedOverlay() {
             status: status as any,
             doneAt: (status === 'done' || status === 'failed' || status === 'cancelled') ? Date.now() : t.doneAt,
             result: data.answer || t.result,
+            thinking: data.thinking || t.thinking || null,
+            sources: data.sources || t.sources || null,
             error: data.error || null,
           };
         }));
-        // Only show completion banner for done/failed (not awaiting-approval or waiting-for-input)
-        if (status === 'done' || status === 'failed' || status === 'cancelled') {
+        // Show completion banner for done/failed/auth-required/awaiting-approval
+        // (awaiting-approval needs an approve action in the notification)
+        if (status === 'done' || status === 'failed' || status === 'cancelled' || status === 'auth-required' || status === 'awaiting-approval') {
           setTaskNotification({
             taskId: data.taskId,
             prompt: data.prompt || '',
             answer: data.answer,
             error: data.error,
             status,
+            planFile: data.planFile || null,
           });
         }
         setUnreadTabs(prev => { const n = new Set(prev); n.add('queue'); return n; });
@@ -3348,6 +3359,10 @@ export function UnifiedOverlay() {
         onGoToQueue={() => {
           setActiveTab('queue');
           setUnreadTabs(prev => { const n = new Set(prev); n.delete('queue'); return n; });
+          setTaskNotification(null);
+        }}
+        onApprove={(taskId, planFile) => {
+          ipcRenderer.send('plan:approve', { taskId, planFile });
           setTaskNotification(null);
         }}
       />
