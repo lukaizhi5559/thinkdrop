@@ -3,7 +3,7 @@ import { flushSync } from 'react-dom';
 import { useDynamicHeight, MAX_HEIGHT } from './utils/useDynamicHeight';
 import { Favicon } from './DefaultFaviconIcon';
 const ipcRenderer = (window as any).electron?.ipcRenderer;
-import { playThinkDropSound, playDropSound } from '../utils/thinkDropSound';
+import { playThinkDropSound, playDropSound, playIntentSound, playDefaultSound } from '../utils/thinkDropSound';
 import {
   TabBar,
   CronTab,
@@ -106,6 +106,7 @@ export function UnifiedOverlay() {
   const [isStreaming, setIsStreaming] = useState(false);
   const [isThinking, setIsThinking] = useState(false);
   const [thinkingElapsed, setThinkingElapsed] = useState(0);
+  const [isTaskWorking, setIsTaskWorking] = useState(false);
   const [isAutomationMode, setIsAutomationMode] = useState(false);
   const isAutomationModeRef = useRef(false);
   useEffect(() => { isAutomationModeRef.current = isAutomationMode; }, [isAutomationMode]);
@@ -245,6 +246,7 @@ export function UnifiedOverlay() {
   // Stable across renders; preload uses it to ensure exactly one listener per channel.
   const listenerToken = useRef('unified-overlay');
   const _lastHandoffSoundRef = useRef(0);  // Debounce for handoff sound
+  const _playedIntentSoundRef = useRef(new Set<string>()); // Dedup intent sounds per task
 
   // --- Dragging State ---
   const [isDragging, setIsDragging] = useState(false);
@@ -800,7 +802,7 @@ export function UnifiedOverlay() {
     // The 'unified-overlay' token automatically evicts any stale listener on re-registration.
 
     // --- Results / Streaming ---
-    const handleWsMessage = (message: { type: string; text?: string; lane?: string; payload?: any }) => {
+    const handleWsMessage = (message: { type: string; text?: string; lane?: string; payload?: any; taskId?: string; isPlaceholder?: boolean }) => {
       if (!message) return;
       const preview = message.text ? `"${message.text.substring(0, 50)}${message.text.length > 50 ? '...' : ''}"` : '(no text)';
       console.log(`[UNIFIED:DIAG] msg.type=${message.type} lane=${message.lane} preview=${preview} curRespLen=${streamingResponse.length}`);
@@ -824,8 +826,9 @@ export function UnifiedOverlay() {
           setInstallPrompt(null);
         }
 
-        // Play drop sound once when streaming starts (skip for fast lane)
-        if (!hasDroppedRef.current && message.lane !== 'fast') {
+        // Play drop sound once when streaming starts (skip for fast lane and
+        // handoff placeholder chunks — the drip is for the real answer only)
+        if (!hasDroppedRef.current && message.lane !== 'fast' && !message.isPlaceholder) {
           hasDroppedRef.current = true;
           playDropSound();
           setIsDropping(true);
@@ -940,6 +943,30 @@ export function UnifiedOverlay() {
     };
 
     const handleAutomationProgress = (data: any) => {
+      // ── Intent decided: play intent-specific sound + manage ••• indicator ──
+      // Emitted by decomposePromptV2 / parseIntentV2 when the stategraph decides
+      // the intent. Deduplicate: only play the first intent:decided per task.
+      if (data?.type === 'intent:decided') {
+        const taskId = data.taskId;
+        const intent = data.intent;
+        if (taskId && intent) {
+          // Deduplicate: skip if we already played a sound for this task
+          if (!_playedIntentSoundRef.current.has(taskId)) {
+            _playedIntentSoundRef.current.add(taskId);
+            playIntentSound(intent);
+          }
+          // Show "•••" working indicator for non-command_automate intents
+          if (intent !== 'command_automate') {
+            setIsTaskWorking(true);
+          } else {
+            setIsTaskWorking(false);
+          }
+        } else if (intent) {
+          // No taskId — play without dedup (non-handoff path)
+          playIntentSound(intent);
+        }
+        return;
+      }
       if (data?.type === 'reminder_fired') {
         // Scheduled run starting — AIActivityPanel is intentionally disabled, so let
         // AutomationProgress handle the deferred step progress. Do NOT suppress it.
@@ -1806,6 +1833,28 @@ export function UnifiedOverlay() {
           _lastHandoffSoundRef.current = now;
           playThinkDropSound();
         }
+        // Show "•••" working indicator while a non-CA task runs.
+        // For parked tasks, guessedIntent is known here — set immediately.
+        // For non-parked tasks, guessedIntent is not yet known — wait for
+        // intent:decided to determine if it should show.
+        if (data.guessedIntent && data.guessedIntent !== 'command_automate') {
+          setIsTaskWorking(true);
+        }
+        // If comms-graph guessed an intent, pre-play the intent sound now.
+        // This is only available for parked tasks (where task:created is emitted
+        // from routeThroughCommsGraph after the response arrives).
+        // For non-parked tasks, guessedIntent is not yet known — the stategraph's
+        // intent:decided event will play the sound instead.
+        // If guessedIntent is null (regex miss), play default sound as fallback.
+        // In both cases, add to dedup set so intent:decided doesn't double-play.
+        if (data.guessedIntent !== undefined) {
+          _playedIntentSoundRef.current.add(data.taskId);
+          if (data.guessedIntent) {
+            playIntentSound(data.guessedIntent);
+          } else {
+            playDefaultSound();
+          }
+        }
         setCommsTasks(prev => {
           if (prev.some(t => t.id === data.taskId)) return prev;
           return [...prev, {
@@ -1819,7 +1868,7 @@ export function UnifiedOverlay() {
             error: null,
             progress: { step: 0, totalSteps: 0, currentStep: null, eta: null },
             result: null,
-            intent: 'handoff',
+            intent: data.guessedIntent || 'handoff',
             source: data.source || 'text',
           }];
         });
@@ -1848,6 +1897,9 @@ export function UnifiedOverlay() {
     ipcRenderer.on('task:complete', (data: any) => {
       if (data?.taskId) {
         const status = data.status || (data.error ? 'failed' : 'done');
+        const taskIntent = data.intent || null;
+        const isCommandAutomate = taskIntent === 'command_automate';
+
         setCommsTasks(prev => prev.map(t => {
           if (t.id !== data.taskId) return t;
           return {
@@ -1858,11 +1910,27 @@ export function UnifiedOverlay() {
             thinking: data.thinking || t.thinking || null,
             sources: data.sources || t.sources || null,
             error: data.error || null,
+            planFile: data.planFile || t.planFile || null,
           };
         }));
-        // Show completion banner for done/failed/auth-required/awaiting-approval
-        // (awaiting-approval needs an approve action in the notification)
-        if (status === 'done' || status === 'failed' || status === 'cancelled' || status === 'auth-required' || status === 'awaiting-approval') {
+
+        // Clean up intent sound dedup set + clear working indicator
+        _playedIntentSoundRef.current.delete(data.taskId);
+        setIsTaskWorking(false);
+
+        if (status === 'done' && !isCommandAutomate && data.answer) {
+          // ── Non-command_automate: replace placeholder text with real answer ──
+          // Directly update the streaming response state — the ws-bridge:message
+          // handler is designed for main→renderer IPC, not renderer→main.
+          setStreamingResponse(data.answer);
+          setIsStreaming(false);
+          setIsTaskWorking(false);
+          streamCompletedRef.current = true;
+          playDropSound();
+          // NO notification banner for non-command_automate
+        } else if (status === 'done' || status === 'failed' || status === 'cancelled' || status === 'auth-required' || status === 'awaiting-approval') {
+          // ── Command_automate or error states: show notification banner ──
+          // (TaskCompleteBanner plays water-drip when it appears, so no need to play here)
           setTaskNotification({
             taskId: data.taskId,
             prompt: data.prompt || '',
@@ -2216,6 +2284,14 @@ export function UnifiedOverlay() {
             />
             {isStreaming && (
               <span className="inline-block w-1.5 h-4 bg-blue-500 animate-pulse ml-1" />
+            )}
+            {/* "•••" working indicator — shows while a handoff task is running */}
+            {isTaskWorking && !isStreaming && (
+              <div className="flex gap-1.5 mt-2">
+                <div className="w-1.5 h-1.5 rounded-full bg-blue-400 animate-pulse" style={{ animationDelay: '0ms' }} />
+                <div className="w-1.5 h-1.5 rounded-full bg-blue-400 animate-pulse" style={{ animationDelay: '200ms' }} />
+                <div className="w-1.5 h-1.5 rounded-full bg-blue-400 animate-pulse" style={{ animationDelay: '400ms' }} />
+              </div>
             )}
           </div>
         )}

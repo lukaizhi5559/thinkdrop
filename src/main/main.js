@@ -227,6 +227,66 @@ async function _commsHttp(urlPath, body = {}) {
   });
 }
 
+// Helper: GET from comms-graph (port 3015)
+async function _commsGet(urlPath) {
+  return new Promise((resolve, reject) => {
+    const req = http.request(
+      { hostname: '127.0.0.1', port: COMMS_GRAPH_PORT, path: urlPath, method: 'GET' },
+      (res) => {
+        let data = '';
+        res.on('data', chunk => { data += chunk; });
+        res.on('end', () => { try { resolve(JSON.parse(data)); } catch (_) { resolve({}); } });
+      }
+    );
+    req.on('error', reject);
+    req.setTimeout(5000, () => reject(new Error('commsGet timeout')));
+    req.end();
+  });
+}
+
+// Restore persisted tasks from comms-graph journal to the frontend queue on startup.
+// Fetches GET /tasks and emits task:created + task:complete for each persisted task.
+async function restoreQueueFromJournal() {
+  try {
+    const resp = await _commsGet('/tasks');
+    const tasks = resp?.tasks || [];
+    if (tasks.length === 0) return;
+    console.log(`[QueueRestore] Restoring ${tasks.length} tasks from journal`);
+    for (const t of tasks) {
+      safeSendUnified('task:created', {
+        taskId: t.id,
+        prompt: t.prompt || '',
+        agentId: t.agentId,
+        source: t.source || 'text',
+      });
+      // Emit completion for terminal tasks so the card shows the final state
+      const isTerminal = ['done', 'failed', 'cancelled'].includes(t.status);
+      if (isTerminal) {
+        safeSendUnified('task:complete', {
+          taskId: t.id,
+          status: t.status,
+          answer: t.result || null,
+          error: t.error || null,
+          prompt: t.prompt || '',
+        });
+      } else {
+        // Active task — emit progress if available
+        if (t.progress && (t.progress.step > 0 || t.progress.currentStep)) {
+          safeSendUnified('task:progress', {
+            taskId: t.id,
+            step: t.progress.step,
+            totalSteps: t.progress.totalSteps,
+            node: t.progress.currentStep,
+          });
+        }
+      }
+    }
+    console.log(`[QueueRestore] Done — restored ${tasks.length} tasks`);
+  } catch (err) {
+    console.warn(`[QueueRestore] Failed: ${err.message}`);
+  }
+}
+
 // Helper: GET from command-service (port 3007)
 async function _cmdGet(urlPath) {
   return new Promise((resolve, reject) => {
@@ -2150,6 +2210,10 @@ function createUnifiedWindow() {
   unifiedWindow.webContents.on('did-finish-load', () => {
     console.log('[Unified Window] Content finished loading.');
     unifiedWindow.webContents.setAudioMuted(false);
+    // Restore persisted tasks from comms-graph journal after window loads
+    if (process.env.COMMS_GRAPH_ENABLED === 'true') {
+      setTimeout(restoreQueueFromJournal, 2000); // wait for comms-graph to be ready
+    }
   });
 
   // Block navigation to prevent render frame disposal
@@ -3053,24 +3117,32 @@ app.whenReady().then(async () => {
           const commsData = JSON.parse(commsRaw);
           if (commsData.ok && commsData.data) {
             const { text: responseText, intent, intentName, metadata } = commsData.data;
+            const guessedIntent = metadata?.guessedIntent || null;
+            const taskId = metadata?.taskId || null;
 
-            console.log(`[CommsGraph] Response — intent=${intent} (${intentName}) latency=${metadata?.latencyMs}ms`);
+            console.log(`[CommsGraph] Response — intent=${intent} (${intentName}) guessedIntent=${guessedIntent} latency=${metadata?.latencyMs}ms`);
 
-            // Stream the response to the renderer
+            // Stream the response to the renderer (tag with taskId so renderer can track placeholder)
+            // isPlaceholder is only true for handoff phrases (intent=0) — these are
+            // temporary placeholders that get replaced by the real stategraph answer.
+            // For direct answers (general_quick, memory_quick), the response IS the
+            // answer — isPlaceholder must be false so the water-drip sound plays.
+            const isPlaceholder = intent === 0;
             safeSendUnified('unified:set-prompt', prompt);
-            safeSendUnified('ws-bridge:message', { type: 'chunk', text: responseText });
-            safeSendUnified('ws-bridge:message', { type: 'done' });
+            safeSendUnified('ws-bridge:message', { type: 'chunk', text: responseText, taskId, isPlaceholder });
+            safeSendUnified('ws-bridge:message', { type: 'done', taskId });
 
             // If it was a handoff, the task is already being dispatched by comms-graph
             // via /comms.handoff — no need to enqueue in promptQueue.
             // For non-parked tasks, task:created was already emitted in /comms.handoff.
             // For parked tasks (agent locked), /comms.handoff was never called, so emit here.
-            if (intent === 0 && metadata?.taskId && metadata?.parked) {
+            if (intent === 0 && taskId && metadata?.parked) {
               safeSendUnified('task:created', {
-                taskId: metadata.taskId,
+                taskId,
                 prompt,
                 agentId: metadata.agentId,
                 parked: metadata.parked,
+                guessedIntent,
               });
             }
             return;
@@ -3185,7 +3257,7 @@ app.whenReady().then(async () => {
   });
 
   // ── comms-graph task cancel ──────────────────────────────────────────────
-  ipcMain.on('task:cancel', (_event, { taskId } = {}) => {
+  ipcMain.on('task:cancel', async (_event, { taskId } = {}) => {
     if (!taskId) return;
     try {
       const handoffRunner = require('./handoffRunner');
@@ -3195,6 +3267,10 @@ app.whenReady().then(async () => {
     } catch (err) {
       console.error('[CommsGraph] Task cancel error:', err.message);
     }
+    // Update journal status to cancelled (best-effort — comms-graph may be down)
+    try { await _commsHttp('/comms.cancel', { taskId }); } catch (err) { console.warn(`[CommsGraph] /comms.cancel failed: ${err.message}`); }
+    // Notify frontend so the card updates to cancelled state
+    safeSendUnified('task:complete', { taskId, status: 'cancelled', error: 'cancelled by user' });
   });
 
   ipcMain.on('task:delete', async (_event, { taskId } = {}) => {
@@ -3204,15 +3280,19 @@ app.whenReady().then(async () => {
       const handoffRunner = require('./handoffRunner');
       handoffRunner.cancel(taskId);
       _pendingPreflightPromptsByTask.delete(taskId);
-      // 2. Remove from comms-graph journal
+    } catch (err) {
+      console.error('[CommsGraph] Task delete cancel error:', err.message);
+    }
+    // 2. Remove from comms-graph journal (best-effort — comms-graph may be down)
+    try {
       const result = await _commsHttp('/comms.remove', { taskId });
       const ok = result?.ok === true;
       console.log(`[CommsGraph] Task ${taskId} delete: ${ok ? 'success' : 'failed'}`);
-      // 3. Notify renderer
-      safeSendUnified('task:removed', { taskId });
     } catch (err) {
-      console.error('[CommsGraph] Task delete error:', err.message);
+      console.warn(`[CommsGraph] Task ${taskId} /comms.remove failed: ${err.message}`);
     }
+    // 3. Always notify renderer so the card is removed from the UI
+    safeSendUnified('task:removed', { taskId });
   });
 
   ipcMain.on('prompt-queue:dismiss-alert', () => {

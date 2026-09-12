@@ -250,6 +250,9 @@ interface AutomationProgressProps {
   /** When set, this instance only processes events tagged with this taskId (queue card mode).
    *  When unset, this instance processes global events (Results tab) and ignores task-scoped events. */
   taskId?: string;
+  /** For queue card recovery: task.planFile from task:complete. If set on mount,
+   *  initializes phase='plan_review' even if the plan:generated event was missed. */
+  planFile?: string;
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -874,7 +877,7 @@ function parsePlanStepTitles(content: string): string[] {
   return titles;
 }
 
-export default function AutomationProgress({ onHeightChange, onActiveChange, onOpenRules, onAskUserShown, setIsSubmitting, onAuthPending, suppressIfScheduled, activeTab, taskId }: AutomationProgressProps) {
+export default function AutomationProgress({ onHeightChange, onActiveChange, onOpenRules, onAskUserShown, setIsSubmitting, onAuthPending, suppressIfScheduled, activeTab, taskId, planFile }: AutomationProgressProps) {
   const [phase, setPhase] = useState<AutomationPhase>('idle');
   const planReviewRef = useRef<HTMLDivElement>(null);
   const [steps, setSteps] = useState<Step[]>([]);
@@ -1028,6 +1031,23 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
   // Ref to track current phase — avoids stale closure issues in the IPC listener useEffect
   const phaseRef = useRef<AutomationPhase>('idle');
   useEffect(() => { phaseRef.current = phase; }, [phase]);
+
+  // ── Queue card recovery: initialize plan_review phase if planFile is set ─────
+  // This handles the race condition where plan:generated fires before this
+  // component's useEffect sets up the automation:progress listener. The task's
+  // planFile (from task:complete awaiting-approval) is passed as a prop so we
+  // can recover the plan review state even if the event was missed.
+  useEffect(() => {
+    if (planFile && phaseRef.current !== 'plan_review') {
+      setPhase('plan_review');
+      setPlanReview({
+        planFile,
+        content: '',
+        title: 'Execution Plan',
+        isExisting: false,
+      });
+    }
+  }, [planFile]);
 
   // Scroll plan review buttons into view when plan_review phase activates
   useEffect(() => {
