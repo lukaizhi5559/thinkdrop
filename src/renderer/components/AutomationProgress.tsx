@@ -1012,21 +1012,10 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
   const [preflightAuthBrowserOpened, setPreflightAuthBrowserOpened] = useState(false);
   const [preflightAuthBackgroundFailed, setPreflightAuthBackgroundFailed] = useState(false);
   const [preflightAuthVerifying, setPreflightAuthVerifying] = useState(false);
-  const [authContinueVisible, setAuthContinueVisible] = useState(false);
   const [preflightRouteChoice, setPreflightRouteChoice] = useState<RouteChoice | null>(null);
   const [preflightMessage, setPreflightMessage] = useState('Preparing agents...');
   const [preflightWarnings, setPreflightWarnings] = useState<{ type: string; message: string }[]>([]);
   const [vetScriptReview, setVetScriptReview] = useState<{ scriptContent: string; scriptUrl: string; message: string } | null>(null);
-
-  // Delay the "I've signed in — Continue" button by 5s after browser auth opens
-  useEffect(() => {
-    if (preflightAuthBrowserOpened) {
-      setAuthContinueVisible(false);
-      const t = setTimeout(() => setAuthContinueVisible(true), 5000);
-      return () => clearTimeout(t);
-    }
-    setAuthContinueVisible(false);
-  }, [preflightAuthBrowserOpened]);
 
   // Ref to track current phase — avoids stale closure issues in the IPC listener useEffect
   const phaseRef = useRef<AutomationPhase>('idle');
@@ -2438,6 +2427,14 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
           onAuthPending?.(false);
           break;
 
+        case 'preflight:auth_bypassed':
+          // User chose "Proceed without" — task resumed unauthenticated, clear card
+          setPreflightAuthVerifying(false);
+          setPreflightAuthBackgroundFailed(false);
+          setPreflightAuthRequired(null);
+          onAuthPending?.(false);
+          break;
+
         case 'gather_start':
           setPhase('gathering');
           setGatherCredential(null);
@@ -3028,7 +3025,7 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
     // Answer submitted — flip paused steps back to running spinners while the agent resumes
     const blockedStepIndex = currentPrompt?.stepIndex;
     setSteps(prev => prev.map(s => s.status === 'needs_input' && (blockedStepIndex == null || s.index === blockedStepIndex) ? { ...s, status: 'running' as const } : s));
-    ipcRenderer?.send('prompt-queue:submit', { prompt: _value, selectedText: '', isAskUserAnswer: true });
+    ipcRenderer?.send('prompt-queue:submit', { prompt: _value, selectedText: '', isAskUserAnswer: true, taskId: taskId || undefined });
   };
 
   // Keep the latest handler on a ref so the auto-retry timer can call it directly.
@@ -3050,15 +3047,22 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
     // Answer submitted — flip paused steps back to running spinners while the agent resumes
     const blockedStepIndex = currentPrompt?.stepIndex;
     setSteps(prev => prev.map(s => s.status === 'needs_input' && (blockedStepIndex == null || s.index === blockedStepIndex) ? { ...s, status: 'running' as const } : s));
-    ipcRenderer?.send('prompt-queue:submit', { prompt: _val, selectedText: '', isAskUserAnswer: true });
+    ipcRenderer?.send('prompt-queue:submit', { prompt: _val, selectedText: '', isAskUserAnswer: true, taskId: taskId || undefined });
   };
 
   // Sync the askUserPrompt ref and manage the 15s auto-retry countdown for agent failures.
+  // Capped at 2 auto-retries per question — a step that keeps failing gets left
+  // for the user instead of looping retry → fail → retry forever.
+  const autoRetryAttemptsRef = useRef(0);
+  const autoRetryKeyRef = useRef<string | null>(null);
   useEffect(() => {
     askUserPromptRef.current = askUserPrompt;
     if (!askUserPrompt || !askUserPrompt._isAgentAskUser) {
       if (autoRetryTimerRef.current) { clearInterval(autoRetryTimerRef.current); autoRetryTimerRef.current = null; }
       setAutoRetryCountdown(null);
+      // NOTE: do NOT reset autoRetryAttemptsRef/autoRetryKeyRef here — the prompt
+      // is set to null while a retry executes, and resetting would let the same
+      // failing question auto-retry forever (prompt → auto-fire → null → prompt).
       return;
     }
     const hasTryAgain = (askUserPrompt.options || []).some((o: any) =>
@@ -3069,6 +3073,19 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
       setAutoRetryCountdown(null);
       return;
     }
+    // Reset the attempt counter only when a genuinely different question appears
+    // (new task/step/question). The same question reappearing after a failed
+    // auto-retry keeps counting toward the cap.
+    const _qKey = `${taskId || ''}|${askUserPrompt.stepIndex}|${askUserPrompt.question}`;
+    if (autoRetryKeyRef.current !== _qKey) {
+      autoRetryKeyRef.current = _qKey;
+      autoRetryAttemptsRef.current = 0;
+    }
+    if (autoRetryAttemptsRef.current >= 2) {
+      setAutoRetryCountdown(null);
+      return;
+    }
+    autoRetryAttemptsRef.current += 1;
     setAutoRetryCountdown(15);
     autoRetryTimerRef.current = setInterval(() => {
       setAutoRetryCountdown(prev => {
@@ -3955,7 +3972,7 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
                           alignSelf: 'flex-start',
                         }}
                       >
-                        {gatherAuthConnecting ? 'Opening browser…' : `Sign in to ${gatherAuthAction.agentId.replace('.agent', '')}`}
+                        {gatherAuthConnecting ? 'Opening browser…' : `Sign into ${gatherAuthAction.agentId.replace('.agent', '')}`}
                       </button>
                       <button
                         onClick={() => handleGatherAuthAction('use_api', gatherAuthAction.agentId, gatherAuthAction.agentType)}
@@ -4604,7 +4621,7 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
                       }}>Action Required</span>
                     </div>
                     <div style={{ fontSize: '13px', color: '#f9fafb', fontWeight: 600, marginBottom: 6 }}>
-                      Sign in to {taskAuthOverlay.serviceDisplay || 'this service'}
+                      Sign into {taskAuthOverlay.serviceDisplay || 'this service'}
                     </div>
                     <div style={{ fontSize: '11px', color: '#d1d5db', lineHeight: 1.6 }}>
                       A browser window is open and waiting. Sign in with Google, Apple, or email — this panel updates automatically once you're in.
@@ -5282,6 +5299,8 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
         (() => {
           const isBrowserAuth = preflightAuthRequired.authType === 'browser_oauth' || preflightAuthRequired.authType === 'browser_reauth';
           const isCliSetup = preflightAuthRequired.authType === 'cli_setup';
+          const _rawName = (preflightAuthRequired.serviceName || preflightAuthRequired.agentId.replace('.agent', '') || 'this service');
+          const displayName = _rawName.charAt(0).toUpperCase() + _rawName.slice(1);
           return (
         <div className="rounded-lg"
           style={{
@@ -5313,10 +5332,8 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
                 ? 'CLI agent needs configuration — open the Agents tab to complete setup.'
                 : isBrowserAuth
                 ? preflightAuthBackgroundFailed
-                  ? 'Background auth check could not verify login. If you have signed in, click Continue to proceed.'
-                  : preflightAuthBrowserOpened
-                  ? 'Browser is open — complete the sign-in, then click Continue.'
-                  : 'Browser login required — click Sign in to continue.'
+                  ? 'Sign-in could not be verified — try again, confirm below, or proceed without.'
+                  : 'Browser login required — sign in, confirm below, or proceed without.'
                 : preflightAuthRequired.authType === 'cli_install'
                 ? 'CLI install required — open the Agents tab to install.'
                 : preflightAuthRequired.authType === 'cli_update_needed'
@@ -5329,76 +5346,80 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
           </div>
           <div style={{ display: 'flex', width: '100%', gap: 8, flexWrap: 'wrap', alignItems: 'center', justifyContent: 'flex-end' }}>
             {isBrowserAuth ? (
-              preflightAuthBrowserOpened || preflightAuthBackgroundFailed ? (
-                <>
-                  {preflightAuthBackgroundFailed && (
-                    <button
-                      onClick={() => {
-                        setPreflightAuthBrowserOpened(false);
-                        setPreflightAuthBackgroundFailed(false);
-                        ipcRenderer?.send('browser.agent:auth', { agentId: preflightAuthRequired.agentId });
-                      }}
-                      className="text-xs font-medium rounded-md transition-colors"
-                      style={{
-                        padding: '6px 12px',
-                        backgroundColor: 'rgba(245,158,11,0.15)',
-                        border: '1px solid rgba(245,158,11,0.4)',
-                        color: '#f59e0b',
-                        cursor: 'pointer',
-                      }}
-                    >
-                      Retry sign-in →
-                    </button>
-                  )}
-                  {authContinueVisible || preflightAuthBackgroundFailed ? (
-                    <button
-                      onClick={() => {
-                        ipcRenderer?.send('preflight:auth_continue', { agentId: preflightAuthRequired.agentId, taskId });
-                        // Do NOT clear preflightAuthRequired — the background browser.agent
-                        // task is the single source of truth. It will send
-                        // preflight:auth_succeeded (clears card) or preflight:auth_background_failed.
-                        setAuthContinueVisible(false);
-                      }}
-                      className="text-xs font-medium rounded-md transition-colors"
-                      style={{
-                        padding: '6px 12px',
-                        backgroundColor: 'rgba(34,197,94,0.15)',
-                        border: '1px solid rgba(34,197,94,0.4)',
-                        color: '#22c55e',
-                        cursor: 'pointer',
-                      }}
-                    >
-                      I've signed in — Continue →
-                    </button>
-                  ) : (
-                    <span className="text-xs" style={{ color: '#f59e0b' }}>
-                      Complete sign-in… Continue unlocks shortly.
-                    </span>
-                  )}
-                  {preflightAuthVerifying && (
-                    <span className="text-xs" style={{ color: '#3b82f6', display: 'flex', alignItems: 'center', gap: 6 }}>
-                      <span className="animate-spin" style={{ display: 'inline-block', width: 12, height: 12, border: '2px solid #3b82f6', borderTopColor: 'transparent', borderRadius: '50%' }} />
-                      Verifying sign-in…
-                    </span>
-                  )}
-                </>
-              ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', width: '100%', gap: 6 }}>
+                {/* ── Live status line ─────────────────────────────────────── */}
+                {(preflightAuthVerifying || preflightAuthBrowserOpened || preflightAuthBackgroundFailed) && (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 2 }}>
+                    {preflightAuthVerifying ? (
+                      <span className="text-xs" style={{ color: '#3b82f6', display: 'flex', alignItems: 'center', gap: 6 }}>
+                        <span className="animate-spin" style={{ display: 'inline-block', width: 12, height: 12, border: '2px solid #3b82f6', borderTopColor: 'transparent', borderRadius: '50%' }} />
+                        Verifying sign-in…
+                      </span>
+                    ) : preflightAuthBackgroundFailed ? (
+                      <span className="text-xs" style={{ color: '#f59e0b' }}>
+                        Couldn't verify sign-in — retry, confirm below, or proceed without.
+                      </span>
+                    ) : (
+                      <span className="text-xs" style={{ color: '#86efac', display: 'flex', alignItems: 'center', gap: 6 }}>
+                        <span className="rounded-full animate-pulse" style={{ display: 'inline-block', width: 8, height: 8, backgroundColor: '#4ade80' }} />
+                        Browser is open — complete sign-in and this continues automatically.
+                      </span>
+                    )}
+                  </div>
+                )}
+                {/* ── Stacked actions ──────────────────────────────────────── */}
                 <button
                   onClick={() => {
-                    ipcRenderer?.send('browser.agent:auth', { agentId: preflightAuthRequired.agentId });
+                    ipcRenderer?.send('browser.agent:auth', { agentId: preflightAuthRequired.agentId, taskId });
                   }}
                   className="text-xs font-medium rounded-md transition-colors"
                   style={{
-                    padding: '6px 12px',
+                    padding: '7px 14px',
                     backgroundColor: 'rgba(245,158,11,0.15)',
                     border: '1px solid rgba(245,158,11,0.4)',
                     color: '#f59e0b',
                     cursor: 'pointer',
+                    alignSelf: 'flex-start',
                   }}
                 >
-                  Sign in to {preflightAuthRequired.agentId.replace('.agent', '')} →
+                  {preflightAuthBrowserOpened ? 'Re-open sign-in page →' : `Sign into ${displayName} →`}
                 </button>
-              )
+                <button
+                  onClick={() => {
+                    ipcRenderer?.send('preflight:auth_continue', { agentId: preflightAuthRequired.agentId, taskId });
+                    // Do NOT clear preflightAuthRequired — the background browser.agent
+                    // task is the single source of truth. It will send
+                    // preflight:auth_succeeded (clears card) or preflight:auth_background_failed.
+                  }}
+                  className="text-xs font-medium rounded-md transition-colors"
+                  style={{
+                    padding: '7px 14px',
+                    backgroundColor: 'rgba(34,197,94,0.12)',
+                    border: '1px solid rgba(34,197,94,0.35)',
+                    color: '#22c55e',
+                    cursor: 'pointer',
+                    alignSelf: 'flex-start',
+                  }}
+                >
+                  I've already signed in (bypass)
+                </button>
+                <button
+                  onClick={() => {
+                    ipcRenderer?.send('preflight:auth_bypass', { agentId: preflightAuthRequired.agentId, taskId });
+                  }}
+                  className="text-xs font-medium rounded-md transition-colors"
+                  style={{
+                    padding: '6px 14px',
+                    backgroundColor: 'transparent',
+                    border: '1px solid rgba(107,114,128,0.3)',
+                    color: '#9ca3af',
+                    cursor: 'pointer',
+                    alignSelf: 'flex-start',
+                  }}
+                >
+                  Proceed without
+                </button>
+              </div>
             ) : (
               <button
                 onClick={() => {
@@ -5648,7 +5669,7 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
                 setAskUserCorrectionMode(false);
                 const blockedStepIndex = askUserPrompt?.stepIndex;
                 setSteps(prev => prev.map(s => s.status === 'needs_input' && (blockedStepIndex == null || s.index === blockedStepIndex) ? { ...s, status: 'running' as const } : s));
-                ipcRenderer?.send('prompt-queue:submit', { prompt: answer, selectedText: '', isAskUserAnswer: true });
+                ipcRenderer?.send('prompt-queue:submit', { prompt: answer, selectedText: '', isAskUserAnswer: true, taskId: taskId || undefined });
               }
             }}
             onCancel={() => { setAskUserPrompt(null); }}

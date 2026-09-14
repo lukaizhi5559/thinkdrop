@@ -3,6 +3,9 @@ import AutomationProgress from './AutomationProgress';
 import { playDropSound } from '../utils/thinkDropSound';
 import { Favicon } from './DefaultFaviconIcon';
 import RichContentRenderer from './rich-content/RichContentRenderer';
+import WebResultsGrid from './rich-content/WebResultsGrid';
+import { stripItemImageMarkdown } from './rich-content/itemImages';
+import type { WebResultItem } from './rich-content/WebResultCard';
 
 const ipcRenderer = (window as any).electron?.ipcRenderer;
 
@@ -27,6 +30,7 @@ export interface CommsTask {
   result: string | null;
   thinking?: string | null;
   sources?: { url: string; title: string; hostname: string }[] | null;
+  items?: WebResultItem[] | null;
   intent: string;
   source: string;
   planFile?: string | null;
@@ -406,6 +410,13 @@ export function QueueTaskCard({ task, onShowResult, onHeightChange }: {
           </div>
         )}
 
+        {/* Extracted items (cards) — shown when items exist */}
+        {task.items && task.items.length > 0 && (
+          <div style={{ margin: '0 12px 8px' }}>
+            <WebResultsGrid items={task.items} />
+          </div>
+        )}
+
         {/* Result (if done) — rendered via RichContentRenderer for markdown + citation strip */}
         {task.result && (
           <div style={{
@@ -418,7 +429,7 @@ export function QueueTaskCard({ task, onShowResult, onHeightChange }: {
             scrollbarColor: 'rgba(255,255,255,0.15) transparent',
           }}>
             <RichContentRenderer
-              content={task.result.replace(/【[^】]*】/g, '')}
+              content={stripItemImageMarkdown(task.result.replace(/【[^】]*】/g, ''), task.items)}
               animated={false}
               className="text-xs"
             />

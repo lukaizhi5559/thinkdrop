@@ -20,6 +20,14 @@ app.commandLine.appendSwitch('enable-features', 'WebRtcHideLocalIpsWithMdns');
 app.commandLine.appendSwitch('unsafely-treat-insecure-origin-as-secure', 'http://localhost:5173');
 app.commandLine.appendSwitch('allow-insecure-localhost', 'true');
 
+// Privileges for the thinkdrop-image:// cache protocol — must be registered
+// before app is ready so <img>/<link> loads work when the renderer is served
+// from http://localhost:5173 in dev (secure scheme avoids mixed-content blocks).
+const { protocol } = require('electron');
+protocol.registerSchemesAsPrivileged([
+  { scheme: 'thinkdrop-image', privileges: { standard: false, secure: true, supportFetchAPI: true, stream: true } },
+]);
+
 const { startCryptoBridge, stopCryptoBridge } = require('./cryptoBridge');
 
 // Safe IPC send — guards against "Render frame was disposed" crash that occurs when
@@ -253,11 +261,16 @@ async function restoreQueueFromJournal() {
     if (tasks.length === 0) return;
     console.log(`[QueueRestore] Restoring ${tasks.length} tasks from journal`);
     for (const t of tasks) {
+      // `restored: true` tells the renderer these are historical events replayed
+      // from the journal on startup — populate queue cards but skip side effects
+      // (sounds, toasts, response-panel overwrite, unread badges).
       safeSendUnified('task:created', {
         taskId: t.id,
         prompt: t.prompt || '',
         agentId: t.agentId,
         source: t.source || 'text',
+        createdAt: t.createdAt || Date.now(),
+        restored: true,
       });
       // Emit completion for terminal tasks so the card shows the final state
       const isTerminal = ['done', 'failed', 'cancelled'].includes(t.status);
@@ -268,6 +281,8 @@ async function restoreQueueFromJournal() {
           answer: t.result || null,
           error: t.error || null,
           prompt: t.prompt || '',
+          items: t.items || null,
+          restored: true,
         });
       } else {
         // Active task — emit progress if available
@@ -277,6 +292,7 @@ async function restoreQueueFromJournal() {
             step: t.progress.step,
             totalSteps: t.progress.totalSteps,
             node: t.progress.currentStep,
+            restored: true,
           });
         }
       }
@@ -3079,6 +3095,7 @@ app.whenReady().then(async () => {
         sessionId: item.sessionId || null,
         userId: item.userId || 'default_user',
         isAskUserAnswer: item.isAskUserAnswer || false,
+        _preflightAuthBypass: item._preflightAuthBypass || null,
       });
     },
     alertRestart: (items, countdownMs) => {
@@ -3171,7 +3188,7 @@ app.whenReady().then(async () => {
     return true; // request dispatched — caller should NOT also enqueue
   }
 
-  ipcMain.on('prompt-queue:submit', (_event, { prompt, selectedText = '', responseLanguage = null, isAskUserAnswer = false } = {}) => {
+  ipcMain.on('prompt-queue:submit', (_event, { prompt, selectedText = '', responseLanguage = null, isAskUserAnswer = false, taskId = null } = {}) => {
     const trimmedPrompt = prompt?.trim();
     if (!trimmedPrompt) return;
 
@@ -3189,6 +3206,32 @@ app.whenReady().then(async () => {
       safeSendUnified('gather:pending', { active: false, question: null });
       resolve(trimmedPrompt);
       return;
+    }
+
+    // ── Intercept: ask_user answer for a paused HANDOFF task ──────────────────
+    // Queue-card ask_user cards (PartialFailureCard) submit answers here with the
+    // taskId. Handoff tasks pause via handoffRunner, NOT pausedAutomationState —
+    // routing them into the serial path would treat e.g. "try_again" as a fresh
+    // prompt and replan garbage (this once deep-linked "try_again" into a bogus
+    // URL and closed the user's session). Route to the task's resume instead.
+    if (isAskUserAnswer) {
+      const handoffRunner = require('./handoffRunner');
+      if (taskId && handoffRunner.hasPendingQuestion && handoffRunner.hasPendingQuestion(taskId)) {
+        console.log(`[HandoffRunner] prompt-queue:submit → answerQuestion for task=${taskId}: "${trimmedPrompt.slice(0, 60)}"`);
+        handoffRunner.answerQuestion(taskId, trimmedPrompt).catch(err => {
+          console.error(`[HandoffRunner] answerQuestion failed for ${taskId}:`, err.message);
+        });
+        return;
+      }
+      // ── Guard: orphaned ask_user answer with no resumable state ──────────────
+      // Neither a serial paused state nor a handoff pending question exists —
+      // running the answer (e.g. literal "try_again") as a fresh prompt produces
+      // nonsense tasks. Drop it and clear the card.
+      if (!pausedAutomationState) {
+        console.warn(`[PromptQueue] Dropping orphaned isAskUserAnswer "${trimmedPrompt.slice(0, 60)}" — no paused state to resume`);
+        safeSendUnified('automation:progress', { type: 'all_done', cancelled: true, completedCount: 0, totalCount: 0, ...(taskId ? { taskId } : {}) });
+        return;
+      }
     }
 
     if (pendingPlanContext && PLAN_MODE_CANCEL_RE.test(trimmedPrompt)) {
@@ -4291,7 +4334,7 @@ app.whenReady().then(async () => {
   });
 
   // ─── StateGraph: Core execution — called by promptQueue serially ─────────
-  async function runPromptThroughStateGraph(prompt, { selectedText = '', sessionId = null, userId = 'default_user', responseLanguage = null, promptQueueId = null, _planFile = null, _forceNewPlan = false, _skillPlan = null, _skillPlanFile = null, _planCorrectionMode = false, _planCorrectionText = null, _basePlanFile = null, _skillPlanJson = null, _planCorrectionSourcePrompt = null, _resumeMultiIntent = false, _resumeIntentQueue = [], _resumeIntentResults = [], _resumeDataContext = {}, isAskUserAnswer = false } = {}) {
+  async function runPromptThroughStateGraph(prompt, { selectedText = '', sessionId = null, userId = 'default_user', responseLanguage = null, promptQueueId = null, _planFile = null, _forceNewPlan = false, _skillPlan = null, _skillPlanFile = null, _planCorrectionMode = false, _planCorrectionText = null, _basePlanFile = null, _skillPlanJson = null, _planCorrectionSourcePrompt = null, _resumeMultiIntent = false, _resumeIntentQueue = [], _resumeIntentResults = [], _resumeDataContext = {}, isAskUserAnswer = false, _preflightAuthBypass = null } = {}) {
     const isPlanExecute = !!_planFile;
     console.log('🧠 [StateGraph] Processing prompt:', prompt.substring(0, 80), responseLanguage ? `(responseLanguage: ${responseLanguage})` : '', isPlanExecute ? `[plan:${require('path').basename(_planFile)}]` : '');
     _currentAutomationPrompt = prompt;
@@ -5054,12 +5097,15 @@ app.whenReady().then(async () => {
             || /^create\s+and\s+install/i.test(chosenOption.trim());
           const allowCommandMatch = /^allow\s+"?([a-z0-9._-]+)"?\s+and\s+retry$/i.exec(chosenOption.trim());
           const allowCommandName = (allowCommandMatch?.[1]
-            || paused.pendingQuestion?.context?.commandName
+            || paused.pendingQuestion?.commandName           // top-level (executeCommand short-circuit)
+            || paused.pendingQuestion?.context?.commandName  // legacy context.* path
             || paused.failedStep?.commandName
             || '').trim();
           const wantsAllowCommand = (!!allowCommandMatch || /^allow\b/i.test(chosenOption.trim()))
             && !!allowCommandName
-            && !!(paused.pendingQuestion?.context?.userAllowlistHint || paused.failedStep?.userAllowlistHint);
+            && !!(paused.pendingQuestion?.userAllowlistHint    // top-level
+               || paused.pendingQuestion?.context?.userAllowlistHint  // legacy
+               || paused.failedStep?.userAllowlistHint);
           if (wantsAllowCommand) {
             try {
               const _fs = require('fs');
@@ -5983,6 +6029,9 @@ app.whenReady().then(async () => {
           _resumeIntentQueue: _resumeIntentQueue || [],
           _resumeIntentResults: _resumeIntentResults || [],
           _resumeDataContext: _resumeDataContext || {},
+          // Auth bypass: user chose "proceed without" — treat listed agents as
+          // authed for this run only (not persisted to auth cache or authed_at)
+          preflightAuthBypass: _preflightAuthBypass || null,
           context: {
             sessionId: resolvedSessionId,
             userId,
@@ -8020,16 +8069,36 @@ app.whenReady().then(async () => {
   // Fire-and-forget: immediately emits browser:auth_opened so the card transforms
   // to the confirmation step ("I've signed in — continue"). The pipeline's
   // gatherAnswerCallback stays pending until the user clicks that button.
-  ipcMain.on('browser.agent:auth', (_event, { agentId } = {}) => {
+  ipcMain.on('browser.agent:auth', (_event, { agentId, taskId } = {}) => {
     if (!agentId) return;
     // Normalize: browser.agent DB keys always have .agent suffix; preflight may omit it
     const normalizedAgentId = agentId.endsWith('.agent') ? agentId : `${agentId}.agent`;
-    console.log(`[GatherAuth] Opening browser sign-in for ${normalizedAgentId} (fire-and-forget)`);
+    console.log(`[GatherAuth] Opening browser sign-in for ${normalizedAgentId} (fire-and-forget)${taskId ? ` taskId=${taskId}` : ''}`);
     _gatherAuthSessionId = normalizedAgentId.replace('.agent', '').replace(/[^a-z0-9_]/gi, '_') + '_agent';
     _gatherAuthInFlight = true;
 
+    // Resolve the pending handoff task (if any) for this agent so completion events
+    // can be task-tagged — queue-card AutomationProgress instances drop untagged events.
+    // Note: handoff tasks store the ROUTED agentId (often 'auto'), not the agent that
+    // triggered auth — so prefer taskId, then explicit agentId match, then fall back
+    // to the single pending entry when unambiguous.
+    const _findPendingTask = () => {
+      if (taskId && _pendingPreflightPromptsByTask.has(taskId)) {
+        return { taskId, entry: _pendingPreflightPromptsByTask.get(taskId) };
+      }
+      let onlyEntry = null, count = 0;
+      for (const [tid, entry] of _pendingPreflightPromptsByTask) {
+        count++;
+        onlyEntry = { taskId: tid, entry };
+        if (entry.agentId === normalizedAgentId) return { taskId: tid, entry };
+      }
+      return count === 1 ? onlyEntry : null;
+    };
+    const _pendingTask = _findPendingTask();
+    const _pendingTaskId = _pendingTask ? _pendingTask.taskId : (taskId || null);
+
     // Immediately tell the renderer the browser is open so the card changes state
-    safeSendUnified('automation:progress', { type: 'browser:auth_opened', agentId: normalizedAgentId });
+    safeSendUnified('automation:progress', { type: 'browser:auth_opened', agentId: normalizedAgentId, taskId: _pendingTaskId || undefined });
 
     // Fire browser.agent in the background with a long timeout — we don't await it.
     // The pipeline stays pending; the user manually confirms via "I've signed in" button.
@@ -8056,7 +8125,49 @@ app.whenReady().then(async () => {
           try {
             const result = JSON.parse(data);
             console.log(`[GatherAuth] browser.agent background run done for ${normalizedAgentId}: ok=${result?.data?.ok} authVerified=${result?.data?.authVerified}`);
-            if (result?.data?.ok && result?.data?.authVerified === true && _pendingPreflightPrompt) {
+            // Re-resolve — the pending entry may have been deleted (task:cancel) or
+            // re-registered while the background auth was running.
+            const _pendingTask = _findPendingTask();
+            if (result?.data?.ok && result?.data?.authVerified === true && _pendingTask) {
+              // ── Per-task handoff path: auth verified — resume the queue task ──
+              _pendingPreflightPromptsByTask.delete(_pendingTask.taskId);
+              _pendingNewlyBuiltAgents.delete(normalizedAgentId);
+              const _now = new Date().toISOString();
+              const _expires = new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString();
+              try {
+                await _cmdHttp('/agent.update', { id: normalizedAgentId, authed_at: _now, auth_expires_at: _expires });
+                console.log(`[PreflightAuth] Updated ${normalizedAgentId} authed_at=${_now}`);
+              } catch (err) {
+                console.warn(`[PreflightAuth] Could not update authed_at for ${normalizedAgentId}:`, err.message);
+              }
+              const tp = _pendingTask.entry;
+              console.log(`[GatherAuth] Auth succeeded — resuming handoff task ${_pendingTask.taskId}: "${(tp.prompt || '').slice(0, 60)}"`);
+              safeSendUnified('automation:progress', {
+                type: 'preflight:auth_succeeded',
+                agentId: normalizedAgentId,
+                taskId: _pendingTask.taskId,
+                message: 'Sign-in verified — resuming task...',
+              });
+              safeSendUnified('task:complete', {
+                taskId: _pendingTask.taskId,
+                prompt: tp.originalPrompt || tp.prompt,
+                answer: '',
+                status: 'running',
+                agentId: tp.agentId,
+                source: tp.source,
+              });
+              const handoffRunner = require('./handoffRunner');
+              handoffRunner.execute({
+                taskId: _pendingTask.taskId,
+                prompt: tp.prompt,
+                agentId: tp.agentId,
+                source: tp.source,
+                originalPrompt: tp.originalPrompt,
+                sessionId: tp.sessionId,
+              }).catch(err => {
+                console.error(`[GatherAuth] Handoff resume ${_pendingTask.taskId} failed:`, err.message);
+              });
+            } else if (result?.data?.ok && result?.data?.authVerified === true && _pendingPreflightPrompt) {
               // Auth verified by browser.agent — update authed_at and re-enqueue.
               // This is the single source of truth for auth success.
               const pp = _pendingPreflightPrompt;
@@ -8081,15 +8192,16 @@ app.whenReady().then(async () => {
                 responseLanguage: pp.responseLanguage,
                 sessionId: pp.sessionId,
               });
-            } else if (_pendingPreflightPrompt) {
+            } else if (_pendingTask || _pendingPreflightPrompt) {
               // Background auth probe failed or returned inconclusive — tell the UI
               // so the card can show retry/continue options instead of hanging.
-              // Do NOT clear _pendingPreflightPrompt — the Retry button needs it to
+              // Do NOT clear pending entries — the Retry button needs them to
               // re-enqueue after a successful retry. Only clear on success or cancel.
               console.log(`[GatherAuth] Background auth did not verify — notifying UI for ${normalizedAgentId} (preserving pending prompt for retry)`);
               safeSendUnified('automation:progress', {
                 type: 'preflight:auth_background_failed',
                 agentId: normalizedAgentId,
+                taskId: _pendingTaskId || undefined,
                 message: result?.data?.error || 'Background auth check did not confirm login.',
               });
             }
@@ -8100,11 +8212,12 @@ app.whenReady().then(async () => {
     req.on('error', err => {
       _gatherAuthInFlight = false;
       console.warn(`[GatherAuth] browser.agent background error for ${normalizedAgentId}:`, err.message);
-      // Notify UI but preserve _pendingPreflightPrompt for retry — don't hang forever
-      if (_pendingPreflightPrompt) {
+      // Notify UI but preserve pending entries for retry — don't hang forever
+      if (_pendingPreflightPrompt || _findPendingTask()) {
         safeSendUnified('automation:progress', {
           type: 'preflight:auth_background_failed',
           agentId: normalizedAgentId,
+          taskId: _pendingTaskId || undefined,
           message: `Auth request failed: ${err.message}`,
         });
       }
@@ -8114,11 +8227,12 @@ app.whenReady().then(async () => {
       _gatherAuthInFlight = false;
       console.warn(`[GatherAuth] browser.agent background timeout for ${normalizedAgentId}`);
       req.destroy();
-      if (_pendingPreflightPrompt) {
-        // Preserve _pendingPreflightPrompt for retry — only notify UI of timeout
+      if (_pendingPreflightPrompt || _findPendingTask()) {
+        // Preserve pending entries for retry — only notify UI of timeout
         safeSendUnified('automation:progress', {
           type: 'preflight:auth_background_failed',
           agentId: normalizedAgentId,
+          taskId: _pendingTaskId || undefined,
           message: 'Sign-in timed out after 5 minutes. Please try again.',
         });
       }
@@ -8148,6 +8262,26 @@ app.whenReady().then(async () => {
         taskId,
         message: 'Verifying sign-in...',
       });
+      // If a background waitForAuth poll is already running for THIS agent's
+      // session, signal it to verify-and-return now instead of spawning a second
+      // authenticate that would contend on the session mutex.
+      const _expectedSession = normalizedAgentId
+        ? normalizedAgentId.replace('.agent', '').replace(/[^a-z0-9_]/gi, '_') + '_agent'
+        : null;
+      if (_gatherAuthInFlight && _gatherAuthSessionId && _gatherAuthSessionId === _expectedSession) {
+        console.log(`[StateGraph] preflight:auth_continue — signaling /browser.auth_complete for session=${_gatherAuthSessionId} (task path)`);
+        const _completePayload = JSON.stringify({ sessionId: _gatherAuthSessionId });
+        const _completeReq = http.request(
+          { hostname: '127.0.0.1', port: 3007, path: '/browser.auth_complete', method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(_completePayload) } },
+          () => {}
+        );
+        _completeReq.on('error', (err) => {
+          console.warn(`[StateGraph] preflight:auth_continue — /browser.auth_complete failed:`, err.message);
+        });
+        _completeReq.end(_completePayload);
+        return;
+      }
       // Re-trigger auth via handoffRunner resume after verification
       if (normalizedAgentId) {
         _gatherAuthInFlight = true;
@@ -8321,6 +8455,89 @@ app.whenReady().then(async () => {
     } else {
       console.log(`[StateGraph] preflight:auth_continue — no pending prompt, ignoring`);
     }
+  });
+
+  // ─── Preflight: proceed without authentication ────────────────────────────
+  // Triggered by the "Proceed without" button in the preflight auth card.
+  // Resumes the pending task/prompt with a one-run preflightAuthBypass flag so
+  // preflightAgents treats the agent as authed for THIS run only — nothing is
+  // persisted to the auth cache or authed_at, so a future task that truly needs
+  // auth will still prompt.
+  ipcMain.on('preflight:auth_bypass', (_event, { agentId, taskId } = {}) => {
+    const normalizedAgentId = agentId ? (agentId.endsWith('.agent') ? agentId : `${agentId}.agent`) : null;
+    console.log(`[StateGraph] preflight:auth_bypass — agentId=${normalizedAgentId} taskId=${taskId || 'none'}`);
+    if (normalizedAgentId) _pendingNewlyBuiltAgents.delete(normalizedAgentId);
+
+    // If a background waitForAuth poll for THIS agent's session is running,
+    // release it so the resumed run doesn't contend on the session mutex. Its
+    // completion handler will find no pending entry and no-op.
+    const _expectedBypassSession = normalizedAgentId
+      ? normalizedAgentId.replace('.agent', '').replace(/[^a-z0-9_]/gi, '_') + '_agent'
+      : null;
+    if (_gatherAuthInFlight && _gatherAuthSessionId && _gatherAuthSessionId === _expectedBypassSession) {
+      const _completePayload = JSON.stringify({ sessionId: _gatherAuthSessionId });
+      const _completeReq = http.request(
+        { hostname: '127.0.0.1', port: 3007, path: '/browser.auth_complete', method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(_completePayload) } },
+        () => {}
+      );
+      _completeReq.on('error', () => {});
+      _completeReq.end(_completePayload);
+    }
+
+    // ── Handoff path: per-task pending preflight prompt ──────────────────────
+    if (taskId && _pendingPreflightPromptsByTask.has(taskId)) {
+      const tp = _pendingPreflightPromptsByTask.get(taskId);
+      _pendingPreflightPromptsByTask.delete(taskId);
+      safeSendUnified('automation:progress', {
+        type: 'preflight:auth_bypassed',
+        agentId: normalizedAgentId,
+        taskId,
+        message: 'Proceeding without sign-in...',
+      });
+      safeSendUnified('task:complete', {
+        taskId,
+        prompt: tp.originalPrompt || tp.prompt,
+        answer: '',
+        status: 'running',
+        agentId: tp.agentId,
+        source: tp.source,
+      });
+      const handoffRunner = require('./handoffRunner');
+      handoffRunner.execute({
+        taskId,
+        prompt: tp.prompt,
+        agentId: tp.agentId,
+        source: tp.source,
+        originalPrompt: tp.originalPrompt,
+        sessionId: tp.sessionId,
+        preflightAuthBypass: normalizedAgentId ? [normalizedAgentId] : [],
+      }).catch(err => {
+        console.error(`[PreflightAuth] Handoff bypass-resume ${taskId} failed:`, err.message);
+      });
+      return;
+    }
+
+    // ── Serial promptQueue path ──────────────────────────────────────────────
+    if (_pendingPreflightPrompt) {
+      const pp = _pendingPreflightPrompt;
+      _pendingPreflightPrompt = null;
+      safeSendUnified('automation:progress', {
+        type: 'preflight:auth_bypassed',
+        agentId: normalizedAgentId,
+        message: 'Proceeding without sign-in...',
+      });
+      console.log(`[GatherAuth] Auth bypassed — re-enqueuing prompt: "${pp.prompt.slice(0, 60)}"`);
+      promptQueue.enqueue(pp.prompt, {
+        selectedText: pp.selectedText,
+        responseLanguage: pp.responseLanguage,
+        sessionId: pp.sessionId,
+        _preflightAuthBypass: normalizedAgentId ? [normalizedAgentId] : [],
+      });
+      return;
+    }
+
+    console.log(`[StateGraph] preflight:auth_bypass — no pending prompt, ignoring`);
   });
 
   // ─── Agents: list / learn / train / create ────────────────────────────────

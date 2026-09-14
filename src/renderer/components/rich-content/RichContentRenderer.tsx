@@ -1,5 +1,5 @@
 import React, { useState, useMemo } from 'react';
-import ReactMarkdown from 'react-markdown';
+import ReactMarkdown, { defaultUrlTransform } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import remarkBreaks from 'remark-breaks';
 import rehypeRaw from 'rehype-raw';
@@ -8,6 +8,12 @@ import { vscDarkPlus } from 'react-syntax-highlighter/dist/esm/styles/prism';
 import { ImageCarousel } from './ImageCarousel';
 
 const SyntaxHighlighter = SyntaxHighlighterBase as any;
+
+// react-markdown's defaultUrlTransform strips any URL whose protocol isn't in
+// its allowlist (http/https/irc/mailto/xmpp) — our thinkdrop-image: cache
+// protocol would be zeroed out before it ever reaches the img renderer.
+const urlTransform = (url: string) =>
+  /^thinkdrop-image:/i.test(url) ? url : defaultUrlTransform(url);
 
 // ── Overlay-safe colors ────────────────────────────────────────────────────────
 // The UnifiedOverlay has a dark background. prose-invert is present but
@@ -142,7 +148,8 @@ const renderContentWithCarousels = (
   
   // Extract ALL images from content (including those in list items)
   // This pattern matches markdown images anywhere: ![alt](url "title")
-  const imageRegex = /!?\[([^\]]*)\]\(([^\s")]+)(?:\s+"([^"]*)")?\)/g;
+  // The `!` is REQUIRED — plain [text](url) links must NOT be treated as images.
+  const imageRegex = /!\[([^\]]*)\]\(([^\s")]+)(?:\s+"([^"]*)")?\)/g;
   const allImages: { alt: string; src: string; title?: string; index: number }[] = [];
   
   let imgMatch;
@@ -174,6 +181,7 @@ const renderContentWithCarousels = (
           key={`text-${partIndex++}`}
           remarkPlugins={[remarkGfm, remarkBreaks]}
           rehypePlugins={[rehypeRaw]}
+          urlTransform={urlTransform}
           components={{
             code({ node, inline, className, children, ...props }: any) {
               const match = /language-(\w+)/.exec(className || '');
@@ -215,6 +223,7 @@ const renderContentWithCarousels = (
       key="full-content"
       remarkPlugins={[remarkGfm, remarkBreaks]}
       rehypePlugins={[rehypeRaw]}
+      urlTransform={urlTransform}
       components={{
         code({ node, inline, className, children, ...props }: any) {
           const match = /language-(\w+)/.exec(className || '');
@@ -262,7 +271,8 @@ const RichContentRenderer: React.FC<RichContentRendererProps> = ({
   }, [searchResults]);
   
   // Check if content has multiple consecutive images for carousel
-  const hasImageGroups = /(?:!?\[[^\]]*\]\([^\)]+\)\s*\n?){2,}/.test(content);
+  // The `!` is REQUIRED — plain [text](url) links must NOT trigger the carousel.
+  const hasImageGroups = /(?:!\[[^\]]*\]\([^\)]+\)\s*\n?){2,}/.test(content);
 
   // Use carousel rendering for content with multiple image groups
   if (hasImageGroups) {
@@ -286,6 +296,7 @@ const RichContentRenderer: React.FC<RichContentRendererProps> = ({
       <ReactMarkdown
         remarkPlugins={[remarkGfm, remarkBreaks]}
         rehypePlugins={[rehypeRaw]}
+        urlTransform={urlTransform}
         components={{
           code({ node, inline, className, children, ...props }: any) {
             const match = /language-(\w+)/.exec(className || '');
@@ -306,8 +317,11 @@ const RichContentRenderer: React.FC<RichContentRendererProps> = ({
             // Security validation
             const isDataUrl = src.startsWith('data:');
             const isHttpUrl = src.startsWith('http://') || src.startsWith('https://');
-            
-            if (!isDataUrl && !isHttpUrl) {
+            // thinkdrop-image:// serves locally-cached images from
+            // ~/.thinkdrop/image-cache — trusted, registered in main.js.
+            const isThinkdropImage = src.startsWith('thinkdrop-image:');
+
+            if (!isDataUrl && !isHttpUrl && !isThinkdropImage) {
               return (
                 <div className="inline-flex items-center gap-2 px-2 py-1 rounded text-xs bg-red-500/20 text-red-400 border border-red-500/30">
                   <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -327,7 +341,6 @@ const RichContentRenderer: React.FC<RichContentRendererProps> = ({
                   className="max-w-full h-auto rounded-lg shadow-lg border border-gray-600/30 cursor-pointer hover:border-blue-500/50 transition-colors"
                   style={{ maxHeight: '400px', objectFit: 'contain' }}
                   referrerPolicy="no-referrer"
-                  crossOrigin="anonymous"
                   loading="lazy"
                   onError={(e) => {
                     const target = e.target as HTMLImageElement;
@@ -353,11 +366,11 @@ const RichContentRenderer: React.FC<RichContentRendererProps> = ({
                     target.parentNode?.insertBefore(errorSpan, target.nextSibling);
                   }}
                   onClick={() => {
-                    if (isHttpUrl) {
+                    if (isHttpUrl || isThinkdropImage) {
                       const ipcRenderer = (window as any).electron?.ipcRenderer;
                       if (ipcRenderer) {
                         ipcRenderer.send('shell:open-url', src);
-                      } else {
+                      } else if (isHttpUrl) {
                         window.open(src, '_blank');
                       }
                     }

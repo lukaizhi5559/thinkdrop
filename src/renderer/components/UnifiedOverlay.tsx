@@ -16,6 +16,8 @@ import VoiceButton from './VoiceButton';
 import AutomationProgress from './AutomationProgress';
 import { QueueTaskList, TaskCompleteBanner, type CommsTask } from './QueueTaskCard';
 import { RichContentRenderer } from './rich-content';
+import { WebResultsGrid, stripItemImageMarkdown } from './rich-content';
+import type { WebResultItem } from './rich-content/WebResultCard';
 import SkillBuildProgress from './SkillBuildProgress';
 import { SlideoutDrawer, ThinkDropLogo } from './SlideoutDrawer';
 import { SettingsTab } from './SettingsTab';
@@ -103,6 +105,7 @@ export function UnifiedOverlay() {
 
   // --- Results State ---
   const [streamingResponse, setStreamingResponse] = useState('');
+  const [resultItems, setResultItems] = useState<WebResultItem[]>([]);
   const [isStreaming, setIsStreaming] = useState(false);
   const [isThinking, setIsThinking] = useState(false);
   const [thinkingElapsed, setThinkingElapsed] = useState(0);
@@ -403,6 +406,7 @@ export function UnifiedOverlay() {
       setPromptText('');
       setHighlights([]);
       setStreamingResponse('');
+      setResultItems([]);
       setSearchSources([]);
       setIsStreaming(false);
       setIsThinking(true);
@@ -512,6 +516,7 @@ export function UnifiedOverlay() {
         setPromptText('');
         setHighlights([]);
         setStreamingResponse('');
+        setResultItems([]);
         setSearchSources([]);
         setIsStreaming(false);
         setIsThinking(true);
@@ -850,6 +855,12 @@ export function UnifiedOverlay() {
             if (Array.isArray(sources)) setSearchSources(sources);
           } catch (_) {}
           return;
+        } else if (msgText.startsWith('\x00ITEMS\x00')) {
+          try {
+            const items = JSON.parse(msgText.slice('\x00ITEMS\x00'.length));
+            if (Array.isArray(items)) setResultItems(items);
+          } catch (_) {}
+          return;
         } else if (msgText.startsWith('\x00REPLACE\x00')) {
           const newText = msgText.slice('\x00REPLACE\x00'.length);
           console.log('🔄 [UNIFIED] Replacing text, new length:', newText.length);
@@ -889,6 +900,7 @@ export function UnifiedOverlay() {
 
     const handleClear = () => {
       setStreamingResponse('');
+      setResultItems([]);
       setSearchSources([]);
       setIsGlowActive(false);
       setIsThinking(false);
@@ -909,6 +921,7 @@ export function UnifiedOverlay() {
       // Reset all state for new prompt — do NOT setPromptText here,
       // handleSubmit already cleared it synchronously via flushSync.
       setStreamingResponse('');
+      setResultItems([]);
       setSearchSources([]);
       setShowSourcesPanel(false);
       setIsStreaming(false);
@@ -1040,6 +1053,16 @@ export function UnifiedOverlay() {
         markUnreadTab('results');
         setIsThinking(false);
         setIsStreaming(false);
+        // Extract structured items from skillResults (web.crawl extractItems, browser.agent extract_items)
+        if (Array.isArray(data.skillResults)) {
+          const extractedItems = data.skillResults
+            .filter((r: any) => r && Array.isArray(r.items) && r.items.length > 0)
+            .flatMap((r: any) => r.items)
+            .slice(0, 24);
+          if (extractedItems.length > 0) {
+            setResultItems(extractedItems);
+          }
+        }
         if (data?.cancelled) {
           // Extra safety: ensure clean state on cancelled tasks
           setPreflightAuthPending(false);
@@ -1240,6 +1263,7 @@ export function UnifiedOverlay() {
     const handleQueueEnqueued = (data?: any) => {
       console.log('[UNIFIED] Queue enqueued - clearing previous response', data?.isResume ? '(resume)' : '');
       setStreamingResponse('');
+      setResultItems([]);
       if (data?.isResume) return; // Don't kill automation mode on ASK_USER resume
       setIsAutomationMode(false);
       setActionChips([]);
@@ -1827,17 +1851,20 @@ export function UnifiedOverlay() {
     // ── comms-graph task events ──────────────────────────────────────────────
     ipcRenderer.on('task:created', (data: any) => {
       if (data?.taskId) {
+        const isRestored = data.restored === true;
         // Play handoff sound (debounced — skip if a handoff sound played within 3s)
-        const now = Date.now();
-        if (now - _lastHandoffSoundRef.current > 3000) {
-          _lastHandoffSoundRef.current = now;
-          playThinkDropSound();
+        if (!isRestored) {
+          const now = Date.now();
+          if (now - _lastHandoffSoundRef.current > 3000) {
+            _lastHandoffSoundRef.current = now;
+            playThinkDropSound();
+          }
         }
         // Show "•••" working indicator while a non-CA task runs.
         // For parked tasks, guessedIntent is known here — set immediately.
         // For non-parked tasks, guessedIntent is not yet known — wait for
         // intent:decided to determine if it should show.
-        if (data.guessedIntent && data.guessedIntent !== 'command_automate') {
+        if (!isRestored && data.guessedIntent && data.guessedIntent !== 'command_automate') {
           setIsTaskWorking(true);
         }
         // If comms-graph guessed an intent, pre-play the intent sound now.
@@ -1847,7 +1874,7 @@ export function UnifiedOverlay() {
         // intent:decided event will play the sound instead.
         // If guessedIntent is null (regex miss), play default sound as fallback.
         // In both cases, add to dedup set so intent:decided doesn't double-play.
-        if (data.guessedIntent !== undefined) {
+        if (!isRestored && data.guessedIntent !== undefined) {
           _playedIntentSoundRef.current.add(data.taskId);
           if (data.guessedIntent) {
             playIntentSound(data.guessedIntent);
@@ -1862,7 +1889,7 @@ export function UnifiedOverlay() {
             prompt: data.prompt || '',
             agentId: data.agentId || null,
             status: 'queued' as const,
-            createdAt: Date.now(),
+            createdAt: data.createdAt || Date.now(),
             startedAt: null,
             doneAt: null,
             error: null,
@@ -1872,7 +1899,9 @@ export function UnifiedOverlay() {
             source: data.source || 'text',
           }];
         });
-        setUnreadTabs(prev => { const n = new Set(prev); n.add('queue'); return n; });
+        if (!isRestored) {
+          setUnreadTabs(prev => { const n = new Set(prev); n.add('queue'); return n; });
+        }
       }
     }, token);
 
@@ -1899,6 +1928,7 @@ export function UnifiedOverlay() {
         const status = data.status || (data.error ? 'failed' : 'done');
         const taskIntent = data.intent || null;
         const isCommandAutomate = taskIntent === 'command_automate';
+        const isRestored = data.restored === true;
 
         setCommsTasks(prev => prev.map(t => {
           if (t.id !== data.taskId) return t;
@@ -1909,6 +1939,7 @@ export function UnifiedOverlay() {
             result: data.answer || t.result,
             thinking: data.thinking || t.thinking || null,
             sources: data.sources || t.sources || null,
+            items: data.items || t.items || null,
             error: data.error || null,
             planFile: data.planFile || t.planFile || null,
           };
@@ -1918,29 +1949,32 @@ export function UnifiedOverlay() {
         _playedIntentSoundRef.current.delete(data.taskId);
         setIsTaskWorking(false);
 
-        if (status === 'done' && !isCommandAutomate && data.answer) {
-          // ── Non-command_automate: replace placeholder text with real answer ──
-          // Directly update the streaming response state — the ws-bridge:message
-          // handler is designed for main→renderer IPC, not renderer→main.
-          setStreamingResponse(data.answer);
-          setIsStreaming(false);
-          setIsTaskWorking(false);
-          streamCompletedRef.current = true;
-          playDropSound();
-          // NO notification banner for non-command_automate
-        } else if (status === 'done' || status === 'failed' || status === 'cancelled' || status === 'auth-required' || status === 'awaiting-approval') {
-          // ── Command_automate or error states: show notification banner ──
-          // (TaskCompleteBanner plays water-drip when it appears, so no need to play here)
-          setTaskNotification({
-            taskId: data.taskId,
-            prompt: data.prompt || '',
-            answer: data.answer,
-            error: data.error,
-            status,
-            planFile: data.planFile || null,
-          });
+        if (!isRestored) {
+          if (status === 'done' && !isCommandAutomate && data.answer) {
+            // ── Non-command_automate: replace placeholder text with real answer ──
+            // Directly update the streaming response state — the ws-bridge:message
+            // handler is designed for main→renderer IPC, not renderer→main.
+            setStreamingResponse(data.answer);
+            setResultItems(Array.isArray(data.items) ? data.items : []);
+            setIsStreaming(false);
+            setIsTaskWorking(false);
+            streamCompletedRef.current = true;
+            playDropSound();
+            // NO notification banner for non-command_automate
+          } else if (status === 'done' || status === 'failed' || status === 'cancelled' || status === 'auth-required' || status === 'awaiting-approval') {
+            // ── Command_automate or error states: show notification banner ──
+            // (TaskCompleteBanner plays water-drip when it appears, so no need to play here)
+            setTaskNotification({
+              taskId: data.taskId,
+              prompt: data.prompt || '',
+              answer: data.answer,
+              error: data.error,
+              status,
+              planFile: data.planFile || null,
+            });
+          }
+          setUnreadTabs(prev => { const n = new Set(prev); n.add('queue'); return n; });
         }
-        setUnreadTabs(prev => { const n = new Set(prev); n.add('queue'); return n; });
       }
     }, token);
 
@@ -2277,8 +2311,9 @@ export function UnifiedOverlay() {
         {/* Non-automation responses (plain LLM answers) */}
         {streamingResponse && !isAutomationMode && (
           <div className="relative" style={{ overflowX: 'hidden', wordBreak: 'break-word', overflowWrap: 'break-word' }}>
+            {resultItems.length > 0 && <WebResultsGrid items={resultItems} />}
             <RichContentRenderer
-              content={streamingResponse}
+              content={stripItemImageMarkdown(streamingResponse, resultItems)}
               animated={!isStreaming}
               className="text-sm"
             />
@@ -2364,8 +2399,9 @@ export function UnifiedOverlay() {
                     lineHeight: '1.6'
                   }}
                 >
+                  {resultItems.length > 0 && <WebResultsGrid items={resultItems} />}
                   <RichContentRenderer
-                    content={streamingResponse}
+                    content={stripItemImageMarkdown(streamingResponse, resultItems)}
                     animated={!isStreaming}
                     className="text-sm"
                   />
@@ -2777,6 +2813,7 @@ export function UnifiedOverlay() {
                 onShowResult={(task) => {
                   if (task.result) {
                     setStreamingResponse(task.result);
+                    setResultItems(task.items || []);
                     setActiveTab('results');
                   }
                 }}
@@ -3435,6 +3472,7 @@ export function UnifiedOverlay() {
           const task = commsTasks.find(t => t.id === taskId);
           if (task?.result) {
             setStreamingResponse(task.result);
+            setResultItems(task.items || []);
             setActiveTab('results');
           }
           setTaskNotification(null);

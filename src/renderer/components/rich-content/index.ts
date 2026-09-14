@@ -5,3 +5,6 @@
 
 export { default as RichContentRenderer } from './RichContentRenderer';
 export { default as ImageCarousel, type ImageItem } from './ImageCarousel';
+export { default as WebResultCard, type WebResultItem } from './WebResultCard';
+export { default as WebResultsGrid } from './WebResultsGrid';
+export { stripItemImageMarkdown } from './itemImages';

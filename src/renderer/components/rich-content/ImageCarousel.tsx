@@ -3,7 +3,7 @@
  * Used when content contains multiple images to display them in a nice grid/carousel layout
  */
 
-import React, { useState, useRef, useCallback } from 'react';
+import React, { useState, useRef, useCallback, useEffect } from 'react';
 import './ImageCarousel.css';
 
 export interface ImageItem {
@@ -27,6 +27,16 @@ export const ImageCarousel: React.FC<ImageCarouselProps> = ({
   const [loadingImages, setLoadingImages] = useState<Set<number>>(new Set(images.map((_, i) => i)));
   const [loadedImages, setLoadedImages] = useState<Set<number>>(new Set());
   const scrollRef = useRef<HTMLDivElement>(null);
+  const itemRefs = useRef<(HTMLDivElement | null)[]>([]);
+  const scrollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Reset state when the images array identity changes (new result set arrived)
+  useEffect(() => {
+    setCurrentIndex(0);
+    setFailedImages(new Set());
+    setLoadingImages(new Set(images.map((_, i) => i)));
+    setLoadedImages(new Set());
+  }, [images]);
 
   const handleImageError = useCallback((index: number) => {
     setFailedImages(prev => new Set(prev).add(index));
@@ -47,11 +57,40 @@ export const ImageCarousel: React.FC<ImageCarouselProps> = ({
   }, []);
 
   const scrollToImage = useCallback((index: number) => {
-    if (scrollRef.current) {
-      const scrollAmount = index * (scrollRef.current.offsetWidth * 0.85);
-      scrollRef.current.scrollTo({ left: scrollAmount, behavior: 'smooth' });
+    if (scrollRef.current && itemRefs.current[index]) {
+      // Scroll to the actual item element's offset, not an estimated width
+      const target = itemRefs.current[index];
+      const left = target.offsetLeft - 8;
+      scrollRef.current.scrollTo({ left, behavior: 'smooth' });
     }
     setCurrentIndex(index);
+  }, []);
+
+  // Track manual scrolling to sync currentIndex with dots/counter
+  const handleScroll = useCallback(() => {
+    if (scrollTimerRef.current) clearTimeout(scrollTimerRef.current);
+    scrollTimerRef.current = setTimeout(() => {
+      if (!scrollRef.current) return;
+      const scrollLeft = scrollRef.current.scrollLeft;
+      let nearest = 0;
+      let nearestDist = Infinity;
+      for (let i = 0; i < itemRefs.current.length; i++) {
+        const el = itemRefs.current[i];
+        if (!el) continue;
+        const dist = Math.abs(el.offsetLeft - 8 - scrollLeft);
+        if (dist < nearestDist) {
+          nearestDist = dist;
+          nearest = i;
+        }
+      }
+      setCurrentIndex(nearest);
+    }, 80);
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (scrollTimerRef.current) clearTimeout(scrollTimerRef.current);
+    };
   }, []);
 
   const handlePrev = useCallback(() => {
@@ -120,7 +159,6 @@ export const ImageCarousel: React.FC<ImageCarouselProps> = ({
           }`}
           style={{ maxHeight: `${maxHeight}px`, objectFit: 'contain' }}
           referrerPolicy="no-referrer"
-          crossOrigin="anonymous"
           loading="lazy"
           onError={() => handleImageError(0)}
           onLoad={() => handleImageLoad(0)}
@@ -143,6 +181,7 @@ export const ImageCarousel: React.FC<ImageCarouselProps> = ({
         {/* Scrollable container */}
         <div 
           ref={scrollRef}
+          onScroll={handleScroll}
           className="flex gap-3 overflow-x-auto scrollbar-hide scroll-smooth"
           style={{ 
             scrollbarWidth: 'none', 
@@ -158,6 +197,7 @@ export const ImageCarousel: React.FC<ImageCarouselProps> = ({
             return (
               <div 
                 key={`${img.src}-${index}`}
+                ref={(el) => { itemRefs.current[index] = el; }}
                 className="flex-shrink-0 scroll-snap-align-start relative"
                 style={{ scrollSnapAlign: 'start' }}
               >
@@ -203,12 +243,17 @@ export const ImageCarousel: React.FC<ImageCarouselProps> = ({
                         objectFit: 'contain'
                       }}
                       referrerPolicy="no-referrer"
-                      crossOrigin="anonymous"
                       loading="lazy"
                       onError={() => handleImageError(index)}
                       onLoad={() => handleImageLoad(index)}
                       onClick={() => openImageInBrowser(img)}
                     />
+                    {/* Caption under each thumbnail (not just single-image) */}
+                    {(img.alt || img.title) && (
+                      <div className="text-xs text-gray-400 mt-1 italic text-center" style={{ maxWidth: '300px' }}>
+                        {img.alt || img.title}
+                      </div>
+                    )}
                   </>
                 )}
               </div>
