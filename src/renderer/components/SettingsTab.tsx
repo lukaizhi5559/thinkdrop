@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import React, { useState, useEffect } from 'react';
 
 const ipcRenderer = (window as any).electron?.ipcRenderer;
 
@@ -15,7 +15,7 @@ const PLAN_APPROVAL_OPTIONS: { value: PlanApprovalMode; label: string; desc: str
   { value: 'auto',       label: 'Auto-approve all',     desc: 'Plans execute immediately without review' },
 ];
 
-export function SettingsTab() {
+export function _SettingsTab() {
   const [shortcuts, setShortcuts] = useState<ShortcutItem[]>([
     { key: 'Cmd+Shift+T', description: 'Toggle overlay' },
     { key: 'Esc', description: 'Hide overlay' },
@@ -123,3 +123,5 @@ export function SettingsTab() {
     </div>
   );
 }
+
+export const SettingsTab = React.memo(_SettingsTab);

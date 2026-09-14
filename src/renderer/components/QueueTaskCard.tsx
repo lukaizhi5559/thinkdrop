@@ -466,7 +466,7 @@ export function QueueTaskCard({ task, onShowResult, onHeightChange }: {
 }
 
 // ── QueueTaskList — renders all comms-graph tasks ──────────────────────────────
-export function QueueTaskList({ tasks, onShowResult, onHeightChange }: {
+export function _QueueTaskList({ tasks, onShowResult, onHeightChange }: {
   tasks: CommsTask[];
   onShowResult?: (task: CommsTask) => void;
   onHeightChange?: () => void;
@@ -826,3 +826,5 @@ export function TaskCompleteBanner({ notification, onDismiss, onShowResult, onGo
     </>
   );
 }
+
+export const QueueTaskList = React.memo(_QueueTaskList);

@@ -196,6 +196,11 @@ const os = require('os');
 const WebSocket = require('ws');
 const http = require('http');
 
+// Verbose logging flag — gates high-frequency logs (per-resize IPC, etc.) that
+// spam main.log and slow the main process on hot paths. Set THINKDROP_VERBOSE=1
+// to re-enable them for debugging.
+const THINKDROP_VERBOSE = process.env.THINKDROP_VERBOSE === '1';
+
 // Helper: POST to command-service (port 3007) — sole owner of agents.db
 async function _cmdHttp(urlPath, body = {}) {
   return new Promise((resolve, reject) => {
@@ -593,17 +598,20 @@ function startOverlayControlServer() {
       req.on('data', chunk => { body += chunk; });
       req.on('end', () => {
         try {
-          const { taskId, prompt, agentId, source, originalPrompt } = JSON.parse(body || '{}');
-          console.log(`[CommsGraph] Handoff received — task=${taskId} agent=${agentId || 'auto'} source=${source}`);
+          const { taskId, prompt, agentId, source, originalPrompt, guessedIntent } = JSON.parse(body || '{}');
+          console.log(`[CommsGraph] Handoff received — task=${taskId} agent=${agentId || 'auto'} source=${source} guessedIntent=${guessedIntent || 'null'}`);
 
           // Emit task:created BEFORE starting the stategraph run so the queue card
           // is mounted and ready to receive plan:generated / preflight events.
           // Without this, plan:generated can fire before the card exists and be lost.
+          // guessedIntent (from comms-graph regex) is passed so the renderer can
+          // play the intent sound + show ••• immediately at task:created time.
           safeSendUnified('task:created', {
             taskId,
             prompt: originalPrompt || prompt,
             agentId: agentId || null,
             parked: false,
+            guessedIntent: guessedIntent !== undefined ? guessedIntent : null,
           });
 
           // Spawn concurrent stategraph run via handoffRunner
@@ -2351,9 +2359,16 @@ function createGhostLayerWindow() {
     ghostLayerWindow = null;
   });
 
-  // Open DevTools for debugging GhostLayer
-  ghostLayerWindow.webContents.openDevTools({ mode: 'detach' });
-  console.log('[GhostLayer] DevTools opened for debugging');
+  // Open DevTools for debugging GhostLayer — gated behind an env flag because
+  // DevTools instrumentation on a fullscreen transparent always-on-top window
+  // is a constant GPU/CPU drain that starves the renderer (typing/moving lag).
+  // Re-enable with: THINKDROP_DEVTOOLS=1 yarn dev
+  if (process.env.THINKDROP_DEVTOOLS === '1') {
+    ghostLayerWindow.webContents.openDevTools({ mode: 'detach' });
+    console.log('[GhostLayer] DevTools opened for debugging');
+  } else {
+    console.log('[GhostLayer] DevTools disabled (set THINKDROP_DEVTOOLS=1 to enable)');
+  }
 
   return ghostLayerWindow;
 }
@@ -7462,7 +7477,7 @@ app.whenReady().then(async () => {
   ipcMain.on('unified:set-content-height', (_e, { height, width, animate = true, saveBounds = false, restoreBounds = false } = {}) => {
     const result = applyUnifiedBounds({ contentHeight: height, width, animate, saveBounds, restoreBounds });
     if (result) {
-      console.log(`[Unified Window] set-content-height → ${result.width}x${result.height} @ (${result.x}, ${result.y})`);
+      if (THINKDROP_VERBOSE) console.log(`[Unified Window] set-content-height → ${result.width}x${result.height} @ (${result.x}, ${result.y})`);
     }
   });
 

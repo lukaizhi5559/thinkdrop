@@ -1,27 +1,31 @@
-import { useState, useEffect, useRef, useCallback, useReducer, useMemo } from 'react';
-import { flushSync } from 'react-dom';
+import { useState, useEffect, useRef, useCallback, useReducer, useMemo, startTransition, useDeferredValue } from 'react';
 import { useDynamicHeight, MAX_HEIGHT } from './utils/useDynamicHeight';
-import { Favicon } from './DefaultFaviconIcon';
 const ipcRenderer = (window as any).electron?.ipcRenderer;
-import { playThinkDropSound, playDropSound, playIntentSound, playDefaultSound } from '../utils/thinkDropSound';
+import { playThinkDropSound, playDropSound, playIntentSound } from '../utils/thinkDropSound';
+
+// Debug logging flag — gates high-frequency renderer logs (per-LLM-chunk,
+// submit-path) that spam the devtools console and cost render time on hot
+// paths. Flip to true to debug streaming/submit issues.
+const DEBUG_LOG = false;
+const dbg = (...args: any[]) => { if (DEBUG_LOG) console.log(...args); };
 import {
-  TabBar,
   CronTab,
   SkillsTab,
   ConnectionsTab,
   AgentsTab,
   type TabId,
 } from './TabComponents';
-import VoiceButton from './VoiceButton';
-import AutomationProgress from './AutomationProgress';
 import { QueueTaskList, TaskCompleteBanner, type CommsTask } from './QueueTaskCard';
-import { RichContentRenderer } from './rich-content';
-import { WebResultsGrid, stripItemImageMarkdown } from './rich-content';
 import type { WebResultItem } from './rich-content/WebResultCard';
-import SkillBuildProgress from './SkillBuildProgress';
-import { SlideoutDrawer, ThinkDropLogo } from './SlideoutDrawer';
+import { SlideoutDrawer } from './SlideoutDrawer';
 import { SettingsTab } from './SettingsTab';
 import { RulesManagementPanel } from './RulesManagementPanel';
+import { PromptInputBar, type PromptInputBarHandle } from './PromptInputBar';
+import { OverlayStyles } from './OverlayStyles';
+import { LearnModeOverlay, type LearnModeState } from './LearnModeOverlay';
+import { HighlightDebugPanel } from './HighlightDebugPanel';
+import { OverlayHeader } from './OverlayHeader';
+import { ResultsContent, type SkillBuildState, type BridgeStatus, type SearchSource, type ActionChip, type InstallPrompt, type SchedulePending } from './ResultsContent';
 // TrainingBanner removed — training now handled by TrainingPanel in AgentsTab
 import { TeachMeDialog } from './TeachMeDialog';
 import type { AIActivityPanelHandle } from './AIActivityPanel';
@@ -36,15 +40,6 @@ interface PromptQueueItem {
   responseLanguage?: string | null;
 }
 
-interface SkillBuildState {
-  step: 'fetching' | 'building' | 'validating' | 'fixing' | 'installing' | 'done' | 'error' | 'asking';
-  skillName?: string;
-  code?: string;
-  error?: string;
-  language?: string;
-  confirmMessage?: string;
-}
-
 interface TrainingModeState {
   active: boolean;
   agentId: string | null;
@@ -57,28 +52,13 @@ interface TrainingModeState {
   generatedSkill?: { name: string; parameters: string[] };
 }
 
-interface BridgeStatus {
-  state: 'idle' | 'watching' | 'stopped';
-  cronStatus?: 'running' | 'done' | 'failed';
-  cronSkillName?: string;
-}
-
-interface SearchSource {
-  url: string;
-  hostname: string;
-  title?: string;
-}
-
-interface ActionChip {
-  label: string;
-  action: string;
-  args?: Record<string, unknown>;
-}
-
 // --- Components ---
 export function UnifiedOverlay() {
   // --- Tab State ---
   const [activeTab, setActiveTab] = useState<TabId | 'settings' | 'rules'>('results');
+  // Deferred tab value: TabBar highlight uses activeTab (urgent — instant on click),
+  // tab content display styles + useDynamicHeight use deferredTab (non-blocking swap).
+  const deferredTab = useDeferredValue(activeTab);
   const [isSlideoutOpen, setIsSlideoutOpen] = useState(false);
   const [isExpanded, setIsExpanded] = useState(false);
   const [unreadTabs, setUnreadTabs] = useState<Set<TabId>>(new Set());
@@ -88,7 +68,8 @@ export function UnifiedOverlay() {
   const [modalCardEl, setModalCardEl] = useState<HTMLDivElement | null>(null);
 
   // --- Prompt Input State ---
-  const [promptText, setPromptText] = useState('');
+  // promptText, promptHistory, terminalHistory, and textareaRef now live in
+  // PromptInputBar so typing doesn't re-render the entire overlay.
   const [highlights, setHighlights] = useState<string[]>([]);
   const [copyButtonGlowing, setCopyButtonGlowing] = useState(false);
   const [_isRecording, setIsRecording] = useState(false);
@@ -97,11 +78,6 @@ export function UnifiedOverlay() {
   const [preflightAuthPending, setPreflightAuthPending] = useState(false);
   const preflightAuthPendingRef = useRef(false);
   useEffect(() => { preflightAuthPendingRef.current = preflightAuthPending; }, [preflightAuthPending]);
-  const textareaRef = useRef<HTMLTextAreaElement>(null);
-  
-  // --- Prompt History State (for normal mode up/down navigation) ---
-  const [promptHistory, setPromptHistory] = useState<string[]>([]);
-  const [promptHistoryIndex, setPromptHistoryIndex] = useState(-1);
 
   // --- Results State ---
   const [streamingResponse, setStreamingResponse] = useState('');
@@ -125,13 +101,7 @@ export function UnifiedOverlay() {
   const [actionChips, setActionChips] = useState<ActionChip[]>([]);
   const [searchSources, setSearchSources] = useState<SearchSource[]>([]);
   const [showSourcesPanel, setShowSourcesPanel] = useState(false);
-  const [installPrompt, setInstallPrompt] = useState<{
-    tool: string;
-    installCmd: string;
-    reason: string;
-    source?: string;
-    toolDescription?: string;
-  } | null>(null);
+  const [installPrompt, setInstallPrompt] = useState<InstallPrompt | null>(null);
   const [isInstalling, setIsInstalling] = useState(false);
   const [installOutput, setInstallOutput] = useState<string[]>([]);
   const [isDropping, setIsDropping] = useState(false);
@@ -139,8 +109,6 @@ export function UnifiedOverlay() {
   
   // --- Debug Terminal State ---
   const [isDebugMode] = useState(false);
-  const [terminalHistory, setTerminalHistory] = useState<string[]>([]);
-  const [terminalHistoryIndex, setTerminalHistoryIndex] = useState(-1);
   
   // --- Highlight Debug State ---
   const [showHighlightDebug, setShowHighlightDebug] = useState(false);
@@ -149,6 +117,9 @@ export function UnifiedOverlay() {
   
   // Ref to AIActivityPanel for executing terminal commands
   const aiActivityPanelRef = useRef<AIActivityPanelHandle>(null);
+
+  // Imperative handle to PromptInputBar — used for voice inject + focus.
+  const promptInputBarRef = useRef<PromptInputBarHandle>(null);
   
   // Force update mechanism to ensure UI refreshes during streaming
   const [, forceUpdate] = useReducer((x: number) => x + 1, 0);
@@ -182,33 +153,10 @@ export function UnifiedOverlay() {
   const [trainingMode, setTrainingMode] = useState<TrainingModeState | null>(null);
 
   // --- Agent Learn State ---
-  const [learnMode, setLearnMode] = useState<{
-    active: boolean;
-    agentId: string | null;
-    hostname: string | null;
-    progress: number;
-    message: string;
-    discoveredStates: string[];
-    startTime: number | null;
-    authRequired: boolean;
-    totalUrls?: number;
-    currentUrlIndex?: number;
-    // Scan summary stats
-    scanStats?: {
-      totalElements: number;
-      successful: number;
-      failed: number;
-      filtered: number;
-      states: number;
-      skillsGenerated: number;
-      dataItems?: number;
-      duration: number;
-    };
-    requiresDismissal?: boolean;
-  } | null>(null);
+  const [learnMode, setLearnMode] = useState<LearnModeState | null>(null);
 
   // --- UI State ---
-  const [schedulePending, setSchedulePending] = useState<{ id: string; label: string; targetTime: string } | null>(null);
+  const [schedulePending, setSchedulePending] = useState<SchedulePending | null>(null);
   const [bridgeStatus, setBridgeStatus] = useState<BridgeStatus | null>(null);
   const [isCopied, setIsCopied] = useState(false);
   const [isScrolledUp, setIsScrolledUp] = useState(false);
@@ -248,7 +196,6 @@ export function UnifiedOverlay() {
   // --- Stable token for token-based IPC deduplication ---
   // Stable across renders; preload uses it to ensure exactly one listener per channel.
   const listenerToken = useRef('unified-overlay');
-  const _lastHandoffSoundRef = useRef(0);  // Debounce for handoff sound
   const _playedIntentSoundRef = useRef(new Set<string>()); // Dedup intent sounds per task
 
   // --- Dragging State ---
@@ -285,8 +232,18 @@ export function UnifiedOverlay() {
     rules: rulesTabRef,
   }), []);
 
+  // Memoized tab badge counts — avoids recompute on every parent render.
+  const queueCount = useMemo(() =>
+    queueItems.filter(i => i.status !== 'done').length + promptQueueItems.length,
+    [queueItems, promptQueueItems]
+  );
+  const cronCount = useMemo(() =>
+    cronItems.filter(i => i.status === 'active').length,
+    [cronItems]
+  );
+
   const { measureNow } = useDynamicHeight({
-    activeTab,
+    activeTab: deferredTab,
     headerRef,
     inputBarRef,
     contentRefs,
@@ -369,41 +326,17 @@ export function UnifiedOverlay() {
     }
   }, []);
 
-  // --- Prompt Input Functions ---
-  const handleTextareaChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
-    setPromptText(e.target.value);
-    // Auto-resize
-    const textarea = e.target;
-    textarea.style.height = 'auto';
-    textarea.style.height = `${Math.min(textarea.scrollHeight, 200)}px`;
-  };
+  // --- Submit handler (called by PromptInputBar with text + highlights + gatherPending) ---
+  // The child already cleared its own promptText via flushSync (fast — small component).
+  // This handler resets parent state via startTransition (non-blocking) + sends the IPC.
+  // The browser paints the child's text clear first, then "Thinking…" appears after the
+  // transition renders the parent — no 0.5-1s freeze blocking the paint.
+  const handleSubmitFromInputBar = useCallback(async (finalPromptText: string, finalHighlights: string[], wasGatherPending: boolean) => {
+    dbg('🚀 [UNIFIED] handleSubmit called');
 
-  // Reset the textarea's inline height whenever the prompt is cleared (submit,
-  // history navigation, programmatic set-prompt). The inline style set by
-  // handleTextareaChange otherwise persists, keeping the input bar (and thus the
-  // window) at the multi-line height after submit. The inputBar ResizeObserver
-  // in useDynamicHeight picks up the shrink and resizes the window accordingly.
-  useEffect(() => {
-    if (promptText === '' && textareaRef.current) {
-      textareaRef.current.style.height = 'auto';
-    }
-  }, [promptText]);
-
-  // Captured values ref — set synchronously by clearInputAndShowThinking so handleSubmit
-  // can read them after the state has already been cleared.
-  const _pendingSubmitRef = useRef<{ text: string; highlights: string[]; gatherPending: boolean } | null>(null);
-
-  // Non-async synchronous UI reset — called directly from the keydown / click event handler
-  // so flushSync runs in a regular (non-async) call stack and React 18 honours it immediately.
-  // This guarantees the text clears and "Thinking..." appears on the SAME frame as Enter.
-  const clearInputAndShowThinking = () => {
-    _pendingSubmitRef.current = {
-      text: promptText,
-      highlights: [...highlights],
-      gatherPending,
-    };
-    flushSync(() => {
-      setPromptText('');
+    // Reset parent state via startTransition — non-blocking, lets the browser paint
+    // the child's cleared text before the parent re-renders.
+    startTransition(() => {
       setHighlights([]);
       setStreamingResponse('');
       setResultItems([]);
@@ -420,124 +353,9 @@ export function UnifiedOverlay() {
       setStreamingStartedRef(false);
     });
     hasDroppedRef.current = false;
-  };
 
-  const handleTextareaKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    // Debug mode: handle terminal commands and history
-    if (isDebugMode) {
-      if (e.key === 'Enter' && !e.shiftKey) {
-        e.preventDefault();
-        const command = promptText.trim();
-        if (command) {
-          // Add to history
-          setTerminalHistory(prev => [command, ...prev].slice(0, 50));
-          setTerminalHistoryIndex(-1);
-          // Execute via AIActivityPanel ref
-          aiActivityPanelRef.current?.executeCommand(command);
-          // Clear input
-          setPromptText('');
-        }
-        return;
-      }
-
-      // Command history navigation
-      if (e.key === 'ArrowUp') {
-        e.preventDefault();
-        if (terminalHistoryIndex < terminalHistory.length - 1) {
-          const newIndex = terminalHistoryIndex + 1;
-          setTerminalHistoryIndex(newIndex);
-          setPromptText(terminalHistory[newIndex] || '');
-        }
-        return;
-      }
-
-      if (e.key === 'ArrowDown') {
-        e.preventDefault();
-        if (terminalHistoryIndex > 0) {
-          const newIndex = terminalHistoryIndex - 1;
-          setTerminalHistoryIndex(newIndex);
-          setPromptText(terminalHistory[newIndex] || '');
-        } else if (terminalHistoryIndex === 0) {
-          setTerminalHistoryIndex(-1);
-          setPromptText('');
-        }
-        return;
-      }
-    }
-
-    // Normal mode: Prompt history navigation with Up/Down arrows
-    if (!isDebugMode && promptHistory.length > 0) {
-      if (e.key === 'ArrowUp') {
-        e.preventDefault();
-        if (promptHistoryIndex < promptHistory.length - 1) {
-          const newIndex = promptHistoryIndex + 1;
-          setPromptHistoryIndex(newIndex);
-          setPromptText(promptHistory[newIndex]);
-        }
-        return;
-      }
-      if (e.key === 'ArrowDown') {
-        e.preventDefault();
-        if (promptHistoryIndex > 0) {
-          const newIndex = promptHistoryIndex - 1;
-          setPromptHistoryIndex(newIndex);
-          setPromptText(promptHistory[newIndex]);
-        } else if (promptHistoryIndex === 0) {
-          setPromptHistoryIndex(-1);
-          setPromptText('');
-        }
-        return;
-      }
-    }
-
-    // Normal mode: standard submit
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault();
-      clearInputAndShowThinking();
-      handleSubmit();
-    }
-  };
-
-  const handleSubmit = async () => {
-    console.log('🚀 [UNIFIED] handleSubmit called');
-    
-    // Read values saved synchronously by clearInputAndShowThinking (keydown path)
-    // or capture fresh values if called directly (button click path).
-    const _pending = _pendingSubmitRef.current;
-    _pendingSubmitRef.current = null;
-
-    const finalPromptText = _pending ? _pending.text : promptText;
-    const finalHighlights = _pending ? _pending.highlights : [...highlights];
-    const wasGatherPending = _pending ? _pending.gatherPending : gatherPending;
-
-    // If called directly (button click), we still need to flush sync UI update.
-    if (!_pending) {
-      flushSync(() => {
-        setPromptText('');
-        setHighlights([]);
-        setStreamingResponse('');
-        setResultItems([]);
-        setSearchSources([]);
-        setIsStreaming(false);
-        setIsThinking(true);
-        setIsSubmitting(true);
-        setActiveTab('results');
-        setIsAutomationMode(false);
-        setInstallPrompt(null);
-        setActionChips([]);
-        setInstallOutput([]);
-        setGatherPending(false);
-        setGatherQuestion(null);
-        setStreamingStartedRef(false);
-      });
-      hasDroppedRef.current = false;
-    }
-    
-    // Refs must be reset outside flushSync but immediately after
-    hasDroppedRef.current = false;
-    
     if (!finalPromptText.trim() && finalHighlights.length === 0) {
-      console.log('⚠️ [UNIFIED] No text or highlights, skipping submit');
+      dbg('⚠️ [UNIFIED] No text or highlights, skipping submit');
       setIsThinking(false);
       setIsSubmitting(false);
       return;
@@ -546,19 +364,10 @@ export function UnifiedOverlay() {
       setIsThinking(false);
       return;
     }
-    
-    // Save to prompt history (normal prompts only, not gather flow answers)
-    if (!wasGatherPending && finalPromptText.trim()) {
-      setPromptHistory(prev => {
-        const newHistory = [finalPromptText.trim(), ...prev.filter(p => p !== finalPromptText.trim())].slice(0, 100);
-        return newHistory;
-      });
-      setPromptHistoryIndex(-1);
-    }
-    
+
     // Handle gather flow - just send answer (state already reset above)
     if (wasGatherPending) {
-      console.log('📋 [UNIFIED] gather:pending was active — routing to gather:answer');
+      dbg('📋 [UNIFIED] gather:pending was active — routing to gather:answer');
       ipcRenderer?.send('gather:answer', { answer: finalPromptText.trim() });
       return; // Return after sending gather answer (state is already reset)
     }
@@ -566,50 +375,50 @@ export function UnifiedOverlay() {
     playThinkDropSound();
 
     let finalPrompt = '';
-    
+
     if (finalHighlights.length > 0) {
       finalPrompt = finalHighlights.map(h =>
         (h.startsWith('[File:') || h.startsWith('[Folder:')) ? h : `[Highlighted: ${h}]`
       ).join('\n') + '\n\n';
     }
-    
+
     finalPrompt += finalPromptText;
-    
+
     const MAX_MESSAGE_LENGTH = 50000;
     if (finalPrompt.trim().length > MAX_MESSAGE_LENGTH) {
       console.error(`❌ [UNIFIED] Message too long: ${finalPrompt.length} chars`);
-      
-      const errorMessage = 
+
+      const errorMessage =
         `⚠️ Message Too Long\n\n` +
         `Your message is ${finalPrompt.length.toLocaleString()} characters, but the limit is ${MAX_MESSAGE_LENGTH.toLocaleString()}.\n\n` +
         `Please try:\n` +
         `• Remove some highlight tags by clicking the × button\n` +
         `• Highlight a smaller section of code\n` +
         `• Break your question into multiple parts`;
-      
+
       if (ipcRenderer) {
         ipcRenderer.send('results-window:show-error', errorMessage);
       }
       setIsSubmitting(false);
       return;
     }
-    
+
     console.log('📤 [UNIFIED] Final prompt to send:', finalPrompt.trim());
-    console.log('🔍 [UNIFIED] ipcRenderer available?', !!ipcRenderer);
+    dbg('🔍 [UNIFIED] ipcRenderer available?', !!ipcRenderer);
 
     // Send to main process - match StandalonePromptCapture exactly
     ipcRenderer?.send('prompt-queue:submit', {
       prompt: finalPrompt.trim(),
       selectedText: finalHighlights.join('\n'),
     });
-    console.log('✅ [UNIFIED] Prompt enqueued');
+    dbg('✅ [UNIFIED] Prompt enqueued');
 
     // Note: isSubmitting stays true until task completes (handled in all_done)
-  };
+  }, [isSubmitting]);
 
-  const handleHighlightRemove = (index: number) => {
+  const handleHighlightRemove = useCallback((index: number) => {
     setHighlights(prev => prev.filter((_, i) => i !== index));
-  };
+  }, []);
 
   // --- Drag and Drop ---
   const handleDragOver = (e: React.DragEvent) => {
@@ -652,7 +461,7 @@ export function UnifiedOverlay() {
   };
 
   // --- Paste Handling ---
-  const handlePaste = (e: React.ClipboardEvent) => {
+  const handlePaste = useCallback((e: React.ClipboardEvent) => {
     const items = Array.from(e.clipboardData.items);
     const hasFiles = items.some(item => item.kind === 'file');
 
@@ -681,7 +490,7 @@ export function UnifiedOverlay() {
       }
     }
     // Text paste is handled naturally by textarea
-  };
+  }, [highlights]);
 
   // --- Voice Recording ---
   // const toggleRecording = () => {
@@ -693,14 +502,101 @@ export function UnifiedOverlay() {
   // };
 
   // --- File Attach ---
-  const handleAttachClick = () => {
+  const handleAttachClick = useCallback(() => {
     ipcRenderer?.send('dialog:open-file');
-  };
+  }, []);
+
+  // --- Stable callbacks for memoized tab components ---
+  // These are wrapped in useCallback so that React.memo on the tab components
+  // actually works — without this, inline arrow functions create new refs on
+  // every parent render (e.g. every keystroke) and force all tabs to re-render.
+  const handleCronToggle = useCallback((item: any) => ipcRenderer?.send('cron:toggle', { id: item.id }), []);
+  const handleCronDelete = useCallback((item: any) => ipcRenderer?.send('cron:delete', { id: item.id }), []);
+  const handleCronRerun = useCallback((item: any) => ipcRenderer?.send('cron:run-now', { id: item.id }), []);
+  const handleAgentsRefresh = useCallback(() => ipcRenderer?.send('agents:list'), []);
+  const handleSkillsSaveSecret = useCallback((skillName: string, key: string, value: string) => ipcRenderer?.send('skills:save-secret', { skillName, key, value }), []);
+  const handleSkillsOpenCode = useCallback((filePath: string) => ipcRenderer?.send('skills:open-code', { filePath }), []);
+  const handleSkillsOAuthConnect = useCallback((skillName: string, provider: string, tokenKey: string, scopes: any) => ipcRenderer?.send('skills:oauth-connect', { skillName, provider, tokenKey, scopes }), []);
+  const handleSkillsScopesChange = useCallback((skillName: string, provider: string, scopes: any) => ipcRenderer?.send('skills:update-oauth-scopes', { skillName, provider, scopes }), []);
+  const handleSkillsRepairOAuth = useCallback((skillName: string) => ipcRenderer?.send('skills:repair-oauth', { skillName }), []);
+  const handleSkillsDelete = useCallback((skillName: string) => ipcRenderer?.send('skills:delete', { skillName }), []);
+  const handleSkillsInstallFromUrl = useCallback((url: string, nameOverride?: string, descriptionOverride?: string) => ipcRenderer?.send('skill:install-from-url', { url, nameOverride, descriptionOverride }), []);
+  const handleSkillsInstallFromFile = useCallback((filePath: string, nameOverride?: string, descriptionOverride?: string) => ipcRenderer?.send('skill:install-from-file', { filePath, nameOverride, descriptionOverride }), []);
+  const handleSkillsRefresh = useCallback(() => ipcRenderer?.send('skills:list'), []);
+  const handleConnectionsConnect = useCallback((provider: string, tokenKey: string, scopes: any) => ipcRenderer?.send('connections:connect', { provider, tokenKey, scopes }), []);
+  const handleConnectionsDisconnect = useCallback((provider: string, tokenKey: string) => ipcRenderer?.send('connections:disconnect', { provider, tokenKey }), []);
+  const handleConnectionsRefresh = useCallback(() => ipcRenderer?.send('connections:list'), []);
+  const handleQueueShowResult = useCallback((task: any) => {
+    if (task.result) {
+      setStreamingResponse(task.result);
+      setResultItems(task.items || []);
+      setActiveTab('results');
+    }
+  }, []);
+  const handleQueueHeightChange = useCallback(() => {
+    if (shouldSuppressResize()) return;
+    measureNow();
+  }, [shouldSuppressResize, measureNow]);
+
+  // --- Learn Mode callbacks (stabilized for LearnModeOverlay memo) ---
+  const handleLearnCancel = useCallback((agentId: string) => {
+    ipcRenderer?.send('agents:learn-cancel', { agentId });
+  }, []);
+  const handleLearnDone = useCallback(() => {
+    setLearnMode(null);
+    setActiveTab('agents');
+  }, []);
+
+  // --- Highlight Debug callbacks (stabilized for HighlightDebugPanel memo) ---
+  const handleHighlightDebugExecute = useCallback((query: string) => {
+    let action: string, searchText: string | undefined;
+    if (query === 'all') {
+      action = 'highlight_all';
+    } else if (query === 'boundaries') {
+      action = 'highlight_boundaries';
+    } else if (query === 'assets') {
+      action = 'highlight_assets';
+    } else {
+      action = 'highlight_search';
+      searchText = query;
+    }
+    fetch('http://localhost:3007/app.agent', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action, searchText, duration: 0 }),
+    });
+    setShowHighlightDebug(false);
+    setHighlightQuery('');
+    setActiveHighlight(action);
+  }, []);
+
+  const handleHighlightDebugClose = useCallback(() => {
+    setShowHighlightDebug(false);
+    setHighlightQuery('');
+    fetch('http://localhost:3007/app.agent', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'clear_highlights' }),
+    });
+    setActiveHighlight(null);
+  }, []);
 
   // --- Window Controls ---
-  const handleClose = () => {
+  const handleClose = useCallback(() => {
     ipcRenderer?.send('window:hide');
-  };
+  }, []);
+
+  const handleCopy = useCallback(() => {
+    if (streamingResponse) {
+      ipcRenderer?.send('clipboard:write-text', streamingResponse);
+      setIsCopied(true);
+      setTimeout(() => setIsCopied(false), 2000);
+    }
+  }, [streamingResponse]);
+
+  const handleToggleSlideout = useCallback(() => {
+    setIsSlideoutOpen(prev => !prev);
+  }, []);
 
   // --- Click outside handler for sources panel ---
   useEffect(() => {
@@ -719,15 +615,6 @@ export function UnifiedOverlay() {
     document.addEventListener('mousedown', handleClickOutside);
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, [showSourcesPanel]);
-
-  // --- Copy Response ---
-  const handleCopy = () => {
-    if (streamingResponse) {
-      ipcRenderer?.send('clipboard:write-text', streamingResponse);
-      setIsCopied(true);
-      setTimeout(() => setIsCopied(false), 2000);
-    }
-  };
 
   // --- Clear copy-button pulse on any click inside the overlay ---
   // The copy capture button's onClick (sends copy-button:click) fires first in
@@ -758,17 +645,17 @@ export function UnifiedOverlay() {
   }, []);
 
   // --- Drag to Move Window ---
-  const handleMouseDown = (e: React.MouseEvent) => {
+  const handleMouseDown = useCallback((e: React.MouseEvent) => {
     if (e.button !== 0) return; // Only left mouse
     if (!ipcRenderer) return;
-    
+
     isDraggingRef.current = true; // Set ref synchronously — readable in any closure immediately
     setIsDragging(true);
     const bounds = (e.currentTarget as HTMLElement).getBoundingClientRect();
     dragOffsetX.current = e.clientX - bounds.left;
     dragOffsetY.current = e.clientY - bounds.top;
     console.log('[Drag] Mouse down - starting drag');
-  };
+  }, []);
 
   useEffect(() => {
     if (!isDragging) return;
@@ -810,11 +697,11 @@ export function UnifiedOverlay() {
     const handleWsMessage = (message: { type: string; text?: string; lane?: string; payload?: any; taskId?: string; isPlaceholder?: boolean }) => {
       if (!message) return;
       const preview = message.text ? `"${message.text.substring(0, 50)}${message.text.length > 50 ? '...' : ''}"` : '(no text)';
-      console.log(`[UNIFIED:DIAG] msg.type=${message.type} lane=${message.lane} preview=${preview} curRespLen=${streamingResponse.length}`);
-      console.log('📨 [UNIFIED] WebSocket message received:', message.type, preview, 'lane:', message.lane, 'full message:', message);
+      dbg(`[UNIFIED:DIAG] msg.type=${message.type} lane=${message.lane} preview=${preview} curRespLen=${streamingResponse.length}`);
+      dbg('📨 [UNIFIED] WebSocket message received:', message.type, preview, 'lane:', message.lane, 'full message:', message);
 
       if (message.type === 'chunk' || message.type === 'llm_stream_chunk') {
-        console.log('💬 [UNIFIED] Received chunk, length:', message.text?.length || 0);
+        dbg('💬 [UNIFIED] Received chunk, length:', message.text?.length || 0);
         setIsThinking(false);
         setIsStreaming(true);
         // Force re-render to immediately show response and hide Thinking...
@@ -825,7 +712,7 @@ export function UnifiedOverlay() {
         // Defensive: reset automation mode if we're receiving regular content (not automation)
         // This catches cases where a new non-automation prompt starts but automation UI persists
         if (isAutomationMode && !message.lane?.includes('automation') && !streamingResponse) {
-          console.log('🔄 [UNIFIED] First chunk on new prompt - resetting automation mode');
+          dbg('🔄 [UNIFIED] First chunk on new prompt - resetting automation mode');
           setIsAutomationMode(false);
           setActionChips([]);
           setInstallPrompt(null);
@@ -845,7 +732,7 @@ export function UnifiedOverlay() {
         const isNewStream = streamCompletedRef.current;
         if (isNewStream) {
           streamCompletedRef.current = false;
-          console.log('🔄 [UNIFIED] New stream started after completion — will clear previous response');
+          dbg('🔄 [UNIFIED] New stream started after completion — will clear previous response');
         }
 
         const msgText = message?.text || message.payload?.text || '';
@@ -863,15 +750,15 @@ export function UnifiedOverlay() {
           return;
         } else if (msgText.startsWith('\x00REPLACE\x00')) {
           const newText = msgText.slice('\x00REPLACE\x00'.length);
-          console.log('🔄 [UNIFIED] Replacing text, new length:', newText.length);
+          dbg('🔄 [UNIFIED] Replacing text, new length:', newText.length);
           setStreamingResponse(newText);
         } else {
-          console.log('➕ [UNIFIED] Appending text, length:', msgText.length);
+          dbg('➕ [UNIFIED] Appending text, length:', msgText.length);
           setStreamingResponse(prev => {
             // If this is the first chunk of a new stream, discard prev (old answer) atomically.
             const base = isNewStream ? '' : prev;
             const combined = base + msgText;
-            console.log('📝 [UNIFIED] Combined length:', combined.length, isNewStream ? '(new stream — cleared prev)' : '');
+            dbg('📝 [UNIFIED] Combined length:', combined.length, isNewStream ? '(new stream — cleared prev)' : '');
             return combined;
           });
           // Force immediate re-render to ensure response shows
@@ -891,10 +778,10 @@ export function UnifiedOverlay() {
           setIsAutomationMode(false); // Clear automation status
         }
         streamCompletedRef.current = true;
-        console.log('✅ [UNIFIED] Streaming complete, final streamingResponse length:', streamingResponse.length);
+        dbg('✅ [UNIFIED] Streaming complete, final streamingResponse length:', streamingResponse.length);
         glowOffTimerRef.current = setTimeout(() => setIsGlowActive(false), 300);
       } else if (message.type === 'ready') {
-        console.log('✅ [UNIFIED] VS Code extension ready');
+        dbg('✅ [UNIFIED] VS Code extension ready');
       }
     };
 
@@ -919,7 +806,7 @@ export function UnifiedOverlay() {
 
     const handleSetPrompt = (_text: string) => {
       // Reset all state for new prompt — do NOT setPromptText here,
-      // handleSubmit already cleared it synchronously via flushSync.
+      // PromptInputBar already cleared it synchronously via flushSync (child-local).
       setStreamingResponse('');
       setResultItems([]);
       setSearchSources([]);
@@ -956,28 +843,12 @@ export function UnifiedOverlay() {
     };
 
     const handleAutomationProgress = (data: any) => {
-      // ── Intent decided: play intent-specific sound + manage ••• indicator ──
-      // Emitted by decomposePromptV2 / parseIntentV2 when the stategraph decides
-      // the intent. Deduplicate: only play the first intent:decided per task.
+      // ── Intent decided (stategraph) — no longer drives sound/••• ──
+      // Sound + ••• now fire at task:created (comms-graph regex guess) for
+      // immediate feedback. The stategraph's intent:decided event is kept as
+      // a no-op here — the dedup set prevents double-play if it fires after
+      // task:created already played the sound.
       if (data?.type === 'intent:decided') {
-        const taskId = data.taskId;
-        const intent = data.intent;
-        if (taskId && intent) {
-          // Deduplicate: skip if we already played a sound for this task
-          if (!_playedIntentSoundRef.current.has(taskId)) {
-            _playedIntentSoundRef.current.add(taskId);
-            playIntentSound(intent);
-          }
-          // Show "•••" working indicator for non-command_automate intents
-          if (intent !== 'command_automate') {
-            setIsTaskWorking(true);
-          } else {
-            setIsTaskWorking(false);
-          }
-        } else if (intent) {
-          // No taskId — play without dedup (non-handoff path)
-          playIntentSound(intent);
-        }
         return;
       }
       if (data?.type === 'reminder_fired') {
@@ -1195,7 +1066,7 @@ export function UnifiedOverlay() {
 
     // --- Voice ---
     const handleVoiceInject = (data: { message: string }) => {
-      setPromptText(data.message);
+      promptInputBarRef.current?.setPromptText(data.message);
     };
 
     const handleVoiceResponse = () => {
@@ -1852,34 +1723,24 @@ export function UnifiedOverlay() {
     ipcRenderer.on('task:created', (data: any) => {
       if (data?.taskId) {
         const isRestored = data.restored === true;
-        // Play handoff sound (debounced — skip if a handoff sound played within 3s)
+        // ── Intent sound + ••• working indicator (from comms-graph regex guess) ──
+        // The comms-graph's guessedIntent (pure regex) is now available at
+        // task:created for ALL handoff tasks (parked and non-parked), forwarded
+        // through handoff.cjs → /comms.handoff → task:created.
+        // - If guessedIntent matches → play intent-specific sound
+        // - If guessedIntent is null (regex miss) → no sound
+        // - ••• shows for all non-command_automate handoff tasks (incl. regex miss)
+        // - command_automate gets the notification banner instead (no •••)
+        // Dedup via _playedIntentSoundRef so intent:decided doesn't double-play.
         if (!isRestored) {
-          const now = Date.now();
-          if (now - _lastHandoffSoundRef.current > 3000) {
-            _lastHandoffSoundRef.current = now;
-            playThinkDropSound();
-          }
-        }
-        // Show "•••" working indicator while a non-CA task runs.
-        // For parked tasks, guessedIntent is known here — set immediately.
-        // For non-parked tasks, guessedIntent is not yet known — wait for
-        // intent:decided to determine if it should show.
-        if (!isRestored && data.guessedIntent && data.guessedIntent !== 'command_automate') {
-          setIsTaskWorking(true);
-        }
-        // If comms-graph guessed an intent, pre-play the intent sound now.
-        // This is only available for parked tasks (where task:created is emitted
-        // from routeThroughCommsGraph after the response arrives).
-        // For non-parked tasks, guessedIntent is not yet known — the stategraph's
-        // intent:decided event will play the sound instead.
-        // If guessedIntent is null (regex miss), play default sound as fallback.
-        // In both cases, add to dedup set so intent:decided doesn't double-play.
-        if (!isRestored && data.guessedIntent !== undefined) {
           _playedIntentSoundRef.current.add(data.taskId);
           if (data.guessedIntent) {
             playIntentSound(data.guessedIntent);
-          } else {
-            playDefaultSound();
+          }
+          // Show ••• for all handoff tasks except command_automate.
+          // guessedIntent null (regex miss) still shows •••.
+          if (data.guessedIntent !== 'command_automate') {
+            setIsTaskWorking(true);
           }
         }
         setCommsTasks(prev => {
@@ -2067,357 +1928,47 @@ export function UnifiedOverlay() {
   // which measures the component's own root div — outside the clipped layout chain.
 
   // --- Render Helpers ---
-  const renderHighlightChips = () => {
-    if (highlights.length === 0) return null;
-
-    return (
-      <div className="flex flex-wrap gap-2 mb-2">
-        {highlights.map((highlight, index) => {
-          const isFolder = highlight.includes('[Folder:');
-          const isFile = highlight.includes('[File:');
-          const bgColor = isFolder ? 'rgba(74, 222, 128, 0.15)' : isFile ? 'rgba(59, 130, 246, 0.15)' : 'rgba(255, 255, 255, 0.1)';
-          const borderColor = isFolder ? 'rgba(74, 222, 128, 0.3)' : isFile ? 'rgba(59, 130, 246, 0.3)' : 'rgba(255, 255, 255, 0.2)';
-          const textColor = isFolder ? '#4ade80' : isFile ? '#93c5fd' : '#e5e7eb';
-
-          return (
-            <div
-              key={index}
-              className="flex items-center gap-1 px-2 py-1 rounded-md text-xs"
-              style={{
-                backgroundColor: bgColor,
-                border: `1px solid ${borderColor}`,
-                color: textColor,
-              }}
-            >
-              {isFolder && <span>📁</span>}
-              {isFile && <span>📄</span>}
-              <span className="truncate max-w-[150px]">{highlight}</span>
-              <button
-                onClick={() => handleHighlightRemove(index)}
-                className="ml-1 hover:opacity-70"
-                style={{ color: textColor }}
-              >
-                ×
-              </button>
-            </div>
-          );
-        })}
-      </div>
-    );
-  };
+  // renderHighlightChips moved to PromptInputBar (it owns the input area now).
 
   // --- Action Chip Click ---
-  const handleActionChip = (chip: ActionChip) => {
+  const handleActionChip = useCallback((chip: ActionChip) => {
     setActionChips([]);
     if (ipcRenderer) {
       const chipText = typeof chip === 'string' ? chip : (chip as any).label || String(chip);
       ipcRenderer.send('prompt-queue:submit', { prompt: chipText, selectedText: '' });
     }
-  };
+  }, []);
 
   // --- Install Confirm Click (button → main) ---
-  const handleInstallButtonClick = (confirmed: boolean) => {
+  const handleInstallButtonClick = useCallback((confirmed: boolean) => {
     const fn = (window as any).__unifiedInstallConfirm;
     if (typeof fn === 'function') fn(confirmed);
-  };
+  }, []);
 
-  // --- Install Card ---
-  const renderInstallCard = () => {
-    if (!installPrompt && !isInstalling) return null;
+  // --- Stable callbacks for ResultsContent memo ---
+  const handleScheduleDismiss = useCallback((id: string) => {
+    ipcRenderer?.send('schedule:dismiss', { id });
+    setSchedulePending(null);
+  }, []);
 
-    if (isInstalling) {
-      return (
-        <div style={{ margin: '8px 0', borderRadius: 10, backgroundColor: 'rgba(15,15,15,0.95)', border: '1px solid rgba(59,130,246,0.3)', overflow: 'hidden' }}>
-          <div className="flex items-center gap-2" style={{ padding: '8px 12px', borderBottom: '1px solid rgba(59,130,246,0.15)', backgroundColor: 'rgba(59,130,246,0.08)' }}>
-            <div className="w-2.5 h-2.5 rounded-full bg-blue-500 animate-pulse" />
-            <span style={{ color: '#93c5fd', fontSize: '0.78rem', fontWeight: 600 }}>Installing...</span>
-            <span style={{ color: '#4b5563', fontSize: '0.7rem', marginLeft: 'auto', fontFamily: 'monospace' }}>{installOutput.length} lines</span>
-          </div>
-          <div
-            ref={installOutputRef}
-            style={{ maxHeight: 180, overflowY: 'auto', padding: '8px 12px', fontFamily: 'ui-monospace, monospace', fontSize: '0.68rem', lineHeight: 1.55, color: '#86efac', whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}
-          >
-            {installOutput.length === 0 ? (
-              <span style={{ color: '#4b5563' }}>Waiting for output...</span>
-            ) : (
-              installOutput.map((line, i) => (
-                <div key={i} style={{ color: line.toLowerCase().includes('error') || line.toLowerCase().includes('failed') ? '#f87171' : line.toLowerCase().includes('warn') ? '#fbbf24' : '#86efac' }}>{line}</div>
-              ))
-            )}
-          </div>
-        </div>
-      );
-    }
+  const handleAutomationHeightChange = useCallback(() => {
+    if (shouldSuppressResize()) return;
+    measureNow();
+  }, [shouldSuppressResize, measureNow]);
 
-    if (!installPrompt) return null;
-    const { tool, installCmd, reason, source, toolDescription } = installPrompt;
-    const sourceLabel = source === 'brew' ? 'Homebrew' : source === 'npm' ? 'npm' : source === 'pip' ? 'pip' : source;
-    const sourceBadgeColor = source === 'brew' ? 'rgba(251,146,60,0.15)' : 'rgba(59,130,246,0.15)';
-    const sourceBorderColor = source === 'brew' ? 'rgba(251,146,60,0.35)' : 'rgba(59,130,246,0.3)';
-    const sourceTextColor = source === 'brew' ? '#fdba74' : '#93c5fd';
+  const handleAutomationActiveChange = useCallback((active: boolean) => {
+    if (streamingStartedRef && active) return;
+    setIsAutomationMode(active);
+    setIsGlowActive(active);
+  }, [streamingStartedRef]);
 
-    return (
-      <div style={{ margin: '8px 0', padding: '14px', borderRadius: 10, backgroundColor: 'rgba(23,23,23,0.9)', border: '1px solid rgba(255,255,255,0.12)' }}>
-        <div className="flex items-start gap-3">
-          <div style={{ width: 32, height: 32, borderRadius: 8, backgroundColor: 'rgba(251,146,60,0.12)', border: '1px solid rgba(251,146,60,0.25)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#fdba74" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/>
-            </svg>
-          </div>
-          <div className="flex-1 min-w-0">
-            <div className="flex items-center gap-2 flex-wrap" style={{ marginBottom: 4 }}>
-              <span style={{ color: '#f3f4f6', fontSize: '0.82rem', fontWeight: 600 }}>Install {tool}?</span>
-              <span style={{ padding: '1px 6px', borderRadius: 4, backgroundColor: sourceBadgeColor, border: `1px solid ${sourceBorderColor}`, color: sourceTextColor, fontSize: '0.68rem', fontWeight: 500 }}>{sourceLabel}</span>
-            </div>
-            <p style={{ color: '#9ca3af', fontSize: '0.75rem', margin: '0 0 6px', lineHeight: 1.4 }}>{reason}</p>
-            {toolDescription && (
-              <p style={{ color: '#6b7280', fontSize: '0.72rem', margin: '0 0 8px', lineHeight: 1.4 }}>{toolDescription}</p>
-            )}
-            <code style={{ display: 'block', padding: '4px 8px', borderRadius: 5, backgroundColor: 'rgba(0,0,0,0.3)', color: '#86efac', fontSize: '0.7rem', fontFamily: 'monospace', marginBottom: 10, wordBreak: 'break-all' }}>{installCmd}</code>
-            <div className="flex gap-2">
-              <button
-                onClick={() => handleInstallButtonClick(true)}
-                style={{ padding: '5px 14px', borderRadius: 6, backgroundColor: 'rgba(59,130,246,0.2)', border: '1px solid rgba(59,130,246,0.4)', color: '#93c5fd', fontSize: '0.75rem', fontWeight: 600, cursor: 'pointer' }}
-              >
-                Install
-              </button>
-              <button
-                onClick={() => handleInstallButtonClick(false)}
-                style={{ padding: '5px 14px', borderRadius: 6, backgroundColor: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.12)', color: '#6b7280', fontSize: '0.75rem', fontWeight: 500, cursor: 'pointer' }}
-              >
-                Skip
-              </button>
-            </div>
-          </div>
-        </div>
-      </div>
-    );
-  };
+  const handleOpenRules = useCallback(() => {
+    handleTabSelect('rules');
+  }, [handleTabSelect]);
 
-  // --- Source Pill ---
-  const renderSourcePill = () => {
-    if (!searchSources.length) return null;
-    const visible = searchSources.slice(0, 4);
-    const OVERLAP = 10;
-    const CIRCLE = 22;
-    return (
-      <div style={{ position: 'relative', marginBottom: 10 }}>
-        <button
-          data-sources-button
-          onClick={() => setShowSourcesPanel(prev => !prev)}
-          style={{ display: 'flex', alignItems: 'center', gap: 8, background: 'none', border: 'none', padding: 0, cursor: 'pointer', userSelect: 'none' }}
-        >
-          <div style={{ position: 'relative', width: CIRCLE + (visible.length - 1) * (CIRCLE - OVERLAP), height: CIRCLE, flexShrink: 0 }}>
-            {visible.map((src, i) => (
-              <div
-                key={src.url}
-                style={{ position: 'absolute', left: i * (CIRCLE - OVERLAP), top: 0, width: CIRCLE, height: CIRCLE, borderRadius: '50%', overflow: 'hidden', border: '1.5px solid rgba(255,255,255,0.12)', backgroundColor: '#1a1a1a', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: visible.length - i, flexShrink: 0 }}
-              >
-                <Favicon domain={src.hostname} size={14} alt={src.hostname} />
-              </div>
-            ))}
-          </div>
-          <span style={{ color: '#9ca3af', fontSize: '0.7rem', fontWeight: 500, display: 'flex', alignItems: 'center', gap: 3 }}>
-            {searchSources.length} {searchSources.length === 1 ? 'site' : 'sites'}
-            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ color: '#6b7280', transform: showSourcesPanel ? 'rotate(180deg)' : 'rotate(0deg)', transition: 'transform 0.15s' }}>
-              <polyline points="6 9 12 15 18 9" />
-            </svg>
-          </span>
-        </button>
-        {showSourcesPanel && (
-          <div data-sources-panel style={{ position: 'absolute', top: 'calc(100% + 6px)', left: 0, zIndex: 50, width: 280, maxHeight: 320, overflowY: 'auto', backgroundColor: '#1c1c1e', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 10, boxShadow: '0 8px 32px rgba(0,0,0,0.5)', padding: '6px 0' }}>
-            <div style={{ padding: '6px 12px 4px', fontSize: '0.65rem', fontWeight: 600, color: '#6b7280', textTransform: 'uppercase', letterSpacing: '0.06em' }}>Sources</div>
-            {searchSources.map((src, i) => (
-              <div
-                key={src.url + i}
-                onClick={() => ipcRenderer?.send('shell:open-url', src.url)}
-                style={{ display: 'flex', alignItems: 'center', gap: 9, padding: '7px 12px', cursor: 'pointer' }}
-                onMouseEnter={e => (e.currentTarget.style.backgroundColor = 'rgba(255,255,255,0.06)')}
-                onMouseLeave={e => (e.currentTarget.style.backgroundColor = 'transparent')}
-              >
-                <div style={{ width: 20, height: 20, borderRadius: '50%', backgroundColor: '#2a2a2c', border: '1px solid rgba(255,255,255,0.08)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-                  <Favicon domain={src.hostname} size={12} alt="" />
-                </div>
-                <div style={{ minWidth: 0, flex: 1 }}>
-                  <div style={{ fontSize: '0.72rem', fontWeight: 500, color: '#e5e7eb', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                    {src.title || src.hostname}
-                  </div>
-                  <div style={{ fontSize: '0.65rem', color: '#6b7280', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                    {src.hostname}
-                  </div>
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
-    );
-  };
-
-  // --- Action Chips ---
-  const renderActionChips = () => {
-    if (!actionChips.length || isStreaming || isThinking || isAutomationMode) return null;
-    return (
-      <div className="flex flex-wrap gap-2" style={{ marginTop: 10 }}>
-        {actionChips.map((chip, i) => {
-          const label = typeof chip === 'string' ? chip : (chip as any).label || String(chip);
-          return (
-            <button
-              key={i}
-              onClick={() => handleActionChip(chip)}
-              style={{ padding: '4px 12px', borderRadius: 20, backgroundColor: 'rgba(59,130,246,0.1)', border: '1px solid rgba(59,130,246,0.25)', color: '#93c5fd', fontSize: '0.72rem', fontWeight: 500, cursor: 'pointer', whiteSpace: 'nowrap' }}
-            >
-              {label}
-            </button>
-          );
-        })}
-      </div>
-    );
-  };
-
-  const renderResults = () => {
-    // In automation mode, only render if there's streaming content (synthesis answer below steps)
-    if (isAutomationMode && !streamingResponse && !installPrompt && !isInstalling) return null;
-
-    if (isThinking) {
-      // Progressive status messages based on elapsed time
-      const thinkingText =
-        thinkingElapsed >= 15 ? 'This is taking longer than usual...'
-        : thinkingElapsed >= 10 ? 'Still working on it...'
-        : thinkingElapsed >= 5 ? 'Thinking...'
-        : '';
-      return (
-        <div className="flex items-center gap-3">
-          <div className="flex gap-1">
-            <div className="w-2 h-2 rounded-full bg-blue-500 animate-pulse" style={{ animationDelay: '0ms' }} />
-            <div className="w-2 h-2 rounded-full bg-blue-500 animate-pulse" style={{ animationDelay: '150ms' }} />
-            <div className="w-2 h-2 rounded-full bg-blue-500 animate-pulse" style={{ animationDelay: '300ms' }} />
-          </div>
-          {thinkingText && <span className="text-gray-400 text-sm">{thinkingText}</span>}
-        </div>
-      );
-    }
-
-    if (!streamingResponse && !installPrompt && !isInstalling && !actionChips.length) return null;
-
-    // Approximate token count (1 token ≈ 4 chars) for the progress indicator
-    const synthTokenCount = streamingResponse ? Math.ceil(streamingResponse.length / 4) : 0;
-
-    return (
-      <div className={`space-y-4${isDropping ? ' drop-animate' : ''} mt-4`}>
-        {renderInstallCard()}
-        {searchSources.length > 0 && renderSourcePill()}
-        
-        {/* Non-automation responses (plain LLM answers) */}
-        {streamingResponse && !isAutomationMode && (
-          <div className="relative" style={{ overflowX: 'hidden', wordBreak: 'break-word', overflowWrap: 'break-word' }}>
-            {resultItems.length > 0 && <WebResultsGrid items={resultItems} />}
-            <RichContentRenderer
-              content={stripItemImageMarkdown(streamingResponse, resultItems)}
-              animated={!isStreaming}
-              className="text-sm"
-            />
-            {isStreaming && (
-              <span className="inline-block w-1.5 h-4 bg-blue-500 animate-pulse ml-1" />
-            )}
-            {/* "•••" working indicator — shows while a handoff task is running */}
-            {isTaskWorking && !isStreaming && (
-              <div className="flex gap-1.5 mt-2">
-                <div className="w-1.5 h-1.5 rounded-full bg-blue-400 animate-pulse" style={{ animationDelay: '0ms' }} />
-                <div className="w-1.5 h-1.5 rounded-full bg-blue-400 animate-pulse" style={{ animationDelay: '200ms' }} />
-                <div className="w-1.5 h-1.5 rounded-full bg-blue-400 animate-pulse" style={{ animationDelay: '400ms' }} />
-              </div>
-            )}
-          </div>
-        )}
-
-        {/* Automation mode summary with progress indicator */}
-        {isAutomationMode && (streamingResponse || isStreaming) && (
-          <div style={{ marginTop: '20px' }}>
-            {/* Clean divider */}
-            <div style={{ 
-              height: '1px', 
-              background: 'linear-gradient(to right, transparent, rgba(255,255,255,0.1), transparent)', 
-              margin: '16px 0' 
-            }} />
-            
-            {/* Progress indicator or summary content */}
-            <div className="relative" style={{ overflowX: 'hidden', wordBreak: 'break-word', overflowWrap: 'break-word' }}>
-              {/* Header with progress */}
-              <div className="flex items-center gap-2 mb-3" style={{ color: 'rgba(147,197,253,0.9)', fontSize: '0.875rem', fontWeight: 500 }}>
-                {isStreaming ? (
-                  <>
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="animate-pulse">
-                      <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
-                      <polyline points="14 2 14 8 20 8"/>
-                    </svg>
-                    <span>Summarizing...</span>
-                    {synthTokenCount > 0 && (
-                      <span style={{ 
-                        fontSize: '0.75rem', 
-                        color: 'rgba(147,197,253,0.7)', 
-                        marginLeft: '8px',
-                        background: 'rgba(59,130,246,0.15)',
-                        padding: '2px 8px',
-                        borderRadius: '12px',
-                        fontFamily: 'monospace'
-                      }}>
-                        {synthTokenCount > 999 ? `${(synthTokenCount / 1000).toFixed(1)}k` : synthTokenCount} tokens
-                      </span>
-                    )}
-                  </>
-                ) : (
-                  <>
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                      <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
-                      <polyline points="14 2 14 8 20 8"/>
-                    </svg>
-                    <span>Summary</span>
-                    {synthTokenCount > 0 && (
-                      <span style={{ 
-                        fontSize: '0.75rem', 
-                        color: 'rgba(147,197,253,0.6)', 
-                        marginLeft: '8px',
-                        background: 'rgba(59,130,246,0.1)',
-                        padding: '2px 8px',
-                        borderRadius: '12px',
-                        fontFamily: 'monospace'
-                      }}>
-                        {synthTokenCount > 999 ? `${(synthTokenCount / 1000).toFixed(1)}k` : synthTokenCount} tokens
-                      </span>
-                    )}
-                  </>
-                )}
-              </div>
-              
-              {/* Summary content with smooth streaming */}
-              {streamingResponse && (
-                <div 
-                  className="relative text-sm leading-relaxed" 
-                  style={{ 
-                    animation: isStreaming ? 'fadeIn 0.3s ease-out' : 'none',
-                    lineHeight: '1.6'
-                  }}
-                >
-                  {resultItems.length > 0 && <WebResultsGrid items={resultItems} />}
-                  <RichContentRenderer
-                    content={stripItemImageMarkdown(streamingResponse, resultItems)}
-                    animated={!isStreaming}
-                    className="text-sm"
-                  />
-                  {isStreaming && (
-                    <span className="inline-block w-1.5 h-4 bg-blue-500 animate-pulse ml-1" />
-                  )}
-                </div>
-              )}
-            </div>
-          </div>
-        )}
-
-        {renderActionChips()}
-      </div>
-    );
-  };
+  const handleToggleSourcesPanel = useCallback(() => {
+    setShowSourcesPanel(prev => !prev);
+  }, []);
 
   return (
     <div
@@ -2428,104 +1979,7 @@ export function UnifiedOverlay() {
       onDrop={handleDrop}
     >
       {/* Glow effect for automation mode */}
-      <style>{`
-        @keyframes prompt-border-sweep {
-          to { --prompt-angle: 360deg; }
-        }
-        @property --prompt-angle {
-          syntax: '<angle>';
-          initial-value: 0deg;
-          inherits: false;
-        }
-        @keyframes think-breathe {
-          0%, 100% { opacity: 1; }
-          50% { opacity: 0.7; }
-        }
-        @keyframes drop-in {
-          0%   { transform: translateY(-8px) scaleY(0.97); }
-          55%  { transform: translateY(3px) scaleY(1.01); }
-          75%  { transform: translateY(-1px) scaleY(0.998); }
-          100% { transform: translateY(0) scaleY(1); }
-        }
-        @keyframes fadeIn {
-          from { opacity: 0; transform: translateY(4px); }
-          to { opacity: 1; transform: translateY(0); }
-        }
-        .drop-animate {
-          animation: drop-in 0.45s cubic-bezier(0.22, 1, 0.36, 1) forwards;
-          transform-origin: top center;
-        }
-        .prompt-glow-ring {
-          position: absolute;
-          inset: -1px;
-          border-radius: 13px;
-          padding: 1.5px;
-          background: conic-gradient(from var(--prompt-angle), transparent 65%, #3b82f6 82%, #60a5fa 88%, #3b82f6 94%, transparent);
-          animation: prompt-border-sweep 2.4s linear infinite;
-          -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
-          -webkit-mask-composite: xor;
-          mask-composite: exclude;
-          pointer-events: none;
-          z-index: 10;
-          opacity: 0;
-          transition: opacity 0.4s ease;
-        }
-        .prompt-glow-ring.active {
-          opacity: 1;
-        }
-        .prompt-glow-ring.ptt {
-          background: conic-gradient(from var(--prompt-angle), transparent 60%, #10b981 78%, #34d399 86%, #10b981 93%, transparent);
-          animation: prompt-border-sweep 1.4s linear infinite;
-          opacity: 1;
-        }
-        .prompt-glow-ring.thinking {
-          background: conic-gradient(from var(--prompt-angle), transparent 40%, #6366f1 65%, #a78bfa 78%, #818cf8 88%, #6366f1 95%, transparent);
-          animation: prompt-border-sweep 3.2s linear infinite, think-breathe 1.6s ease-in-out infinite;
-          opacity: 1;
-        }
-        .prompt-glow-ring.gathering {
-          background: conic-gradient(from var(--prompt-angle), transparent 60%, #f59e0b 78%, #fbbf24 86%, #f59e0b 93%, transparent);
-          animation: prompt-border-sweep 1.8s linear infinite;
-          opacity: 1;
-        }
-        /* Cancel button hover glow - red variant */
-        .cancel-glow-ring {
-          position: absolute;
-          inset: -2px;
-          border-radius: 8px;
-          padding: 2px;
-          background: conic-gradient(from var(--prompt-angle), transparent 60%, #ef4444 78%, #f87171 86%, #ef4444 93%, transparent);
-          animation: prompt-border-sweep 1.4s linear infinite;
-          -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
-          -webkit-mask-composite: xor;
-          mask-composite: exclude;
-          pointer-events: none;
-          z-index: 10;
-          opacity: 0;
-          transition: opacity 0.2s ease;
-        }
-        .cancel-glow-ring.active {
-          opacity: 1;
-        }
-        .drag-glow-ring {
-          position: absolute;
-          inset: -1px;
-          border-radius: 13px;
-          padding: 2px;
-          background: conic-gradient(from var(--prompt-angle), transparent 60%, #3b82f6 75%, #60a5fa 85%, #3b82f6 95%, transparent);
-          animation: prompt-border-sweep 1.5s linear infinite;
-          -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
-          -webkit-mask-composite: xor;
-          mask-composite: exclude;
-          pointer-events: none;
-          z-index: 10;
-          opacity: 0;
-          transition: opacity 0.3s ease;
-        }
-        .drag-glow-ring.active {
-          opacity: 1;
-        }
-      `}</style>
+      <OverlayStyles />
       <div className={`drag-glow-ring${isDragOver ? ' active' : ''}`} />
       <div className={`prompt-glow-ring${isGlowActive ? ' active' : isThinking ? ' thinking' : ''}`} />
 
@@ -2541,144 +1995,23 @@ export function UnifiedOverlay() {
         }}
       >
         {/* Header - Two Row Layout */}
-        <div
-          ref={headerRef}
-          className="flex flex-col"
+        <OverlayHeader
+          headerRef={headerRef}
+          isDragging={isDragging}
+          isExpanded={isExpanded}
+          showCopyButton={!!streamingResponse}
+          isCopied={isCopied}
+          activeTab={activeTab}
+          queueCount={queueCount}
+          cronCount={cronCount}
+          unreadTabs={unreadTabs}
+          onToggleWidth={toggleWidth}
+          onCopy={handleCopy}
+          onClose={handleClose}
           onMouseDown={handleMouseDown}
-          style={{
-            flexShrink: 0,
-            cursor: isDragging ? 'grabbing' : 'grab',
-            userSelect: 'none',
-          }}
-        >
-          {/* Row 1: Hamburger + Logo (centered) + Action Buttons */}
-          <div className="flex items-center justify-between px-4 py-2 relative">
-            {/* Left: Hamburger Menu */}
-            <button
-              onClick={(e) => {
-                e.stopPropagation();
-                setIsSlideoutOpen(prev => !prev);
-              }}
-              className="w-8 h-8 flex items-center justify-center rounded-md hover:bg-white/10 transition-colors"
-              style={{ color: '#9ca3af' }}
-              title="Menu"
-            >
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <line x1="3" y1="6" x2="21" y2="6" />
-                <line x1="3" y1="12" x2="21" y2="12" />
-                <line x1="3" y1="18" x2="21" y2="18" />
-              </svg>
-            </button>
-
-            {/* Center: ThinkDrop Logo */}
-            <div className="absolute left-1/2 -translate-x-1/2 pointer-events-none">
-              <ThinkDropLogo size={22} />
-            </div>
-
-            {/* Right: Action Buttons */}
-            <div className="flex items-center gap-2">
-            {/* Width Toggle */}
-            <button
-              onClick={toggleWidth}
-              className="w-7 h-7 flex items-center justify-center rounded-full hover:bg-gray-700 transition-colors"
-              style={{
-                backgroundColor: 'rgba(255, 255, 255, 0.1)',
-                border: '1px solid rgba(255, 255, 255, 0.2)',
-                color: '#9ca3af',
-              }}
-              title={isExpanded ? 'Collapse' : 'Expand'}
-            >
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                {isExpanded ? (
-                  <>
-                    <polyline points="4 14 10 14 10 20" />
-                    <polyline points="20 10 14 10 14 4" />
-                    <line x1="14" y1="10" x2="21" y2="3" />
-                    <line x1="3" y1="21" x2="10" y2="14" />
-                  </>
-                ) : (
-                  <>
-                    <polyline points="15 3 21 3 21 9" />
-                    <polyline points="9 21 3 21 3 15" />
-                    <line x1="21" y1="3" x2="14" y2="10" />
-                    <line x1="3" y1="21" x2="10" y2="14" />
-                  </>
-                )}
-              </svg>
-            </button>
-
-            {/* Copy Button */}
-            {streamingResponse && (
-              <button
-                onClick={handleCopy}
-                className="w-7 h-7 flex items-center justify-center rounded-full hover:bg-gray-700 transition-colors"
-                style={{
-                  backgroundColor: isCopied ? 'rgba(34, 197, 94, 0.2)' : 'rgba(255, 255, 255, 0.1)',
-                  border: '1px solid rgba(255, 255, 255, 0.2)',
-                  color: isCopied ? '#22c55e' : '#9ca3af',
-                }}
-                title={isCopied ? 'Copied!' : 'Copy response'}
-              >
-                {isCopied ? (
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                    <polyline points="20 6 9 17 4 12"></polyline>
-                  </svg>
-                ) : (
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                    <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
-                    <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
-                  </svg>
-                )}
-              </button>
-            )}
-
-            {/* Cancel Button (automation mode) */}
-            {/* {isAutomationMode && (
-              <button
-                onClick={() => ipcRenderer?.send('automation:cancel')}
-                style={{
-                  padding: '2px 8px',
-                  borderRadius: 5,
-                  backgroundColor: 'rgba(239,68,68,0.12)',
-                  border: '1px solid rgba(239,68,68,0.3)',
-                  color: '#f87171',
-                  fontSize: '0.7rem',
-                  fontWeight: 600,
-                  cursor: 'pointer',
-                }}
-                title="Cancel automation"
-              >
-                Cancel
-              </button>
-            )} */}
-
-            {/* Close Button */}
-            <button
-              onClick={handleClose}
-              className="w-7 h-7 flex items-center justify-center rounded-full hover:bg-gray-700 transition-colors"
-              style={{
-                backgroundColor: 'rgba(255, 255, 255, 0.1)',
-                border: '1px solid rgba(255, 255, 255, 0.2)',
-                color: '#9ca3af',
-              }}
-              title="Close (ESC)"
-            >
-              ×
-            </button>
-          </div>
-          </div>
-
-          {/* Row 2: TabBar */}
-          <div style={{ flexShrink: 0 }}>
-            <TabBar
-              active={activeTab === 'settings' ? 'results' : activeTab}
-              onSelect={(tab) => handleTabSelect(tab as TabId | 'settings' | 'rules')}
-              queueCount={queueItems.filter(i => i.status !== 'done').length + promptQueueItems.length}
-              cronCount={cronItems.filter(i => i.status === 'active').length}
-              unreadTabs={unreadTabs}
-            />
-          </div>
-        </div>
+          onToggleSlideout={handleToggleSlideout}
+          onTabSelect={handleTabSelect}
+        />
 
         {/* Slideout Drawer */}
         <SlideoutDrawer
@@ -2694,95 +2027,49 @@ export function UnifiedOverlay() {
           <div 
             ref={scrollContainerRef} 
             className="h-full overflow-y-auto overflow-x-hidden p-4"
-            style={{ display: activeTab === 'results' ? 'block' : 'none' }}
+            style={{ display: deferredTab === 'results' ? 'block' : 'none' }}
           >
-              <div ref={contentRef}>
-                {schedulePending && (
-                  <div style={{ marginBottom: 12, padding: '12px 14px', borderRadius: 10, backgroundColor: 'rgba(139,92,246,0.08)', border: '1px solid rgba(139,92,246,0.3)' }}>
-                    <div className="flex items-start gap-3">
-                      <div style={{ width: 28, height: 28, borderRadius: 7, backgroundColor: 'rgba(139,92,246,0.15)', border: '1px solid rgba(139,92,246,0.3)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#a78bfa" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                          <circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>
-                        </svg>
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <div style={{ color: '#c4b5fd', fontSize: '0.8rem', fontWeight: 600, marginBottom: 2 }}>
-                          Scheduled task queued
-                        </div>
-                        <div style={{ color: '#9ca3af', fontSize: '0.72rem', marginBottom: 8, lineHeight: 1.4 }}>
-                          <strong style={{ color: '#e5e7eb' }}>{schedulePending.label}</strong> will run automatically at <strong style={{ color: '#a78bfa' }}>{schedulePending.targetTime}</strong>
-                        </div>
-                        <button
-                          onClick={() => {
-                            ipcRenderer?.send('schedule:dismiss', { id: schedulePending.id });
-                            setSchedulePending(null);
-                          }}
-                          style={{ padding: '3px 10px', borderRadius: 5, backgroundColor: 'rgba(139,92,246,0.15)', border: '1px solid rgba(139,92,246,0.3)', color: '#a78bfa', fontSize: '0.72rem', cursor: 'pointer' }}
-                        >
-                          Got it
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-                )}
-
-                {bridgeStatus && bridgeStatus.state !== 'stopped' && (
-                  <div style={{ marginBottom: 8, display: 'flex', alignItems: 'center', gap: 5, opacity: bridgeStatus.cronStatus === 'running' ? 1 : (bridgeStatus.cronStatus ? 0.85 : 0.45) }}>
-                    <div style={{ width: 5, height: 5, borderRadius: '50%', flexShrink: 0, backgroundColor: bridgeStatus.cronStatus === 'running' ? '#3b82f6' : bridgeStatus.cronStatus === 'failed' ? '#ef4444' : bridgeStatus.cronStatus === 'done' ? '#22c55e' : '#10b981', animation: bridgeStatus.cronStatus === 'running' ? 'pulse 1.5s ease-in-out infinite' : 'none' }} />
-                    <span style={{ color: '#6b7280', fontSize: '0.65rem' }}>Bridge watching</span>
-                  </div>
-                )}
-
-                <AutomationProgress
-                  suppressIfScheduled={false}
-                  setIsSubmitting={setIsSubmitting}
-                  onAuthPending={setPreflightAuthPending}
-                  activeTab={activeTab}
-                  onHeightChange={() => {
-                    // Route through the single consolidated pipeline — the root
-                    // ResizeObserver in useDynamicHeight will re-measure and send
-                    // the correct height. We just nudge it to measure now.
-                    if (shouldSuppressResize()) return;
-                    measureNow();
-                  }}
-                  onActiveChange={(active) => {
-                    if (streamingStartedRef && active) return;
-                    setIsAutomationMode(active);
-                    setIsGlowActive(active);
-                  }}
-                  onAskUserShown={scrollToBottom}
-                  onOpenRules={() => handleTabSelect('rules')}
-                />
-
-                {skillBuild && (
-                  <SkillBuildProgress
-                    state={{
-                      phase: skillBuild.step || 'idle',
-                      skillName: skillBuild.skillName || '',
-                      skillDisplayName: skillBuild.skillName || '',
-                      category: 'general',
-                      round: 0,
-                      maxRounds: 3,
-                      rounds: [],
-                      question: skillBuild.confirmMessage,
-                      error: skillBuild.error,
-                    }}
-                    onAnswer={() => {}}
-                    onCancel={() => {}}
-                    onOpenUrl={() => {}}
-                  />
-                )}
-
-                {renderResults()}
-                <div ref={scrollBottomRef} />
-              </div>
+              <ResultsContent
+                contentRef={contentRef}
+                scrollBottomRef={scrollBottomRef}
+                installOutputRef={installOutputRef}
+                streamingResponse={streamingResponse}
+                resultItems={resultItems}
+                isStreaming={isStreaming}
+                isThinking={isThinking}
+                thinkingElapsed={thinkingElapsed}
+                isTaskWorking={isTaskWorking}
+                isAutomationMode={isAutomationMode}
+                isDropping={isDropping}
+                installPrompt={installPrompt}
+                isInstalling={isInstalling}
+                installOutput={installOutput}
+                actionChips={actionChips}
+                searchSources={searchSources}
+                showSourcesPanel={showSourcesPanel}
+                schedulePending={schedulePending}
+                bridgeStatus={bridgeStatus}
+                skillBuild={skillBuild}
+                deferredTab={deferredTab}
+                setIsSubmitting={setIsSubmitting}
+                setPreflightAuthPending={setPreflightAuthPending}
+                onScheduleDismiss={handleScheduleDismiss}
+                onInstallConfirm={handleInstallButtonClick}
+                onActionChip={handleActionChip}
+                onToggleSourcesPanel={handleToggleSourcesPanel}
+                onOpenSourceUrl={(url) => ipcRenderer?.send('shell:open-url', url)}
+                onScrollToBottom={scrollToBottom}
+                onOpenRules={handleOpenRules}
+                onHeightChange={handleAutomationHeightChange}
+                onActiveChange={handleAutomationActiveChange}
+              />
             </div>
 
           {/* Queue Tab */}
           <div 
             ref={queueTabRef}
             className="overflow-y-auto overflow-x-hidden p-4 flex flex-col gap-2"
-            style={{ display: activeTab === 'queue' ? 'flex' : 'none', height: 'auto', maxHeight: '100%' }}
+            style={{ display: deferredTab === 'queue' ? 'flex' : 'none', height: 'auto', maxHeight: '100%' }}
           >
               {restartAlert && (
                 <div style={{ borderRadius: 9, padding: '10px 14px', backgroundColor: 'rgba(245,158,11,0.07)', border: '1px solid rgba(245,158,11,0.3)', display: 'flex', flexDirection: 'column', gap: 6 }}>
@@ -2810,17 +2097,8 @@ export function UnifiedOverlay() {
               {/* comms-graph background tasks (concurrent handoffs) — at top */}
               <QueueTaskList
                 tasks={commsTasks}
-                onShowResult={(task) => {
-                  if (task.result) {
-                    setStreamingResponse(task.result);
-                    setResultItems(task.items || []);
-                    setActiveTab('results');
-                  }
-                }}
-                onHeightChange={() => {
-                  if (shouldSuppressResize()) return;
-                  measureNow();
-                }}
+                onShowResult={handleQueueShowResult}
+                onHeightChange={handleQueueHeightChange}
               />
             </div>
 
@@ -2828,13 +2106,13 @@ export function UnifiedOverlay() {
           <div 
             ref={cronTabRef}
             className="overflow-y-auto overflow-x-hidden p-4"
-            style={{ display: activeTab === 'cron' ? 'block' : 'none', height: 'auto', maxHeight: '100%' }}
+            style={{ display: deferredTab === 'cron' ? 'block' : 'none', height: 'auto', maxHeight: '100%' }}
           >
               <CronTab
                 items={cronItems}
-                onToggle={(item) => ipcRenderer?.send('cron:toggle', { id: item.id })}
-                onDelete={(item) => ipcRenderer?.send('cron:delete', { id: item.id })}
-                onRerun={(item) => ipcRenderer?.send('cron:run-now', { id: item.id })}
+                onToggle={handleCronToggle}
+                onDelete={handleCronDelete}
+                onRerun={handleCronRerun}
               />
             </div>
 
@@ -2842,11 +2120,11 @@ export function UnifiedOverlay() {
           <div 
             ref={agentsTabRef}
             className="overflow-y-auto overflow-x-hidden"
-            style={{ display: activeTab === 'agents' ? 'block' : 'none', height: 'auto', maxHeight: '100%' }}
+            style={{ display: deferredTab === 'agents' ? 'block' : 'none', height: 'auto', maxHeight: '100%' }}
           >
               <AgentsTab
                 items={agentItems}
-                onRefresh={() => ipcRenderer?.send('agents:list')}
+                onRefresh={handleAgentsRefresh}
                 onContentResize={measureNow}
                 modalCardRef={setModalCardEl}
               />
@@ -2856,19 +2134,19 @@ export function UnifiedOverlay() {
           <div 
             ref={skillsTabRef}
             className="overflow-y-auto overflow-x-hidden p-4"
-            style={{ display: activeTab === 'skills' ? 'block' : 'none', height: 'auto', maxHeight: '100%' }}
+            style={{ display: deferredTab === 'skills' ? 'block' : 'none', height: 'auto', maxHeight: '100%' }}
           >
               <SkillsTab
                 items={skillItems}
-                onSaveSecret={(skillName, key, value) => ipcRenderer?.send('skills:save-secret', { skillName, key, value })}
-                onOpenCode={(filePath) => ipcRenderer?.send('skills:open-code', { filePath })}
-                onOAuthConnect={(skillName, provider, tokenKey, scopes) => ipcRenderer?.send('skills:oauth-connect', { skillName, provider, tokenKey, scopes })}
-                onScopesChange={(skillName, provider, scopes) => ipcRenderer?.send('skills:update-oauth-scopes', { skillName, provider, scopes })}
-                onRepairOAuth={(skillName) => ipcRenderer?.send('skills:repair-oauth', { skillName })}
-                onDelete={(skillName) => ipcRenderer?.send('skills:delete', { skillName })}
-                onInstallFromUrl={(url, nameOverride, descriptionOverride) => ipcRenderer?.send('skill:install-from-url', { url, nameOverride, descriptionOverride })}
-                onInstallFromFile={(filePath, nameOverride, descriptionOverride) => ipcRenderer?.send('skill:install-from-file', { filePath, nameOverride, descriptionOverride })}
-                onRefreshSkills={() => ipcRenderer?.send('skills:list')}
+                onSaveSecret={handleSkillsSaveSecret}
+                onOpenCode={handleSkillsOpenCode}
+                onOAuthConnect={handleSkillsOAuthConnect}
+                onScopesChange={handleSkillsScopesChange}
+                onRepairOAuth={handleSkillsRepairOAuth}
+                onDelete={handleSkillsDelete}
+                onInstallFromUrl={handleSkillsInstallFromUrl}
+                onInstallFromFile={handleSkillsInstallFromFile}
+                onRefreshSkills={handleSkillsRefresh}
                 onContentResize={measureNow}
                 modalCardRef={setModalCardEl}
               />
@@ -2878,13 +2156,13 @@ export function UnifiedOverlay() {
           <div 
             ref={connectionsTabRef}
             className="overflow-y-auto overflow-x-hidden p-4"
-            style={{ display: activeTab === 'connections' ? 'block' : 'none', height: 'auto', maxHeight: '100%' }}
+            style={{ display: deferredTab === 'connections' ? 'block' : 'none', height: 'auto', maxHeight: '100%' }}
           >
               <ConnectionsTab
                 items={connectionItems}
-                onConnect={(provider, tokenKey, scopes) => ipcRenderer?.send('connections:connect', { provider, tokenKey, scopes })}
-                onDisconnect={(provider, tokenKey) => ipcRenderer?.send('connections:disconnect', { provider, tokenKey })}
-                onRefresh={() => ipcRenderer?.send('connections:list')}
+                onConnect={handleConnectionsConnect}
+                onDisconnect={handleConnectionsDisconnect}
+                onRefresh={handleConnectionsRefresh}
               />
             </div>
 
@@ -2892,7 +2170,7 @@ export function UnifiedOverlay() {
           {/* <div
             ref={storeTabRef}
             className="overflow-y-auto overflow-x-hidden p-4"
-            style={{ display: activeTab === 'store' ? 'block' : 'none', height: 'auto', maxHeight: '100%' }}
+            style={{ display: deferredTab === 'store' ? 'block' : 'none', height: 'auto', maxHeight: '100%' }}
           >
               <StoreTab onBuildSkill={() => setActiveTab('results')} />
           </div> */}
@@ -2901,7 +2179,7 @@ export function UnifiedOverlay() {
           <div 
             ref={settingsTabRef}
             className="overflow-y-auto overflow-x-hidden p-4"
-            style={{ display: activeTab === 'settings' ? 'block' : 'none', height: 'auto', maxHeight: '100%' }}
+            style={{ display: deferredTab === 'settings' ? 'block' : 'none', height: 'auto', maxHeight: '100%' }}
           >
               <SettingsTab />
             </div>
@@ -2910,13 +2188,13 @@ export function UnifiedOverlay() {
           <div 
             ref={rulesTabRef}
             className="overflow-y-auto overflow-x-hidden p-4"
-            style={{ display: activeTab === 'rules' ? 'block' : 'none', height: 'auto', maxHeight: '100%' }}
+            style={{ display: deferredTab === 'rules' ? 'block' : 'none', height: 'auto', maxHeight: '100%' }}
           >
               <RulesManagementPanel />
             </div>
 
           {/* Floating scroll-to-bottom button */}
-          {activeTab === 'results' && isScrolledUp && (
+          {deferredTab === 'results' && isScrolledUp && (
             <button
               onClick={scrollToBottom}
               className="absolute rounded-full flex items-center justify-center shadow-lg transition-all hover:scale-105"
@@ -2950,368 +2228,31 @@ export function UnifiedOverlay() {
         /> */}
 
         {/* Bottom Input Bar */}
-        <div
-          ref={inputBarRef}
-          className="border-t p-4 relative"
-          style={{ borderColor: 'rgba(255, 255, 255, 0.1)', flexShrink: 0 }}
-        >
-          {/* Highlights */}
-          {renderHighlightChips()}
-
-          {/* Textarea with $ prefix in debug mode */}
-          <div className="relative">
-            {isDebugMode && (
-              <span className="absolute left-0 top-0 text-green-400 font-mono text-sm select-none pointer-events-none">
-                $
-              </span>
-            )}
-            <textarea
-              ref={textareaRef}
-              value={promptText}
-              onChange={handleTextareaChange}
-              onKeyDown={handleTextareaKeyDown}
-              onPaste={handlePaste}
-              placeholder={
-                gatherPending && gatherQuestion
-                  ? gatherQuestion
-                  : isDebugMode
-                    ? "Enter command..."
-                    : "Ask or Drag-Drop anything here"
-              }
-              className={`w-full bg-transparent text-white placeholder-gray-500 resize-none outline-none text-sm mb-3 ${isDebugMode ? 'pl-4' : ''}`}
-              style={{ minHeight: '24px', maxHeight: '200px' }}
-              rows={1}
-            />
-          </div>
-
-          {/* Action Buttons */}
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              {/* Attach Button */}
-              <button
-                onClick={handleAttachClick}
-                className="flex items-center justify-center w-9 h-9 p-0 rounded-lg text-sm font-medium bg-white/5 text-gray-400 border border-white/10 hover:bg-white/10 transition-all"
-              >
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48" />
-                </svg>
-              </button>
-
-              {/* Copy Button — pulses when text is highlighted (detected via mouse drag) */}
-              <button
-                id="copy-capture-button"
-                onClick={copyButtonGlowing ? () => ipcRenderer?.send('copy-button:click') : undefined}
-                title={copyButtonGlowing ? 'Click to save highlighted text as a copy file' : 'Highlight text to activate'}
-                className={copyButtonGlowing ? 'copy-button-glowing' : ''}
-                style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  width: '36px',
-                  height: '36px',
-                  borderRadius: '8px',
-                  backgroundColor: copyButtonGlowing ? 'rgba(59,130,246,0.25)' : 'rgba(255,255,255,0.05)',
-                  border: '1px solid',
-                  borderColor: copyButtonGlowing ? 'rgba(59,130,246,0.5)' : 'rgba(255,255,255,0.1)',
-                  color: copyButtonGlowing ? '#93c5fd' : '#6b7280',
-                  cursor: copyButtonGlowing ? 'pointer' : 'default',
-                  transition: 'background-color 0.2s, border-color 0.2s, color 0.2s',
-                }}
-              >
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
-                  <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
-                </svg>
-              </button>
-
-              {/* Terminal Button */}
-              {/* <button
-                onClick={() => setIsDebugMode(!isDebugMode)}
-                className={`flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium border transition-all ${
-                  isDebugMode
-                    ? 'bg-blue-600/20 text-blue-400 border-blue-500/50 hover:bg-blue-600/30'
-                    : 'bg-white/5 text-gray-400 border-white/10 hover:bg-white/10'
-                }`}
-                title={isDebugMode ? 'Exit Debug Mode' : 'Enter Debug Mode'}
-              >
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <polyline points="4 17 10 11 4 5" />
-                  <line x1="12" y1="19" x2="20" y2="19" />
-                </svg>
-              </button> */}
-            </div>
-
-            {/* Submit/Cancel Button - Matching StandalonePromptCapture style */}
-            <div className="flex items-center gap-2">
-              <div
-                className={isSubmitting ? 'relative group' : ''}
-                style={{
-                  width: '36px',
-                  height: '36px',
-                  borderRadius: '8px',
-                  backgroundColor: isSubmitting
-                    ? 'rgba(239, 68, 68, 0.15)'
-                    : (promptText.trim() || highlights.length > 0) ? 'rgba(59, 130, 246, 0.2)' : 'rgba(255, 255, 255, 0.05)',
-                  border: '1px solid',
-                  borderColor: isSubmitting
-                    ? 'rgba(239, 68, 68, 0.3)'
-                    : (promptText.trim() || highlights.length > 0) ? 'rgba(59, 130, 246, 0.3)' : 'rgba(255, 255, 255, 0.1)',
-                  flexShrink: 0,
-                  marginTop: '0px',
-                  cursor: (isSubmitting || promptText.trim() || highlights.length > 0) ? 'pointer' : 'default',
-                  transition: 'background-color 0.15s, border-color 0.15s',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  position: 'relative',
-                }}
-                onMouseEnter={(e) => {
-                  if (isSubmitting) {
-                    e.currentTarget.style.backgroundColor = 'rgba(239, 68, 68, 0.25)';
-                    e.currentTarget.style.borderColor = 'rgba(239, 68, 68, 0.5)';
-                  }
-                }}
-                onMouseLeave={(e) => {
-                  if (isSubmitting) {
-                    e.currentTarget.style.backgroundColor = 'rgba(239, 68, 68, 0.15)';
-                    e.currentTarget.style.borderColor = 'rgba(239, 68, 68, 0.3)';
-                  }
-                }}
-                title={isSubmitting ? 'Cancel' : 'Send'}
-                onClick={isSubmitting ? () => ipcRenderer?.send('automation:cancel') : (promptText.trim() || highlights.length > 0) ? () => { clearInputAndShowThinking(); handleSubmit(); } : undefined}
-              >
-                {/* Red glow ring on hover when cancelling */}
-                {isSubmitting && (
-                  <div 
-                    className="cancel-glow-ring group-hover:active"
-                    style={{ borderRadius: '8px' }}
-                  />
-                )}
-                {isSubmitting ? (
-                  /* Stop square — like ChatGPT/Windsurf cancel */
-                  <svg width="10" height="10" viewBox="0 0 10 10" className="group-hover:fill-[#ef4444] transition-colors" fill="#9ca3af">
-                    <rect x="0" y="0" width="10" height="10" rx="2" />
-                  </svg>
-                ) : (
-                  <svg
-                    width="14"
-                    height="14"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke={(promptText.trim() || highlights.length > 0) ? '#60a5fa' : '#6b7280'}
-                    strokeWidth="2"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                  >
-                    <path d="M9 10l-5 5 5 5" />
-                    <path d="M20 4v7a4 4 0 0 1-4 4H4" />
-                  </svg>
-                )}
-              </div>
-              <VoiceButton compact={true} icon="voice" style={{ width: '36px', height: '36px', borderRadius: '8px' }} />
-            </div>
-          </div>
-        </div>
+        <PromptInputBar
+          ref={promptInputBarRef}
+          inputBarRef={inputBarRef}
+          highlights={highlights}
+          onHighlightRemove={handleHighlightRemove}
+          gatherPending={gatherPending}
+          gatherQuestion={gatherQuestion}
+          isDebugMode={isDebugMode}
+          isSubmitting={isSubmitting}
+          copyButtonGlowing={copyButtonGlowing}
+          onPaste={handlePaste}
+          onAttachClick={handleAttachClick}
+          onCopyClick={() => ipcRenderer?.send('copy-button:click')}
+          onCancel={() => ipcRenderer?.send('automation:cancel')}
+          onSubmit={handleSubmitFromInputBar}
+          aiActivityPanelRef={aiActivityPanelRef}
+        />
       </div>
 
       {/* Learn Mode Overlay — shown when learning is active OR when showing completion summary */}
-      {learnMode && (
-        <div style={{
-          position: 'absolute',
-          top: 0, left: 0, right: 0, bottom: 0,
-          backgroundColor: 'rgba(0,0,0,0.80)',
-          display: 'flex',
-          flexDirection: 'column',
-          alignItems: 'center',
-          justifyContent: 'center',
-          zIndex: 9999,
-          pointerEvents: 'none', // backdrop passes mouse events through to drag header
-        }}>
-          <div style={{
-            width: 320,
-            padding: 28,
-            backgroundColor: '#1f2937',
-            borderRadius: 16,
-            textAlign: 'center',
-            boxShadow: learnMode.authRequired
-              ? '0 0 0 2px #f59e0b, 0 25px 50px -12px rgba(0,0,0,0.6)'
-              : '0 25px 50px -12px rgba(0,0,0,0.5)',
-            border: learnMode.authRequired ? '1px solid rgba(245,158,11,0.5)' : '1px solid transparent',
-            pointerEvents: 'auto',
-            transition: 'box-shadow 0.3s ease, border 0.3s ease',
-          }}>
-            {learnMode.authRequired ? (
-              <>
-                {/* Auth required — prominent lock icon */}
-                <div style={{
-                  fontSize: '3.5rem',
-                  marginBottom: 12,
-                  animation: 'pulse 1.2s ease-in-out infinite',
-                }}>
-                  🔐
-                </div>
-
-                {/* ACTION REQUIRED badge */}
-                <div style={{
-                  display: 'inline-block',
-                  padding: '3px 10px',
-                  borderRadius: 20,
-                  backgroundColor: 'rgba(245,158,11,0.2)',
-                  border: '1px solid rgba(245,158,11,0.5)',
-                  color: '#fbbf24',
-                  fontSize: '0.7rem',
-                  fontWeight: 700,
-                  letterSpacing: '0.08em',
-                  textTransform: 'uppercase' as const,
-                  marginBottom: 14,
-                }}>
-                  ⚠️ Action Required
-                </div>
-
-                <h3 style={{ margin: '0 0 10px 0', color: '#fff', fontSize: '1.3rem', fontWeight: 700 }}>
-                  Sign in to {learnMode.hostname || 'the site'}
-                </h3>
-
-                <p style={{
-                  margin: '0 0 20px 0',
-                  color: '#d1d5db',
-                  fontSize: '0.9rem',
-                  lineHeight: 1.6,
-                }}>
-                  A browser window is open and waiting.<br />
-                  Sign in with Google, Apple, or email —<br />
-                  this panel updates automatically once you're in.
-                </p>
-              </>
-            ) : learnMode.requiresDismissal ? (
-              <>
-                {/* Completion state — scan summary with Done button */}
-                <h3 style={{ margin: '0 0 8px 0', color: '#fff', fontSize: '1.1rem' }}>
-                  ✨ {learnMode.scanStats?.skillsGenerated || 0} Skills Created
-                </h3>
-
-                <p style={{ margin: '0 0 16px 0', color: '#9ca3af', fontSize: '0.85rem' }}>
-                  {learnMode.message || `Agent finished exploring ${learnMode.hostname || 'the site'}`}
-                </p>
-
-                {/* Completion summary stats */}
-                {learnMode.scanStats && (
-                  <div style={{
-                    margin: '16px 0',
-                    padding: '12px',
-                    backgroundColor: 'rgba(16, 185, 129, 0.1)',
-                    border: '1px solid rgba(16, 185, 129, 0.3)',
-                    borderRadius: 8,
-                    textAlign: 'left',
-                  }}>
-                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '6px 12px', fontSize: '0.75rem', color: '#9ca3af' }}>
-                      <div>Skills: <span style={{ color: '#3b82f6', fontWeight: 600 }}>{learnMode.scanStats.skillsGenerated}</span></div>
-                      <div>Elements: <span style={{ color: '#fff' }}>{learnMode.scanStats.totalElements}</span></div>
-                      <div>Successful: <span style={{ color: '#10b981' }}>{learnMode.scanStats.successful}</span></div>
-                      <div>Filtered: <span style={{ color: '#f59e0b' }}>{learnMode.scanStats.filtered}</span></div>
-                      <div>Failed: <span style={{ color: '#ef4444' }}>{learnMode.scanStats.failed}</span></div>
-                      <div>States: <span style={{ color: '#fff' }}>{learnMode.scanStats.states}</span></div>
-                    </div>
-                    <div style={{ marginTop: '8px', fontSize: '0.7rem', color: '#6b7280' }}>
-                      Duration: {learnMode.scanStats.duration}s
-                    </div>
-                  </div>
-                )}
-
-                {/* Done button */}
-                <button
-                  onClick={() => {
-                    setLearnMode(null);
-                    // Switch back to agents tab
-                    setActiveTab('agents');
-                  }}
-                  style={{
-                    padding: '8px 24px',
-                    borderRadius: 6,
-                    border: 'none',
-                    backgroundColor: '#10b981',
-                    color: '#fff',
-                    fontSize: '0.85rem',
-                    fontWeight: 500,
-                    cursor: 'pointer',
-                    marginTop: 8,
-                  }}
-                >
-                  Done
-                </button>
-              </>
-            ) : (
-              <>
-                {/* Scanning — robot icon */}
-                <div style={{
-                  fontSize: '3rem',
-                  marginBottom: 20,
-                  animation: 'pulse 1.5s ease-in-out infinite',
-                }}>
-                  🤖
-                </div>
-
-                <h3 style={{ margin: '0 0 8px 0', color: '#fff', fontSize: '1.1rem' }}>
-                  Learning Mode Active
-                </h3>
-
-                <p style={{ margin: '0 0 16px 0', color: '#9ca3af', fontSize: '0.85rem' }}>
-                  Agent is exploring {learnMode.hostname || 'domain'}...
-                </p>
-
-                {/* Progress bar */}
-                <div style={{
-                  width: '100%',
-                  height: 6,
-                  backgroundColor: 'rgba(255,255,255,0.1)',
-                  borderRadius: 3,
-                  overflow: 'hidden',
-                  marginBottom: 12,
-                }}>
-                  <div style={{
-                    width: `${learnMode.progress}%`,
-                    height: '100%',
-                    backgroundColor: '#f59e0b',
-                    borderRadius: 3,
-                    transition: 'width 0.3s ease',
-                  }} />
-                </div>
-
-                {/* Status message */}
-                <p style={{ margin: '0 0 20px 0', color: '#6b7280', fontSize: '0.75rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={learnMode.message}>
-                  {learnMode.message}
-                </p>
-
-                {/* Discovered states count */}
-                {learnMode.discoveredStates.length > 0 && (
-                  <p style={{ margin: '0 0 16px 0', color: '#10b981', fontSize: '0.7rem' }}>
-                    Discovered {learnMode.discoveredStates.length} states
-                  </p>
-                )}
-
-                {/* Cancel button */}
-                <button
-                  onClick={() => {
-                    ipcRenderer?.send('agents:learn-cancel', { agentId: learnMode.agentId });
-                  }}
-                  style={{
-                    padding: '8px 20px',
-                    borderRadius: 6,
-                    border: '1px solid rgba(255,255,255,0.2)',
-                    backgroundColor: 'transparent',
-                    color: '#9ca3af',
-                    fontSize: '0.8rem',
-                    cursor: 'pointer',
-                    marginTop: 4,
-                  }}
-                >
-                  Cancel
-                </button>
-              </>
-            )}
-          </div>
-        </div>
-      )}
+      <LearnModeOverlay
+        learnMode={learnMode}
+        onCancel={handleLearnCancel}
+        onDone={handleLearnDone}
+      />
 
       {/* Training Mode Banner removed — handled by TrainingPanel slideout in AgentsTab */}
 
@@ -3339,129 +2280,13 @@ export function UnifiedOverlay() {
       )}
 
       {/* Highlight Debug Button (Dev Mode Only) */}
-      {import.meta.env.DEV && (
-        <>
-          {/* <button
-            onClick={() => {
-              if (activeHighlight) {
-                // Clear highlights
-                fetch('http://localhost:3007/app.agent', {
-                  method: 'POST',
-                  headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({ action: 'clear_highlights' })
-                });
-                setActiveHighlight(null);
-                setShowHighlightDebug(false);
-              } else {
-                setShowHighlightDebug(preHighlightDebug => !preHighlightDebug);
-              }
-            }}
-            title={activeHighlight ? 'Clear Highlights' : 'Highlight Debug Mode'}
-            style={{
-              position: 'absolute',
-              bottom: 15,
-              left: '50%',
-              transform: 'translateX(-50%)',
-              width: 28,
-              height: 28,
-              borderRadius: 6,
-              border: '1px solid rgba(255,255,255,0.2)',
-              backgroundColor: 'rgba(30,30,30,0.9)',
-              color: '#fff',
-              fontSize: '14px',
-              cursor: 'pointer',
-              zIndex: 1000,
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-            }}
-          >
-            🔍
-          </button> */}
-
-          {/* Highlight Debug Dialog */}
-          {showHighlightDebug && (
-            <div
-              style={{
-                position: 'absolute',
-                bottom: 105,
-                left: '50%',
-                transform: 'translateX(-50%)',
-                width: 280,
-                padding: 16,
-                borderRadius: 10,
-                backgroundColor: 'rgba(23,23,23,0.98)',
-                border: '1px solid rgba(255,255,255,0.15)',
-                boxShadow: '0 4px 20px rgba(0,0,0,0.5)',
-                zIndex: 1001,
-              }}
-            >
-              <div style={{ fontSize: '0.85rem', color: '#9ca3af', marginBottom: 10 }}>
-                Highlight Debug Mode
-              </div>
-              <input
-                value={highlightQuery}
-                onChange={(e) => setHighlightQuery(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') {
-                    // Execute highlight
-                    let action, searchText;
-                    if (highlightQuery === 'all') {
-                      action = 'highlight_all';
-                    } else if (highlightQuery === 'boundaries') {
-                      action = 'highlight_boundaries';
-                    } else if (highlightQuery === 'assets') {
-                      action = 'highlight_assets';
-                    } else {
-                      action = 'highlight_search';
-                      searchText = highlightQuery;
-                    }
-
-                    fetch('http://localhost:3007/app.agent', {
-                      method: 'POST',
-                      headers: { 'Content-Type': 'application/json' },
-                      body: JSON.stringify({ action, searchText, duration: 0 }) // 0 = persistent
-                    });
-
-                    setShowHighlightDebug(false);
-                    setHighlightQuery('');
-                    setActiveHighlight(action);
-                  }
-                  if (e.key === 'Escape') {
-                    setShowHighlightDebug(false);
-                    setHighlightQuery('');
-                    // Also clear highlights on Escape
-                    fetch('http://localhost:3007/app.agent', {
-                      method: 'POST',
-                      headers: { 'Content-Type': 'application/json' },
-                      body: JSON.stringify({ action: 'clear_highlights' })
-                    });
-                    setActiveHighlight(null);
-                  }
-                }}
-                placeholder="Type: all | boundaries | assets | search"
-                style={{
-                  width: '100%',
-                  padding: '8px 12px',
-                  borderRadius: 6,
-                  border: '1px solid rgba(255,255,255,0.15)',
-                  backgroundColor: 'rgba(0,0,0,0.3)',
-                  color: '#fff',
-                  fontSize: '0.85rem',
-                  marginBottom: 10,
-                  outline: 'none',
-                }}
-                autoFocus
-              />
-              <div style={{ display: 'flex', gap: 8, fontSize: '0.75rem', color: '#6b7280' }}>
-                <span style={{ color: '#4ade80' }}>● all</span>
-                <span style={{ color: '#3b82f6' }}>● boundaries</span>
-                <span style={{ color: '#facc15' }}>● assets</span>
-                <span>or type to search</span>
-              </div>
-            </div>
-          )}
-        </>
+      {import.meta.env.DEV && showHighlightDebug && (
+        <HighlightDebugPanel
+          highlightQuery={highlightQuery}
+          onQueryChange={setHighlightQuery}
+          onExecute={handleHighlightDebugExecute}
+          onClose={handleHighlightDebugClose}
+        />
       )}
 
       {/* comms-graph task completion banner */}

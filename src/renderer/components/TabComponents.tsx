@@ -746,7 +746,7 @@ function CronItemCard({ item, onToggle, onDelete, onRerun }: {
   );
 }
 
-export function CronTab({ items, onToggle, onDelete, onRerun }: {
+function _CronTab({ items, onToggle, onDelete, onRerun }: {
   items: CronItem[];
   onToggle: (item: CronItem) => void;
   onDelete: (item: CronItem) => void;
@@ -771,6 +771,8 @@ export function CronTab({ items, onToggle, onDelete, onRerun }: {
     </div>
   );
 }
+
+export const CronTab = React.memo(_CronTab);
 
 // ── Skills tab ────────────────────────────────────────────────────────────────
 
@@ -1577,7 +1579,7 @@ function CreateSkillModal({ isOpen, onClose, onCreate, cardRef }: CreateSkillMod
   );
 }
 
-export function SkillsTab({ items, onSaveSecret, onOpenCode, onOAuthConnect, onScopesChange, onRepairOAuth, onDelete, onInstallFromUrl, onInstallFromFile, onRefreshSkills, onContentResize, modalCardRef }: {
+export function _SkillsTab({ items, onSaveSecret, onOpenCode, onOAuthConnect, onScopesChange, onRepairOAuth, onDelete, onInstallFromUrl, onInstallFromFile, onRefreshSkills, onContentResize, modalCardRef }: {
   items: SkillItem[];
   onSaveSecret: (skillName: string, key: string, value: string) => void;
   onOpenCode: (filePath: string) => void;
@@ -1699,6 +1701,8 @@ export function SkillsTab({ items, onSaveSecret, onOpenCode, onOAuthConnect, onS
     </div>
   );
 }
+
+export const SkillsTab = React.memo(_SkillsTab);
 
 // ── Prompt Queue section (serial stategraph runner) ───────────────────────────
 
@@ -1900,7 +1904,7 @@ function ProviderCard({ item, onConnect, onDisconnect }: {
   );
 }
 
-export function ConnectionsTab({ items, onConnect, onDisconnect, onRefresh }: {
+export function _ConnectionsTab({ items, onConnect, onDisconnect, onRefresh }: {
   items: ConnectionItem[];
   onConnect: (provider: string, tokenKey: string, scopes: string) => void;
   onDisconnect: (provider: string, tokenKey: string) => void;
@@ -1955,6 +1959,8 @@ export function ConnectionsTab({ items, onConnect, onDisconnect, onRefresh }: {
     </div>
   );
 }
+
+export const ConnectionsTab = React.memo(_ConnectionsTab);
 
 // ── Store tab ─────────────────────────────────────────────────────────────────
 

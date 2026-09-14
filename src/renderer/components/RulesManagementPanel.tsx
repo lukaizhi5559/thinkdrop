@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 
 const ipcRenderer = (window as any).electron?.ipcRenderer;
 
@@ -50,7 +50,7 @@ const SOURCE_BADGES: Record<string, { label: string; color: string }> = {
   user: { label: 'User', color: '#10b981' },
 };
 
-export function RulesManagementPanel() {
+export function _RulesManagementPanel() {
   // State
   const [contextRules, setContextRules] = useState<GroupedContextRules>({});
   const [constraints, setConstraints] = useState<ConstraintRule[]>([]);
@@ -1231,4 +1231,5 @@ function CreateRuleModal({ type, onClose, onSave }: CreateRuleModalProps) {
   );
 }
 
+export const RulesManagementPanel = React.memo(_RulesManagementPanel);
 export default RulesManagementPanel;

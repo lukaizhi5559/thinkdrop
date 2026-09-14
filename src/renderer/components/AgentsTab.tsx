@@ -970,7 +970,7 @@ function CreateCliAgentModal({
 }
 
 // Main Agents Tab component
-export function AgentsTab({ items, onRefresh, onContentResize, modalCardRef }: AgentsTabProps) {
+function _AgentsTab({ items, onRefresh, onContentResize, modalCardRef }: AgentsTabProps) {
   const [expandedAgent, setExpandedAgent] = useState<string | null>(null);
   const [isCreateBrowserModalOpen, setIsCreateBrowserModalOpen] = useState(false);
   const [isCreateCliModalOpen, setIsCreateCliModalOpen] = useState(false);
@@ -2738,3 +2738,5 @@ export function AgentsTab({ items, onRefresh, onContentResize, modalCardRef }: A
     </div>
   );
 }
+
+export const AgentsTab = React.memo(_AgentsTab);
