@@ -243,16 +243,19 @@ async function execute({ taskId, prompt, agentId, source, originalPrompt, sessio
             .filter(r => r && Array.isArray(r.items) && r.items.length > 0)
             .flatMap(r => r.items)
         : []),
-      // web_search image results land in contextDocs (not skillResults) — map
-      // them into items so they render as cards too.
+      // web_search image/video results land in contextDocs (not skillResults) —
+      // map them into items so they render as cards too.
       ...(Array.isArray(finalState.contextDocs)
         ? finalState.contextDocs
-            .filter(d => d && (d.isImage || d.imageUrl) && d.imageUrl)
+            .filter(d => d && (d.isImage || d.imageUrl || d.mediaType === 'video') && (d.imageUrl || d.url))
             .map(d => ({
               title: d.title || undefined,
               imageUrl: d.imageUrl,
               url: (d.url && d.url.startsWith('http')) ? d.url : (d.originalUrl || undefined),
               snippet: d.snippet || undefined,
+              mediaType: d.mediaType || undefined,
+              duration: d.duration || undefined,
+              channel: d.channel || undefined,
             }))
         : []),
     ]
@@ -261,7 +264,7 @@ async function execute({ taskId, prompt, agentId, source, originalPrompt, sessio
             const url = (it.url || '').toString().trim();
             const imageUrl = (it.imageUrl || '').toString().trim();
             if (!url && !imageUrl) return acc;
-            const key = (url || imageUrl) + '|' + (it.title || '');
+            const key = (url || imageUrl) + '|' + (it.title || '') + '|' + (it.mediaType || '');
             if (acc._seen.has(key)) return acc;
             acc._seen.add(key);
             let hostname = it.hostname || null;
@@ -275,6 +278,13 @@ async function execute({ taskId, prompt, agentId, source, originalPrompt, sessio
               price: it.price || undefined,
               snippet: it.snippet || undefined,
               hostname: hostname || undefined,
+              mediaType: it.mediaType || undefined,
+              videoUrl: it.videoUrl || undefined,
+              embedUrl: it.embedUrl || undefined,
+              posterUrl: it.posterUrl || undefined,
+              duration: it.duration || undefined,
+              channel: it.channel || undefined,
+              sourceUrl: it.sourceUrl || undefined,
             });
             return acc;
           }, Object.assign([], { _seen: new Set() }))

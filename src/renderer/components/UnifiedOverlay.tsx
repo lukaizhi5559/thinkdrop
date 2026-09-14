@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback, useReducer, useMemo, startTransition, useDeferredValue } from 'react';
+import { useState, useEffect, useRef, useCallback, useMemo, startTransition, useDeferredValue } from 'react';
 import { useDynamicHeight, MAX_HEIGHT } from './utils/useDynamicHeight';
 const ipcRenderer = (window as any).electron?.ipcRenderer;
 import { playThinkDropSound, playDropSound, playIntentSound } from '../utils/thinkDropSound';
@@ -121,8 +121,6 @@ export function UnifiedOverlay() {
   // Imperative handle to PromptInputBar — used for voice inject + focus.
   const promptInputBarRef = useRef<PromptInputBarHandle>(null);
   
-  // Force update mechanism to ensure UI refreshes during streaming
-  const [, forceUpdate] = useReducer((x: number) => x + 1, 0);
 
   // --- Gather Context State (like StandalonePromptCapture) ---
   const [gatherPending, setGatherPending] = useState(false);
@@ -403,7 +401,7 @@ export function UnifiedOverlay() {
       return;
     }
 
-    console.log('📤 [UNIFIED] Final prompt to send:', finalPrompt.trim());
+    dbg('📤 [UNIFIED] Final prompt to send:', finalPrompt.trim());
     dbg('🔍 [UNIFIED] ipcRenderer available?', !!ipcRenderer);
 
     // Send to main process - match StandalonePromptCapture exactly
@@ -704,8 +702,6 @@ export function UnifiedOverlay() {
         dbg('💬 [UNIFIED] Received chunk, length:', message.text?.length || 0);
         setIsThinking(false);
         setIsStreaming(true);
-        // Force re-render to immediately show response and hide Thinking...
-        forceUpdate();
         if (glowOffTimerRef.current) clearTimeout(glowOffTimerRef.current);
         setIsGlowActive(true);
 
@@ -761,8 +757,6 @@ export function UnifiedOverlay() {
             dbg('📝 [UNIFIED] Combined length:', combined.length, isNewStream ? '(new stream — cleared prev)' : '');
             return combined;
           });
-          // Force immediate re-render to ensure response shows
-          forceUpdate();
         }
       } else if (message.type === 'done' || message.type === 'llm_stream_end') {
         setIsStreaming(false);
@@ -801,7 +795,6 @@ export function UnifiedOverlay() {
       setStreamingStartedRef(false); // Reset streaming started flag
       hasDroppedRef.current = false;
       streamCompletedRef.current = false;
-      forceUpdate(); // Force immediate re-render
     };
 
     const handleSetPrompt = (_text: string) => {
@@ -830,7 +823,6 @@ export function UnifiedOverlay() {
       setIsGlowActive(true);
       hasDroppedRef.current = false;
       streamCompletedRef.current = false;
-      forceUpdate(); // Force immediate re-render
     };
 
     // --- Automation Progress ---
@@ -1132,18 +1124,23 @@ export function UnifiedOverlay() {
 
     // --- Queue Enqueued Handler ---
     const handleQueueEnqueued = (data?: any) => {
-      console.log('[UNIFIED] Queue enqueued - clearing previous response', data?.isResume ? '(resume)' : '');
-      setStreamingResponse('');
-      setResultItems([]);
-      if (data?.isResume) return; // Don't kill automation mode on ASK_USER resume
-      setIsAutomationMode(false);
-      setActionChips([]);
-      setInstallPrompt(null);
-      setGatherPending(false);
-      setGatherQuestion(null);
-      setStreamingStartedRef(false); // Reset streaming started flag
+      dbg('[UNIFIED] Queue enqueued - clearing previous response', data?.isResume ? '(resume)' : '');
+      // Wrap in startTransition so the browser can paint the cleared input text
+      // (from PromptInputBar's flushSync) before the parent re-renders. Without this,
+      // the synchronous setState calls here would block the paint and cause submit lag.
+      startTransition(() => {
+        setStreamingResponse('');
+        setResultItems([]);
+        if (!data?.isResume) { // Don't kill automation mode on ASK_USER resume
+          setIsAutomationMode(false);
+          setActionChips([]);
+          setInstallPrompt(null);
+          setGatherPending(false);
+          setGatherQuestion(null);
+          setStreamingStartedRef(false); // Reset streaming started flag
+        }
+      });
       hasDroppedRef.current = false; // Reset drop sound flag
-      forceUpdate(); // Force immediate re-render
     };
 
     // --- Search Sources ---
@@ -1895,11 +1892,16 @@ export function UnifiedOverlay() {
   }, []);
 
   // --- Auto-scroll during streaming ---
+  // Uses instant scroll (scrollTop = scrollHeight) instead of scrollIntoView({behavior:'smooth'}).
+  // Smooth animation (~300ms) can't keep up with rapid streaming chunks (~50-100ms) —
+  // the animations constantly restart and the scroll position lags behind, cutting off content.
+  // Skips auto-scroll when the user has scrolled up to read earlier content.
   useEffect(() => {
-    if (isStreaming && scrollBottomRef.current) {
-      scrollBottomRef.current.scrollIntoView({ behavior: 'smooth' });
-    }
-  }, [streamingResponse, isStreaming]);
+    const container = scrollContainerRef.current;
+    if (!container || isScrolledUp) return;
+    if (!isStreaming && !isThinking) return;
+    container.scrollTop = container.scrollHeight;
+  }, [streamingResponse, isStreaming, isThinking, isScrolledUp]);
 
   // --- Scroll-to-bottom tracking ---
   const scrollToBottom = useCallback(() => {

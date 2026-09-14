@@ -18,6 +18,14 @@ export interface WebResultItem {
   price?: string;
   snippet?: string;
   hostname?: string;
+  // Media fields (videos / rich cards)
+  mediaType?: 'video' | 'product' | 'article' | 'card';
+  videoUrl?: string;
+  embedUrl?: string;
+  posterUrl?: string;
+  duration?: string;
+  channel?: string;
+  sourceUrl?: string;
 }
 
 interface WebResultCardProps {
@@ -39,11 +47,16 @@ const WebResultCard: React.FC<WebResultCardProps> = ({ item }) => {
   const [imgLoaded, setImgLoaded] = useState(false);
 
   const handleClick = useCallback(() => {
-    openUrl(item.url || item.imageUrl || '');
-  }, [item.url, item.imageUrl]);
+    // For video items, prefer the watch page (url) then the direct video/embed URL.
+    const target = item.url || item.videoUrl || item.embedUrl || item.imageUrl || '';
+    openUrl(target);
+  }, [item.url, item.videoUrl, item.embedUrl, item.imageUrl]);
 
   const handleImgError = useCallback(() => setImgFailed(true), []);
   const handleImgLoad = useCallback(() => setImgLoaded(true), []);
+
+  const isVideo = item.mediaType === 'video';
+  const thumbUrl = item.imageUrl || item.posterUrl;
 
   const hostname = item.hostname || (() => {
     try { return new URL(item.url || item.imageUrl || '').hostname.replace(/^www\./, ''); } catch (_) { return ''; }
@@ -75,13 +88,13 @@ const WebResultCard: React.FC<WebResultCardProps> = ({ item }) => {
       }}
     >
       {/* Thumbnail */}
-      {item.imageUrl && !imgFailed && (
+      {thumbUrl && !imgFailed && (
         <div style={{ position: 'relative', width: '100%', height: 140, background: 'rgba(255,255,255,0.04)' }}>
           {!imgLoaded && (
             <div className="image-skeleton" style={{ position: 'absolute', inset: 0 }} />
           )}
           <img
-            src={item.imageUrl}
+            src={thumbUrl}
             alt={item.title || ''}
             referrerPolicy="no-referrer"
             loading="lazy"
@@ -95,9 +108,35 @@ const WebResultCard: React.FC<WebResultCardProps> = ({ item }) => {
               transition: 'opacity 0.2s',
             }}
           />
+          {/* Play badge for video items */}
+          {isVideo && imgLoaded && (
+            <div style={{
+              position: 'absolute', top: '50%', left: '50%',
+              transform: 'translate(-50%, -50%)',
+              width: 40, height: 40, borderRadius: '50%',
+              background: 'rgba(0,0,0,0.65)',
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              pointerEvents: 'none',
+            }}>
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="white">
+                <polygon points="6,4 20,12 6,20" />
+              </svg>
+            </div>
+          )}
+          {/* Duration chip for video items (bottom-right) */}
+          {isVideo && item.duration && (
+            <span style={{
+              position: 'absolute', bottom: 4, right: 4,
+              fontSize: 10, fontWeight: 600, color: 'white',
+              background: 'rgba(0,0,0,0.75)', padding: '1px 5px', borderRadius: 3,
+              pointerEvents: 'none',
+            }}>
+              {item.duration}
+            </span>
+          )}
         </div>
       )}
-      {item.imageUrl && imgFailed && (
+      {thumbUrl && imgFailed && (
         <div style={{
           width: '100%', height: 140,
           display: 'flex', alignItems: 'center', justifyContent: 'center',
