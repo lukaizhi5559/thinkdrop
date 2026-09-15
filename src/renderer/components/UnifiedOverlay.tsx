@@ -859,9 +859,15 @@ export function UnifiedOverlay() {
         // isAutomationMode=true here would prevent the 'done' handler from
         // resetting isSubmitting, leaving the red cancel button stuck.
         // Real automation mode is set by 'plan:generated' / 'plan:found_existing'.
-        setActiveTab('results');
-        setInstallPrompt(null);
-        setActionChips([]);
+        // Queue-task recovery (retry/resume) re-emits 'planning' tagged with
+        // taskId. Don't yank the user off the Queue tab — the QueueTaskCard's
+        // own AutomationProgress instance handles task-scoped progress. Only
+        // foreground (untagged) planning events switch to the Results tab.
+        if (!data?.taskId) {
+          setActiveTab('results');
+          setInstallPrompt(null);
+          setActionChips([]);
+        }
         if (glowOffTimerRef.current) clearTimeout(glowOffTimerRef.current);
         setIsGlowActive(true);
       } else if (data?.type === 'plan:generated' || data?.type === 'plan:found_existing') {

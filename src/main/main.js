@@ -5984,31 +5984,14 @@ app.whenReady().then(async () => {
           console.log(`[StateGraph] Preserving browser session ${currentBrowserSessionId} for continuation prompt: "${prompt.substring(0, 50)}..."`);
         }
         
-        // ── Semantic session routing ─────────────────────────────────────────
-        // Before building initialState, check if this prompt relates to a past session.
-        // If sessionId was explicitly provided (plan step, resume), skip the search.
-        // Plan execution re-runs also skip (they inherit sessionId from context).
-        let resolvedSessionId = sessionId || currentSessionId;
+        // ── Session routing ──────────────────────────────────────────────────
+        // session.route (in resolveReferencesV2) is the single routing entry point.
+        // The old session.searchSemantic pre-check here used a 0.75 threshold that
+        // never matched real scores (~0.07-0.5) and just added latency. Removed.
+        // Plan reruns inherit sessionId from context; normal prompts let the
+        // stategraph route via session.route.
         const isPlanRerun = !!(_planFile || _skillPlan);
-        if (!sessionId && !isPlanRerun && mcpAdapter) {
-          try {
-            const semanticResult = await mcpAdapter.callService('conversation', 'session.searchSemantic', {
-              text: prompt,
-              threshold: 0.75,
-            });
-            const matchData = semanticResult?.data || semanticResult;
-            if (matchData?.sessionId) {
-              resolvedSessionId = matchData.sessionId;
-              console.log(`[SessionRouter] Semantic match → session: ${matchData.sessionId} (score: ${matchData.score?.toFixed(3)}, title: "${matchData.title}")`);
-            } else {
-              resolvedSessionId = null; // Force new session via session.route in resolveReferencesV2
-              console.log(`[SessionRouter] No semantic match — will create new session`);
-            }
-          } catch (semErr) {
-            console.warn('[SessionRouter] session.searchSemantic failed:', semErr.message);
-            resolvedSessionId = currentSessionId; // Fallback to current session
-          }
-        }
+        let resolvedSessionId = sessionId || (isPlanRerun ? currentSessionId : null);
 
         initialState = {
           message: prompt,

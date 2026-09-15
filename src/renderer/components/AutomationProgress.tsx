@@ -3085,6 +3085,23 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
   // Keep the latest handler on a ref so the auto-retry timer can call it directly.
   handleOptionClickRef.current = handleOptionClick;
 
+  // Cancel the current ask-user / failure flow for real: stop any auto-retry
+  // timer, clear local UI state, and send a task-aware cancel so the backend
+  // actually aborts the paused task instead of leaving it stuck in
+  // waiting-for-input. Both paths recognize 'cancel':
+  //   - handoff tasks: handoffRunner.answerQuestion(taskId, 'cancel') → cancelled
+  //   - serial/foreground: runPromptThroughStateGraph sees wantsAbort and stops
+  // Routing through prompt-queue:submit with isAskUserAnswer keeps the serial
+  // ASK_USER resume path intact (task:cancel alone would not resume the graph).
+  const handleAskUserCancel = () => {
+    if (autoRetryTimerRef.current) { clearInterval(autoRetryTimerRef.current); autoRetryTimerRef.current = null; }
+    setAutoRetryCountdown(null);
+    setAskUserPrompt(null);
+    askUserPromptRef.current = null;
+    setAskUserCorrectionMode(false);
+    ipcRenderer?.send('prompt-queue:submit', { prompt: 'cancel', selectedText: '', isAskUserAnswer: true, taskId: taskId || undefined });
+  };
+
   const handleAskUserFreeTextSubmit = () => {
     const _val = askUserFreeText.trim();
     if (!_val) return;
@@ -5676,12 +5693,7 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
               .map(o => typeof o === 'string' ? { label: o, value: o } : { label: o?.label || String(o), value: o?.value || o?.label || String(o), primary: o?.primary })
               .filter(o => o.value !== 'correct_and_retry')}
             onSubmit={(value) => handleOptionClick(value)}
-            onCancel={() => {
-              if (autoRetryTimerRef.current) { clearInterval(autoRetryTimerRef.current); autoRetryTimerRef.current = null; }
-              setAutoRetryCountdown(null);
-              setAskUserPrompt(null);
-              askUserPromptRef.current = null;
-            }}
+            onCancel={handleAskUserCancel}
             retryCountdown={autoRetryCountdown}
             onCancelAutoRetry={() => {
               if (autoRetryTimerRef.current) { clearInterval(autoRetryTimerRef.current); autoRetryTimerRef.current = null; }
@@ -5726,7 +5738,7 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
                 ipcRenderer?.send('prompt-queue:submit', { prompt: answer, selectedText: '', isAskUserAnswer: true, taskId: taskId || undefined });
               }
             }}
-            onCancel={() => { setAskUserPrompt(null); }}
+            onCancel={handleAskUserCancel}
           />
           {/* Correction-mode fallback — rendered below QuestionCard when correct_and_retry was selected */}
           {askUserCorrectionMode && (
