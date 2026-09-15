@@ -2157,6 +2157,60 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
           break;
         }
 
+        // ── Turn-Flow (Turn-Loop) progress events ──
+        // Turn-Loop emits these when running via playwright.agent. We reuse
+        // the same tabFlow state so the existing Automation Flow panel renders
+        // Turn-Loop activity with per-turn sub-steps and a final done step.
+        case 'turn_flow:start': {
+          const stepIdx = (data.stepIndex ?? 0) + stepOffsetRef.current;
+          // Seed one pending row so the Automation Flow panel renders
+          // immediately — the panel hides when the flow array is empty.
+          // The first turn_flow:step overwrites this row at flowIndex 0.
+          setTabFlow(prev => {
+            const next = new Map(prev);
+            next.set(stepIdx, [{ index: 0, tier: -1, action: 'Analyzing page and planning actions…', status: 'running' }]);
+            return next;
+          });
+          break;
+        }
+        case 'turn_flow:step': {
+          const stepIdx = (data.stepIndex ?? 0) + stepOffsetRef.current;
+          setTabFlow(prev => {
+            const next = new Map(prev);
+            const flow = next.get(stepIdx) || [];
+            const _idx = data.flowIndex ?? flow.length;
+            // Append or update the step at flowIndex. tier -1 = Turn-Loop (ESCALATE).
+            const updated = [...flow];
+            updated[_idx] = {
+              index: _idx,
+              tier: -1,
+              action: data.action || '',
+              status: (data.status === 'done' ? 'done' : data.status === 'failed' ? 'failed' : 'running') as any,
+            };
+            next.set(stepIdx, updated);
+            return next;
+          });
+          break;
+        }
+        case 'turn_flow:step_done': {
+          const stepIdx = (data.stepIndex ?? 0) + stepOffsetRef.current;
+          setTabFlow(prev => {
+            const next = new Map(prev);
+            const flow = next.get(stepIdx) || [];
+            const _idx = data.flowIndex ?? flow.length;
+            const updated = [...flow];
+            updated[_idx] = {
+              index: _idx,
+              tier: -1,
+              action: data.action || '',
+              status: (data.status === 'done' ? 'done' : 'failed') as any,
+            };
+            next.set(stepIdx, updated);
+            return next;
+          });
+          break;
+        }
+
         // ── Tab-Map sub-plan step events ──
         case 'tab_map:plan': {
           const stepIdx = (data.stepIndex ?? 0) + stepOffsetRef.current;
