@@ -36,6 +36,48 @@ interface PromptInputBarProps {
   onSubmit: (text: string, highlights: string[], gatherPending: boolean) => void;
   /** Debug mode terminal ref (currently no-op, preserved). */
   aiActivityPanelRef: RefObject<AIActivityPanelHandle>;
+  /** "Continue Thread" — recalled task context pinned for the next prompt. */
+  threadContext?: { prompt: string } | null;
+  onThreadContextClear?: () => void;
+}
+
+// ── Chip icons (inline SVG — no emojis) ────────────────────────────────────────
+const _iconProps = { width: 10, height: 10, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 2, strokeLinecap: 'round' as const, strokeLinejoin: 'round' as const };
+const FileIcon = () => (
+  <svg {..._iconProps}>
+    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/>
+  </svg>
+);
+const FolderIcon = () => (
+  <svg {..._iconProps}>
+    <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
+  </svg>
+);
+const ThreadIcon = () => (
+  <svg {..._iconProps}>
+    <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
+  </svg>
+);
+
+/** Display label for a highlight chip — basename for paths, excerpt for text. */
+function _chipLabel(h: string): string {
+  const m = h.match(/^\[(File|Folder):\s*(.+?)\s*\]$/);
+  if (m) {
+    const base = m[2].split('/').filter(Boolean).pop() || m[2];
+    return base;
+  }
+  return h;
+}
+
+// Display-only: replace embedded [File:]/[Folder:] path tags with basenames and
+// strip [Highlighted:] wrappers so e.g. a thread chip reads "家庭 how many..."
+// instead of "[Folder: /Users/.../家庭] how many...". The raw string is untouched.
+function _promptLabel(p: string): string {
+  return p
+    .replace(/\[(File|Folder):\s*([^\]]+)\]/g,
+      (_m, _k, inner: string) => inner.trim().split('/').filter(Boolean).pop() || inner.trim())
+    .replace(/\[Highlighted:\s*([^\]]+)\]/g, '$1')
+    .trim();
 }
 
 function PromptInputBarImpl(
@@ -54,6 +96,8 @@ function PromptInputBarImpl(
     onCancel,
     onSubmit,
     aiActivityPanelRef,
+    threadContext,
+    onThreadContextClear,
   }: PromptInputBarProps,
   ref: React.Ref<PromptInputBarHandle>,
 ) {
@@ -199,10 +243,31 @@ function PromptInputBarImpl(
 
   // --- Highlight chips ---
   const renderHighlightChips = () => {
-    if (highlights.length === 0) return null;
+    if (!threadContext && highlights.length === 0) return null;
 
     return (
       <div className="flex flex-wrap gap-2 mb-2">
+        {threadContext && (
+          <div
+            className="flex items-center gap-1 px-2 py-1 rounded-md text-xs"
+            title={`Continue thread: ${threadContext.prompt}`}
+            style={{
+              backgroundColor: 'rgba(167, 139, 250, 0.15)',
+              border: '1px solid rgba(167, 139, 250, 0.35)',
+              color: '#c4b5fd',
+            }}
+          >
+            <ThreadIcon />
+            <span className="truncate max-w-[150px]">{_promptLabel(threadContext.prompt)}</span>
+            <button
+              onClick={() => onThreadContextClear?.()}
+              className="ml-1 hover:opacity-70"
+              style={{ color: '#c4b5fd' }}
+            >
+              ×
+            </button>
+          </div>
+        )}
         {highlights.map((highlight, index) => {
           const isFolder = highlight.includes('[Folder:');
           const isFile = highlight.includes('[File:');
@@ -214,15 +279,16 @@ function PromptInputBarImpl(
             <div
               key={index}
               className="flex items-center gap-1 px-2 py-1 rounded-md text-xs"
+              title={highlight}
               style={{
                 backgroundColor: bgColor,
                 border: `1px solid ${borderColor}`,
                 color: textColor,
               }}
             >
-              {isFolder && <span>📁</span>}
-              {isFile && <span>📄</span>}
-              <span className="truncate max-w-[150px]">{highlight}</span>
+              {isFolder && <FolderIcon />}
+              {isFile && <FileIcon />}
+              <span className="truncate max-w-[150px]">{_chipLabel(highlight)}</span>
               <button
                 onClick={() => onHighlightRemove(index)}
                 className="ml-1 hover:opacity-70"

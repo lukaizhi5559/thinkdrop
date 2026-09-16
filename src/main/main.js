@@ -277,6 +277,7 @@ async function restoreQueueFromJournal() {
         source: t.source || 'text',
         createdAt: t.createdAt || Date.now(),
         startedAt: t.startedAt || null,
+        sessionId: t.sessionId || null,
         restored: true,
       });
       // Emit completion for terminal tasks so the card shows the final state
@@ -289,12 +290,26 @@ async function restoreQueueFromJournal() {
           error: t.error || null,
           prompt: t.prompt || '',
           items: t.items || null,
+          sessionId: t.sessionId || null,
+          planFile: t.planFile || null,
           // Persisted timestamps so the card shows the real age, not restore time
           startedAt: t.startedAt || null,
           doneAt: t.doneAt || null,
           restored: true,
         });
       } else {
+        // Non-terminal but user-actionable statuses — restore status + planFile
+        // so e.g. a persisted awaiting-approval card shows its review UI again
+        if (t.status === 'awaiting-approval' || t.status === 'auth-required' || t.status === 'waiting-for-input') {
+          safeSendUnified('task:complete', {
+            taskId: t.id,
+            status: t.status,
+            prompt: t.prompt || '',
+            sessionId: t.sessionId || null,
+            planFile: t.planFile || null,
+            restored: true,
+          });
+        }
         // Active task — emit progress if available
         if (t.progress && (t.progress.step > 0 || t.progress.currentStep)) {
           safeSendUnified('task:progress', {
@@ -627,8 +642,8 @@ function startOverlayControlServer() {
       req.on('data', chunk => { body += chunk; });
       req.on('end', () => {
         try {
-          const { taskId, prompt, agentId, source, originalPrompt, guessedIntent } = JSON.parse(body || '{}');
-          console.log(`[CommsGraph] Handoff received — task=${taskId} agent=${agentId || 'auto'} source=${source} guessedIntent=${guessedIntent || 'null'}`);
+          const { taskId, prompt, agentId, source, originalPrompt, guessedIntent, sessionId: handoffSessionId } = JSON.parse(body || '{}');
+          console.log(`[CommsGraph] Handoff received — task=${taskId} agent=${agentId || 'auto'} source=${source} guessedIntent=${guessedIntent || 'null'} session=${handoffSessionId || 'none'}`);
 
           // Emit task:created BEFORE starting the stategraph run so the queue card
           // is mounted and ready to receive plan:generated / preflight events.
@@ -651,7 +666,7 @@ function startOverlayControlServer() {
             agentId: agentId || null,
             source: source || 'text',
             originalPrompt: originalPrompt || null,
-            sessionId: currentSessionId,
+            sessionId: handoffSessionId || currentSessionId,
           }).catch(err => {
             console.error(`[CommsGraph] Handoff ${taskId} error:`, err.message);
           });
@@ -3177,7 +3192,7 @@ app.whenReady().then(async () => {
 
     const commsPort = parseInt(process.env.COMMS_GRAPH_PORT || '3015', 10);
     console.log('🧠 [CommsGraph] Routing prompt through comms-graph:', prompt.substring(0, 80));
-    const commsBody = JSON.stringify({ text: prompt, source: 'text', language: responseLanguage || null });
+    const commsBody = JSON.stringify({ text: prompt, source: 'text', language: responseLanguage || null, sessionId: sessionId || null });
     const commsReq = http.request({
       hostname: '127.0.0.1',
       port: commsPort,
@@ -3247,7 +3262,7 @@ app.whenReady().then(async () => {
     return true; // request dispatched — caller should NOT also enqueue
   }
 
-  ipcMain.on('prompt-queue:submit', (_event, { prompt, selectedText = '', responseLanguage = null, isAskUserAnswer = false, taskId = null } = {}) => {
+  ipcMain.on('prompt-queue:submit', (_event, { prompt, selectedText = '', responseLanguage = null, isAskUserAnswer = false, taskId = null, sessionId: pinnedSessionId = null } = {}) => {
     const trimmedPrompt = prompt?.trim();
     if (!trimmedPrompt) return;
 
@@ -3312,13 +3327,19 @@ app.whenReady().then(async () => {
     // if comms-graph is unavailable or disabled.
     // Skip comms-graph for plan-correction prompts and ask-user answers —
     // those need to go through the existing promptQueue path.
+    // A pinned sessionId (task recall / "Continue Thread") overrides the current session.
+    const effectiveSessionId = pinnedSessionId || currentSessionId;
+    if (pinnedSessionId) {
+      console.log(`[PromptQueue] Pinned session from recall: ${pinnedSessionId}`);
+    }
+
     if (!pendingPlanContext && !isAskUserAnswer) {
-      if (routeThroughCommsGraph(trimmedPrompt, { selectedText, responseLanguage, sessionId: currentSessionId })) {
+      if (routeThroughCommsGraph(trimmedPrompt, { selectedText, responseLanguage, sessionId: effectiveSessionId })) {
         return; // comms-graph dispatched — don't also enqueue
       }
     }
 
-    const enqueueOpts = { selectedText, responseLanguage, sessionId: currentSessionId, isAskUserAnswer };
+    const enqueueOpts = { selectedText, responseLanguage, sessionId: effectiveSessionId, isAskUserAnswer };
     if (pendingPlanContext) {
       // Robust: skip plan correction mode if this is a different session OR if a new session was created
       const planSessionId = pendingPlanContext.sessionId;

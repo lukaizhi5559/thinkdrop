@@ -71,6 +71,8 @@ export function UnifiedOverlay() {
   // promptText, promptHistory, terminalHistory, and textareaRef now live in
   // PromptInputBar so typing doesn't re-render the entire overlay.
   const [highlights, setHighlights] = useState<string[]>([]);
+  // "Continue Thread" — task discussion pinned as context for the next prompt.
+  const [threadContext, setThreadContext] = useState<{ taskId: string; sessionId: string | null; prompt: string; result: string | null } | null>(null);
   const [copyButtonGlowing, setCopyButtonGlowing] = useState(false);
   const [_isRecording, setIsRecording] = useState(false);
   // Skill panel removed - now in slideout
@@ -376,8 +378,18 @@ export function UnifiedOverlay() {
 
     let finalPrompt = '';
 
+    // "Continue Thread" — inject the recalled task's context so the next prompt
+    // continues that discussion even without a session pin (belt-and-suspenders:
+    // sessionId covers sliding-window history; this excerpt guarantees context).
+    if (threadContext) {
+      const excerpt = (threadContext.result || '').replace(/【[^】]*】/g, '').trim().slice(0, 2000);
+      finalPrompt += `[Resumed task discussion]\nEarlier request: "${threadContext.prompt}"\n`;
+      if (excerpt) finalPrompt += `Earlier result (excerpt):\n${excerpt}\n`;
+      finalPrompt += '\n';
+    }
+
     if (finalHighlights.length > 0) {
-      finalPrompt = finalHighlights.map(h =>
+      finalPrompt += finalHighlights.map(h =>
         (h.startsWith('[File:') || h.startsWith('[Folder:')) ? h : `[Highlighted: ${h}]`
       ).join('\n') + '\n\n';
     }
@@ -410,11 +422,13 @@ export function UnifiedOverlay() {
     ipcRenderer?.send('prompt-queue:submit', {
       prompt: finalPrompt.trim(),
       selectedText: finalHighlights.join('\n'),
+      sessionId: threadContext?.sessionId || undefined,
     });
+    setThreadContext(null); // one-shot chip — the session stays current via resolvedSessionId
     dbg('✅ [UNIFIED] Prompt enqueued');
 
     // Note: isSubmitting stays true until task completes (handled in all_done)
-  }, [isSubmitting]);
+  }, [isSubmitting, threadContext]);
 
   const handleHighlightRemove = useCallback((index: number) => {
     setHighlights(prev => prev.filter((_, i) => i !== index));
@@ -526,13 +540,22 @@ export function UnifiedOverlay() {
   const handleConnectionsConnect = useCallback((provider: string, tokenKey: string, scopes: any) => ipcRenderer?.send('connections:connect', { provider, tokenKey, scopes }), []);
   const handleConnectionsDisconnect = useCallback((provider: string, tokenKey: string) => ipcRenderer?.send('connections:disconnect', { provider, tokenKey }), []);
   const handleConnectionsRefresh = useCallback(() => ipcRenderer?.send('connections:list'), []);
-  const handleQueueShowResult = useCallback((task: any) => {
+  // "Continue Thread" — load the task's result into the Results tab AND pin its
+  // discussion as context (chip + sessionId) for the user's next prompt.
+  const handleContinueThread = useCallback((task: any) => {
     if (task.result) {
       setStreamingResponse(task.result);
       setResultItems(task.items || []);
       setActiveTab('results');
     }
+    setThreadContext({
+      taskId: task.id,
+      sessionId: task.sessionId || null,
+      prompt: task.prompt || '',
+      result: task.result || null,
+    });
   }, []);
+  const handleThreadContextClear = useCallback(() => setThreadContext(null), []);
   const handleQueueHeightChange = useCallback(() => {
     if (shouldSuppressResize()) return;
     measureNow();
@@ -1764,6 +1787,7 @@ export function UnifiedOverlay() {
             result: null,
             intent: data.guessedIntent || 'handoff',
             source: data.source || 'text',
+            sessionId: data.sessionId || null,
           }];
         });
         if (!isRestored) {
@@ -1809,6 +1833,7 @@ export function UnifiedOverlay() {
             items: data.items || t.items || null,
             error: data.error || null,
             planFile: data.planFile || t.planFile || null,
+            sessionId: data.sessionId || t.sessionId || null,
           };
         }));
 
@@ -2109,7 +2134,7 @@ export function UnifiedOverlay() {
               {/* comms-graph background tasks (concurrent handoffs) — at top */}
               <QueueTaskList
                 tasks={commsTasks}
-                onShowResult={handleQueueShowResult}
+                onContinueThread={handleContinueThread}
                 onHeightChange={handleQueueHeightChange}
                 focusRequest={queueFocus}
                 onFocusHandled={handleQueueFocusHandled}
@@ -2258,6 +2283,8 @@ export function UnifiedOverlay() {
           onCancel={() => ipcRenderer?.send('automation:cancel')}
           onSubmit={handleSubmitFromInputBar}
           aiActivityPanelRef={aiActivityPanelRef}
+          threadContext={threadContext}
+          onThreadContextClear={handleThreadContextClear}
         />
       </div>
 
@@ -2309,11 +2336,7 @@ export function UnifiedOverlay() {
         onDismiss={() => setTaskNotification(null)}
         onShowResult={(taskId) => {
           const task = commsTasks.find(t => t.id === taskId);
-          if (task?.result) {
-            setStreamingResponse(task.result);
-            setResultItems(task.items || []);
-            setActiveTab('results');
-          }
+          if (task) handleContinueThread(task);
           setTaskNotification(null);
         }}
         onGoToQueue={(taskId, status) => {

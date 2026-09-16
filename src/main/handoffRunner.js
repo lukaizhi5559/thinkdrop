@@ -86,8 +86,8 @@ function _notifyProgress(taskId, agentId, progress) {
   return _postToComms('/comms.progress', { taskId, agentId, progress });
 }
 
-function _notifyComplete(taskId, agentId, status, result, items) {
-  return _postToComms('/comms.complete', { taskId, agentId, status, result, items: items || null });
+function _notifyComplete(taskId, agentId, status, result, items, sessionId = null, planFile = null) {
+  return _postToComms('/comms.complete', { taskId, agentId, status, result, items: items || null, sessionId, planFile });
 }
 
 // ── Create a fresh stategraph instance for a handoff task ──────────────────────
@@ -163,7 +163,7 @@ function _makeProgressCallback(taskId, agentId) {
 async function execute({ taskId, prompt, agentId, source, originalPrompt, sessionId, planFile, preflightAuthBypass, _resumeState }) {
   if (!_mcpAdapter || !_llmBackend) {
     console.error('[HandoffRunner] Not initialized — call init() first');
-    _notifyComplete(taskId, agentId, 'failed', 'HandoffRunner not initialized');
+    _notifyComplete(taskId, agentId, 'failed', 'HandoffRunner not initialized', null, sessionId);
     return;
   }
 
@@ -202,6 +202,9 @@ async function execute({ taskId, prompt, agentId, source, originalPrompt, sessio
           intent: { type: 'command_automate' }, // Handoffs are always command_automate
           sessionId: sessionId || null,
           userId: 'default_user',
+          // context.sessionId pins resolveReferencesV2's history fetch and
+          // logConversation's session — this is what makes task recall work.
+          context: { sessionId: sessionId || null, userId: 'default_user', source: 'thinkdrop_electron' },
           mcpAdapter: _mcpAdapter,
           llmBackend: _llmBackend,
           _handoffTaskId: taskId,
@@ -305,7 +308,7 @@ async function execute({ taskId, prompt, agentId, source, originalPrompt, sessio
       console.log(`[HandoffRunner] Task ${taskId} awaiting plan approval — planFile=${planFileFromState}`);
       // Emit pipeline:done so AutomationProgress clears any planning spinner
       progressCallback({ type: 'pipeline:done', contract: finalState._contract });
-      _notifyComplete(taskId, agentId, 'awaiting-approval', '');
+      _notifyComplete(taskId, agentId, 'awaiting-approval', '', null, finalState.resolvedSessionId || sessionId, planFileFromState);
       if (_ipcBroadcast) {
         _ipcBroadcast('task:complete', {
           taskId,
@@ -318,6 +321,7 @@ async function execute({ taskId, prompt, agentId, source, originalPrompt, sessio
           planFile: planFileFromState,
           agentId,
           source,
+          sessionId: finalState.resolvedSessionId || sessionId || null,
         });
       }
       return { ok: true, status: 'awaiting-approval', planFile: planFileFromState };
@@ -328,7 +332,7 @@ async function execute({ taskId, prompt, agentId, source, originalPrompt, sessio
       console.log(`[HandoffRunner] Task ${taskId} auth required: ${finalState.planError}`);
       // Emit pipeline:done so AutomationProgress clears any planning spinner
       progressCallback({ type: 'pipeline:done', contract: finalState._contract });
-      _notifyComplete(taskId, agentId, 'auth-required', finalState.planError);
+      _notifyComplete(taskId, agentId, 'auth-required', finalState.planError, null, finalState.resolvedSessionId || sessionId);
       if (_ipcBroadcast) {
         _ipcBroadcast('task:complete', {
           taskId,
@@ -341,6 +345,7 @@ async function execute({ taskId, prompt, agentId, source, originalPrompt, sessio
           status: 'auth-required',
           agentId,
           source,
+          sessionId: finalState.resolvedSessionId || sessionId || null,
         });
       }
       // Populate the per-task pending map so the preflight:auth_continue
@@ -361,7 +366,7 @@ async function execute({ taskId, prompt, agentId, source, originalPrompt, sessio
       console.error(`[HandoffRunner] Task ${taskId} plan error: ${finalState.planError}`);
       // Emit pipeline:done so AutomationProgress clears any planning spinner
       progressCallback({ type: 'pipeline:done', contract: finalState._contract });
-      _notifyComplete(taskId, agentId, 'failed', finalState.planError);
+      _notifyComplete(taskId, agentId, 'failed', finalState.planError, null, finalState.resolvedSessionId || sessionId);
       if (_ipcBroadcast) {
         _ipcBroadcast('task:complete', {
           taskId,
@@ -374,6 +379,7 @@ async function execute({ taskId, prompt, agentId, source, originalPrompt, sessio
           status: 'failed',
           agentId,
           source,
+          sessionId: finalState.resolvedSessionId || sessionId || null,
         });
       }
       return { ok: false, status: 'failed', error: finalState.planError };
@@ -386,7 +392,7 @@ async function execute({ taskId, prompt, agentId, source, originalPrompt, sessio
       _pendingQuestions.set(taskId, { finalState, prompt, agentId, source, originalPrompt, sessionId });
       // Emit pipeline:done so AutomationProgress clears any planning spinner
       progressCallback({ type: 'pipeline:done', contract: finalState._contract });
-      _notifyComplete(taskId, agentId, 'waiting-for-input', '');
+      _notifyComplete(taskId, agentId, 'waiting-for-input', '', null, finalState.resolvedSessionId || sessionId);
       if (_ipcBroadcast) {
         _ipcBroadcast('task:complete', {
           taskId,
@@ -397,6 +403,7 @@ async function execute({ taskId, prompt, agentId, source, originalPrompt, sessio
           status: 'waiting-for-input',
           agentId,
           source,
+          sessionId: finalState.resolvedSessionId || sessionId || null,
         });
       }
       return { ok: true, status: 'waiting-for-input' };
@@ -410,7 +417,7 @@ async function execute({ taskId, prompt, agentId, source, originalPrompt, sessio
       // intent) — without it, the "Breaking down your request..." spinner stays
       // forever because all_done never fires.
       progressCallback({ type: 'pipeline:done', contract: finalState._contract });
-      _notifyComplete(taskId, agentId, 'done', answer, items);
+      _notifyComplete(taskId, agentId, 'done', answer, items, finalState.resolvedSessionId || sessionId);
       if (_ipcBroadcast) {
         _ipcBroadcast('task:complete', {
           taskId,
@@ -423,6 +430,7 @@ async function execute({ taskId, prompt, agentId, source, originalPrompt, sessio
           status: 'done',
           agentId,
           source,
+          sessionId: finalState.resolvedSessionId || sessionId || null,
         });
       }
       return { ok: true, status: 'done', answer, thinking, intent };
@@ -432,7 +440,7 @@ async function execute({ taskId, prompt, agentId, source, originalPrompt, sessio
     console.error(`[HandoffRunner] Task ${taskId} failed:`, err.message);
 
     const status = abortController.signal.aborted ? 'cancelled' : 'failed';
-    _notifyComplete(taskId, agentId, status, err.message);
+    _notifyComplete(taskId, agentId, status, err.message, null, sessionId);
 
     if (_ipcBroadcast) {
       _ipcBroadcast('task:complete', {
@@ -443,6 +451,7 @@ async function execute({ taskId, prompt, agentId, source, originalPrompt, sessio
         status,
         agentId,
         source,
+        sessionId: sessionId || null,
       });
     }
 
@@ -515,11 +524,12 @@ async function answerQuestion(taskId, answer) {
     : [];
 
   const _broadcastDone = (status) => {
-    _notifyComplete(taskId, ctx.agentId, status, '');
+    _notifyComplete(taskId, ctx.agentId, status, '', null, ctx.sessionId);
     if (_ipcBroadcast) {
       _ipcBroadcast('task:complete', {
         taskId, prompt: ctx.originalPrompt || ctx.prompt, answer: '',
         status, agentId: ctx.agentId, source: ctx.source,
+        sessionId: ctx.sessionId || null,
       });
     }
   };

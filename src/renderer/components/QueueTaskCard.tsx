@@ -34,6 +34,8 @@ export interface CommsTask {
   intent: string;
   source: string;
   planFile?: string | null;
+  /** Conversation session this task's discussion lives in — used by Continue Thread. */
+  sessionId?: string | null;
 }
 
 // ── Status config ──────────────────────────────────────────────────────────────
@@ -147,10 +149,79 @@ function _timeAgo(ms: number): string {
   return `${Math.round(ms / 3600000)}h ago`;
 }
 
+// ── PromptText — renders prompts containing [File:]/[Folder:]/[Highlighted:]
+// tags with compact inline chips (icon + basename). The underlying string keeps
+// the full path — display only. Truncates by display length, not raw length. ──
+const _TAG_RE = /\[(File|Folder|Highlighted):\s*([^\]]+)\]/g;
+
+function _chipSeg(kind: 'file' | 'folder', label: string, full: string, key: number) {
+  const color = kind === 'folder' ? '#4ade80' : '#93c5fd';
+  return (
+    <span key={key} title={full} style={{
+      display: 'inline-flex', alignItems: 'center', gap: 3, verticalAlign: '-1px',
+      padding: '0 5px', borderRadius: 4, margin: '0 1px',
+      background: kind === 'folder' ? 'rgba(74,222,128,0.12)' : 'rgba(59,130,246,0.12)',
+      border: `1px solid ${kind === 'folder' ? 'rgba(74,222,128,0.28)' : 'rgba(59,130,246,0.28)'}`,
+      color,
+    }}>
+      {kind === 'folder' ? (
+        <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
+        </svg>
+      ) : (
+        <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/>
+        </svg>
+      )}
+      {label}
+    </span>
+  );
+}
+
+export function PromptText({ text, maxLen = 80 }: { text: string; maxLen?: number }) {
+  // Split into segments: text runs + tagged file/folder/highlight spans
+  const segs: { kind: 'text' | 'file' | 'folder' | 'highlight'; text: string; label: string; full: string }[] = [];
+  let last = 0;
+  for (const m of text.matchAll(_TAG_RE)) {
+    if (m.index > last) segs.push({ kind: 'text', text: text.slice(last, m.index), label: text.slice(last, m.index), full: '' });
+    const kind = m[1].toLowerCase() as 'file' | 'folder' | 'highlight';
+    const inner = m[2].trim();
+    const label = kind === 'highlight' ? inner : (inner.split('/').filter(Boolean).pop() || inner);
+    segs.push({ kind, text: inner, label, full: inner });
+    last = m.index + m[0].length;
+  }
+  if (last < text.length) segs.push({ kind: 'text', text: text.slice(last), label: text.slice(last), full: '' });
+
+  // Truncate by display length (label length for chips, raw for text)
+  let remaining = maxLen;
+  const out: React.ReactNode[] = [];
+  let truncated = false;
+  for (let i = 0; i < segs.length; i++) {
+    const s = segs[i];
+    const len = s.label.length;
+    if (s.kind === 'file' || s.kind === 'folder') {
+      if (len <= remaining) {
+        out.push(_chipSeg(s.kind, s.label, s.full, i));
+        remaining -= len;
+      } else { truncated = true; break; }
+    } else {
+      if (len <= remaining) {
+        out.push(<React.Fragment key={i}>{s.label}</React.Fragment>);
+        remaining -= len;
+      } else {
+        out.push(<React.Fragment key={i}>{s.label.slice(0, remaining)}</React.Fragment>);
+        truncated = true;
+        break;
+      }
+    }
+  }
+  return <>{out}{truncated && '…'}</>;
+}
+
 // ── QueueTaskCard — wraps AutomationProgress in an expandable card ────────────
-export function QueueTaskCard({ task, onShowResult, onHeightChange, flash }: {
+export function QueueTaskCard({ task, onContinueThread, onHeightChange, flash }: {
   task: CommsTask;
-  onShowResult?: (task: CommsTask) => void;
+  onContinueThread?: (task: CommsTask) => void;
   onHeightChange?: () => void;
   flash?: boolean;
 }) {
@@ -160,7 +231,6 @@ export function QueueTaskCard({ task, onShowResult, onHeightChange, flash }: {
   const cfg = TASK_STATUS_CONFIG[task.status] || TASK_STATUS_CONFIG.queued;
   const isActive = task.status === 'running' || task.status === 'queued' || task.status === 'waiting-for-agent' || task.status === 'auth-required' || task.status === 'awaiting-approval' || task.status === 'waiting-for-input';
   const needsAttention = task.status === 'auth-required' || task.status === 'awaiting-approval' || task.status === 'waiting-for-input';
-  const preview = task.prompt.length > 80 ? task.prompt.slice(0, 80) + '…' : task.prompt;
   const elapsed = useElapsed(task.startedAt || task.createdAt, isActive);
   const elapsedStr = _formatTime(elapsed);
   const diff = Date.now() - (task.doneAt || task.createdAt);
@@ -205,7 +275,7 @@ export function QueueTaskCard({ task, onShowResult, onHeightChange, flash }: {
     setExpanded(e => !e);
     notifyHeightChange();
   };
-  const handleShowResult = () => { if (onShowResult) onShowResult(task); };
+  const handleContinueThread = () => { if (onContinueThread) onContinueThread(task); };
 
   return (
     <div style={{
@@ -244,7 +314,7 @@ export function QueueTaskCard({ task, onShowResult, onHeightChange, flash }: {
 
             {/* Prompt preview */}
             <div style={{ fontSize: '0.71rem', color: '#d1d5db', lineHeight: 1.45, marginTop: task.agentId ? 4 : 0 }}>
-              {preview}
+              <PromptText text={task.prompt} maxLen={80} />
             </div>
 
             {/* Waiting-for-agent message */}
@@ -406,7 +476,7 @@ export function QueueTaskCard({ task, onShowResult, onHeightChange, flash }: {
         <div style={{ padding: '12px' }}>
           <AutomationProgress
             taskId={task.id}
-            planFile={task.planFile || undefined}
+            planFile={task.status === 'awaiting-approval' ? task.planFile || undefined : undefined}
             setIsSubmitting={() => {}}
             onAuthPending={() => {}}
             activeTab="queue"
@@ -486,13 +556,19 @@ export function QueueTaskCard({ task, onShowResult, onHeightChange, flash }: {
 
         {/* Actions */}
         <div style={{ display: 'flex', gap: 6, padding: '0 12px 10px' }}>
-          {task.status === 'done' && task.result && onShowResult && (
-            <button onClick={handleShowResult} style={{
-              padding: '3px 8px', borderRadius: 5, fontSize: '0.62rem', cursor: 'pointer',
-              background: 'rgba(74,222,128,0.1)', border: '1px solid rgba(74,222,128,0.2)',
-              color: '#4ade80', fontWeight: 500,
-            }}>
-              Show in Results
+          {task.status === 'done' && task.result && onContinueThread && (
+            <button onClick={handleContinueThread}
+              title="Load result and attach this discussion as context for your next prompt"
+              style={{
+                padding: '3px 8px', borderRadius: 5, fontSize: '0.62rem', cursor: 'pointer',
+                display: 'inline-flex', alignItems: 'center', gap: 4,
+                background: 'rgba(167,139,250,0.1)', border: '1px solid rgba(167,139,250,0.25)',
+                color: '#a78bfa', fontWeight: 500,
+              }}>
+              <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
+              </svg>
+              Continue Thread
             </button>
           )}
           {task.status === 'running' && (
@@ -813,9 +889,9 @@ function QueueFilterBar({ search, onSearchChange, open, onToggleOpen, filters, o
 }
 
 // ── QueueTaskList — renders all comms-graph tasks, newest first + filters ──────
-export function _QueueTaskList({ tasks, onShowResult, onHeightChange, focusRequest, onFocusHandled }: {
+export function _QueueTaskList({ tasks, onContinueThread, onHeightChange, focusRequest, onFocusHandled }: {
   tasks: CommsTask[];
-  onShowResult?: (task: CommsTask) => void;
+  onContinueThread?: (task: CommsTask) => void;
   onHeightChange?: () => void;
   focusRequest?: { taskId: string; status?: string; nonce: number } | null;
   onFocusHandled?: () => void;
@@ -937,7 +1013,7 @@ export function _QueueTaskList({ tasks, onShowResult, onHeightChange, focusReque
         </div>
       ) : filtered.map(task => (
         <div key={task.id} ref={el => { cardRefs.current[task.id] = el; }}>
-          <QueueTaskCard task={task} onShowResult={onShowResult} onHeightChange={onHeightChange} flash={task.id === flashTaskId} />
+          <QueueTaskCard task={task} onContinueThread={onContinueThread} onHeightChange={onHeightChange} flash={task.id === flashTaskId} />
         </div>
       ))}
     </div>
@@ -1087,9 +1163,6 @@ export function TaskCompleteBanner({ notification, onDismiss, onShowResult, onGo
   const isFailed = notification.status === 'failed' || (!!notification.error && notification.status !== 'auth-required' && notification.status !== 'awaiting-approval');
   const isAuthRequired = notification.status === 'auth-required';
   const isAwaitingApproval = notification.status === 'awaiting-approval';
-  const preview = notification.prompt.length > 60
-    ? notification.prompt.slice(0, 60) + '…'
-    : notification.prompt;
   // Response preview footer — truncated, defensive strip of any residual think tags
   const _stripThink = (t: string) => t.replace(/<think(?:ing)?>[\s\S]*?<\/think(?:ing)?>/gi, '').replace(/<\/think(?:ing)?>/g, '').trim();
   const cleanAnswer = notification.answer ? _stripThink(notification.answer) : '';
@@ -1193,7 +1266,7 @@ export function TaskCompleteBanner({ notification, onDismiss, onShowResult, onGo
               fontSize: '0.69rem', color: '#d1d5db', lineHeight: 1.45, marginBottom: 6,
               overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
             }}>
-              {isFailed ? (notification.error || 'Something went wrong') : `"${preview}"`}
+              {isFailed ? (notification.error || 'Something went wrong') : <>"<PromptText text={notification.prompt} maxLen={60} />"</>}
             </div>
 
             {/* Response preview footer — only for done tasks with an answer */}
@@ -1259,7 +1332,7 @@ export function TaskCompleteBanner({ notification, onDismiss, onShowResult, onGo
                 onMouseEnter={e => (e.currentTarget.style.background = 'rgba(74,222,128,0.28)')}
                 onMouseLeave={e => (e.currentTarget.style.background = 'rgba(74,222,128,0.18)')}
                 >
-                  View Result
+                  Continue Thread
                 </button>
               )}
               {!isAwaitingApproval && onGoToQueue && (

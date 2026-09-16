@@ -1035,6 +1035,11 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
         title: 'Execution Plan',
         isExisting: false,
       });
+    } else if (!planFile && phaseRef.current === 'plan_review') {
+      // Task left awaiting-approval (approved, completed, or cancelled) while
+      // this card is still mounted — don't leave the review UI stuck on screen.
+      setPhase('idle');
+      setPlanReview(null);
     }
   }, [planFile]);
 
