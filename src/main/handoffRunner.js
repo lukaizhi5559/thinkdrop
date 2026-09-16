@@ -759,4 +759,12 @@ function getActiveTaskIds() {
   return Array.from(_activeRuns.keys());
 }
 
-module.exports = { init, execute, resume, answerQuestion, hasPendingQuestion, cancel, getActiveCount, getActiveTaskIds };
+// ── Get the progressCallback for a running task ────────────────────────────────
+// Used by main.js /agent-turn to route command-service progress events
+// (tab_flow:*, tab_map:*, agent:turn, …) to the correct queue card — the
+// callback tags each event with its taskId before broadcasting.
+function getProgressCallback(taskId) {
+  return _activeRuns.get(taskId)?.progressCallback || null;
+}
+
+module.exports = { init, execute, resume, answerQuestion, hasPendingQuestion, cancel, getActiveCount, getActiveTaskIds, getProgressCallback };

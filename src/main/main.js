@@ -940,7 +940,7 @@ function startOverlayControlServer() {
     // ── POST /agent-turn — command-service streams per-turn progress back to the renderer ──
     // cli.agent.cjs POSTs here after each agentic turn so the UI shows the live turn count
     // before the full response arrives. Forwarded via the active progressCallback.
-    if (req.url === '/agent-turn') {
+    if (req.url === '/agent-turn' || req.url.startsWith('/agent-turn?')) {
       let body = '';
       req.on('data', chunk => { body += chunk; });
       req.on('end', () => {
@@ -954,10 +954,25 @@ function startOverlayControlServer() {
             'app_flow:start', 'app_flow:focusing', 'app_flow:computed', 'app_flow:tier_selected',
             'app_flow:action_start', 'app_flow:action_done', 'app_flow:tier_reset', 'app_flow:done',
           ];
-          if (activeProgressCallback && _agentEventTypes.includes(evt.type)) {
+          if (!_agentEventTypes.includes(evt.type)) {
+            res.writeHead(200).end(JSON.stringify({ ok: true }));
+            return;
+          }
+          // Handoff tasks (comms-graph queue cards) carry ?taskId= — route the
+          // event to that task's progressCallback, which tags + broadcasts it.
+          // Interactive/cron runs have no taskId → use the global callbacks.
+          let _routedToHandoff = false;
+          const _qTaskId = (() => { try { return new URL(req.url, 'http://127.0.0.1').searchParams.get('taskId'); } catch (_) { return null; } })();
+          if (_qTaskId) {
+            try {
+              const _cb = require('./handoffRunner').getProgressCallback?.(_qTaskId) || null;
+              if (_cb) { _cb(evt); _routedToHandoff = true; }
+            } catch (_) {}
+          }
+          if (!_routedToHandoff && activeProgressCallback) {
             activeProgressCallback(evt);
           }
-          if (activeCronProgressCallback && _agentEventTypes.includes(evt.type)) {
+          if (!_routedToHandoff && activeCronProgressCallback) {
             activeCronProgressCallback(evt);
           }
           res.writeHead(200).end(JSON.stringify({ ok: true }));
