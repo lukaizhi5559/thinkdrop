@@ -128,7 +128,15 @@ contextBridge.exposeInMainWorld('electron', {
         'preflight:open-agents-tab',
         'preflight:recheck',
         'preflight:auth_continue',
+        'preflight:auth_bypass',
         'browser.agent:auth',
+        'task:delete',
+        'scan:cancel',
+        'shell:open-terminal',
+        'skill:install-from-file',
+        'skill:install-from-url',
+        'skills:repair-oauth',
+        'parallel:login:decision',
       ];
       if (validChannels.includes(channel)) {
         ipcRenderer.send(channel, data);
@@ -221,6 +229,7 @@ contextBridge.exposeInMainWorld('electron', {
         'task:created',
         'task:progress',
         'task:complete',
+        'task:removed',
       ];
       if (validChannels.includes(channel)) {
         const wrapped = (_event, ...args) => func(...args);
@@ -342,6 +351,7 @@ contextBridge.exposeInMainWorld('electron', {
         'agents:update',
         'operation:status',
         'agents:open-training',
+        'task:removed',
       ];
       if (validChannels.includes(channel)) {
         const chMap = _wiredListeners.get(channel);

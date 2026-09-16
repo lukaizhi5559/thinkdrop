@@ -142,6 +142,8 @@ export function UnifiedOverlay() {
   // --- comms-graph task state (concurrent handoff tasks) ---
   const [commsTasks, setCommsTasks] = useState<CommsTask[]>([]);
   const [taskNotification, setTaskNotification] = useState<{ taskId: string; prompt: string; answer?: string; error?: string; status?: string; planFile?: string | null } | null>(null);
+  // Deep-link target for the queue tab — set when navigating from a notification
+  const [queueFocus, setQueueFocus] = useState<{ taskId: string; status?: string; nonce: number } | null>(null);
 
   // --- Skill Build State ---
   const [skillBuild, setSkillBuild] = useState<SkillBuildState | null>(null);
@@ -535,6 +537,7 @@ export function UnifiedOverlay() {
     if (shouldSuppressResize()) return;
     measureNow();
   }, [shouldSuppressResize, measureNow]);
+  const handleQueueFocusHandled = useCallback(() => setQueueFocus(null), []);
 
   // --- Learn Mode callbacks (stabilized for LearnModeOverlay memo) ---
   const handleLearnCancel = useCallback((agentId: string) => {
@@ -1754,8 +1757,8 @@ export function UnifiedOverlay() {
             agentId: data.agentId || null,
             status: 'queued' as const,
             createdAt: data.createdAt || Date.now(),
-            startedAt: null,
-            doneAt: null,
+            startedAt: data.startedAt || null,
+            doneAt: data.doneAt || null,
             error: null,
             progress: { step: 0, totalSteps: 0, currentStep: null, eta: null },
             result: null,
@@ -1799,7 +1802,7 @@ export function UnifiedOverlay() {
           return {
             ...t,
             status: status as any,
-            doneAt: (status === 'done' || status === 'failed' || status === 'cancelled') ? Date.now() : t.doneAt,
+            doneAt: (status === 'done' || status === 'failed' || status === 'cancelled') ? (data.doneAt || t.doneAt || Date.now()) : t.doneAt,
             result: data.answer || t.result,
             thinking: data.thinking || t.thinking || null,
             sources: data.sources || t.sources || null,
@@ -1894,6 +1897,7 @@ export function UnifiedOverlay() {
       ipcRenderer.removeListenerByToken('search:sources', token);
       ipcRenderer.removeListenerByToken('gather:pending', token);
       ipcRenderer.removeListenerByToken('queue:enqueued', token);
+      ipcRenderer.removeListenerByToken('task:removed', token);
     };
   }, []);
 
@@ -2073,14 +2077,14 @@ export function UnifiedOverlay() {
               />
             </div>
 
-          {/* Queue Tab */}
+          {/* Queue Tab — no top padding so the sticky filter bar sits flush under the tab bar */}
           <div 
             ref={queueTabRef}
-            className="overflow-y-auto overflow-x-hidden p-4 flex flex-col gap-2"
+            className="overflow-y-auto overflow-x-hidden px-4 pb-4 flex flex-col gap-2"
             style={{ display: deferredTab === 'queue' ? 'flex' : 'none', height: 'auto', maxHeight: '100%' }}
           >
               {restartAlert && (
-                <div style={{ borderRadius: 9, padding: '10px 14px', backgroundColor: 'rgba(245,158,11,0.07)', border: '1px solid rgba(245,158,11,0.3)', display: 'flex', flexDirection: 'column', gap: 6 }}>
+                <div style={{ marginTop: 12, borderRadius: 9, padding: '10px 14px', backgroundColor: 'rgba(245,158,11,0.07)', border: '1px solid rgba(245,158,11,0.3)', display: 'flex', flexDirection: 'column', gap: 6 }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                     <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#f59e0b" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                       <circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/>
@@ -2107,6 +2111,8 @@ export function UnifiedOverlay() {
                 tasks={commsTasks}
                 onShowResult={handleQueueShowResult}
                 onHeightChange={handleQueueHeightChange}
+                focusRequest={queueFocus}
+                onFocusHandled={handleQueueFocusHandled}
               />
             </div>
 
@@ -2310,9 +2316,10 @@ export function UnifiedOverlay() {
           }
           setTaskNotification(null);
         }}
-        onGoToQueue={() => {
+        onGoToQueue={(taskId, status) => {
           setActiveTab('queue');
           setUnreadTabs(prev => { const n = new Set(prev); n.delete('queue'); return n; });
+          if (taskId) setQueueFocus({ taskId, status, nonce: Date.now() });
           setTaskNotification(null);
         }}
         onApprove={(taskId, planFile) => {

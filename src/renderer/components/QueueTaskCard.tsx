@@ -148,13 +148,15 @@ function _timeAgo(ms: number): string {
 }
 
 // ── QueueTaskCard — wraps AutomationProgress in an expandable card ────────────
-export function QueueTaskCard({ task, onShowResult, onHeightChange }: {
+export function QueueTaskCard({ task, onShowResult, onHeightChange, flash }: {
   task: CommsTask;
   onShowResult?: (task: CommsTask) => void;
   onHeightChange?: () => void;
+  flash?: boolean;
 }) {
   const [expanded, setExpanded] = React.useState(false);
   const [thinkingExpanded, setThinkingExpanded] = React.useState(false);
+  const [confirmingDelete, setConfirmingDelete] = React.useState(false);
   const cfg = TASK_STATUS_CONFIG[task.status] || TASK_STATUS_CONFIG.queued;
   const isActive = task.status === 'running' || task.status === 'queued' || task.status === 'waiting-for-agent' || task.status === 'auth-required' || task.status === 'awaiting-approval' || task.status === 'waiting-for-input';
   const needsAttention = task.status === 'auth-required' || task.status === 'awaiting-approval' || task.status === 'waiting-for-input';
@@ -180,6 +182,25 @@ export function QueueTaskCard({ task, onShowResult, onHeightChange }: {
     }
   }, [task.status, notifyHeightChange]);
 
+  // Deep-link from a notification: force expand while flashed
+  React.useEffect(() => {
+    if (flash) {
+      setExpanded(true);
+      notifyHeightChange();
+    }
+  }, [flash, notifyHeightChange]);
+
+  // Require a second click before permanently deleting an individual task.
+  React.useEffect(() => {
+    if (!confirmingDelete) return;
+    const timer = setTimeout(() => setConfirmingDelete(false), 4000);
+    return () => clearTimeout(timer);
+  }, [confirmingDelete]);
+
+  React.useEffect(() => {
+    setConfirmingDelete(false);
+  }, [task.status]);
+
   const handleExpand = () => {
     setExpanded(e => !e);
     notifyHeightChange();
@@ -196,6 +217,7 @@ export function QueueTaskCard({ task, onShowResult, onHeightChange }: {
       transition: 'border-color 0.15s, background-color 0.15s',
       overflow: 'hidden',
       ...(needsAttention ? { boxShadow: `0 0 0 1px ${cfg.border}` } : {}),
+      ...(flash ? { animation: 'td-queue-flash 0.8s ease-in-out 3' } : {}),
     }}>
       {/* ── Card header (always visible) ── */}
       <div style={{ padding: '10px 12px', cursor: 'pointer' }} onClick={handleExpand}>
@@ -303,22 +325,48 @@ export function QueueTaskCard({ task, onShowResult, onHeightChange }: {
                 )}
                 {/* Delete button — for terminal tasks (done/failed/cancelled) */}
                 {['done', 'failed', 'cancelled'].includes(task.status) && (
-                  <button
-                    onClick={(e) => { e.stopPropagation(); ipcRenderer?.send('task:delete', { taskId: task.id }); }}
-                    title="Remove task"
-                    style={{
-                      padding: '4px 6px', borderRadius: 5, cursor: 'pointer',
-                      display: 'flex', alignItems: 'center', justifyContent: 'center',
-                      background: 'rgba(248,113,113,0.08)', border: '1px solid rgba(248,113,113,0.15)',
-                      color: '#f87171', transition: 'background 0.15s',
-                    }}
-                    onMouseEnter={e => (e.currentTarget.style.background = 'rgba(248,113,113,0.16)')}
-                    onMouseLeave={e => (e.currentTarget.style.background = 'rgba(248,113,113,0.08)')}
-                  >
-                    <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
-                      <polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/>
-                    </svg>
-                  </button>
+                  confirmingDelete ? (
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setConfirmingDelete(false);
+                        ipcRenderer?.send('task:delete', { taskId: task.id });
+                      }}
+                      title="Confirm remove task"
+                      aria-label="Confirm remove task"
+                      style={{
+                        padding: '4px 8px', borderRadius: 5, cursor: 'pointer',
+                        display: 'flex', alignItems: 'center', gap: 4,
+                        background: 'rgba(248,113,113,0.18)', border: '1px solid rgba(248,113,113,0.4)',
+                        color: '#f87171', fontSize: '0.6rem', fontWeight: 600, transition: 'background 0.15s',
+                      }}
+                      onMouseEnter={e => (e.currentTarget.style.background = 'rgba(248,113,113,0.3)')}
+                      onMouseLeave={e => (e.currentTarget.style.background = 'rgba(248,113,113,0.18)')}
+                    >
+                      <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                        <polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/>
+                      </svg>
+                      Sure?
+                    </button>
+                  ) : (
+                    <button
+                      onClick={(e) => { e.stopPropagation(); setConfirmingDelete(true); }}
+                      title="Remove task"
+                      aria-label="Remove task"
+                      style={{
+                        padding: '4px 6px', borderRadius: 5, cursor: 'pointer',
+                        display: 'flex', alignItems: 'center', justifyContent: 'center',
+                        background: 'rgba(248,113,113,0.08)', border: '1px solid rgba(248,113,113,0.15)',
+                        color: '#f87171', transition: 'background 0.15s',
+                      }}
+                      onMouseEnter={e => (e.currentTarget.style.background = 'rgba(248,113,113,0.16)')}
+                      onMouseLeave={e => (e.currentTarget.style.background = 'rgba(248,113,113,0.08)')}
+                    >
+                      <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                        <polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/>
+                      </svg>
+                    </button>
+                  )
                 )}
 
                 {/* Expand chevron — AgentsTab style */}
@@ -465,27 +513,432 @@ export function QueueTaskCard({ task, onShowResult, onHeightChange }: {
   );
 }
 
-// ── QueueTaskList — renders all comms-graph tasks ──────────────────────────────
-export function _QueueTaskList({ tasks, onShowResult, onHeightChange }: {
+// ── Queue filters ────────────────────────────────────────────────────────────
+type StatusBucket = 'in-progress' | 'done' | 'cancelled' | 'failed';
+
+const STATUS_BUCKET_MAP: Record<TaskStatus, StatusBucket> = {
+  'queued': 'in-progress',
+  'waiting-for-agent': 'in-progress',
+  'running': 'in-progress',
+  'auth-required': 'in-progress',
+  'awaiting-approval': 'in-progress',
+  'waiting-for-input': 'in-progress',
+  'done': 'done',
+  'failed': 'failed',
+  'cancelled': 'cancelled',
+};
+
+const STATUS_BUCKETS: { id: StatusBucket; label: string; color: string }[] = [
+  { id: 'in-progress', label: 'In progress', color: '#60a5fa' },
+  { id: 'done',        label: 'Done',        color: '#4ade80' },
+  { id: 'cancelled',   label: 'Cancelled',   color: '#6b7280' },
+  { id: 'failed',      label: 'Failed',      color: '#f87171' },
+];
+
+type TimeKey = '1h' | '1d' | '1w' | '1m' | 'range';
+
+const TIME_CHIPS: { id: TimeKey; label: string; ms: number }[] = [
+  { id: '1h', label: '1h', ms: 60 * 60 * 1000 },
+  { id: '1d', label: '1d', ms: 24 * 60 * 60 * 1000 },
+  { id: '1w', label: 'W',  ms: 7 * 24 * 60 * 60 * 1000 },
+  { id: '1m', label: 'M',  ms: 30 * 24 * 60 * 60 * 1000 },
+];
+
+const FILTER_LS_KEY = 'td.queue.filters.v1';
+type StatusSel = 'all' | StatusBucket[];
+interface QueueFilters { timeKey: TimeKey | null; rangeFrom: string; rangeTo: string; statusSel: StatusSel; }
+const DEFAULT_FILTERS: QueueFilters = { timeKey: '1h', rangeFrom: '', rangeTo: '', statusSel: ['in-progress'] };
+
+function _loadFilters(): QueueFilters {
+  try {
+    const p = JSON.parse(localStorage.getItem(FILTER_LS_KEY) || '');
+    return {
+      timeKey: p.timeKey ?? '1h',
+      rangeFrom: p.rangeFrom ?? '',
+      rangeTo: p.rangeTo ?? '',
+      statusSel: p.statusSel === 'all' || Array.isArray(p.statusSel) ? p.statusSel : ['in-progress'],
+    };
+  } catch {
+    return { ...DEFAULT_FILTERS };
+  }
+}
+
+// Event time: doneAt for terminal tasks, createdAt for active ones.
+function _eventTs(t: CommsTask): number { return t.doneAt ?? t.createdAt; }
+
+function _matchesTime(t: CommsTask, timeKey: TimeKey | null, rangeFrom: string, rangeTo: string): boolean {
+  if (!timeKey) return true;
+  const ts = _eventTs(t);
+  if (timeKey === 'range') {
+    if (rangeFrom && ts < new Date(rangeFrom + 'T00:00:00').getTime()) return false;
+    if (rangeTo && ts > new Date(rangeTo + 'T23:59:59.999').getTime()) return false;
+    return true;
+  }
+  const chip = TIME_CHIPS.find(c => c.id === timeKey);
+  return chip ? ts >= Date.now() - chip.ms : true;
+}
+
+function _matchesSearch(t: CommsTask, q: string): boolean {
+  if (!q) return true;
+  return t.prompt.toLowerCase().includes(q)
+    || (t.agentId || '').toLowerCase().includes(q)
+    || (t.error || '').toLowerCase().includes(q)
+    || (t.result || '').toLowerCase().includes(q);
+}
+
+function _toggleBucket(sel: StatusSel, b: StatusBucket): StatusSel {
+  if (sel === 'all') return [b];
+  const next = sel.includes(b) ? sel.filter(x => x !== b) : [...sel, b];
+  return next.length === 0 ? 'all' : next;
+}
+
+// ── QueueFilterBar — sticky search + collapsible time/status filter rows ──────
+function QueueFilterBar({ search, onSearchChange, open, onToggleOpen, filters, onFilters, bucketCounts, matchCount, totalCount, onReset, onDeleteFiltered }: {
+  search: string;
+  onSearchChange: (v: string) => void;
+  open: boolean;
+  onToggleOpen: () => void;
+  filters: QueueFilters;
+  onFilters: (patch: Partial<QueueFilters>) => void;
+  bucketCounts: Record<StatusBucket, number>;
+  matchCount: number;
+  totalCount: number;
+  onReset?: () => void;
+  onDeleteFiltered?: () => void;
+}) {
+  const { timeKey, rangeFrom, rangeTo, statusSel } = filters;
+  const [confirmingDelete, setConfirmingDelete] = React.useState(false);
+  // Auto-revert the "Sure?" confirmation if the user doesn't follow through
+  React.useEffect(() => {
+    if (!confirmingDelete) return;
+    const t = setTimeout(() => setConfirmingDelete(false), 4000);
+    return () => clearTimeout(t);
+  }, [confirmingDelete]);
+  const isDefaultSel = statusSel !== 'all' && statusSel.length === 1 && statusSel[0] === 'in-progress';
+  const isCustomized = timeKey !== DEFAULT_FILTERS.timeKey || !isDefaultSel || !!search;
+  const chipStyle = (active: boolean, color: string): React.CSSProperties => ({
+    padding: '2px 7px', borderRadius: 20, fontSize: '0.63rem', fontWeight: 500,
+    cursor: 'pointer', border: `1px solid ${active ? color : 'rgba(255,255,255,0.08)'}`,
+    background: active ? `${color}22` : 'transparent',
+    color: active ? color : '#6b7280', transition: 'all 0.1s',
+    flexShrink: 0, whiteSpace: 'nowrap',
+  });
+  const dateInputStyle: React.CSSProperties = {
+    background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.09)',
+    borderRadius: 5, color: '#e5e7eb', fontSize: '0.62rem', padding: '2px 4px',
+    colorScheme: 'dark', outline: 'none',
+  };
+  const timeLabel = !timeKey ? 'All time' : timeKey === 'range' ? 'Date range' : timeKey;
+  const statusLabel = statusSel === 'all'
+    ? 'All'
+    : statusSel.map(b => STATUS_BUCKETS.find(s => s.id === b)?.label || b).join(' + ');
+
+  return (
+    <div style={{
+      position: 'sticky', top: 0, zIndex: 6,
+      // Negative margins bleed the sticky bar to the queue tab's edge (container has px-4)
+      margin: '0 -16px',
+      backgroundColor: 'rgba(23,23,23,0.94)',
+      backdropFilter: 'blur(8px)', WebkitBackdropFilter: 'blur(8px)',
+      borderBottom: '1px solid rgba(255,255,255,0.06)',
+      display: 'flex', flexDirection: 'column', gap: 6, padding: '4px 16px 6px',
+    }}>
+      {/* Row 1 — search input + ⋯ toggle */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+        <div style={{ position: 'relative', flex: 1, minWidth: 0 }}>
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#6b7280" strokeWidth="2"
+            strokeLinecap="round" strokeLinejoin="round"
+            style={{ position: 'absolute', left: 8, top: '50%', transform: 'translateY(-50%)', pointerEvents: 'none' }}>
+            <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
+          </svg>
+          <input type="text"
+            placeholder="Search tasks…"
+            value={search} onChange={e => onSearchChange(e.target.value)}
+            style={{
+              width: '100%', boxSizing: 'border-box', padding: '5px 26px 5px 26px',
+              background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.09)',
+              borderRadius: 7, color: '#e5e7eb', fontSize: '0.74rem', outline: 'none',
+            }}
+            onFocus={e => { e.currentTarget.style.borderColor = 'rgba(167,139,250,0.5)'; }}
+            onBlur={e => { e.currentTarget.style.borderColor = 'rgba(255,255,255,0.09)'; }}
+          />
+          {search && (
+            <button onClick={() => onSearchChange('')}
+              style={{ position: 'absolute', right: 7, top: '50%', transform: 'translateY(-50%)',
+                background: 'none', border: 'none', cursor: 'pointer', color: '#6b7280', fontSize: '0.7rem', padding: 2 }}>
+              ✕
+            </button>
+          )}
+        </div>
+        <button onClick={onToggleOpen} title={open ? 'Hide filters' : 'Show filters'}
+          style={{
+            position: 'relative', padding: '5px 8px', borderRadius: 6, cursor: 'pointer',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            background: open ? 'rgba(167,139,250,0.15)' : 'rgba(255,255,255,0.04)',
+            border: `1px solid ${open ? 'rgba(167,139,250,0.3)' : 'rgba(255,255,255,0.09)'}`,
+            color: open ? '#a78bfa' : '#6b7280', transition: 'background 0.15s',
+          }}>
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor" stroke="none">
+            <circle cx="5" cy="12" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="19" cy="12" r="2"/>
+          </svg>
+          {isCustomized && (
+            <span style={{
+              position: 'absolute', top: 2, right: 2, width: 5, height: 5,
+              borderRadius: '50%', backgroundColor: '#a78bfa',
+            }} />
+          )}
+        </button>
+      </div>
+
+      {/* Collapsed summary badge — shows what's selected while rows are hidden */}
+      {!open && (
+        <button onClick={onToggleOpen}
+          style={{
+            alignSelf: 'flex-start', display: 'flex', alignItems: 'center', gap: 4,
+            background: 'none', border: 'none', padding: 0, cursor: 'pointer',
+          }}
+          title="Show filters">
+          <span style={{ fontSize: '0.6rem', color: '#6b7280' }}>
+            {timeLabel} · {statusLabel} · {matchCount}/{totalCount}
+          </span>
+          <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="#4b5563" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+            <polyline points="6,9 12,15 18,9"/>
+          </svg>
+        </button>
+      )}
+
+      {open && (<>
+        {/* Row 2 — time chips (single-select, toggle-off = all time) + date range */}
+        <div style={{ display: 'flex', gap: 3, flexWrap: 'wrap', alignItems: 'center' }}>
+          {TIME_CHIPS.map(c => (
+            <button key={c.id} onClick={() => onFilters({ timeKey: timeKey === c.id ? null : c.id })}
+              style={chipStyle(timeKey === c.id, '#a78bfa')}>
+              {c.label}
+            </button>
+          ))}
+          <button onClick={() => onFilters({ timeKey: timeKey === 'range' ? null : 'range' })}
+            title="Pick a date range"
+            style={{ ...chipStyle(timeKey === 'range', '#a78bfa'), display: 'flex', alignItems: 'center' }}>
+            <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/>
+            </svg>
+          </button>
+          {timeKey === 'range' && (
+            <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
+              <span style={{ fontSize: '0.6rem', color: '#6b7280' }}>From</span>
+              <input type="date" value={rangeFrom} onChange={e => onFilters({ rangeFrom: e.target.value })} style={dateInputStyle} />
+              <span style={{ fontSize: '0.6rem', color: '#6b7280' }}>To</span>
+              <input type="date" value={rangeTo} onChange={e => onFilters({ rangeTo: e.target.value })} style={dateInputStyle} />
+            </div>
+          )}
+
+          {/* Filter actions — reset to everything, delete currently-shown tasks */}
+          <div style={{ marginLeft: 'auto', display: 'flex', gap: 4, alignItems: 'center', flexShrink: 0 }}>
+          {onReset && (
+            <button onClick={onReset} title="Show everything — clear all filters"
+              aria-label="Clear all filters"
+              style={{
+                padding: '3px 6px', borderRadius: 5, cursor: 'pointer',
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.09)',
+                color: '#9ca3af', transition: 'background 0.15s',
+              }}
+              onMouseEnter={e => (e.currentTarget.style.background = 'rgba(255,255,255,0.1)')}
+              onMouseLeave={e => (e.currentTarget.style.background = 'rgba(255,255,255,0.04)')}>
+              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                <polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/>
+              </svg>
+            </button>
+          )}
+          {onDeleteFiltered && (confirmingDelete ? (
+            <button
+              onClick={() => { setConfirmingDelete(false); onDeleteFiltered(); }}
+              title={`Confirm delete ${matchCount} shown task${matchCount !== 1 ? 's' : ''}`}
+              style={{
+                padding: '3px 8px', borderRadius: 5, cursor: 'pointer',
+                display: 'flex', alignItems: 'center', gap: 4,
+                background: 'rgba(248,113,113,0.18)', border: '1px solid rgba(248,113,113,0.4)',
+                color: '#f87171', fontSize: '0.62rem', fontWeight: 600, transition: 'background 0.15s',
+              }}
+              onMouseEnter={e => (e.currentTarget.style.background = 'rgba(248,113,113,0.3)')}
+              onMouseLeave={e => (e.currentTarget.style.background = 'rgba(248,113,113,0.18)')}>
+              <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                <polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/>
+              </svg>
+              Sure?
+            </button>
+          ) : (
+            <button onClick={() => setConfirmingDelete(true)} disabled={matchCount === 0}
+              title={`Delete ${matchCount} shown task${matchCount !== 1 ? 's' : ''}`}
+              aria-label={`Delete ${matchCount} shown tasks`}
+              style={{
+                padding: '3px 6px', borderRadius: 5, cursor: matchCount === 0 ? 'default' : 'pointer',
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                background: 'rgba(248,113,113,0.08)', border: '1px solid rgba(248,113,113,0.15)',
+                color: '#f87171', opacity: matchCount === 0 ? 0.4 : 1, transition: 'background 0.15s',
+              }}
+              onMouseEnter={e => { if (matchCount > 0) e.currentTarget.style.background = 'rgba(248,113,113,0.16)'; }}
+              onMouseLeave={e => (e.currentTarget.style.background = 'rgba(248,113,113,0.08)')}>
+              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                <polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/>
+              </svg>
+            </button>
+          ))}
+          </div>
+        </div>
+
+        {/* Row 3 — status chips (multi-select + All) */}
+        <div style={{ display: 'flex', gap: 3, flexWrap: 'wrap', alignItems: 'center' }}>
+          <button onClick={() => onFilters({ statusSel: 'all' })} style={chipStyle(statusSel === 'all', '#a78bfa')}>
+            All
+          </button>
+          {STATUS_BUCKETS.map(b => {
+            const active = statusSel !== 'all' && statusSel.includes(b.id);
+            return (
+              <button key={b.id} onClick={() => onFilters({ statusSel: _toggleBucket(statusSel, b.id) })}
+                style={chipStyle(active, b.color)}>
+                {b.label} {bucketCounts[b.id]}
+              </button>
+            );
+          })}
+        </div>
+
+        {/* Match count */}
+        <div style={{ color: '#4b5563', fontSize: '0.62rem' }}>
+          {matchCount} of {totalCount} task{totalCount !== 1 ? 's' : ''}
+        </div>
+      </>)}
+    </div>
+  );
+}
+
+// ── QueueTaskList — renders all comms-graph tasks, newest first + filters ──────
+export function _QueueTaskList({ tasks, onShowResult, onHeightChange, focusRequest, onFocusHandled }: {
   tasks: CommsTask[];
   onShowResult?: (task: CommsTask) => void;
   onHeightChange?: () => void;
+  focusRequest?: { taskId: string; status?: string; nonce: number } | null;
+  onFocusHandled?: () => void;
 }) {
-  if (tasks.length === 0) {
-    return (
-      <div style={{
-        padding: '20px 12px', textAlign: 'center',
-        color: '#4b5563', fontSize: '0.7rem',
-      }}>
-        No background tasks. Handoffs from voice or chat will appear here.
-      </div>
-    );
-  }
+  const [filters, setFilters] = React.useState<QueueFilters>(_loadFilters);
+  const [search, setSearch] = React.useState('');
+  const [filtersOpen, setFiltersOpen] = React.useState(false);
+  const [flashTaskId, setFlashTaskId] = React.useState<string | null>(null);
+  const cardRefs = React.useRef<Record<string, HTMLDivElement | null>>({});
+  const tasksRef = React.useRef(tasks);
+  tasksRef.current = tasks;
+  const seenIdsRef = React.useRef<Set<string> | null>(null);
+  const { timeKey, rangeFrom, rangeTo, statusSel } = filters;
+
+  // Persist filter selections (search text intentionally not persisted)
+  React.useEffect(() => {
+    try { localStorage.setItem(FILTER_LS_KEY, JSON.stringify({ timeKey, rangeFrom, rangeTo, statusSel })); } catch {}
+  }, [timeKey, rangeFrom, rangeTo, statusSel]);
+
+  // New-task safety net: a fresh task must never be hidden by a status filter —
+  // auto-include 'in-progress' when a new id appears. createdAt ≈ now always
+  // passes the time filter.
+  React.useEffect(() => {
+    const ids = new Set(tasks.map(t => t.id));
+    const prev = seenIdsRef.current;
+    seenIdsRef.current = ids;
+    if (!prev) return; // first render — restore isn't "new"
+    for (const id of ids) {
+      if (!prev.has(id)) {
+        setFilters(f => (f.statusSel !== 'all' && !f.statusSel.includes('in-progress'))
+          ? { ...f, statusSel: [...f.statusSel, 'in-progress'] }
+          : f);
+        break;
+      }
+    }
+  }, [tasks]);
+
+  // Deep-link from a notification: apply the right filter bucket, relax filters
+  // that would hide the target, then flash + scroll to it.
+  React.useEffect(() => {
+    if (!focusRequest) return;
+    const { taskId, status } = focusRequest;
+    const bucket = (STATUS_BUCKET_MAP as Record<string, StatusBucket>)[status || ''] || 'in-progress';
+    setFilters(f => {
+      const task = tasksRef.current.find(t => t.id === taskId);
+      const relaxed = task && !_matchesTime(task, f.timeKey, f.rangeFrom, f.rangeTo) ? null : f.timeKey;
+      return { ...f, statusSel: [bucket], timeKey: relaxed };
+    });
+    setSearch('');
+    setFlashTaskId(taskId);
+    // The queue tab may still be display:none (deferredTab) — scroll after paint.
+    // Timers are fire-and-forget: onFocusHandled clears focusRequest, re-running
+    // this effect — a cleanup return would cancel the pending scroll/flash.
+    setTimeout(() => {
+      cardRefs.current[taskId]?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+    }, 120);
+    setTimeout(() => setFlashTaskId(cur => cur === taskId ? null : cur), 2600);
+    onFocusHandled?.();
+  }, [focusRequest]);
+
+  const q = search.trim().toLowerCase();
+  const preStatus = tasks.filter(t => _matchesTime(t, timeKey, rangeFrom, rangeTo) && _matchesSearch(t, q));
+  const bucketCounts: Record<StatusBucket, number> = { 'in-progress': 0, done: 0, cancelled: 0, failed: 0 };
+  for (const t of preStatus) bucketCounts[STATUS_BUCKET_MAP[t.status] || 'in-progress']++;
+  const filtered = preStatus
+    .filter(t => statusSel === 'all' || statusSel.includes(STATUS_BUCKET_MAP[t.status] || 'in-progress'))
+    .sort((a, b) => _eventTs(b) - _eventTs(a));
+
+  // Window resize: filter rows expand/collapse + filtered count changes
+  React.useEffect(() => {
+    if (onHeightChange) requestAnimationFrame(() => onHeightChange());
+  }, [filtersOpen, filtered.length, onHeightChange]);
+
+  const clearAllFilters = () => {
+    setFilters({ timeKey: null, rangeFrom: '', rangeTo: '', statusSel: 'all' });
+    setSearch('');
+  };
+  const handleDeleteFiltered = () => {
+    for (const t of filtered) ipcRenderer?.send('task:delete', { taskId: t.id });
+  };
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-      {tasks.map(task => (
-        <QueueTaskCard key={task.id} task={task} onShowResult={onShowResult} onHeightChange={onHeightChange} />
+      <style>{`
+        @keyframes td-queue-flash {
+          0%, 100% { box-shadow: 0 0 0 0 rgba(167,139,250,0); }
+          50% { box-shadow: 0 0 0 2px rgba(167,139,250,0.85), 0 0 16px rgba(167,139,250,0.3); }
+        }
+      `}</style>
+      <QueueFilterBar
+        search={search}
+        onSearchChange={setSearch}
+        open={filtersOpen}
+        onToggleOpen={() => setFiltersOpen(o => !o)}
+        filters={filters}
+        onFilters={patch => setFilters(f => ({ ...f, ...patch }))}
+        bucketCounts={bucketCounts}
+        matchCount={filtered.length}
+        totalCount={tasks.length}
+        onReset={clearAllFilters}
+        onDeleteFiltered={handleDeleteFiltered}
+      />
+      {tasks.length === 0 ? (
+        <div style={{ padding: '14px 12px', textAlign: 'center', color: '#4b5563', fontSize: '0.7rem' }}>
+          No background tasks. Handoffs from voice or chat will appear here.
+        </div>
+      ) : filtered.length === 0 ? (
+        <div style={{ padding: '14px 12px', textAlign: 'center', color: '#4b5563', fontSize: '0.7rem' }}>
+          No tasks match these filters.
+          <button
+            onClick={clearAllFilters}
+            style={{
+              marginLeft: 6, padding: '2px 8px', borderRadius: 5, fontSize: '0.64rem', cursor: 'pointer',
+              background: 'rgba(167,139,250,0.12)', border: '1px solid rgba(167,139,250,0.25)',
+              color: '#a78bfa', fontWeight: 500,
+            }}>
+            Clear filters
+          </button>
+        </div>
+      ) : filtered.map(task => (
+        <div key={task.id} ref={el => { cardRefs.current[task.id] = el; }}>
+          <QueueTaskCard task={task} onShowResult={onShowResult} onHeightChange={onHeightChange} flash={task.id === flashTaskId} />
+        </div>
       ))}
     </div>
   );
@@ -605,7 +1058,7 @@ export function TaskCompleteBanner({ notification, onDismiss, onShowResult, onGo
   notification: { taskId: string; prompt: string; answer?: string; error?: string; status?: string; planFile?: string | null } | null;
   onDismiss: () => void;
   onShowResult?: (taskId: string) => void;
-  onGoToQueue?: () => void;
+  onGoToQueue?: (taskId: string, status?: string) => void;
   onApprove?: (taskId: string, planFile?: string | null) => void;
 }) {
   const [exiting, setExiting] = React.useState(false);
@@ -714,7 +1167,11 @@ export function TaskCompleteBanner({ notification, onDismiss, onShowResult, onGo
             <line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line>
           </svg>
         </button>
-        <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10 }}>
+        {/* Clicking the banner body deep-links to the task in the Queue tab */}
+        <div
+          style={{ display: 'flex', alignItems: 'flex-start', gap: 10, cursor: 'pointer' }}
+          onClick={() => onGoToQueue?.(notification.taskId, notification.status)}
+        >
           {/* SVG icon */}
           <div style={{ flexShrink: 0, paddingTop: 1 }}>
             {isFailed ? <FailureAlertIcon size={22} /> : isAuthRequired ? <AuthRequiredIcon size={22} /> : isAwaitingApproval ? <ApprovalIcon size={22} /> : <SuccessDropletIcon size={22} />}
@@ -766,7 +1223,7 @@ export function TaskCompleteBanner({ notification, onDismiss, onShowResult, onGo
             }}>
               {/* For awaiting-approval: Approve + Cancel on the right */}
               {isAwaitingApproval && onApprove && (
-                <button onClick={() => onApprove(notification.taskId, (notification as any).planFile)} style={{
+                <button onClick={(e) => { e.stopPropagation(); onApprove(notification.taskId, (notification as any).planFile); }} style={{
                   padding: '5px 16px', borderRadius: 6, fontSize: '0.64rem', cursor: 'pointer',
                   background: 'rgba(96,165,250,0.22)', border: '1px solid rgba(96,165,250,0.45)',
                   color: '#93c5fd', fontWeight: 600,
@@ -779,7 +1236,7 @@ export function TaskCompleteBanner({ notification, onDismiss, onShowResult, onGo
                 </button>
               )}
               {isAwaitingApproval && (
-                <button onClick={handleDismiss} style={{
+                <button onClick={(e) => { e.stopPropagation(); handleDismiss(); }} style={{
                   padding: '5px 14px', borderRadius: 6, fontSize: '0.64rem', cursor: 'pointer',
                   background: 'rgba(248,113,113,0.14)', border: '1px solid rgba(248,113,113,0.32)',
                   color: '#f87171', fontWeight: 500,
@@ -793,7 +1250,7 @@ export function TaskCompleteBanner({ notification, onDismiss, onShowResult, onGo
               )}
               {/* For non-approval: View Result + Go to Queue on the left */}
               {!isAwaitingApproval && !isFailed && !isAuthRequired && notification.answer && onShowResult && (
-                <button onClick={() => onShowResult(notification.taskId)} style={{
+                <button onClick={(e) => { e.stopPropagation(); onShowResult(notification.taskId); }} style={{
                   padding: '4px 12px', borderRadius: 6, fontSize: '0.64rem', cursor: 'pointer',
                   background: 'rgba(74,222,128,0.18)', border: '1px solid rgba(74,222,128,0.35)',
                   color: '#4ade80', fontWeight: 600,
@@ -806,7 +1263,7 @@ export function TaskCompleteBanner({ notification, onDismiss, onShowResult, onGo
                 </button>
               )}
               {!isAwaitingApproval && onGoToQueue && (
-                <button onClick={onGoToQueue} style={{
+                <button onClick={(e) => { e.stopPropagation(); onGoToQueue(notification.taskId, notification.status); }} style={{
                   padding: '4px 12px', borderRadius: 6, fontSize: '0.64rem', cursor: 'pointer',
                   background: isAuthRequired ? 'rgba(251,191,36,0.18)' : 'rgba(255,255,255,0.06)',
                   border: `1px solid ${isAuthRequired ? 'rgba(251,191,36,0.35)' : 'rgba(255,255,255,0.12)'}`,

@@ -259,11 +259,12 @@ async function _commsGet(urlPath) {
 
 // Restore persisted tasks from comms-graph journal to the frontend queue on startup.
 // Fetches GET /tasks and emits task:created + task:complete for each persisted task.
+// Returns true when the journal was reachable (even if empty), false on failure.
 async function restoreQueueFromJournal() {
   try {
     const resp = await _commsGet('/tasks');
     const tasks = resp?.tasks || [];
-    if (tasks.length === 0) return;
+    if (tasks.length === 0) return true;
     console.log(`[QueueRestore] Restoring ${tasks.length} tasks from journal`);
     for (const t of tasks) {
       // `restored: true` tells the renderer these are historical events replayed
@@ -275,6 +276,7 @@ async function restoreQueueFromJournal() {
         agentId: t.agentId,
         source: t.source || 'text',
         createdAt: t.createdAt || Date.now(),
+        startedAt: t.startedAt || null,
         restored: true,
       });
       // Emit completion for terminal tasks so the card shows the final state
@@ -287,6 +289,9 @@ async function restoreQueueFromJournal() {
           error: t.error || null,
           prompt: t.prompt || '',
           items: t.items || null,
+          // Persisted timestamps so the card shows the real age, not restore time
+          startedAt: t.startedAt || null,
+          doneAt: t.doneAt || null,
           restored: true,
         });
       } else {
@@ -303,9 +308,33 @@ async function restoreQueueFromJournal() {
       }
     }
     console.log(`[QueueRestore] Done — restored ${tasks.length} tasks`);
+    return true;
   } catch (err) {
     console.warn(`[QueueRestore] Failed: ${err.message}`);
+    return false;
   }
+}
+
+// comms-graph often starts after the renderer loads — retry with backoff instead
+// of a single fixed delay that silently leaves the queue empty.
+const QUEUE_RESTORE_DELAYS_MS = [2000, 3000, 5000, 5000, 8000, 10000, 15000, 20000];
+let _queueRestoreDone = false;
+
+function _scheduleQueueRestore(attempt = 0) {
+  if (_queueRestoreDone) return;
+  if (attempt >= QUEUE_RESTORE_DELAYS_MS.length) {
+    console.warn(`[QueueRestore] Giving up after ${attempt} attempts — comms-graph unreachable`);
+    return;
+  }
+  setTimeout(async () => {
+    if (_queueRestoreDone) return;
+    const ok = await restoreQueueFromJournal();
+    if (ok) {
+      _queueRestoreDone = true;
+    } else {
+      _scheduleQueueRestore(attempt + 1);
+    }
+  }, QUEUE_RESTORE_DELAYS_MS[attempt]);
 }
 
 // Helper: GET from command-service (port 3007)
@@ -2251,7 +2280,7 @@ function createUnifiedWindow() {
     unifiedWindow.webContents.setAudioMuted(false);
     // Restore persisted tasks from comms-graph journal after window loads
     if (process.env.COMMS_GRAPH_ENABLED === 'true') {
-      setTimeout(restoreQueueFromJournal, 2000); // wait for comms-graph to be ready
+      _scheduleQueueRestore(0); // retries until comms-graph is ready
     }
   });
 
