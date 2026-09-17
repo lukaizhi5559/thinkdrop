@@ -377,6 +377,9 @@ export function TrainingReviewPanel({ agentId, previewData, onSave, onCancel }: 
   const [existingSkills, setExistingSkills] = useState<any[]>([]);
   const [loadingExistingSkills, setLoadingExistingSkills] = useState(false);
   const ipcRenderer = (window as any).electron?.ipcRenderer;
+  // Listener token — untokened listeners can't be removed across contextBridge.
+  // Per-agentId so multiple panels can't steal each other's channels.
+  const trpToken = `training-review-panel-${agentId || 'default'}`;
 
   useEffect(() => {
     setIsOpen(true);
@@ -426,8 +429,8 @@ export function TrainingReviewPanel({ agentId, previewData, onSave, onCancel }: 
         setPreviewResult({ ok: false, message: data.error || 'Preview failed' });
       }
     };
-    ipcRenderer.on('agents:train-preview-run-result', handlePreviewRunResult);
-    return () => { ipcRenderer.removeListener('agents:train-preview-run-result', handlePreviewRunResult); };
+    ipcRenderer.on('agents:train-preview-run-result', handlePreviewRunResult, trpToken);
+    return () => { ipcRenderer.removeListenerByToken('agents:train-preview-run-result', trpToken); };
   }, [agentId, ipcRenderer, skills, recipe, onSave]);
 
   // 10min safety timeout: first-run discovery can take several minutes as it
@@ -453,8 +456,8 @@ export function TrainingReviewPanel({ agentId, previewData, onSave, onCancel }: 
       setLoadingExistingSkills(false);
       setExistingSkills(data.skills || []);
     };
-    ipcRenderer.on('agents:trained-skills-list', handleTrainedSkillsList);
-    return () => { ipcRenderer.removeListener('agents:trained-skills-list', handleTrainedSkillsList); };
+    ipcRenderer.on('agents:trained-skills-list', handleTrainedSkillsList, trpToken);
+    return () => { ipcRenderer.removeListenerByToken('agents:trained-skills-list', trpToken); };
   }, [agentId, ipcRenderer]);
 
   const handleAddExistingSkillClick = () => {

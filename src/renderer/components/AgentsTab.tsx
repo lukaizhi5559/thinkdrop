@@ -4,6 +4,9 @@ import { TrainingPanel } from './TrainingPanel';
 import { Favicon } from './DefaultFaviconIcon';
 
 const ipcRenderer = (window as any).electron?.ipcRenderer;
+// Listener token — preload dedupes per (channel, token); required because
+// untokened listeners can't be removed across the contextBridge.
+const AGENTS_TAB_TOKEN = 'agents-tab';
 
 interface AgentsTabProps {
   items: AgentItem[];
@@ -1195,16 +1198,16 @@ function _AgentsTab({ items, onRefresh, onContentResize, modalCardRef }: AgentsT
       setCreatingAgent(null);
     };
 
-    ipcRenderer.on('agents:creating', handleCreating);
-    ipcRenderer.on('agents:error', handleCreateError);
-    ipcRenderer.on('agents:new', handleAgentNew);
-    ipcRenderer.on('agents:list', handleAgentsList);
+    ipcRenderer.on('agents:creating', handleCreating, AGENTS_TAB_TOKEN);
+    ipcRenderer.on('agents:error', handleCreateError, AGENTS_TAB_TOKEN);
+    ipcRenderer.on('agents:new', handleAgentNew, AGENTS_TAB_TOKEN);
+    ipcRenderer.on('agents:list', handleAgentsList, AGENTS_TAB_TOKEN);
 
     return () => {
-      ipcRenderer.removeListener('agents:creating', handleCreating);
-      ipcRenderer.removeListener('agents:error', handleCreateError);
-      ipcRenderer.removeListener('agents:new', handleAgentNew);
-      ipcRenderer.removeListener('agents:list', handleAgentsList);
+      ipcRenderer.removeListenerByToken('agents:creating', AGENTS_TAB_TOKEN);
+      ipcRenderer.removeListenerByToken('agents:error', AGENTS_TAB_TOKEN);
+      ipcRenderer.removeListenerByToken('agents:new', AGENTS_TAB_TOKEN);
+      ipcRenderer.removeListenerByToken('agents:list', AGENTS_TAB_TOKEN);
     };
   }, []);
 
@@ -1238,8 +1241,8 @@ function _AgentsTab({ items, onRefresh, onContentResize, modalCardRef }: AgentsT
         });
       }
     };
-    ipcRenderer.on('agents:skill-test-update', handleTestUpdate);
-    return () => { ipcRenderer.removeListener('agents:skill-test-update', handleTestUpdate); };
+    ipcRenderer.on('agents:skill-test-update', handleTestUpdate, AGENTS_TAB_TOKEN);
+    return () => { ipcRenderer.removeListenerByToken('agents:skill-test-update', AGENTS_TAB_TOKEN); };
   }, []);
 
   // Listen for skill refresh status updates
@@ -1254,8 +1257,8 @@ function _AgentsTab({ items, onRefresh, onContentResize, modalCardRef }: AgentsT
         return next;
       });
     };
-    ipcRenderer.on('agents:skill-refresh-update', handleRefreshUpdate);
-    return () => { ipcRenderer.removeListener('agents:skill-refresh-update', handleRefreshUpdate); };
+    ipcRenderer.on('agents:skill-refresh-update', handleRefreshUpdate, AGENTS_TAB_TOKEN);
+    return () => { ipcRenderer.removeListenerByToken('agents:skill-refresh-update', AGENTS_TAB_TOKEN); };
   }, []);
 
   const handleTrain = (agentId: string, trainContext?: { mode?: string; task?: string | null; startUrl?: string | null; keepSession?: boolean } | null) => {

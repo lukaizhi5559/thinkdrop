@@ -2,6 +2,8 @@ import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import skillLibraryData from '../data/skill-library.json';
 
 const ipcRenderer = (window as any).electron?.ipcRenderer;
+// Listener token — untokened listeners can't be removed across contextBridge.
+const SKILL_STORE_TOKEN = 'skill-store';
 
 interface SkillEntry {
   name: string;
@@ -108,8 +110,8 @@ export default function SkillStore({ onBuildSkill, initialSearch = '' }: SkillSt
       if (error) { setInstalledSkills([]); return; }
       setInstalledSkills(skills || []);
     };
-    ipcRenderer.on('skill:list-response', onListResponse);
-    return () => { ipcRenderer.removeListener?.('skill:list-response', onListResponse); };
+    ipcRenderer.on('skill:list-response', onListResponse, SKILL_STORE_TOKEN);
+    return () => { ipcRenderer.removeListenerByToken?.('skill:list-response', SKILL_STORE_TOKEN); };
   }, []);
 
   // ── Install-done listener ──
@@ -127,8 +129,8 @@ export default function SkillStore({ onBuildSkill, initialSearch = '' }: SkillSt
       // Clear message after 5s
       setTimeout(() => setInstallMsg(null), 5000);
     };
-    ipcRenderer.on('skill:install-done', onInstallDone);
-    return () => { ipcRenderer.removeListener?.('skill:install-done', onInstallDone); };
+    ipcRenderer.on('skill:install-done', onInstallDone, SKILL_STORE_TOKEN);
+    return () => { ipcRenderer.removeListenerByToken?.('skill:install-done', SKILL_STORE_TOKEN); };
   }, [view, refreshInstalled]);
 
   // ── Build-done listener (existing) ──
@@ -137,8 +139,8 @@ export default function SkillStore({ onBuildSkill, initialSearch = '' }: SkillSt
     const onDone = (_e: any, { name, ok }: { name: string; ok: boolean }) => {
       if (ok && building === name) setBuilding(null);
     };
-    ipcRenderer.on('skill:build-done', onDone);
-    return () => { ipcRenderer.removeListener?.('skill:build-done', onDone); };
+    ipcRenderer.on('skill:build-done', onDone, SKILL_STORE_TOKEN);
+    return () => { ipcRenderer.removeListenerByToken?.('skill:build-done', SKILL_STORE_TOKEN); };
   }, [building]);
 
   const handleBuild = useCallback((skill: SkillEntry) => {

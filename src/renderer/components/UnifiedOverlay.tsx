@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useCallback, useMemo, startTransition, useDeferredValue } from 'react';
 import { useDynamicHeight, MAX_HEIGHT } from './utils/useDynamicHeight';
 const ipcRenderer = (window as any).electron?.ipcRenderer;
-import { playThinkDropSound, playDropSound, playIntentSound } from '../utils/thinkDropSound';
+import { playThinkDropSound, playDropSound, playIntentSound, playDefaultSound } from '../utils/thinkDropSound';
 
 // Debug logging flag — gates high-frequency renderer logs (per-LLM-chunk,
 // submit-path) that spam the devtools console and cost render time on hot
@@ -862,10 +862,9 @@ export function UnifiedOverlay() {
 
     const handleAutomationProgress = (data: any) => {
       // ── Intent decided (stategraph) — no longer drives sound/••• ──
-      // Sound + ••• now fire at task:created (comms-graph regex guess) for
-      // immediate feedback. The stategraph's intent:decided event is kept as
-      // a no-op here — the dedup set prevents double-play if it fires after
-      // task:created already played the sound.
+      // Sound + ••• fire at task:created (comms-graph regex guess) for
+      // immediate feedback — by the time intent:decided arrives the moment
+      // has passed, so the stategraph's event is kept as a no-op here.
       if (data?.type === 'intent:decided') {
         return;
       }
@@ -1757,14 +1756,21 @@ export function UnifiedOverlay() {
         // task:created for ALL handoff tasks (parked and non-parked), forwarded
         // through handoff.cjs → /comms.handoff → task:created.
         // - If guessedIntent matches → play intent-specific sound
-        // - If guessedIntent is null (regex miss) → no sound
+        // - If guessedIntent is null (regex miss) → default chime
         // - ••• shows for all non-command_automate handoff tasks (incl. regex miss)
         // - command_automate gets the notification banner instead (no •••)
-        // Dedup via _playedIntentSoundRef so intent:decided doesn't double-play.
+        // Dedup via _playedIntentSoundRef so a resumed task's second
+        // task:created doesn't re-play the sound.
         if (!isRestored) {
-          _playedIntentSoundRef.current.add(data.taskId);
-          if (data.guessedIntent) {
-            playIntentSound(data.guessedIntent);
+          // Play once per task — a parked task's second task:created on resume
+          // must not re-play the sound.
+          if (!_playedIntentSoundRef.current.has(data.taskId)) {
+            _playedIntentSoundRef.current.add(data.taskId);
+            if (data.guessedIntent) {
+              playIntentSound(data.guessedIntent);
+            } else {
+              playDefaultSound();
+            }
           }
           // Show ••• for all handoff tasks except command_automate.
           // guessedIntent null (regex miss) still shows •••.
@@ -1840,6 +1846,17 @@ export function UnifiedOverlay() {
         // Clean up intent sound dedup set + clear working indicator
         _playedIntentSoundRef.current.delete(data.taskId);
         setIsTaskWorking(false);
+
+        // Clear the prompt glow on terminal states. Handoff tasks never emit a
+        // ws-bridge 'done' at the end of the run, and non-plan intents
+        // (web_search, memory_retrieve, general_knowledge) never emit 'all_done'
+        // — so task:complete is their only reliable "finished" signal. Paused
+        // states (awaiting-approval / auth-required / waiting-for-input) keep
+        // the glow on as an attention signal.
+        if (status === 'done' || status === 'failed' || status === 'cancelled') {
+          if (glowOffTimerRef.current) clearTimeout(glowOffTimerRef.current);
+          glowOffTimerRef.current = setTimeout(() => setIsGlowActive(false), 400);
+        }
 
         if (!isRestored) {
           if (status === 'done' && !isCommandAutomate && data.answer) {
@@ -1923,6 +1940,13 @@ export function UnifiedOverlay() {
       ipcRenderer.removeListenerByToken('gather:pending', token);
       ipcRenderer.removeListenerByToken('queue:enqueued', token);
       ipcRenderer.removeListenerByToken('task:removed', token);
+      ipcRenderer.removeListenerByToken('task:created', token);
+      ipcRenderer.removeListenerByToken('task:progress', token);
+      ipcRenderer.removeListenerByToken('task:complete', token);
+      ipcRenderer.removeListenerByToken('ui:switch-to-results', token);
+      ipcRenderer.removeListenerByToken('preflight:open-agents-tab', token);
+      ipcRenderer.removeListenerByToken('preflight:recheck', token);
+      ipcRenderer.removeListenerByToken('agents:open-training', token);
     };
   }, []);
 

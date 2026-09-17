@@ -3,6 +3,8 @@ import VoiceButton from './VoiceButton';
 import { playThinkDropSound } from '../utils/thinkDropSound';
 
 const ipcRenderer = (window as any).electron?.ipcRenderer;
+// Listener token — untokened listeners can't be removed across contextBridge.
+const SPC_TOKEN = 'prompt-capture';
 
 interface InstalledSkill {
   name: string;
@@ -128,33 +130,33 @@ export default function StandalonePromptCapture() {
       setCopyButtonGlowing(!!glowing);
     };
 
-    ipcRenderer.on('prompt-capture:show', handleShow);
-    ipcRenderer.on('prompt-capture:add-highlight', handleAddHighlight);
-    ipcRenderer.on('automation:progress', handleProgress);
-    ipcRenderer.on('ws-bridge:message', handleBridgeMessage);
-    ipcRenderer.on('voice:inject-prompt', handleVoiceInjectPrompt);
-    ipcRenderer.on('voice:response', handleVoiceResponse);
-    ipcRenderer.on('skill:list-response', handleSkillListResponse);
-    ipcRenderer.on('skill:delete-response', handleSkillDeleteResponse);
-    ipcRenderer.on('skill:store-trigger', handleSkillStoreTrigger);
-    ipcRenderer.on('queue:started', handleQueueStarted);
-    ipcRenderer.on('gather:pending', handleGatherPending);
-    ipcRenderer.on('copy-button:glow', handleCopyButtonGlow);
+    ipcRenderer.on('prompt-capture:show', handleShow, SPC_TOKEN);
+    ipcRenderer.on('prompt-capture:add-highlight', handleAddHighlight, SPC_TOKEN);
+    ipcRenderer.on('automation:progress', handleProgress, SPC_TOKEN);
+    ipcRenderer.on('ws-bridge:message', handleBridgeMessage, SPC_TOKEN);
+    ipcRenderer.on('voice:inject-prompt', handleVoiceInjectPrompt, SPC_TOKEN);
+    ipcRenderer.on('voice:response', handleVoiceResponse, SPC_TOKEN);
+    ipcRenderer.on('skill:list-response', handleSkillListResponse, SPC_TOKEN);
+    ipcRenderer.on('skill:delete-response', handleSkillDeleteResponse, SPC_TOKEN);
+    ipcRenderer.on('skill:store-trigger', handleSkillStoreTrigger, SPC_TOKEN);
+    ipcRenderer.on('queue:started', handleQueueStarted, SPC_TOKEN);
+    ipcRenderer.on('gather:pending', handleGatherPending, SPC_TOKEN);
+    ipcRenderer.on('copy-button:glow', handleCopyButtonGlow, SPC_TOKEN);
 
     return () => {
-      if (ipcRenderer.removeListener) {
-        ipcRenderer.removeListener('prompt-capture:show', handleShow);
-        ipcRenderer.removeListener('prompt-capture:add-highlight', handleAddHighlight);
-        ipcRenderer.removeListener('automation:progress', handleProgress);
-        ipcRenderer.removeListener('ws-bridge:message', handleBridgeMessage);
-        ipcRenderer.removeListener('voice:inject-prompt', handleVoiceInjectPrompt);
-        ipcRenderer.removeListener('voice:response', handleVoiceResponse);
-        ipcRenderer.removeListener('skill:list-response', handleSkillListResponse);
-        ipcRenderer.removeListener('skill:delete-response', handleSkillDeleteResponse);
-        ipcRenderer.removeListener('skill:store-trigger', handleSkillStoreTrigger);
-        ipcRenderer.removeListener('queue:started', handleQueueStarted);
-        ipcRenderer.removeListener('gather:pending', handleGatherPending);
-        ipcRenderer.removeListener('copy-button:glow', handleCopyButtonGlow);
+      if (ipcRenderer.removeListenerByToken) {
+        ipcRenderer.removeListenerByToken('prompt-capture:show', SPC_TOKEN);
+        ipcRenderer.removeListenerByToken('prompt-capture:add-highlight', SPC_TOKEN);
+        ipcRenderer.removeListenerByToken('automation:progress', SPC_TOKEN);
+        ipcRenderer.removeListenerByToken('ws-bridge:message', SPC_TOKEN);
+        ipcRenderer.removeListenerByToken('voice:inject-prompt', SPC_TOKEN);
+        ipcRenderer.removeListenerByToken('voice:response', SPC_TOKEN);
+        ipcRenderer.removeListenerByToken('skill:list-response', SPC_TOKEN);
+        ipcRenderer.removeListenerByToken('skill:delete-response', SPC_TOKEN);
+        ipcRenderer.removeListenerByToken('skill:store-trigger', SPC_TOKEN);
+        ipcRenderer.removeListenerByToken('queue:started', SPC_TOKEN);
+        ipcRenderer.removeListenerByToken('gather:pending', SPC_TOKEN);
+        ipcRenderer.removeListenerByToken('copy-button:glow', SPC_TOKEN);
       }
     };
   }, []);

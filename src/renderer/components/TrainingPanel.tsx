@@ -3,6 +3,9 @@ import { TrainingReviewPanel } from './TrainingReviewPanel';
 import { RightSlideoutDrawer } from './RightSlideoutDrawer';
 
 const ipcRenderer = (window as any).electron?.ipcRenderer;
+// Listener token — untokened listeners can't be removed across contextBridge.
+// Per-agentId so multiple panels can't steal each other's channels.
+const tpToken = (agentId?: string | null) => `training-panel-${agentId || 'default'}`;
 
 interface TrainingPanelProps {
   agentId: string;
@@ -167,8 +170,9 @@ export function TrainingPanel({ agentId, hostname, onDone: _onDone, onCancel, mo
       }
     };
 
-    ipcRenderer.on('agents:train-progress', handleStep);
-    return () => { ipcRenderer.removeListener('agents:train-progress', handleStep); };
+    const _tok = tpToken(agentId);
+    ipcRenderer.on('agents:train-progress', handleStep, _tok);
+    return () => { ipcRenderer.removeListenerByToken('agents:train-progress', _tok); };
   }, [agentId, reviewData, previewRequested]);
 
   // Listen for review preview/saved/error events
@@ -209,13 +213,14 @@ export function TrainingPanel({ agentId, hostname, onDone: _onDone, onCancel, mo
       }
     };
 
-    ipcRenderer.on('agents:train-preview-result', handlePreviewResult);
-    ipcRenderer.on('agents:train-review-saved', handleReviewSaved);
-    ipcRenderer.on('agents:train-review-error', handleReviewError);
+    const _tok = tpToken(agentId);
+    ipcRenderer.on('agents:train-preview-result', handlePreviewResult, _tok);
+    ipcRenderer.on('agents:train-review-saved', handleReviewSaved, _tok);
+    ipcRenderer.on('agents:train-review-error', handleReviewError, _tok);
     return () => {
-      ipcRenderer.removeListener('agents:train-preview-result', handlePreviewResult);
-      ipcRenderer.removeListener('agents:train-review-saved', handleReviewSaved);
-      ipcRenderer.removeListener('agents:train-review-error', handleReviewError);
+      ipcRenderer.removeListenerByToken('agents:train-preview-result', _tok);
+      ipcRenderer.removeListenerByToken('agents:train-review-saved', _tok);
+      ipcRenderer.removeListenerByToken('agents:train-review-error', _tok);
     };
   }, [agentId]);
 

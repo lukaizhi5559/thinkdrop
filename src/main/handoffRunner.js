@@ -83,6 +83,11 @@ function _postToComms(path, body) {
 }
 
 function _notifyProgress(taskId, agentId, progress) {
+  // Also broadcast to the renderer — comms-graph's SSE stream has no subscriber,
+  // so without this the card's status never leaves queued/awaiting-approval.
+  if (_ipcBroadcast) {
+    _ipcBroadcast('task:progress', { taskId, ...progress, node: progress.currentStep });
+  }
   return _postToComms('/comms.progress', { taskId, agentId, progress });
 }
 
@@ -217,6 +222,21 @@ async function execute({ taskId, prompt, agentId, source, originalPrompt, sessio
           // authed for this run only (not persisted to auth cache or authed_at)
           ...(preflightAuthBypass?.length ? { preflightAuthBypass } : {}),
         };
+
+    // Always normalize to a mutable array — main.js pushes mid-run
+    // "Proceed without" clicks into this same array while the graph is
+    // running (shared by reference into the live state).
+    if (!Array.isArray(initialState.preflightAuthBypass)) {
+      initialState.preflightAuthBypass = initialState.preflightAuthBypass ? [initialState.preflightAuthBypass] : [];
+    }
+    // Mid-run "I've already signed in" queue — preflightAgents re-verifies
+    // these agents once the auth loop finishes.
+    if (!Array.isArray(initialState._authContinueQueued)) initialState._authContinueQueued = [];
+
+    // Expose the live state on the run entry so main.js auth handlers can
+    // push mid-run decisions into it.
+    const _runEntry = _activeRuns.get(taskId);
+    if (_runEntry) _runEntry.state = initialState;
 
     // Execute the stategraph
     const finalState = await stateGraph.execute(initialState, null, abortController.signal);
@@ -357,6 +377,10 @@ async function execute({ taskId, prompt, agentId, source, originalPrompt, sessio
           source: source || 'text',
           originalPrompt: originalPrompt || null,
           sessionId: finalState.resolvedSessionId || sessionId || null,
+          // Mid-run auth decisions the user already made — carried into the
+          // resume so bypassed agents aren't re-prompted for sign-in.
+          queuedBypasses: Array.isArray(finalState.preflightAuthBypass) ? [...finalState.preflightAuthBypass] : [],
+          queuedContinues: Array.isArray(finalState._authContinueQueued) ? [...finalState._authContinueQueued] : [],
         });
       }
       return { ok: false, status: 'auth-required', error: finalState.planError };
@@ -777,4 +801,12 @@ function getProgressCallback(taskId) {
   return _activeRuns.get(taskId)?.progressCallback || null;
 }
 
-module.exports = { init, execute, resume, answerQuestion, hasPendingQuestion, cancel, getActiveCount, getActiveTaskIds, getProgressCallback };
+// ── Get the live run entry for a running task ─────────────────────────────────
+// Used by main.js auth handlers to push mid-run decisions ("Proceed without",
+// "I've already signed in") into the shared state object — the preflight node
+// re-reads state.preflightAuthBypass / state._authContinueQueued live.
+function getLiveRun(taskId) {
+  return _activeRuns.get(taskId) || null;
+}
+
+module.exports = { init, execute, resume, answerQuestion, hasPendingQuestion, cancel, getActiveCount, getActiveTaskIds, getProgressCallback, getLiveRun };

@@ -180,8 +180,8 @@ export default function PlanPanel({ onComplete }: PlanPanelProps) {
       }
     };
 
-    ipcRenderer.on('automation:progress', handleProgress);
-    return () => ipcRenderer.removeListener('automation:progress', handleProgress);
+    ipcRenderer.on('automation:progress', handleProgress, 'plan-panel');
+    return () => ipcRenderer.removeListenerByToken('automation:progress', 'plan-panel');
   }, [onComplete]);
 
   // Reset when a new prompt starts (prompt text set means fresh run)

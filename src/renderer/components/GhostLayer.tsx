@@ -2,6 +2,8 @@ import React, { useState, useEffect, useRef } from 'react';
 import { ThinkDropLogo } from './SlideoutDrawer';
 
 const ipcRenderer = (window as any).electron?.ipcRenderer;
+// Listener token — untokened listeners can't be removed across contextBridge.
+const GHOST_TOKEN = 'ghost-layer';
 
 type AnimState = 'enter' | 'pulse' | 'active' | 'exit';
 type HighlightRole = 'panel' | 'scroll_active';
@@ -206,11 +208,11 @@ function GhostLayer() {
       }
     };
 
-    ipcRenderer.on('app-agent:highlight', handleHighlight);
+    ipcRenderer.on('app-agent:highlight', handleHighlight, GHOST_TOKEN);
     console.log('[GhostLayer] IPC listener registered');
 
     return () => {
-      ipcRenderer.removeListener('app-agent:highlight', handleHighlight);
+      ipcRenderer.removeListenerByToken('app-agent:highlight', GHOST_TOKEN);
       if (timerInterval.current) {
         clearInterval(timerInterval.current);
       }
@@ -222,11 +224,11 @@ function GhostLayer() {
     if (!ipcRenderer) return;
     const handleFlash = () => setFlash(true);
     const handleUnflash = () => setFlash(false);
-    ipcRenderer.on('ghostlayer:flash', handleFlash);
-    ipcRenderer.on('ghostlayer:unflash', handleUnflash);
+    ipcRenderer.on('ghostlayer:flash', handleFlash, GHOST_TOKEN);
+    ipcRenderer.on('ghostlayer:unflash', handleUnflash, GHOST_TOKEN);
     return () => {
-      ipcRenderer.removeListener('ghostlayer:flash', handleFlash);
-      ipcRenderer.removeListener('ghostlayer:unflash', handleUnflash);
+      ipcRenderer.removeListenerByToken('ghostlayer:flash', GHOST_TOKEN);
+      ipcRenderer.removeListenerByToken('ghostlayer:unflash', GHOST_TOKEN);
     };
   }, []);
 

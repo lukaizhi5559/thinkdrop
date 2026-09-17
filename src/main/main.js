@@ -6402,6 +6402,10 @@ app.whenReady().then(async () => {
       if (resultsWindow && !resultsWindow.isDestroyed()) {
         safeSend(resultsWindow, 'ws-bridge:error', err.message);
       }
+      // Notify unifiedWindow too — without this a crashed run leaves the prompt
+      // glow, thinking spinner, and cancel button stuck on.
+      safeSendUnified('automation:progress', { type: 'all_done', cancelled: true, completedCount: 0, totalCount: 0 });
+      safeSendUnified('ws-bridge:message', { type: 'done' });
     } finally {
       // Always clean up the install:confirm and guide:continue/cancel listeners to prevent accumulation across runs
       ipcMain.removeListener('install:confirm', handleInstallConfirm);
@@ -8394,7 +8398,9 @@ app.whenReady().then(async () => {
                     agentId: tp.agentId,
                     source: tp.source,
                   });
-                  // Resume the handoff task via handoffRunner
+                  // Resume the handoff task via handoffRunner — carry any
+                  // mid-run bypasses the user made so those agents aren't
+                  // re-prompted for sign-in.
                   const handoffRunner = require('./handoffRunner');
                   handoffRunner.execute({
                     taskId,
@@ -8403,6 +8409,7 @@ app.whenReady().then(async () => {
                     source: tp.source,
                     originalPrompt: tp.originalPrompt,
                     sessionId: tp.sessionId,
+                    preflightAuthBypass: Array.isArray(tp.queuedBypasses) ? tp.queuedBypasses : [],
                   }).catch(err => {
                     console.error(`[PreflightAuth] Handoff resume ${taskId} failed:`, err.message);
                   });
@@ -8423,6 +8430,29 @@ app.whenReady().then(async () => {
         _reReq.on('timeout', () => { _gatherAuthInFlight = false; _reReq.destroy(); });
         _reReq.end(_rePayload);
       }
+      return;
+    }
+
+    // ── Live run: queue the continue into the running graph's shared state ──
+    // preflightAgents re-verifies queued agents at the end of its auth loop —
+    // the user has had the whole probe window to complete sign-in. Without
+    // this branch mid-run clicks hit "no pending prompt" and die silently.
+    // (Checked AFTER the parked path: the pending entry registers before
+    // _activeRuns clears, so a click in that window must take the resume path.)
+    const _liveRunC = taskId ? require('./handoffRunner').getLiveRun(taskId) : null;
+    if (_liveRunC?.state) {
+      if (normalizedAgentId) {
+        if (!Array.isArray(_liveRunC.state._authContinueQueued)) _liveRunC.state._authContinueQueued = [];
+        if (!_liveRunC.state._authContinueQueued.some(x => String(x).toLowerCase() === normalizedAgentId.toLowerCase())) {
+          _liveRunC.state._authContinueQueued.push(normalizedAgentId);
+        }
+      }
+      safeSendUnified('automation:progress', {
+        type: 'preflight:auth_verifying',
+        agentId: normalizedAgentId,
+        taskId,
+        message: 'Will verify sign-in after current checks…',
+      });
       return;
     }
 
@@ -8574,9 +8604,38 @@ app.whenReady().then(async () => {
         source: tp.source,
         originalPrompt: tp.originalPrompt,
         sessionId: tp.sessionId,
-        preflightAuthBypass: normalizedAgentId ? [normalizedAgentId] : [],
+        // Carry the clicked agent plus any bypasses made mid-run so those
+        // agents aren't re-prompted for sign-in on the resumed run.
+        preflightAuthBypass: [...new Set([
+          ...(Array.isArray(tp.queuedBypasses) ? tp.queuedBypasses : []),
+          ...(normalizedAgentId ? [normalizedAgentId] : []),
+        ])],
       }).catch(err => {
         console.error(`[PreflightAuth] Handoff bypass-resume ${taskId} failed:`, err.message);
+      });
+      return;
+    }
+
+    // ── Live run: push the bypass into the running graph's shared state ────
+    // The task is still executing — preflightAgents re-reads
+    // state.preflightAuthBypass per iteration and un-fails already-failed
+    // agents at the end of its auth loop. Without this branch, mid-run
+    // "Proceed without" clicks hit "no pending prompt" and die silently.
+    // (Checked AFTER the parked path: the pending entry registers before
+    // _activeRuns clears, so a click in that window must take the resume path.)
+    const _liveRunB = taskId ? require('./handoffRunner').getLiveRun(taskId) : null;
+    if (_liveRunB?.state) {
+      if (normalizedAgentId) {
+        if (!Array.isArray(_liveRunB.state.preflightAuthBypass)) _liveRunB.state.preflightAuthBypass = [];
+        if (!_liveRunB.state.preflightAuthBypass.some(x => String(x).toLowerCase() === normalizedAgentId.toLowerCase())) {
+          _liveRunB.state.preflightAuthBypass.push(normalizedAgentId);
+        }
+      }
+      safeSendUnified('automation:progress', {
+        type: 'preflight:auth_bypassed',
+        agentId: normalizedAgentId,
+        taskId,
+        message: 'Proceeding without sign-in...',
       });
       return;
     }
@@ -10489,7 +10548,7 @@ app.whenReady().then(async () => {
       const os = require('os');
 
       const agentsDir = path.join(os.homedir(), '.thinkdrop', 'agents');
-      const dbPath = path.join(os.homedir(), '.thinkdrop', 'agents.db');
+      const dbPath = path.join(os.homedir(), '.thinkdrop', 'data', 'agents.duckdb');
 
       if (!fs.existsSync(agentsDir) || !fs.existsSync(dbPath)) return;
 

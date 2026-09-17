@@ -7,6 +7,8 @@ import { TabBar, QueueTab, CronTab, SkillsTab, StoreTab, ConnectionsTab, PromptQ
 import type { TabId, QueueItem, CronItem, SkillItem, PromptQueueItem, ConnectionItem } from './TabComponents';
 
 const ipcRenderer = (window as any).electron?.ipcRenderer;
+// Listener token — untokened listeners can't be removed across contextBridge.
+const RW_TOKEN = 'results-window';
 
 export default function ResultsWindow() {
   console.log('🎨 [RESULTS_WINDOW] Component rendering');
@@ -435,40 +437,41 @@ export default function ResultsWindow() {
       setUnreadTabs(prev => { const next = new Set(prev); next.delete('store'); return next; });
     };
 
-    ipcRenderer.on('results-window:display-error', handleDisplayError);
-    ipcRenderer.on('results-window:set-prompt', handlePromptText);
-    ipcRenderer.on('results-window:show', handleWindowShow);
-    ipcRenderer.on('automation:progress', handleAutomationProgress);
-    ipcRenderer.on('schedule:pending', handleSchedulePending);
-    ipcRenderer.on('bridge:status', handleBridgeStatus);
-    ipcRenderer.on('queue:update', handleQueueUpdate);
-    ipcRenderer.on('cron:update', handleCronUpdate);
-    ipcRenderer.on('queue:enqueued', handleQueueEnqueued);
-    ipcRenderer.on('skills:update', handleSkillsUpdate);
-    ipcRenderer.on('connections:update', handleConnectionsUpdate);
-    ipcRenderer.on('skill:store-trigger', handleSkillStoreTrigger);
-    ipcRenderer.on('prompt-queue:update', handlePromptQueueUpdate);
-    ipcRenderer.on('prompt-queue:restart-alert', handleRestartAlert);
-    ipcRenderer.on('prompt-queue:restart-cancel', handleRestartCancel);
-    ipcRenderer.on('reminder:play-sound', () => { playDropSound(); });
-  
+    ipcRenderer.on('results-window:display-error', handleDisplayError, RW_TOKEN);
+    ipcRenderer.on('results-window:set-prompt', handlePromptText, RW_TOKEN);
+    ipcRenderer.on('results-window:show', handleWindowShow, RW_TOKEN);
+    ipcRenderer.on('automation:progress', handleAutomationProgress, RW_TOKEN);
+    ipcRenderer.on('schedule:pending', handleSchedulePending, RW_TOKEN);
+    ipcRenderer.on('bridge:status', handleBridgeStatus, RW_TOKEN);
+    ipcRenderer.on('queue:update', handleQueueUpdate, RW_TOKEN);
+    ipcRenderer.on('cron:update', handleCronUpdate, RW_TOKEN);
+    ipcRenderer.on('queue:enqueued', handleQueueEnqueued, RW_TOKEN);
+    ipcRenderer.on('skills:update', handleSkillsUpdate, RW_TOKEN);
+    ipcRenderer.on('connections:update', handleConnectionsUpdate, RW_TOKEN);
+    ipcRenderer.on('skill:store-trigger', handleSkillStoreTrigger, RW_TOKEN);
+    ipcRenderer.on('prompt-queue:update', handlePromptQueueUpdate, RW_TOKEN);
+    ipcRenderer.on('prompt-queue:restart-alert', handleRestartAlert, RW_TOKEN);
+    ipcRenderer.on('prompt-queue:restart-cancel', handleRestartCancel, RW_TOKEN);
+    ipcRenderer.on('reminder:play-sound', () => { playDropSound(); }, RW_TOKEN);
+
     return () => {
-      if (ipcRenderer.removeListener) {
-        ipcRenderer.removeListener('results-window:display-error', handleDisplayError);
-        ipcRenderer.removeListener('results-window:set-prompt', handlePromptText);
-        ipcRenderer.removeListener('results-window:show', handleWindowShow);
-        ipcRenderer.removeListener('automation:progress', handleAutomationProgress);
-        ipcRenderer.removeListener('schedule:pending', handleSchedulePending);
-        ipcRenderer.removeListener('bridge:status', handleBridgeStatus);
-        ipcRenderer.removeListener('queue:update', handleQueueUpdate);
-        ipcRenderer.removeListener('cron:update', handleCronUpdate);
-        ipcRenderer.removeListener('queue:enqueued', handleQueueEnqueued);
-        ipcRenderer.removeListener('skills:update', handleSkillsUpdate);
-        ipcRenderer.removeListener('connections:update', handleConnectionsUpdate);
-        ipcRenderer.removeListener('skill:store-trigger', handleSkillStoreTrigger);
-        ipcRenderer.removeListener('prompt-queue:update', handlePromptQueueUpdate);
-        ipcRenderer.removeListener('prompt-queue:restart-alert', handleRestartAlert);
-        ipcRenderer.removeListener('prompt-queue:restart-cancel', handleRestartCancel);
+      if (ipcRenderer.removeListenerByToken) {
+        ipcRenderer.removeListenerByToken('results-window:display-error', RW_TOKEN);
+        ipcRenderer.removeListenerByToken('results-window:set-prompt', RW_TOKEN);
+        ipcRenderer.removeListenerByToken('results-window:show', RW_TOKEN);
+        ipcRenderer.removeListenerByToken('automation:progress', RW_TOKEN);
+        ipcRenderer.removeListenerByToken('schedule:pending', RW_TOKEN);
+        ipcRenderer.removeListenerByToken('bridge:status', RW_TOKEN);
+        ipcRenderer.removeListenerByToken('queue:update', RW_TOKEN);
+        ipcRenderer.removeListenerByToken('cron:update', RW_TOKEN);
+        ipcRenderer.removeListenerByToken('queue:enqueued', RW_TOKEN);
+        ipcRenderer.removeListenerByToken('skills:update', RW_TOKEN);
+        ipcRenderer.removeListenerByToken('connections:update', RW_TOKEN);
+        ipcRenderer.removeListenerByToken('skill:store-trigger', RW_TOKEN);
+        ipcRenderer.removeListenerByToken('prompt-queue:update', RW_TOKEN);
+        ipcRenderer.removeListenerByToken('prompt-queue:restart-alert', RW_TOKEN);
+        ipcRenderer.removeListenerByToken('prompt-queue:restart-cancel', RW_TOKEN);
+        ipcRenderer.removeListenerByToken('reminder:play-sound', RW_TOKEN);
       }
     };
   }, []);

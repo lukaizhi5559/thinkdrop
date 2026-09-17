@@ -11,6 +11,7 @@
 import { useEffect, useState, useRef, useCallback } from 'react';
 import { QuestionCard, QuestionBatch, PartialFailureCard, PartialFailureSummary } from './QuestionCard';
 import { Favicon } from './DefaultFaviconIcon';
+import { ipcOn, ipcOff } from '../utils/ipcBus';
 
 const ipcRenderer = (window as any).electron?.ipcRenderer;
 
@@ -992,8 +993,10 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
     return isValidDotName(c) ? c : '';
   };
 
-  // Maintenance scan state
-  const [maintenanceScan, setMaintenanceScan] = useState<{
+  // Maintenance scan state — currently read-only: the 'scan:progress' channel
+  // is not whitelisted in preload `on`, so no setter call sites remain. The JSX
+  // below stays so the banner renders if the channel is ever revived.
+  const [maintenanceScan] = useState<{
     active: boolean;
     trigger: string;
     total: number;
@@ -1279,39 +1282,10 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
       }
       resetToIdle();
     };
-    const handleScanProgress = (data: any) => {
-      if (taskId) return; // Scan events are global; not relevant to queue cards
-      if (!active) return;
-      switch (data.type) {
-        case 'maintenance_scan_start':
-          setMaintenanceScan({
-            active: true,
-            trigger: data.trigger || 'user',
-            total: data.total || 0,
-            completed: 0,
-            agents: data.agents || [],
-            doneAgents: [],
-            currentAgent: data.agents?.[0] || null,
-          });
-          break;
-        case 'maintenance_scan_agent_done':
-          setMaintenanceScan(prev => prev ? {
-            ...prev,
-            completed: data.index,
-            doneAgents: [...prev.doneAgents, data.agentId],
-            currentAgent: prev.agents[data.index] || null,
-          } : prev);
-          break;
-        case 'maintenance_scan_complete':
-          setMaintenanceScan(prev => prev ? { ...prev, active: false, completed: data.total } : null);
-          setTimeout(() => setMaintenanceScan(null), 6000);
-          break;
-        case 'maintenance_scan_cancelled':
-        case 'maintenance_scan_error':
-          setMaintenanceScan(null);
-          break;
-      }
-    };
+    // NOTE: 'scan:progress' (maintenance-scan lifecycle events) is intentionally
+    // not subscribed — it is absent from preload's `on` validChannels and main.js
+    // only sends it to the results/promptCapture windows, so it never arrived
+    // here. Re-add subscription + whitelist entry if the scan banner is revived.
     const handleScanDiscovery = (data: any) => {
       if (taskId) return; // Scan discovery is global; not relevant to queue cards
       if (!active || !Array.isArray(data?.suggestions) || data.suggestions.length === 0) return;
@@ -2847,6 +2821,14 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
           break;
         }
 
+        case 'plan:approved':
+          // Handoff approvals are echoed on automation:progress (main.js emits
+          // {type:'plan:approved', taskId}) — transition out of review for tasks
+          // approved outside this card (e.g. the notification banner).
+          setPlanReview(null);
+          setPhase('executing');
+          break;
+
         case 'plan:generated': {
           const _planStepTitles = parsePlanStepTitles(data.content || '');
           setPhase('plan_review');
@@ -2992,27 +2974,39 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
       }
     };
 
-    const AP_TOKEN = 'automation-progress';
-    ipcRenderer.on('unified:set-prompt', handleNewPrompt, AP_TOKEN);
-    ipcRenderer.on('queue:enqueued', handleNewPrompt, AP_TOKEN);
-    ipcRenderer.on('scan:progress', handleScanProgress, AP_TOKEN);
-    ipcRenderer.on('scan:discovery', handleScanDiscovery, AP_TOKEN);
-    ipcRenderer.on('automation:progress', handleProgress, AP_TOKEN);
-    ipcRenderer.on('ws-bridge:message', handleBridgeMessage, AP_TOKEN);
-    ipcRenderer.on('app-control:mode-change', handleControlModeChange, AP_TOKEN);
-    ipcRenderer.on('plan:approved', handlePlanApproved, AP_TOKEN);
-    ipcRenderer.on('gather:question_batch', handleQuestionBatch, AP_TOKEN);
+    // Unique token per instance — multiple AutomationProgress components coexist
+    // (Results tab + one per queue card). Subscriptions go through ipcBus so all
+    // instances share ONE real ipcRenderer listener per channel — without it, N
+    // mounted queue cards = N listeners per channel and EventEmitter warns at 11.
+    const AP_TOKEN = `automation-progress-${taskId || 'results'}`;
+    if (taskId) {
+      // Task-scoped queue cards only consume task-tagged automation:progress and
+      // plan:approved events — every other handler early-returns on taskId, so
+      // subscribing to the global channels would be dead work per event.
+      ipcOn('automation:progress', AP_TOKEN, handleProgress);
+      ipcOn('plan:approved', AP_TOKEN, handlePlanApproved);
+    } else {
+      ipcOn('unified:set-prompt', AP_TOKEN, handleNewPrompt);
+      ipcOn('queue:enqueued', AP_TOKEN, handleNewPrompt);
+      ipcOn('scan:discovery', AP_TOKEN, handleScanDiscovery);
+      ipcOn('automation:progress', AP_TOKEN, handleProgress);
+      ipcOn('ws-bridge:message', AP_TOKEN, handleBridgeMessage);
+      ipcOn('app-control:mode-change', AP_TOKEN, handleControlModeChange);
+      ipcOn('plan:approved', AP_TOKEN, handlePlanApproved);
+      ipcOn('gather:question_batch', AP_TOKEN, handleQuestionBatch);
+    }
     return () => {
       active = false;
-      ipcRenderer.removeListenerByToken('automation:progress', AP_TOKEN);
-      ipcRenderer.removeListenerByToken('unified:set-prompt', AP_TOKEN);
-      ipcRenderer.removeListenerByToken('queue:enqueued', AP_TOKEN);
-      ipcRenderer.removeListenerByToken('ws-bridge:message', AP_TOKEN);
-      ipcRenderer.removeListenerByToken('app-control:mode-change', AP_TOKEN);
-      ipcRenderer.removeListenerByToken('plan:approved', AP_TOKEN);
-      ipcRenderer.removeListenerByToken('scan:progress', AP_TOKEN);
-      ipcRenderer.removeListenerByToken('scan:discovery', AP_TOKEN);
-      ipcRenderer.removeListenerByToken('gather:question_batch', AP_TOKEN);
+      ipcOff('automation:progress', AP_TOKEN);
+      ipcOff('plan:approved', AP_TOKEN);
+      if (!taskId) {
+        ipcOff('unified:set-prompt', AP_TOKEN);
+        ipcOff('queue:enqueued', AP_TOKEN);
+        ipcOff('ws-bridge:message', AP_TOKEN);
+        ipcOff('app-control:mode-change', AP_TOKEN);
+        ipcOff('scan:discovery', AP_TOKEN);
+        ipcOff('gather:question_batch', AP_TOKEN);
+      }
     };
   }, []);
 

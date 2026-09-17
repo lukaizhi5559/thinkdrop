@@ -11,6 +11,7 @@
  * Each intent has a unique tone/pattern that's pleasant and distinct:
  *   web_search       — quick ascending blip (searching outward)
  *   memory_retrieve  — soft descending two-note (looking inward/recalling)
+ *   memory_store     — soft ascending two-note (putting something away)
  *   screen_analysis  — gentle sweep (scanning)
  *   command_automate — steady double-pulse (working/processing)
  *   general_knowledge — neutral single tone
@@ -149,6 +150,16 @@ function _playMemoryRetrieveSound(ctx: AudioContext): void {
 }
 
 /**
+ * memory_store — soft ascending two-note (putting something away for later)
+ * Inverse of memory_retrieve: F4 → A4
+ */
+function _playMemoryStoreSound(ctx: AudioContext): void {
+  const t = ctx.currentTime;
+  _playNote(ctx, 349.23, t, 0.12, 0.10, 'sine', 0.03, 0.08);        // F4
+  _playNote(ctx, 440.00, t + 0.10, 0.16, 0.12, 'sine', 0.03, 0.10); // A4
+}
+
+/**
  * screen_analysis — gentle frequency sweep (scanning)
  * A single note that sweeps from low to high, like a scanner passing over
  */
@@ -201,6 +212,7 @@ function _playDefaultChimeSound(ctx: AudioContext): void {
 const INTENT_SOUND_FNS: Record<string, (ctx: AudioContext) => void> = {
   web_search: _playWebSearchSound,
   memory_retrieve: _playMemoryRetrieveSound,
+  memory_store: _playMemoryStoreSound,
   screen_analysis: _playScreenAnalysisSound,
   screen_intelligence: _playScreenAnalysisSound,
   command_automate: _playCommandAutomateSound,
