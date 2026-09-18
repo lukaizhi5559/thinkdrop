@@ -680,6 +680,53 @@ function startOverlayControlServer() {
       return;
     }
 
+    // ── POST /thought.event — Thought/Trigger engine lifecycle events ──────────
+    // personality-service thought-engine forwards thought created/reinforced/
+    // triggered/awaiting_approval/completed/expired/notify/question events here;
+    // we relay them to the Brain tab in the unified overlay.
+    if (req.url === '/thought.event') {
+      let body = '';
+      req.on('data', chunk => { body += chunk; });
+      req.on('end', () => {
+        try {
+          const evt = JSON.parse(body || '{}');
+          safeSendUnified('thought:update', evt);
+          // Proactive delivery (notify/question) — pop a real macOS notification
+          // so the engine's outreach is visible even when the overlay is hidden.
+          if (evt.kind === 'notify' || evt.kind === 'question') {
+            try {
+              const { Notification, nativeImage } = require('electron');
+              const path = require('path');
+              if (Notification.isSupported()) {
+                const text = (evt.thought && (evt.thought.summary || evt.thought.action?.payload?.text)) || 'ThinkDrop';
+                const n = new Notification({
+                  title: evt.kind === 'question' ? 'ThinkDrop has a question' : 'ThinkDrop',
+                  body: String(text).slice(0, 200),
+                  silent: false,
+                  icon: nativeImage.createFromPath(path.join(__dirname, '..', 'renderer', 'assets', 'logo.jpg')),
+                });
+                n.on('click', () => {
+                  try {
+                    if (unifiedWindow && !unifiedWindow.isDestroyed()) {
+                      unifiedWindow.showInactive();
+                      unifiedWindow.moveTop();
+                    }
+                  } catch (_) {}
+                });
+                n.show();
+              }
+            } catch (notifErr) {
+              console.warn('[ThoughtEvent] Notification failed:', notifErr?.message || 'unknown');
+            }
+          }
+          res.writeHead(200).end(JSON.stringify({ ok: true }));
+        } catch (err) {
+          res.writeHead(400).end(JSON.stringify({ error: err.message }));
+        }
+      });
+      return;
+    }
+
     // ── POST /comms.signal — comms-graph sends control signals (cancel/pause/resume) ──
     if (req.url === '/comms.signal') {
       let body = '';
@@ -853,7 +900,7 @@ function startOverlayControlServer() {
                   mcpAdapter,
                   activeBrowserSessionId: null,
                   activeBrowserUrl: null,
-                  context: { userId: 'default_user', source: 'reminder_fired' },
+                  context: { userId: 'local_user', source: 'reminder_fired' },
                 };
                 // Set activeProgressCallback so /agent-turn POSTs from browser.agent/cli.agent
                 // are forwarded to AIActivityPanel (same path used by normal interactive runs).
@@ -1001,6 +1048,12 @@ function startOverlayControlServer() {
           if (!_agentEventTypes.includes(evt.type)) {
             res.writeHead(200).end(JSON.stringify({ ok: true }));
             return;
+          }
+          // OS-level alert when a browser sign-in window needs the user — the
+          // in-app cards render silently in the queue; the window itself opens
+          // outside the overlay, so pull attention with a Notification.
+          if (evt.type === 'needs_login' || evt.type === 'task:auth_required') {
+            alertSignInNeeded(evt.serviceDisplay || evt.agentId || '', evt.loginUrl || '', evt.sessionId || evt.agentId || evt.type);
           }
           // Handoff tasks (comms-graph queue cards) carry ?taskId= — route the
           // event to that task's progressCallback, which tags + broadcasts it.
@@ -1345,6 +1398,33 @@ let _gatherAuthInFlight = false; // Tracks whether a background browser.agent:au
 let _pendingPreflightPrompt = null; // { prompt, selectedText, responseLanguage, sessionId } — stored when preflight auth required, re-enqueued after auth succeeds
 let _pendingPreflightPromptsByTask = new Map(); // Per-task pending preflight prompts for handoff tasks: taskId → { prompt, agentId, source, originalPrompt, sessionId }
 let _pendingNewlyBuiltAgents = new Set(); // Tracks newly built agents pending auth — retained on cancel for retry
+
+// ── Sign-in alert ─────────────────────────────────────────────────────────
+// A headed browser sign-in window opening is easy to miss when the user isn't
+// watching the overlay — fire a macOS Notification + dock bounce so the alert
+// actually reaches them. Deduped per key (90s) to avoid spam on repeated polls.
+const _signInAlertedAt = new Map(); // key → timestamp of last alert
+function alertSignInNeeded(serviceDisplay, loginUrl, key) {
+  try {
+    const _k = key || serviceDisplay || 'unknown';
+    const _last = _signInAlertedAt.get(_k) || 0;
+    if (Date.now() - _last < 90000) return;
+    _signInAlertedAt.set(_k, Date.now());
+    const { Notification, app } = require('electron');
+    const svc = serviceDisplay || 'the service';
+    if (Notification.isSupported()) {
+      new Notification({
+        title: 'ThinkDrop — Sign-in needed',
+        body: `Sign in to ${svc} in the browser window that just opened.${loginUrl ? `\n${loginUrl}` : ''}`,
+        silent: false,
+      }).show();
+    }
+    app.dock?.bounce?.('informational');
+    console.log(`[SignInAlert] Notification fired for ${svc}`);
+  } catch (_e) {
+    console.warn('[SignInAlert] Notification failed:', _e?.message || _e);
+  }
+}
 let _takeOverContext = null; // Phase 10: { agentId, task, pageType, service } — set when user takes over, used for distillHumanCorrection
 let _currentAutomationPrompt = null; // Phase 10: tracks the active prompt for take-over context
 let currentLastOpenedFilePath = null; // Persists last opened file path so "close it" knows the target
@@ -3071,7 +3151,7 @@ app.whenReady().then(async () => {
           mcpAdapter,
           activeBrowserSessionId: null,
           activeBrowserUrl: null,
-          context: { userId: 'default_user', source: 'scheduled_task' },
+          context: { userId: 'local_user', source: 'scheduled_task' },
         };
         stateGraph.execute(schedulerInitialState, null, null)
           .catch(err => console.error('[Scheduler] Auto-run failed:', err.message));
@@ -3122,6 +3202,49 @@ app.whenReady().then(async () => {
     scheduler.clearPendingSchedule(id);
   });
 
+  // ─── Brain tab / Thought engine IPC ───────────────────────────────────────
+  // The renderer asks for the current thought list; we forward to
+  // personality-service which proxies user-memory thought.* routes.
+  const PERSONALITY_PORT = parseInt(process.env.PERSONALITY_SERVICE_PORT || '3012', 10);
+  const postToPersonality = (path, payload) => new Promise((resolve) => {
+    const body = JSON.stringify({ payload: payload || {}, requestId: 'ui_th_' + Date.now() });
+    const req = http.request({
+      hostname: '127.0.0.1', port: PERSONALITY_PORT, path, method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) },
+      timeout: 8000,
+    }, (res) => {
+      let raw = '';
+      res.on('data', c => { raw += c; });
+      res.on('end', () => { try { resolve(JSON.parse(raw)); } catch (_) { resolve(null); } });
+    });
+    req.on('error', () => resolve(null));
+    req.on('timeout', () => { req.destroy(); resolve(null); });
+    req.write(body);
+    req.end();
+  });
+
+  ipcMain.on('thoughts:list', async () => {
+    const res = await postToPersonality('/thought.list', { userId: 'local_user', all: true, limit: 200 });
+    safeSendUnified('thoughts:list', res?.data || { thoughts: [], total: 0 });
+  });
+
+  ipcMain.on('thought:decide', async (_event, { id, decision, minutes }) => {
+    if (!id || !['approve', 'dismiss', 'snooze'].includes(decision)) return;
+    console.log(`[ThoughtEngine] Brain tab decision — ${decision} ${id}`);
+    const res = await postToPersonality('/thought.decide', { id, decision, minutes });
+    // Refresh the list after a decision so the tab reflects the transition
+    const list = await postToPersonality('/thought.list', { userId: 'local_user', all: true, limit: 200 });
+    safeSendUnified('thoughts:list', list?.data || { thoughts: [], total: 0 });
+    safeSendUnified('thought:decided', { id, decision, result: res?.data || null });
+  });
+
+  // Ensure the Brain artifact directory exists — prompt actions save generated
+  // docs/outputs under ~/.thinkdrop/brain/<slug>/.
+  try {
+    const brainDir = path.join(os.homedir(), '.thinkdrop', 'brain');
+    if (!fs.existsSync(brainDir)) fs.mkdirSync(brainDir, { recursive: true });
+  } catch (_) {}
+
   // ─── Queue + Cron: init broadcast callbacks ───────────────────────────────
   queueManager.init({
     queue: (items) => {
@@ -3167,7 +3290,7 @@ app.whenReady().then(async () => {
         _resumeDataContext: item._resumeDataContext || {},
         _resumePriorSynthesizedContent: item._resumePriorSynthesizedContent || '',
         sessionId: item.sessionId || null,
-        userId: item.userId || 'default_user',
+        userId: item.userId || 'local_user',
         isAskUserAnswer: item.isAskUserAnswer || false,
         _preflightAuthBypass: item._preflightAuthBypass || null,
       });
@@ -3577,7 +3700,7 @@ app.whenReady().then(async () => {
                 }
               },
               mcpAdapter,
-              userId: pendingPlanContext?.userId || 'default_user',
+              userId: pendingPlanContext?.userId || 'local_user',
               logger: console,
             });
           } catch (ksErr) {
@@ -3607,7 +3730,7 @@ app.whenReady().then(async () => {
       {
         selectedText:  ctx.selectedText || '',
         sessionId:     ctx.sessionId || currentSessionId,
-        userId:        ctx.userId || 'default_user',
+        userId:        ctx.userId || 'local_user',
         _planFile:     resolvedPlanFile,
         // Restore multi-intent context so planExecutor can resume the queue
         _resumeMultiIntent:   ctx.isMultiIntent || false,
@@ -3633,7 +3756,7 @@ app.whenReady().then(async () => {
       {
         selectedText:    ctx.selectedText || '',
         sessionId:       ctx.sessionId || currentSessionId,
-        userId:          ctx.userId || 'default_user',
+        userId:          ctx.userId || 'local_user',
         _forceNewPlan:   true,
       }
     );
@@ -3765,7 +3888,7 @@ app.whenReady().then(async () => {
             }
           },
           mcpAdapter,
-          userId: pendingPlanContext?.userId || 'default_user',
+          userId: pendingPlanContext?.userId || 'local_user',
           logger: console,
         });
         if (fileToScan) fs.writeFileSync(fileToScan, sanitized, 'utf8');
@@ -4414,7 +4537,7 @@ app.whenReady().then(async () => {
   });
 
   // ─── StateGraph: Core execution — called by promptQueue serially ─────────
-  async function runPromptThroughStateGraph(prompt, { selectedText = '', sessionId = null, userId = 'default_user', responseLanguage = null, promptQueueId = null, _planFile = null, _forceNewPlan = false, _skillPlan = null, _skillPlanFile = null, _planCorrectionMode = false, _planCorrectionText = null, _basePlanFile = null, _skillPlanJson = null, _planCorrectionSourcePrompt = null, _resumeMultiIntent = false, _resumeIntentQueue = [], _resumeIntentResults = [], _resumeDataContext = {}, isAskUserAnswer = false, _preflightAuthBypass = null } = {}) {
+  async function runPromptThroughStateGraph(prompt, { selectedText = '', sessionId = null, userId = 'local_user', responseLanguage = null, promptQueueId = null, _planFile = null, _forceNewPlan = false, _skillPlan = null, _skillPlanFile = null, _planCorrectionMode = false, _planCorrectionText = null, _basePlanFile = null, _skillPlanJson = null, _planCorrectionSourcePrompt = null, _resumeMultiIntent = false, _resumeIntentQueue = [], _resumeIntentResults = [], _resumeDataContext = {}, isAskUserAnswer = false, _preflightAuthBypass = null } = {}) {
     const isPlanExecute = !!_planFile;
     console.log('🧠 [StateGraph] Processing prompt:', prompt.substring(0, 80), responseLanguage ? `(responseLanguage: ${responseLanguage})` : '', isPlanExecute ? `[plan:${require('path').basename(_planFile)}]` : '');
     _currentAutomationPrompt = prompt;
@@ -4516,7 +4639,7 @@ app.whenReady().then(async () => {
           planFile:      event.planFile,
           prompt:        prompt,
           sessionId:     currentSessionId,
-          userId:        'default_user',
+          userId:        'local_user',
           selectedText:  selectedText || '',
           skillPlanJson: event.skillPlanJson || null,
           // Preserve multi-intent context for mixed-intent plan approval
@@ -4544,7 +4667,7 @@ app.whenReady().then(async () => {
           planFile:      event.planFile,
           prompt:        prompt,
           sessionId:     currentSessionId,
-          userId:        'default_user',
+          userId:        'local_user',
           selectedText:  selectedText || '',
           skillPlanJson: event.skillPlanJson || null,
         };
@@ -6942,7 +7065,7 @@ app.whenReady().then(async () => {
     const initialState = {
       message: `Build ThinkDrop skill: ${displayName || name}`,
       intent: { type: 'skill_build', confidence: 1.0 },
-      context: { sessionId: currentSessionId, userId: 'default_user', source: 'skill_store' },
+      context: { sessionId: currentSessionId, userId: 'local_user', source: 'skill_store' },
     };
 
     try {
@@ -8166,6 +8289,9 @@ app.whenReady().then(async () => {
 
     // Immediately tell the renderer the browser is open so the card changes state
     safeSendUnified('automation:progress', { type: 'browser:auth_opened', agentId: normalizedAgentId, taskId: _pendingTaskId || undefined });
+    // OS-level alert — this background auth run has no progressCallbackUrl, so
+    // its needs_login event never reaches /agent-turn; alert here instead.
+    alertSignInNeeded(normalizedAgentId.replace('.agent', ''), '', normalizedAgentId);
 
     // Fire browser.agent in the background with a long timeout — we don't await it.
     // The pipeline stays pending; the user manually confirms via "I've signed in" button.

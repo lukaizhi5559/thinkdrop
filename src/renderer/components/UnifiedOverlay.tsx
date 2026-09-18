@@ -13,7 +13,9 @@ import {
   SkillsTab,
   ConnectionsTab,
   AgentsTab,
+  BrainTab,
   type TabId,
+  type ThoughtItem,
 } from './TabComponents';
 import { QueueTaskList, TaskCompleteBanner, type CommsTask } from './QueueTaskCard';
 import type { WebResultItem } from './rich-content/WebResultCard';
@@ -139,6 +141,7 @@ export function UnifiedOverlay() {
   const [connectionItems, setConnectionItems] = useState<ConnectionItem[]>([]);
   const [agentItems, setAgentItems] = useState<AgentItem[]>([]);
   const [promptQueueItems, setPromptQueueItems] = useState<PromptQueueItem[]>([]);
+  const [brainThoughts, setBrainThoughts] = useState<ThoughtItem[]>([]);
   const [restartAlert, setRestartAlert] = useState<{ items: PromptQueueItem[] } | null>(null);
 
   // --- comms-graph task state (concurrent handoff tasks) ---
@@ -179,6 +182,7 @@ export function UnifiedOverlay() {
   // const storeTabRef = useRef<HTMLDivElement>(null); // Store tab removed
   const settingsTabRef = useRef<HTMLDivElement>(null);
   const rulesTabRef = useRef<HTMLDivElement>(null);
+  const brainTabRef = useRef<HTMLDivElement>(null);
 
   // --- Glow Timer Ref ---
   const glowOffTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -232,6 +236,7 @@ export function UnifiedOverlay() {
     // store: storeTabRef, // Store tab removed
     settings: settingsTabRef,
     rules: rulesTabRef,
+    brain: brainTabRef,
   }), []);
 
   // Memoized tab badge counts — avoids recompute on every parent render.
@@ -304,6 +309,8 @@ export function UnifiedOverlay() {
       ipcRenderer?.send('cron:list');
     } else if (tab === 'agents') {
       ipcRenderer?.send('agents:list');
+    } else if (tab === 'brain') {
+      ipcRenderer?.send('thoughts:list');
     }
   }, []);
 
@@ -325,6 +332,8 @@ export function UnifiedOverlay() {
       ipcRenderer?.send('cron:list');
     } else if (tab === 'agents') {
       ipcRenderer?.send('agents:list');
+    } else if (tab === 'brain') {
+      ipcRenderer?.send('thoughts:list');
     }
   }, []);
 
@@ -540,6 +549,10 @@ export function UnifiedOverlay() {
   const handleConnectionsConnect = useCallback((provider: string, tokenKey: string, scopes: any) => ipcRenderer?.send('connections:connect', { provider, tokenKey, scopes }), []);
   const handleConnectionsDisconnect = useCallback((provider: string, tokenKey: string) => ipcRenderer?.send('connections:disconnect', { provider, tokenKey }), []);
   const handleConnectionsRefresh = useCallback(() => ipcRenderer?.send('connections:list'), []);
+  const handleThoughtDecide = useCallback((id: string, decision: 'approve' | 'dismiss' | 'snooze', minutes?: number) => {
+    ipcRenderer?.send('thought:decide', { id, decision, minutes });
+  }, []);
+  const handleThoughtsRefresh = useCallback(() => ipcRenderer?.send('thoughts:list'), []);
   // "Continue Thread" — load the task's result into the Results tab AND pin its
   // discussion as context (chip + sessionId) for the user's next prompt.
   const handleContinueThread = useCallback((task: any) => {
@@ -1747,6 +1760,27 @@ export function UnifiedOverlay() {
     ipcRenderer.on('gather:pending', handleGatherPending, token);
     ipcRenderer.on('queue:enqueued', handleQueueEnqueued, token);
 
+    // ── Brain tab / Thought engine events ────────────────────────────────────
+    // thoughts:list — full list refresh (after tab open, refresh, or a decision)
+    ipcRenderer.on('thoughts:list', (data: { thoughts?: ThoughtItem[] }) => {
+      setBrainThoughts(Array.isArray(data?.thoughts) ? data.thoughts : []);
+    }, token);
+    // thought:update — incremental lifecycle event { kind, thought, outcomeText? }
+    ipcRenderer.on('thought:update', (evt: { kind?: string; thought?: ThoughtItem; outcomeText?: string }) => {
+      const t = evt?.thought;
+      if (!t?.id) return;
+      setBrainThoughts(prev => {
+        const idx = prev.findIndex(x => x.id === t.id);
+        const next = [...prev];
+        if (idx >= 0) next[idx] = { ...next[idx], ...t };
+        else next.unshift(t);
+        return next;
+      });
+      // Badge the Brain tab — a proactive notification/approval request
+      // deserves the unread dot (cleared when the user opens the tab).
+      setUnreadTabs(prev => new Set(prev).add('brain'));
+    }, token);
+
     // ── comms-graph task events ──────────────────────────────────────────────
     ipcRenderer.on('task:created', (data: any) => {
       if (data?.taskId) {
@@ -2254,6 +2288,19 @@ export function UnifiedOverlay() {
             style={{ display: deferredTab === 'rules' ? 'block' : 'none', height: 'auto', maxHeight: '100%' }}
           >
               <RulesManagementPanel />
+            </div>
+
+          {/* Brain Tab — Thought/Trigger engine visibility */}
+          <div
+            ref={brainTabRef}
+            className="overflow-y-auto overflow-x-hidden p-4"
+            style={{ display: deferredTab === 'brain' ? 'block' : 'none', height: 'auto', maxHeight: '100%' }}
+          >
+              <BrainTab
+                thoughts={brainThoughts}
+                onDecide={handleThoughtDecide}
+                onRefresh={handleThoughtsRefresh}
+              />
             </div>
 
           {/* Floating scroll-to-bottom button */}

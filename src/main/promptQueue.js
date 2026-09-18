@@ -113,7 +113,7 @@ function _getSnapshot() {
  * @param {string|null} [opts._planCorrectionSourcePrompt] — original prompt that generated the pending plan
  * @returns {string} id
  */
-function enqueue(prompt, { selectedText = '', responseLanguage = null, _planFile = null, sessionId = null, userId = 'default_user', _forceNewPlan = false, _skillPlan = null, _skillPlanFile = null, _planCorrectionMode = false, _planCorrectionText = null, _basePlanFile = null, _skillPlanJson = null, _planCorrectionSourcePrompt = null, isAskUserAnswer = false, _preflightAuthBypass = null } = {}) {
+function enqueue(prompt, { selectedText = '', responseLanguage = null, _planFile = null, sessionId = null, userId = 'local_user', _forceNewPlan = false, _skillPlan = null, _skillPlanFile = null, _planCorrectionMode = false, _planCorrectionText = null, _basePlanFile = null, _skillPlanJson = null, _planCorrectionSourcePrompt = null, isAskUserAnswer = false, _preflightAuthBypass = null } = {}) {
   const id = _uid();
 
   // If a new prompt comes in while crashed-session items are still pending restart,

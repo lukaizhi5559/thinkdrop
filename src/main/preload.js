@@ -137,6 +137,8 @@ contextBridge.exposeInMainWorld('electron', {
         'skill:install-from-url',
         'skills:repair-oauth',
         'parallel:login:decision',
+        'thoughts:list',
+        'thought:decide',
       ];
       if (validChannels.includes(channel)) {
         ipcRenderer.send(channel, data);
@@ -230,6 +232,9 @@ contextBridge.exposeInMainWorld('electron', {
         'task:progress',
         'task:complete',
         'task:removed',
+        'thought:update',
+        'thoughts:list',
+        'thought:decided',
       ];
       if (validChannels.includes(channel)) {
         const wrapped = (_event, ...args) => func(...args);

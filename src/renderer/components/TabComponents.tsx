@@ -3,7 +3,7 @@ import SkillStore from './SkillStore';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
-export type TabId = 'results' | 'queue' | 'cron' | 'agents' | 'skills' | 'store' | 'connections' | 'rules';
+export type TabId = 'results' | 'queue' | 'cron' | 'agents' | 'skills' | 'store' | 'connections' | 'rules' | 'brain';
 
 export interface ConnectionItem {
   provider: string;       // 'github' | 'google' | 'microsoft' etc.
@@ -270,6 +270,19 @@ export function AgentsIcon({ active }: { active: boolean }) {
   );
 }
 
+export function BrainIcon({ active }: { active: boolean }) {
+  const c = active ? '#e879f9' : '#6b7280';
+  return (
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="none"
+      stroke={c} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      {/* Lightbulb — a thought */}
+      <path d="M12 2a7 7 0 0 1 7 7c0 2.4-1.2 4.2-2.6 5.7-.9 1-1.4 1.6-1.4 2.3a1 1 0 0 1-1 1h-4a1 1 0 0 1-1-1c0-.7-.5-1.3-1.4-2.3C6.2 13.2 5 11.4 5 9a7 7 0 0 1 7-7z"/>
+      <line x1="9.5" y1="21" x2="14.5" y2="21"/>
+      <line x1="10.5" y1="18" x2="13.5" y2="18"/>
+    </svg>
+  );
+}
+
 // ── Tab bar ───────────────────────────────────────────────────────────────────
 
 export function TabBar({ active, onSelect, queueCount, cronCount, unreadTabs }: {
@@ -284,6 +297,7 @@ export function TabBar({ active, onSelect, queueCount, cronCount, unreadTabs }: 
     { id: 'queue',       label: 'Queue',    icon: <QueueIcon       active={active === 'queue'}       />, badge: queueCount, activeColor: '#a78bfa' },
     { id: 'agents',      label: 'Agents',   icon: <AgentsIcon      active={active === 'agents'}      />, activeColor: '#f59e0b' },
     { id: 'cron',        label: 'Cron',     icon: <CronIcon        active={active === 'cron'}        />, badge: cronCount, activeColor: '#34d399' },
+    { id: 'brain',       label: 'Brain',    icon: <BrainIcon       active={active === 'brain'}       />, activeColor: '#e879f9' },
   ];
 
   return (
@@ -1981,3 +1995,335 @@ export function StoreTab({ initialSearch, onBuildSkill }: {
 // ── Agents tab (re-export from separate file) ─────────────────────────────────
 
 export { AgentsTab } from './AgentsTab';
+
+// ── Brain tab — Thought/Trigger engine visibility ──────────────────────────────
+
+export interface ThoughtTrace {
+  ts: number;
+  w: number;
+  input: string;
+  srcIds?: string[];
+}
+
+export interface ThoughtItem {
+  id: string;
+  userId: string;
+  input: string;
+  status: 'thought' | 'triggered' | 'awaiting_approval' | 'watching' | 'completed' | 'expired' | 'dismissed';
+  score: number;
+  summary: string;
+  sources: string[];
+  entityNames: string[];
+  actionNames: string[];
+  reinforcements: ThoughtTrace[];
+  silenceEpisode: number;
+  action?: {
+    type: string;
+    payload?: Record<string, unknown>;
+    reason?: string;
+    urgency?: string;
+  } | null;
+  outcomeText?: string | null;
+  snoozedUntil?: string | null;
+  /** Shadow-mode preview: what the engine would have done (in-memory only). */
+  shadowAction?: { type: string; text?: string; reason?: string } | null;
+  createdAt: string;
+  updatedAt: string;
+  triggeredAt?: string | null;
+  completedAt?: string | null;
+}
+
+const INPUT_META: Record<string, { label: string; color: string }> = {
+  prompt:         { label: 'prompt',  color: '#60a5fa' },
+  screen_capture: { label: 'screen',  color: '#34d399' },
+  memory:         { label: 'memory',  color: '#a78bfa' },
+  queue:          { label: 'queue',   color: '#f59e0b' },
+  silence:        { label: 'silence', color: '#94a3b8' },
+  judgment:       { label: 'judgment', color: '#f472b6' },
+};
+
+const ACTION_COLORS: Record<string, string> = {
+  notify: '#60a5fa', question: '#fbbf24', prompt: '#a78bfa',
+  skill: '#34d399', remember: '#22d3ee', watch: '#fb923c', skip: '#6b7280',
+};
+
+/** Evidence trail — group reinforcement traces by input: "prompt ×1 · screen ×2" */
+function evidenceTrail(t: ThoughtItem): string {
+  const counts = new Map<string, number>();
+  for (const tr of t.reinforcements || []) {
+    const k = tr.input || t.input;
+    counts.set(k, (counts.get(k) || 0) + 1);
+  }
+  return [...counts.entries()]
+    .map(([k, n]) => `${(INPUT_META[k]?.label || k)}${n > 1 ? ` ×${n}` : ''}`)
+    .join(' · ');
+}
+
+function timeAgo(iso?: string | null): string {
+  if (!iso) return '';
+  const ms = Date.now() - new Date(iso).getTime();
+  if (ms < 60_000) return 'just now';
+  if (ms < 3_600_000) return `${Math.round(ms / 60_000)}m ago`;
+  if (ms < 86_400_000) return `${Math.round(ms / 3_600_000)}h ago`;
+  return `${Math.round(ms / 86_400_000)}d ago`;
+}
+
+function ThoughtCard({ t, onDecide }: { t: ThoughtItem; onDecide?: (id: string, d: 'approve' | 'dismiss' | 'snooze', minutes?: number) => void }) {
+  const meta = INPUT_META[t.input] || { label: t.input, color: '#9ca3af' };
+  const progress = Math.max(0, Math.min(1, t.score));
+  const awaiting = t.status === 'awaiting_approval';
+  const dim = t.status === 'expired';
+  return (
+    <div style={{
+      padding: '8px 10px', borderRadius: 8,
+      backgroundColor: awaiting ? 'rgba(251,191,36,0.06)' : 'rgba(255,255,255,0.03)',
+      border: `1px solid ${awaiting ? 'rgba(251,191,36,0.3)' : 'rgba(255,255,255,0.07)'}`,
+      opacity: dim ? 0.5 : 1,
+      display: 'flex', flexDirection: 'column', gap: 5,
+    }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+        <span style={{
+          fontSize: '0.55rem', fontWeight: 700, padding: '1px 5px', borderRadius: 4,
+          backgroundColor: `${meta.color}22`, color: meta.color, textTransform: 'uppercase',
+        }}>{meta.label}</span>
+        {DONE_STATUS[t.status] && (
+          <span style={{
+            fontSize: '0.55rem', fontWeight: 700, padding: '1px 5px', borderRadius: 4,
+            backgroundColor: `${DONE_STATUS[t.status].color}22`, color: DONE_STATUS[t.status].color,
+          }}>{DONE_STATUS[t.status].label}</span>
+        )}
+        <span style={{ fontSize: '0.55rem', color: '#4b5563', marginLeft: 'auto', flexShrink: 0 }}>
+          {timeAgo(t.updatedAt)}
+        </span>
+      </div>
+      <div style={{ fontSize: '0.68rem', color: '#d1d5db', lineHeight: 1.4 }}>{t.summary}</div>
+      {(t.entityNames?.length ?? 0) > 0 && (
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 3 }}>
+          {t.entityNames.slice(0, 6).map((e, i) => (
+            <span key={i} style={{
+              fontSize: '0.55rem', padding: '0px 5px', borderRadius: 4,
+              backgroundColor: 'rgba(255,255,255,0.06)', color: '#9ca3af',
+            }}>{e}</span>
+          ))}
+        </div>
+      )}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+        <div style={{
+          flex: 1, height: 3, borderRadius: 2, backgroundColor: 'rgba(255,255,255,0.08)', overflow: 'hidden',
+        }}>
+          <div style={{
+            width: `${Math.round(progress * 100)}%`, height: '100%',
+            backgroundColor: progress >= 1 ? '#e879f9' : meta.color,
+            borderRadius: 2, transition: 'width 0.4s',
+          }} />
+        </div>
+        <span style={{ fontSize: '0.55rem', color: '#6b7280' }}>{t.score.toFixed(2)}</span>
+      </div>
+      <div style={{ fontSize: '0.55rem', color: '#4b5563' }}>
+        {evidenceTrail(t)}{t.silenceEpisode > 1 ? ` · ep.${t.silenceEpisode}` : ''}
+        {DONE_STATUS[t.status] && t.updatedAt && (() => {
+          const left = new Date(t.updatedAt).getTime() + EXPIRED_KEEP_DAYS * 86400000 - Date.now();
+          if (left <= 0) return '';
+          const d = Math.floor(left / 86400000), h = Math.floor((left % 86400000) / 3600000);
+          return ` · removes in ${d >= 1 ? `${d}d` : `${h}h`}`;
+        })()}
+      </div>
+      {t.action && t.action.type !== 'skip' && (
+        <div style={{ fontSize: '0.58rem', color: '#9ca3af', display: 'flex', gap: 5, alignItems: 'center' }}>
+          <span style={{
+            fontWeight: 700, color: ACTION_COLORS[t.action.type] || '#9ca3af', textTransform: 'uppercase',
+            fontSize: '0.55rem',
+          }}>{t.action.type}</span>
+          {t.action.reason ? <span style={{ color: '#6b7280' }}>{t.action.reason}</span> : null}
+        </div>
+      )}
+      {t.shadowAction && (
+        <div style={{ fontSize: '0.56rem', color: '#6b7280', fontStyle: 'italic' }}>
+          shadow · would {t.shadowAction.type}{t.shadowAction.text ? `: "${t.shadowAction.text}"` : ''}
+        </div>
+      )}
+      {t.outcomeText && (
+        <div style={{ fontSize: '0.58rem', color: '#6b7280', fontStyle: 'italic' }}>{t.outcomeText}</div>
+      )}
+      {Array.isArray((t.action?.payload as any)?.artifacts) && (t.action!.payload as any).artifacts.length > 0 && (
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+          {((t.action!.payload as any).artifacts as { name: string; path: string }[]).map((a, i) => (
+            <button key={i}
+              onClick={() => (window as any).electron?.ipcRenderer?.invoke('shell:open-path', a.path)}
+              title={a.path}
+              style={{
+                fontSize: '0.55rem', padding: '1px 6px', borderRadius: 4, cursor: 'pointer',
+                background: 'rgba(167,139,250,0.1)', border: '1px solid rgba(167,139,250,0.3)',
+                color: '#a78bfa',
+              }}>{a.name}</button>
+          ))}
+        </div>
+      )}
+      {awaiting && onDecide && (
+        <div style={{ display: 'flex', gap: 6, marginTop: 2 }}>
+          <button onClick={() => onDecide(t.id, 'approve')} style={{
+            flex: 1, padding: '4px 0', borderRadius: 5, border: '1px solid rgba(52,211,153,0.4)',
+            background: 'rgba(52,211,153,0.12)', color: '#34d399', fontSize: '0.6rem',
+            fontWeight: 600, cursor: 'pointer',
+          }}>Approve</button>
+          <button onClick={() => onDecide(t.id, 'dismiss')} style={{
+            flex: 1, padding: '4px 0', borderRadius: 5, border: '1px solid rgba(255,255,255,0.12)',
+            background: 'rgba(255,255,255,0.04)', color: '#9ca3af', fontSize: '0.6rem', cursor: 'pointer',
+          }}>Dismiss</button>
+        </div>
+      )}
+      {!awaiting && !dim && onDecide && (
+        <button onClick={() => onDecide(t.id, 'snooze', 60)} title="Snooze this thought for 1 hour" style={{
+          alignSelf: 'flex-start', padding: '1px 7px', borderRadius: 4, cursor: 'pointer',
+          border: '1px solid rgba(255,255,255,0.1)', background: 'rgba(255,255,255,0.03)',
+          color: '#6b7280', fontSize: '0.52rem',
+        }}>snooze 1h</button>
+      )}
+    </div>
+  );
+}
+
+function WatchCard({ t }: { t: ThoughtItem }) {
+  const p = (t.action?.payload || {}) as Record<string, unknown>;
+  const expiresAt = typeof p.expiresAt === 'number' ? p.expiresAt : null;
+  const minsLeft = expiresAt ? Math.max(0, Math.round((expiresAt - Date.now()) / 60000)) : null;
+  return (
+    <div style={{
+      padding: '8px 10px', borderRadius: 8,
+      backgroundColor: 'rgba(251,146,60,0.05)', border: '1px solid rgba(251,146,60,0.25)',
+      display: 'flex', flexDirection: 'column', gap: 4,
+    }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+        <span style={{
+          fontSize: '0.55rem', fontWeight: 700, padding: '1px 5px', borderRadius: 4,
+          backgroundColor: 'rgba(251,146,60,0.18)', color: '#fb923c', textTransform: 'uppercase',
+        }}>watching</span>
+        {typeof p.checkType === 'string' && (
+          <span style={{ fontSize: '0.55rem', color: '#6b7280' }}>{String(p.checkType)}</span>
+        )}
+        <span style={{ fontSize: '0.55rem', color: '#4b5563', marginLeft: 'auto', flexShrink: 0 }}>
+          {minsLeft !== null ? `expires in ${minsLeft}m` : timeAgo(t.updatedAt)}
+        </span>
+      </div>
+      <div style={{ fontSize: '0.68rem', color: '#d1d5db', lineHeight: 1.4 }}>
+        {typeof p.condition === 'string' ? String(p.condition) : t.summary}
+      </div>
+      {typeof p.target === 'string' && p.target && (
+        <div style={{ fontSize: '0.55rem', color: '#9ca3af' }}>target: {String(p.target)}</div>
+      )}
+    </div>
+  );
+}
+
+const DONE_STATUS: Record<string, { label: string; color: string }> = {
+  completed: { label: 'done',      color: '#4ade80' },
+  expired:   { label: 'expired',   color: '#6b7280' },
+  dismissed: { label: 'dismissed', color: '#6b7280' },
+};
+const EXPIRED_KEEP_DAYS = 30; // mirrors EXPIRED_KEEP_DAYS in user-memory thoughts.js
+
+export function BrainTab({ thoughts, onDecide, onRefresh }: {
+  thoughts: ThoughtItem[];
+  onDecide: (id: string, decision: 'approve' | 'dismiss' | 'snooze', minutes?: number) => void;
+  onRefresh?: () => void;
+}) {
+  const [view, setView] = React.useState<'live' | 'done'>('live');
+  const awaiting = thoughts.filter(t => t.status === 'awaiting_approval');
+  const watching = thoughts.filter(t => t.status === 'watching');
+  const live = thoughts.filter(t => (t.status === 'thought' || t.status === 'triggered') && t.score > 0);
+  const faded = thoughts.filter(t => (t.status === 'thought' || t.status === 'triggered') && t.score <= 0);
+  const done = thoughts.filter(t => t.status === 'completed' || t.status === 'expired' || t.status === 'dismissed')
+    .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime())
+    .slice(0, 30);
+  const liveCount = awaiting.length + watching.length + live.length;
+
+  const sectionTitle = (label: string, count: number, color = '#9ca3af') => (
+    <div style={{
+      fontSize: '0.6rem', fontWeight: 700, color, textTransform: 'uppercase',
+      letterSpacing: '0.05em', marginTop: 4,
+    }}>{label} {count > 0 ? `(${count})` : ''}</div>
+  );
+
+  const pill = (v: 'live' | 'done', label: string, count: number) => (
+    <button
+      onClick={() => setView(v)}
+      style={{
+        padding: '3px 8px', borderRadius: 5, cursor: 'pointer', fontSize: '0.6rem', fontWeight: 700,
+        letterSpacing: '0.03em', textTransform: 'uppercase',
+        background: view === v ? 'rgba(232,121,249,0.14)' : 'rgba(255,255,255,0.03)',
+        border: `1px solid ${view === v ? 'rgba(232,121,249,0.4)' : 'rgba(255,255,255,0.08)'}`,
+        color: view === v ? '#e879f9' : '#6b7280',
+      }}>{label} {count > 0 ? `(${count})` : ''}</button>
+  );
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 7 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+        <span style={{ fontSize: '0.7rem', fontWeight: 700, color: '#e879f9' }}>Brain</span>
+        <div style={{ display: 'flex', gap: 4, marginLeft: 'auto' }}>
+          {pill('live', 'Live Thoughts', liveCount)}
+          {pill('done', 'Completed Actions', done.length)}
+          {onRefresh && (
+            <button onClick={onRefresh} title="Refresh thoughts" style={{
+              padding: '4px 8px', borderRadius: 5, cursor: 'pointer',
+              background: 'rgba(232,121,249,0.08)', border: '1px solid rgba(232,121,249,0.25)',
+              color: '#e879f9', fontSize: '0.6rem',
+            }}>↻</button>
+          )}
+        </div>
+      </div>
+      {thoughts.length === 0 && (
+        <div style={{
+          padding: '12px 10px', borderRadius: 7, fontSize: '0.62rem', color: '#6b7280',
+          backgroundColor: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.05)',
+          lineHeight: 1.5,
+        }}>
+          No thoughts yet. As you use ThinkDrop — prompts, apps you dwell in, quiet
+          moments — observations accumulate here and occasionally act on your behalf.
+        </div>
+      )}
+      {view === 'live' && (
+        <>
+          {awaiting.length > 0 && (
+            <>
+              {sectionTitle('Needs your approval', awaiting.length, '#fbbf24')}
+              {awaiting.map(t => <ThoughtCard key={t.id} t={t} onDecide={onDecide} />)}
+            </>
+          )}
+          {watching.length > 0 && (
+            <>
+              {sectionTitle('Watching', watching.length, '#fb923c')}
+              {watching.map(t => <WatchCard key={t.id} t={t} />)}
+            </>
+          )}
+          {live.length > 0 && (
+            <>
+              {sectionTitle('Live thoughts', live.length)}
+              {live.map(t => <ThoughtCard key={t.id} t={t} onDecide={onDecide} />)}
+            </>
+          )}
+          {liveCount === 0 && thoughts.length > 0 && (
+            <div style={{ fontSize: '0.6rem', color: '#4b5563', padding: '6px 2px' }}>
+              Nothing live right now.
+            </div>
+          )}
+          {faded.length > 0 && (
+            <div style={{ fontSize: '0.56rem', color: '#4b5563' }}>
+              {faded.length} faded thought{faded.length > 1 ? 's' : ''} hidden (score ≤ 0)
+            </div>
+          )}
+        </>
+      )}
+      {view === 'done' && (
+        <>
+          {done.length === 0 && (
+            <div style={{ fontSize: '0.6rem', color: '#4b5563', padding: '6px 2px' }}>
+              No completed actions yet.
+            </div>
+          )}
+          {done.map(t => <ThoughtCard key={t.id} t={t} />)}
+        </>
+      )}
+    </div>
+  );
+}

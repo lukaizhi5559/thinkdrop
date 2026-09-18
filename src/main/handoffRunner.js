@@ -206,10 +206,12 @@ async function execute({ taskId, prompt, agentId, source, originalPrompt, sessio
           resolvedMessage: prompt,
           intent: { type: 'command_automate' }, // Handoffs are always command_automate
           sessionId: sessionId || null,
-          userId: 'default_user',
+          userId: process.env.MONITOR_USER_ID || 'local_user',
           // context.sessionId pins resolveReferencesV2's history fetch and
           // logConversation's session — this is what makes task recall work.
-          context: { sessionId: sessionId || null, userId: 'default_user', source: 'thinkdrop_electron' },
+          // userId must match the monitor's MONITOR_USER_ID ('local_user') —
+          // all memory/episodic rows live under that id.
+          context: { sessionId: sessionId || null, userId: process.env.MONITOR_USER_ID || 'local_user', source: 'thinkdrop_electron' },
           mcpAdapter: _mcpAdapter,
           llmBackend: _llmBackend,
           _handoffTaskId: taskId,
