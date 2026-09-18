@@ -51,7 +51,7 @@ const CAT_COLORS: Record<string, string> = {
   'Media & Streaming': '#f43f5e',
   'Health & Fitness': '#22c55e',
 };
-const catColor = (c: string) => CAT_COLORS[c] || '#6b7280';
+const catColor = (c: string) => CAT_COLORS[c] || '#abafb8';
 
 const EXEC_TYPE_COLORS: Record<string, string> = {
   instruction: '#a78bfa',
@@ -60,7 +60,7 @@ const EXEC_TYPE_COLORS: Record<string, string> = {
   shell: '#f59e0b',
   recipe: '#ec4899',
 };
-const execTypeColor = (t: string) => EXEC_TYPE_COLORS[t] || '#6b7280';
+const execTypeColor = (t: string) => EXEC_TYPE_COLORS[t] || '#abafb8';
 
 function HiMatch({ text, q }: { text: string; q: string }) {
   if (!q) return <>{text}</>;
@@ -194,7 +194,7 @@ export default function SkillStore({ onBuildSkill, initialSearch = '' }: SkillSt
             cursor: 'pointer', whiteSpace: 'nowrap',
             border: `1px solid ${view === 'browse' ? '#8b5cf6' : 'rgba(255,255,255,0.08)'}`,
             background: view === 'browse' ? 'rgba(139,92,246,0.18)' : 'transparent',
-            color: view === 'browse' ? '#c4b5fd' : '#6b7280',
+            color: view === 'browse' ? '#c4b5fd' : '#abafb8',
           }}>
           Browse
         </button>
@@ -204,7 +204,7 @@ export default function SkillStore({ onBuildSkill, initialSearch = '' }: SkillSt
             cursor: 'pointer', whiteSpace: 'nowrap',
             border: `1px solid ${view === 'installed' ? '#8b5cf6' : 'rgba(255,255,255,0.08)'}`,
             background: view === 'installed' ? 'rgba(139,92,246,0.18)' : 'transparent',
-            color: view === 'installed' ? '#c4b5fd' : '#6b7280',
+            color: view === 'installed' ? '#c4b5fd' : '#abafb8',
           }}>
           Installed
         </button>
@@ -274,7 +274,7 @@ export default function SkillStore({ onBuildSkill, initialSearch = '' }: SkillSt
 
       {/* ── Search ── */}
       <div style={{ position: 'relative' }}>
-        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#6b7280" strokeWidth="2"
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#abafb8" strokeWidth="2"
           strokeLinecap="round" strokeLinejoin="round"
           style={{ position: 'absolute', left: 8, top: '50%', transform: 'translateY(-50%)', pointerEvents: 'none' }}>
           <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
@@ -293,7 +293,7 @@ export default function SkillStore({ onBuildSkill, initialSearch = '' }: SkillSt
         {search && (
           <button onClick={() => setSearch('')}
             style={{ position: 'absolute', right: 7, top: '50%', transform: 'translateY(-50%)',
-              background: 'none', border: 'none', cursor: 'pointer', color: '#6b7280', fontSize: '0.7rem', padding: 2 }}>
+              background: 'none', border: 'none', cursor: 'pointer', color: '#abafb8', fontSize: '0.7rem', padding: 2 }}>
             ✕
           </button>
         )}
@@ -314,7 +314,7 @@ export default function SkillStore({ onBuildSkill, initialSearch = '' }: SkillSt
               padding: '2px 7px', borderRadius: 20, fontSize: '0.63rem', fontWeight: 500,
               cursor: 'pointer', border: `1px solid ${active ? col : 'rgba(255,255,255,0.08)'}`,
               background: active ? `${col}22` : 'transparent',
-              color: active ? col : '#6b7280', transition: 'all 0.1s',
+              color: active ? col : '#abafb8', transition: 'all 0.1s',
               flexShrink: 0, whiteSpace: 'nowrap',
             }}>
               {c}
@@ -413,7 +413,7 @@ export default function SkillStore({ onBuildSkill, initialSearch = '' }: SkillSt
               color: page === 1 ? '#374151' : '#9ca3af' }}>
             ‹ Prev
           </button>
-          <span style={{ color: '#6b7280', fontSize: '0.66rem' }}>{page} / {totalPages}</span>
+          <span style={{ color: '#abafb8', fontSize: '0.66rem' }}>{page} / {totalPages}</span>
           <button onClick={() => setPage(p => Math.min(totalPages, p + 1))} disabled={page === totalPages}
             style={{ padding: '2px 8px', borderRadius: 5, fontSize: '0.68rem', cursor: page === totalPages ? 'not-allowed' : 'pointer',
               background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)',
@@ -428,7 +428,7 @@ export default function SkillStore({ onBuildSkill, initialSearch = '' }: SkillSt
         <div style={{ display: 'flex', flexDirection: 'column', gap: 4, maxHeight: 420, overflowY: 'auto',
           scrollbarWidth: 'thin', scrollbarColor: 'rgba(139,92,246,0.3) transparent' }}>
           {installedLoading ? (
-            <div style={{ color: '#6b7280', fontSize: '0.72rem', padding: '20px 0', textAlign: 'center' }}>
+            <div style={{ color: '#abafb8', fontSize: '0.72rem', padding: '20px 0', textAlign: 'center' }}>
               Loading installed skills…
             </div>
           ) : installedSkills.length === 0 ? (

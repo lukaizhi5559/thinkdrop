@@ -48,7 +48,7 @@ const TASK_STATUS_CONFIG: Record<TaskStatus, { label: string; color: string; bg:
   'waiting-for-input':  { label: 'Needs input',      color: '#fbbf24', bg: 'rgba(251,191,36,0.08)',  border: 'rgba(251,191,36,0.3)' },
   'done':               { label: 'Done',             color: '#4ade80', bg: 'rgba(74,222,128,0.06)',   border: 'rgba(74,222,128,0.18)' },
   'failed':             { label: 'Failed',           color: '#f87171', bg: 'rgba(248,113,113,0.06)',  border: 'rgba(248,113,113,0.18)' },
-  'cancelled':          { label: 'Cancelled',       color: '#6b7280', bg: 'rgba(107,114,128,0.06)',  border: 'rgba(107,114,128,0.18)' },
+  'cancelled':          { label: 'Cancelled',       color: '#abafb8', bg: 'rgba(107,114,128,0.06)',  border: 'rgba(107,114,128,0.18)' },
 };
 
 // ── SVG icons (no emojis) ──────────────────────────────────────────────────────
@@ -357,8 +357,8 @@ export function QueueTaskCard({ task, onContinueThread, onHeightChange, flash }:
 
               {/* Auto-purge countdown for completed/cancelled/failed */}
               {(task.status === 'done' || task.status === 'failed' || task.status === 'cancelled') && task.doneAt && (
-                <span style={{ fontSize: '0.56rem', color: '#6b7280', display: 'flex', alignItems: 'center', gap: 3 }}>
-                  <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="#6b7280" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <span style={{ fontSize: '0.56rem', color: '#abafb8', display: 'flex', alignItems: 'center', gap: 3 }}>
+                  <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="#abafb8" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                     <circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>
                   </svg>
                   {(() => {
@@ -448,7 +448,7 @@ export function QueueTaskCard({ task, onContinueThread, onHeightChange, flash }:
                     display: 'flex', alignItems: 'center', justifyContent: 'center',
                     background: expanded ? 'rgba(99,102,241,0.15)' : 'rgba(255,255,255,0.04)',
                     border: expanded ? '1px solid rgba(99,102,241,0.25)' : '1px solid rgba(255,255,255,0.1)',
-                    color: expanded ? '#818cf8' : '#6b7280', transition: 'background 0.15s',
+                    color: expanded ? '#818cf8' : '#abafb8', transition: 'background 0.15s',
                   }}
                   onMouseEnter={e => (e.currentTarget.style.background = expanded ? 'rgba(99,102,241,0.25)' : 'rgba(255,255,255,0.1)')}
                   onMouseLeave={e => (e.currentTarget.style.background = expanded ? 'rgba(99,102,241,0.15)' : 'rgba(255,255,255,0.04)')}
@@ -607,7 +607,7 @@ const STATUS_BUCKET_MAP: Record<TaskStatus, StatusBucket> = {
 const STATUS_BUCKETS: { id: StatusBucket; label: string; color: string }[] = [
   { id: 'in-progress', label: 'In progress', color: '#60a5fa' },
   { id: 'done',        label: 'Done',        color: '#4ade80' },
-  { id: 'cancelled',   label: 'Cancelled',   color: '#6b7280' },
+  { id: 'cancelled',   label: 'Cancelled',   color: '#abafb8' },
   { id: 'failed',      label: 'Failed',      color: '#f87171' },
 ];
 
@@ -696,7 +696,7 @@ function QueueFilterBar({ search, onSearchChange, open, onToggleOpen, filters, o
     padding: '2px 7px', borderRadius: 20, fontSize: '0.63rem', fontWeight: 500,
     cursor: 'pointer', border: `1px solid ${active ? color : 'rgba(255,255,255,0.08)'}`,
     background: active ? `${color}22` : 'transparent',
-    color: active ? color : '#6b7280', transition: 'all 0.1s',
+    color: active ? color : '#abafb8', transition: 'all 0.1s',
     flexShrink: 0, whiteSpace: 'nowrap',
   });
   const dateInputStyle: React.CSSProperties = {
@@ -722,7 +722,7 @@ function QueueFilterBar({ search, onSearchChange, open, onToggleOpen, filters, o
       {/* Row 1 — search input + ⋯ toggle */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
         <div style={{ position: 'relative', flex: 1, minWidth: 0 }}>
-          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#6b7280" strokeWidth="2"
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#abafb8" strokeWidth="2"
             strokeLinecap="round" strokeLinejoin="round"
             style={{ position: 'absolute', left: 8, top: '50%', transform: 'translateY(-50%)', pointerEvents: 'none' }}>
             <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
@@ -741,7 +741,7 @@ function QueueFilterBar({ search, onSearchChange, open, onToggleOpen, filters, o
           {search && (
             <button onClick={() => onSearchChange('')}
               style={{ position: 'absolute', right: 7, top: '50%', transform: 'translateY(-50%)',
-                background: 'none', border: 'none', cursor: 'pointer', color: '#6b7280', fontSize: '0.7rem', padding: 2 }}>
+                background: 'none', border: 'none', cursor: 'pointer', color: '#abafb8', fontSize: '0.7rem', padding: 2 }}>
               ✕
             </button>
           )}
@@ -752,7 +752,7 @@ function QueueFilterBar({ search, onSearchChange, open, onToggleOpen, filters, o
             display: 'flex', alignItems: 'center', justifyContent: 'center',
             background: open ? 'rgba(167,139,250,0.15)' : 'rgba(255,255,255,0.04)',
             border: `1px solid ${open ? 'rgba(167,139,250,0.3)' : 'rgba(255,255,255,0.09)'}`,
-            color: open ? '#a78bfa' : '#6b7280', transition: 'background 0.15s',
+            color: open ? '#a78bfa' : '#abafb8', transition: 'background 0.15s',
           }}>
           <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor" stroke="none">
             <circle cx="5" cy="12" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="19" cy="12" r="2"/>
@@ -774,7 +774,7 @@ function QueueFilterBar({ search, onSearchChange, open, onToggleOpen, filters, o
             background: 'none', border: 'none', padding: 0, cursor: 'pointer',
           }}
           title="Show filters">
-          <span style={{ fontSize: '0.6rem', color: '#6b7280' }}>
+          <span style={{ fontSize: '0.6rem', color: '#abafb8' }}>
             {timeLabel} · {statusLabel} · {matchCount}/{totalCount}
           </span>
           <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="#4b5563" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
@@ -801,9 +801,9 @@ function QueueFilterBar({ search, onSearchChange, open, onToggleOpen, filters, o
           </button>
           {timeKey === 'range' && (
             <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
-              <span style={{ fontSize: '0.6rem', color: '#6b7280' }}>From</span>
+              <span style={{ fontSize: '0.6rem', color: '#abafb8' }}>From</span>
               <input type="date" value={rangeFrom} onChange={e => onFilters({ rangeFrom: e.target.value })} style={dateInputStyle} />
-              <span style={{ fontSize: '0.6rem', color: '#6b7280' }}>To</span>
+              <span style={{ fontSize: '0.6rem', color: '#abafb8' }}>To</span>
               <input type="date" value={rangeTo} onChange={e => onFilters({ rangeTo: e.target.value })} style={dateInputStyle} />
             </div>
           )}
@@ -1086,7 +1086,7 @@ const SourcePill = ({ sources }: { sources: { url: string; title: string; hostna
         <span style={{ color: '#9ca3af', fontSize: '0.66rem', fontWeight: 500, display: 'flex', alignItems: 'center', gap: 3 }}>
           {sources.length} {sources.length === 1 ? 'site' : 'sites'}
           <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"
-            style={{ color: '#6b7280', transform: showPanel ? 'rotate(180deg)' : 'rotate(0deg)', transition: 'transform 0.15s' }}>
+            style={{ color: '#abafb8', transform: showPanel ? 'rotate(180deg)' : 'rotate(0deg)', transition: 'transform 0.15s' }}>
             <polyline points="6 9 12 15 18 9" />
           </svg>
         </span>
@@ -1097,7 +1097,7 @@ const SourcePill = ({ sources }: { sources: { url: string; title: string; hostna
           backgroundColor: '#1c1c1e', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 10,
           boxShadow: '0 8px 32px rgba(0,0,0,0.5)', padding: '6px 0',
         }}>
-          <div style={{ padding: '6px 12px 4px', fontSize: '0.65rem', fontWeight: 600, color: '#6b7280', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+          <div style={{ padding: '6px 12px 4px', fontSize: '0.65rem', fontWeight: 600, color: '#abafb8', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
             Sources
           </div>
           {sources.map((src, i) => (
@@ -1113,7 +1113,7 @@ const SourcePill = ({ sources }: { sources: { url: string; title: string; hostna
                 <div style={{ fontSize: '0.72rem', fontWeight: 500, color: '#e5e7eb', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                   {src.title || src.hostname}
                 </div>
-                <div style={{ fontSize: '0.62rem', color: '#6b7280', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                <div style={{ fontSize: '0.62rem', color: '#abafb8', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                   {src.hostname}
                 </div>
               </div>

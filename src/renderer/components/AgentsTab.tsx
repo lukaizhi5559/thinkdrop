@@ -25,14 +25,14 @@ const categoryColors: Record<string, string> = {
   'Entertainment & Media': '#8b5cf6',
   'Commerce & Finance': '#10b981',
   'Creation & Contribution': '#f59e0b',
-  'Consumption & Discovery': '#6b7280',
+  'Consumption & Discovery': '#abafb8',
   'Interactive Entertainment': '#ec4899',
   'Utility': '#64748b',
 };
 
 // Status indicator colors
 const statusColors: Record<string, string> = {
-  pending: '#6b7280',
+  pending: '#abafb8',
   learning: '#f59e0b',
   learned: '#10b981',
   needs_training: '#f97316',
@@ -192,7 +192,7 @@ function CompactSkillRow({
           <button onClick={() => setChoosing(false)} title="Cancel" style={{ padding: '2px 4px', background: 'transparent', border: 'none', color: '#4b5563', cursor: 'pointer', fontSize: '0.7rem' }}>×</button>
         </div>
       ) : (
-        <button onClick={() => setChoosing(true)} title="Test" style={{ padding: '2px 4px', background: 'transparent', border: '1px solid rgba(255,255,255,0.08)', borderRadius: 3, cursor: 'pointer', color: '#6b7280', display: 'flex', alignItems: 'center' }}>
+        <button onClick={() => setChoosing(true)} title="Test" style={{ padding: '2px 4px', background: 'transparent', border: '1px solid rgba(255,255,255,0.08)', borderRadius: 3, cursor: 'pointer', color: '#abafb8', display: 'flex', alignItems: 'center' }}>
           <svg width="8" height="8" viewBox="0 0 24 24" fill="currentColor"><polygon points="5,3 19,12 5,21"/></svg>
         </button>
       )}
@@ -202,7 +202,7 @@ function CompactSkillRow({
         <button 
           onClick={() => onEdit(skill.skillPath!)} 
           title="Edit skill code" 
-          style={{ padding: '2px 4px', background: 'transparent', border: '1px solid rgba(255,255,255,0.08)', borderRadius: 3, cursor: 'pointer', color: '#6b7280', display: 'flex', alignItems: 'center' }}
+          style={{ padding: '2px 4px', background: 'transparent', border: '1px solid rgba(255,255,255,0.08)', borderRadius: 3, cursor: 'pointer', color: '#abafb8', display: 'flex', alignItems: 'center' }}
         >
           <svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
             <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
@@ -221,7 +221,7 @@ function CompactSkillRow({
           <button 
             onClick={() => onRefresh(agentId, skill.name, skill.skillPath!)} 
             title="Rescan this skill" 
-            style={{ padding: '2px 4px', background: 'transparent', border: '1px solid rgba(255,255,255,0.08)', borderRadius: 3, cursor: 'pointer', color: '#6b7280', display: 'flex', alignItems: 'center' }}
+            style={{ padding: '2px 4px', background: 'transparent', border: '1px solid rgba(255,255,255,0.08)', borderRadius: 3, cursor: 'pointer', color: '#abafb8', display: 'flex', alignItems: 'center' }}
           >
             <svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
               <polyline points="23 4 23 10 17 10"/>
@@ -235,7 +235,7 @@ function CompactSkillRow({
       {confirmDelete ? (
         <button onClick={() => { onDelete(agentId, skill.name, skill.skillPath); setConfirmDelete(false); }} style={{ padding: '2px 5px', background: 'rgba(239,68,68,0.15)', border: '1px solid rgba(239,68,68,0.4)', color: '#ef4444', borderRadius: 3, fontSize: '0.55rem', cursor: 'pointer' }}>sure?</button>
       ) : (
-        <button onClick={() => setConfirmDelete(true)} title="Delete" style={{ padding: '2px 4px', background: 'transparent', border: '1px solid rgba(255,255,255,0.08)', borderRadius: 3, cursor: 'pointer', color: '#6b7280', display: 'flex', alignItems: 'center' }}>
+        <button onClick={() => setConfirmDelete(true)} title="Delete" style={{ padding: '2px 4px', background: 'transparent', border: '1px solid rgba(255,255,255,0.08)', borderRadius: 3, cursor: 'pointer', color: '#abafb8', display: 'flex', alignItems: 'center' }}>
           <svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/></svg>
         </button>
       )}
@@ -293,8 +293,8 @@ function AgentCard({
   setEditingStartUrl?: (v: string | null) => void;
   startUrlSaving?: boolean;
 }) {
-  const categoryColor = categoryColors[agent.category] || '#6b7280';
-  const statusColor = statusColors[agent.status] || '#6b7280';
+  const categoryColor = categoryColors[agent.category] || '#abafb8';
+  const statusColor = statusColors[agent.status] || '#abafb8';
   const isLearning = agent.status === 'learning';
   const [confirmDelete, setConfirmDelete] = useState(false);
 
@@ -338,7 +338,7 @@ function AgentCard({
               title={`Open ${agent.domain}`}
               style={{
                 fontSize: '0.62rem',
-                color: '#6b7280',
+                color: '#abafb8',
                 whiteSpace: 'nowrap',
                 overflow: 'hidden',
                 textOverflow: 'ellipsis',
@@ -378,10 +378,10 @@ function AgentCard({
               boxShadow: isLearning ? `0 0 5px ${statusColor}` : 'none',
               animation: isLearning ? 'pulse 1.5s infinite' : undefined,
             }} />
-            <span style={{ fontSize: '0.62rem', color: '#6b7280' }}>
+            <span style={{ fontSize: '0.62rem', color: '#abafb8' }}>
               {statusLabels[agent.status] || agent.status}
             </span>
-            <span style={{ color: '#6b7280' }}>|</span>
+            <span style={{ color: '#abafb8' }}>|</span>
             <span 
               style={{
                 fontSize: '0.58rem',
@@ -479,7 +479,7 @@ function AgentCard({
               display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 3,
               background: confirmDelete ? 'rgba(239,68,68,0.18)' : 'rgba(255,255,255,0.04)',
               border: confirmDelete ? '1px solid rgba(239,68,68,0.45)' : '1px solid rgba(255,255,255,0.1)',
-              color: confirmDelete ? '#f87171' : '#6b7280',
+              color: confirmDelete ? '#f87171' : '#abafb8',
               transition: 'all 0.15s',
             }}
           >
@@ -532,7 +532,7 @@ function AgentCard({
               display: 'flex', alignItems: 'center', justifyContent: 'center',
               background: expanded ? 'rgba(99,102,241,0.15)' : 'rgba(255,255,255,0.04)',
               border: expanded ? '1px solid rgba(99,102,241,0.25)' : '1px solid rgba(255,255,255,0.1)',
-              color: expanded ? '#818cf8' : '#6b7280',
+              color: expanded ? '#818cf8' : '#abafb8',
             }}
           >
             <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round">
@@ -561,7 +561,7 @@ function AgentCard({
                   {urls.map((url, idx) => (
                     <div key={idx} style={{
                       fontSize: '0.62rem',
-                      color: '#6b7280',
+                      color: '#abafb8',
                       fontFamily: 'ui-monospace,monospace',
                       overflow: 'hidden',
                       textOverflow: 'ellipsis',
@@ -618,7 +618,7 @@ function AgentCard({
                     style={{
                       padding: '3px 8px', borderRadius: 4, fontSize: '0.58rem',
                       backgroundColor: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.1)',
-                      color: '#6b7280', cursor: 'pointer',
+                      color: '#abafb8', cursor: 'pointer',
                     }}
                   >
                     Cancel
@@ -628,7 +628,7 @@ function AgentCard({
                 <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
                   <span style={{
                     fontSize: '0.62rem',
-                    color: '#6b7280',
+                    color: '#abafb8',
                     fontFamily: 'ui-monospace,monospace',
                     overflow: 'hidden',
                     textOverflow: 'ellipsis',
@@ -650,7 +650,7 @@ function AgentCard({
                     style={{
                       padding: '2px 6px', borderRadius: 3, fontSize: '0.58rem',
                       backgroundColor: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.1)',
-                      color: '#6b7280', cursor: 'pointer',
+                      color: '#abafb8', cursor: 'pointer',
                     }}
                   >
                     Edit
@@ -787,7 +787,7 @@ function CreateBrowserAgentModal({
           </div>
           <div>
             <h3 style={{ margin: 0, color: '#fff', fontSize: '0.95rem', fontWeight: 600 }}>Create Browser Agent</h3>
-            <p style={{ margin: 0, color: '#6b7280', fontSize: '0.72rem' }}>ThinkDrop will explore and learn the site</p>
+            <p style={{ margin: 0, color: '#abafb8', fontSize: '0.72rem' }}>ThinkDrop will explore and learn the site</p>
           </div>
         </div>
 
@@ -808,7 +808,7 @@ function CreateBrowserAgentModal({
         </div>
 
         <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
-          <button onClick={onClose} style={{ padding: '8px 15px', borderRadius: 6, border: '1px solid rgba(255,255,255,0.15)', backgroundColor: 'transparent', color: '#6b7280', cursor: 'pointer', fontSize: '0.83rem' }}>
+          <button onClick={onClose} style={{ padding: '8px 15px', borderRadius: 6, border: '1px solid rgba(255,255,255,0.15)', backgroundColor: 'transparent', color: '#abafb8', cursor: 'pointer', fontSize: '0.83rem' }}>
             Cancel
           </button>
           <button
@@ -883,7 +883,7 @@ function CreateCliAgentModal({
           </div>
           <div>
             <h3 style={{ margin: 0, color: '#fff', fontSize: '0.95rem', fontWeight: 600 }}>Create CLI Agent</h3>
-            <p style={{ margin: 0, color: '#6b7280', fontSize: '0.72rem' }}>Register an API-backed service agent</p>
+            <p style={{ margin: 0, color: '#abafb8', fontSize: '0.72rem' }}>Register an API-backed service agent</p>
           </div>
         </div>
 
@@ -900,7 +900,7 @@ function CreateCliAgentModal({
             />
           </div>
           <div>
-            <label style={MODAL_LABEL_STYLE}>CLI Tool <span style={{ color: '#6b7280', fontWeight: 400 }}>(optional)</span></label>
+            <label style={MODAL_LABEL_STYLE}>CLI Tool <span style={{ color: '#abafb8', fontWeight: 400 }}>(optional)</span></label>
             <input
               type="text"
               value={cliTool}
@@ -912,7 +912,7 @@ function CreateCliAgentModal({
         </div>
 
         <div style={{ marginBottom: 6 }}>
-          <label style={{ ...MODAL_LABEL_STYLE, marginBottom: 8 }}>Credentials <span style={{ color: '#6b7280', fontWeight: 400 }}>(optional)</span></label>
+          <label style={{ ...MODAL_LABEL_STYLE, marginBottom: 8 }}>Credentials <span style={{ color: '#abafb8', fontWeight: 400 }}>(optional)</span></label>
           {creds.map((row, i) => (
             <div key={i} style={{ display: 'grid', gridTemplateColumns: '130px 1fr 1fr 28px', gap: 6, marginBottom: 6, alignItems: 'center' }}>
               <select
@@ -941,7 +941,7 @@ function CreateCliAgentModal({
               <button
                 onClick={() => removeCred(i)}
                 disabled={creds.length === 1}
-                style={{ background: 'transparent', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 5, color: '#6b7280', cursor: creds.length === 1 ? 'default' : 'pointer', padding: '4px', display: 'flex', alignItems: 'center', justifyContent: 'center', opacity: creds.length === 1 ? 0.3 : 1 }}
+                style={{ background: 'transparent', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 5, color: '#abafb8', cursor: creds.length === 1 ? 'default' : 'pointer', padding: '4px', display: 'flex', alignItems: 'center', justifyContent: 'center', opacity: creds.length === 1 ? 0.3 : 1 }}
               >
                 <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
               </button>
@@ -949,14 +949,14 @@ function CreateCliAgentModal({
           ))}
           <button
             onClick={addCred}
-            style={{ marginTop: 4, padding: '5px 12px', borderRadius: 5, border: '1px dashed rgba(255,255,255,0.2)', backgroundColor: 'transparent', color: '#6b7280', cursor: 'pointer', fontSize: '0.75rem' }}
+            style={{ marginTop: 4, padding: '5px 12px', borderRadius: 5, border: '1px dashed rgba(255,255,255,0.2)', backgroundColor: 'transparent', color: '#abafb8', cursor: 'pointer', fontSize: '0.75rem' }}
           >
             + Add credential
           </button>
         </div>
 
         <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', marginTop: 20, paddingTop: 16, borderTop: '1px solid rgba(255,255,255,0.06)' }}>
-          <button onClick={onClose} style={{ padding: '8px 15px', borderRadius: 6, border: '1px solid rgba(255,255,255,0.15)', backgroundColor: 'transparent', color: '#6b7280', cursor: 'pointer', fontSize: '0.83rem' }}>
+          <button onClick={onClose} style={{ padding: '8px 15px', borderRadius: 6, border: '1px solid rgba(255,255,255,0.15)', backgroundColor: 'transparent', color: '#abafb8', cursor: 'pointer', fontSize: '0.83rem' }}>
             Cancel
           </button>
           <button
@@ -1664,7 +1664,7 @@ function _AgentsTab({ items, onRefresh, onContentResize, modalCardRef }: AgentsT
       case 'healthy': return '#10b981';
       case 'needs_update': return '#f59e0b';
       case 'broken': case 'not_installed': return '#ef4444';
-      default: return '#6b7280';
+      default: return '#abafb8';
     }
   };
   const cliStatusLabel = (status: string) => {
@@ -1696,7 +1696,7 @@ function _AgentsTab({ items, onRefresh, onContentResize, modalCardRef }: AgentsT
       {/* Header */}
       <div style={{ marginBottom: 16 }}>
         <h2 style={{ margin: 0, color: '#fff', fontSize: '1.1rem', fontWeight: 600 }}>Agents</h2>
-        <p style={{ margin: '3px 0 10px 0', color: '#6b7280', fontSize: '0.78rem' }}>
+        <p style={{ margin: '3px 0 10px 0', color: '#abafb8', fontSize: '0.78rem' }}>
           Domain-specific automation agents that learn and adapt
         </p>
 
@@ -1805,7 +1805,7 @@ function _AgentsTab({ items, onRefresh, onContentResize, modalCardRef }: AgentsT
             borderRadius: 6,
             border: 'none',
             backgroundColor: activeSubtab === 'browser' ? 'rgba(99,102,241,0.25)' : 'transparent',
-            color: activeSubtab === 'browser' ? '#818cf8' : '#6b7280',
+            color: activeSubtab === 'browser' ? '#818cf8' : '#abafb8',
             fontSize: '0.8rem',
             cursor: 'pointer',
             fontWeight: activeSubtab === 'browser' ? 500 : 400,
@@ -1821,7 +1821,7 @@ function _AgentsTab({ items, onRefresh, onContentResize, modalCardRef }: AgentsT
             borderRadius: 6,
             border: 'none',
             backgroundColor: activeSubtab === 'cli' ? 'rgba(16,185,129,0.25)' : 'transparent',
-            color: activeSubtab === 'cli' ? '#10b981' : '#6b7280',
+            color: activeSubtab === 'cli' ? '#10b981' : '#abafb8',
             fontSize: '0.8rem',
             cursor: 'pointer',
             fontWeight: activeSubtab === 'cli' ? 500 : 400,
@@ -1838,7 +1838,7 @@ function _AgentsTab({ items, onRefresh, onContentResize, modalCardRef }: AgentsT
             borderRadius: 6,
             border: 'none',
             backgroundColor: activeSubtab === 'app' ? 'rgba(236,72,153,0.25)' : 'transparent',
-            color: activeSubtab === 'app' ? '#ec4899' : '#6b7280',
+            color: activeSubtab === 'app' ? '#ec4899' : '#abafb8',
             fontSize: '0.8rem',
             cursor: 'pointer',
             fontWeight: activeSubtab === 'app' ? 500 : 400,
@@ -1908,7 +1908,7 @@ function _AgentsTab({ items, onRefresh, onContentResize, modalCardRef }: AgentsT
               <span style={{ fontWeight: 600, fontSize: '0.9rem', color: '#c7d2fe' }}>
                 {creatingAgent.domain ? creatingAgent.domain.split('.')[0].replace(/^./, c => c.toUpperCase()) : 'New Agent'}
               </span>
-              <span style={{ fontSize: '0.72rem', color: '#6b7280' }}>
+              <span style={{ fontSize: '0.72rem', color: '#abafb8' }}>
                 ({creatingAgent.domain || 'building…'})
               </span>
             </div>
@@ -1925,7 +1925,7 @@ function _AgentsTab({ items, onRefresh, onContentResize, modalCardRef }: AgentsT
         <div style={{
           textAlign: 'center',
           padding: 60,
-          color: '#6b7280',
+          color: '#abafb8',
         }}>
           <div style={{ marginBottom: 16, display: 'flex', justifyContent: 'center' }}>
             <div style={{ width: 56, height: 56, borderRadius: 12, backgroundColor: 'rgba(245,158,11,0.12)', border: '1px solid rgba(245,158,11,0.25)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
@@ -1992,7 +1992,7 @@ function _AgentsTab({ items, onRefresh, onContentResize, modalCardRef }: AgentsT
         <div style={{ marginTop: 8 }}>
           {/* Empty state */}
           {cliAgents.length === 0 && (
-            <div style={{ textAlign: 'center', padding: 50, color: '#6b7280' }}>
+            <div style={{ textAlign: 'center', padding: 50, color: '#abafb8' }}>
               <div style={{ marginBottom: 16, display: 'flex', justifyContent: 'center' }}>
                 <div style={{ width: 56, height: 56, borderRadius: 12, backgroundColor: 'rgba(16,185,129,0.12)', border: '1px solid rgba(16,185,129,0.25)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                   <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#10b981" strokeWidth="1.6"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg>
@@ -2055,7 +2055,7 @@ function _AgentsTab({ items, onRefresh, onContentResize, modalCardRef }: AgentsT
                           </span>
                         )}
                       </div>
-                      <div style={{ fontSize: '0.7rem', color: '#6b7280', marginTop: 2 }}>
+                      <div style={{ fontSize: '0.7rem', color: '#abafb8', marginTop: 2 }}>
                         {agent.cliTool && <span>CLI: <code style={{ color: '#10b981', fontSize: '0.68rem' }}>{agent.cliTool}</code></span>}
                         {agent.service && <span style={{ marginLeft: agent.cliTool ? 8 : 0 }}>Service: {agent.service}</span>}
                         {agent.lastValidated && <span style={{ marginLeft: 8 }}>Validated: {timeAgo(agent.lastValidated)}</span>}
@@ -2097,7 +2097,7 @@ function _AgentsTab({ items, onRefresh, onContentResize, modalCardRef }: AgentsT
                     ) : (
                       <button
                         onClick={() => { setCliConfirmDelete(agent.id); setTimeout(() => setCliConfirmDelete(null), 3000); }}
-                        style={{ padding: '3px 8px', borderRadius: 5, border: '1px solid rgba(255,255,255,0.08)', background: 'transparent', color: '#6b7280', fontSize: '0.63rem', cursor: 'pointer' }}
+                        style={{ padding: '3px 8px', borderRadius: 5, border: '1px solid rgba(255,255,255,0.08)', background: 'transparent', color: '#abafb8', fontSize: '0.63rem', cursor: 'pointer' }}
                       >
                         Delete
                       </button>
@@ -2126,12 +2126,12 @@ function _AgentsTab({ items, onRefresh, onContentResize, modalCardRef }: AgentsT
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
                   <div>
                     <div style={{ fontSize: '1rem', fontWeight: 600, color: '#fff' }}>{cliDetailAgent.id}</div>
-                    <div style={{ fontSize: '0.75rem', color: '#6b7280', marginTop: 2 }}>
+                    <div style={{ fontSize: '0.75rem', color: '#abafb8', marginTop: 2 }}>
                       {cliDetailAgent.cliTool && <span>CLI: <code style={{ color: '#10b981' }}>{cliDetailAgent.cliTool}</code></span>}
                       {cliDetailAgent.service && <span style={{ marginLeft: 10 }}>Service: {cliDetailAgent.service}</span>}
                     </div>
                   </div>
-                  <button onClick={() => { setCliDetailAgent(null); setCliDetailData(null); setPreflightSetupData(null); }} style={{ background: 'none', border: 'none', color: '#6b7280', cursor: 'pointer', fontSize: '1.2rem' }}>x</button>
+                  <button onClick={() => { setCliDetailAgent(null); setCliDetailData(null); setPreflightSetupData(null); }} style={{ background: 'none', border: 'none', color: '#abafb8', cursor: 'pointer', fontSize: '1.2rem' }}>x</button>
                 </div>
                 {/* Status */}
                 <div style={{ marginBottom: 14, display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -2140,7 +2140,7 @@ function _AgentsTab({ items, onRefresh, onContentResize, modalCardRef }: AgentsT
                     {cliStatusLabel(cliDetailAgent.status)}
                   </span>
                   {cliDetailAgent.lastValidated && (
-                    <span style={{ fontSize: '0.7rem', color: '#6b7280' }}>Last validated: {timeAgo(cliDetailAgent.lastValidated)}</span>
+                    <span style={{ fontSize: '0.7rem', color: '#abafb8' }}>Last validated: {timeAgo(cliDetailAgent.lastValidated)}</span>
                   )}
                 </div>
                 {/* Missing Configuration warning — shows when preflight detected a setup issue */}
@@ -2177,7 +2177,7 @@ function _AgentsTab({ items, onRefresh, onContentResize, modalCardRef }: AgentsT
                       <div style={{ marginBottom: 6, display: 'flex', alignItems: 'center', gap: 6 }}>
                         <span style={{ fontSize: '0.65rem', color: '#9ca3af' }}>Install: </span>
                         <code style={{ fontSize: '0.68rem', color: '#10b981', background: 'rgba(16,185,129,0.08)', padding: '2px 6px', borderRadius: 4 }}>{setupInfo.installCmd}</code>
-                        <button onClick={() => { navigator.clipboard?.writeText(setupInfo.installCmd); setCopiedCmd('install'); setTimeout(() => setCopiedCmd(null), 2000); }} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '2px', color: copiedCmd === 'install' ? '#10b981' : '#6b7280' }}>
+                        <button onClick={() => { navigator.clipboard?.writeText(setupInfo.installCmd); setCopiedCmd('install'); setTimeout(() => setCopiedCmd(null), 2000); }} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '2px', color: copiedCmd === 'install' ? '#10b981' : '#abafb8' }}>
                           {copiedCmd === 'install' ? '✓' : <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>}
                         </button>
                       </div>
@@ -2187,7 +2187,7 @@ function _AgentsTab({ items, onRefresh, onContentResize, modalCardRef }: AgentsT
                       <div style={{ marginBottom: 6, display: 'flex', alignItems: 'center', gap: 6 }}>
                         <span style={{ fontSize: '0.65rem', color: '#9ca3af' }}>Init: </span>
                         <code style={{ fontSize: '0.68rem', color: '#a78bfa', background: 'rgba(167,139,250,0.08)', padding: '2px 6px', borderRadius: 4 }}>{setupInfo.initCmd}</code>
-                        <button onClick={() => { navigator.clipboard?.writeText(setupInfo.initCmd); setCopiedCmd('init'); setTimeout(() => setCopiedCmd(null), 2000); }} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '2px', color: copiedCmd === 'init' ? '#a78bfa' : '#6b7280' }}>
+                        <button onClick={() => { navigator.clipboard?.writeText(setupInfo.initCmd); setCopiedCmd('init'); setTimeout(() => setCopiedCmd(null), 2000); }} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '2px', color: copiedCmd === 'init' ? '#a78bfa' : '#abafb8' }}>
                           {copiedCmd === 'init' ? '✓' : <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>}
                         </button>
                       </div>
@@ -2197,7 +2197,7 @@ function _AgentsTab({ items, onRefresh, onContentResize, modalCardRef }: AgentsT
                       <div style={{ marginBottom: 6, display: 'flex', alignItems: 'center', gap: 6 }}>
                         <span style={{ fontSize: '0.65rem', color: '#9ca3af' }}>Auth: </span>
                         <code style={{ fontSize: '0.68rem', color: '#fbbf24', background: 'rgba(251,191,36,0.08)', padding: '2px 6px', borderRadius: 4 }}>{setupInfo.authCmd}</code>
-                        <button onClick={() => { navigator.clipboard?.writeText(setupInfo.authCmd); setCopiedCmd('auth'); setTimeout(() => setCopiedCmd(null), 2000); }} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '2px', color: copiedCmd === 'auth' ? '#fbbf24' : '#6b7280' }}>
+                        <button onClick={() => { navigator.clipboard?.writeText(setupInfo.authCmd); setCopiedCmd('auth'); setTimeout(() => setCopiedCmd(null), 2000); }} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '2px', color: copiedCmd === 'auth' ? '#fbbf24' : '#abafb8' }}>
                           {copiedCmd === 'auth' ? '✓' : <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>}
                         </button>
                       </div>
@@ -2207,7 +2207,7 @@ function _AgentsTab({ items, onRefresh, onContentResize, modalCardRef }: AgentsT
                       <div style={{ marginBottom: 6, display: 'flex', alignItems: 'center', gap: 6 }}>
                         <span style={{ fontSize: '0.65rem', color: '#9ca3af' }}>Verify: </span>
                         <code style={{ fontSize: '0.68rem', color: '#60a5fa', background: 'rgba(59,130,246,0.08)', padding: '2px 6px', borderRadius: 4 }}>{setupInfo.verifyCmd}</code>
-                        <button onClick={() => { navigator.clipboard?.writeText(setupInfo.verifyCmd); setCopiedCmd('verify'); setTimeout(() => setCopiedCmd(null), 2000); }} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '2px', color: copiedCmd === 'verify' ? '#60a5fa' : '#6b7280' }}>
+                        <button onClick={() => { navigator.clipboard?.writeText(setupInfo.verifyCmd); setCopiedCmd('verify'); setTimeout(() => setCopiedCmd(null), 2000); }} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '2px', color: copiedCmd === 'verify' ? '#60a5fa' : '#abafb8' }}>
                           {copiedCmd === 'verify' ? '✓' : <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>}
                         </button>
                       </div>
@@ -2317,7 +2317,7 @@ function _AgentsTab({ items, onRefresh, onContentResize, modalCardRef }: AgentsT
                             fontSize: '0.7rem',
                           }}
                         />
-                        <span style={{ color: '#6b7280', fontSize: '0.75rem' }}>=</span>
+                        <span style={{ color: '#abafb8', fontSize: '0.75rem' }}>=</span>
                         {/* Value input */}
                         <input
                           type="password"
@@ -2435,7 +2435,7 @@ function _AgentsTab({ items, onRefresh, onContentResize, modalCardRef }: AgentsT
                                   border: '1px solid rgba(107,114,128,0.3)',
                                   borderRadius: 3,
                                   cursor: 'pointer',
-                                  color: '#6b7280',
+                                  color: '#abafb8',
                                   display: 'flex',
                                   alignItems: 'center',
                                 }}
@@ -2466,7 +2466,7 @@ function _AgentsTab({ items, onRefresh, onContentResize, modalCardRef }: AgentsT
                 )}
                 {/* Loading detail data */}
                 {!cliDetailData && (
-                  <div style={{ textAlign: 'center', padding: 20, color: '#6b7280', fontSize: '0.75rem' }}>Loading details...</div>
+                  <div style={{ textAlign: 'center', padding: 20, color: '#abafb8', fontSize: '0.75rem' }}>Loading details...</div>
                 )}
                 {cliDetailData && (
                   <>
@@ -2488,7 +2488,7 @@ function _AgentsTab({ items, onRefresh, onContentResize, modalCardRef }: AgentsT
                           <div style={{ background: 'rgba(0,0,0,0.2)', borderRadius: 8, padding: '10px 12px', marginTop: 4 }}>
                             {configFields.map((field) => (
                               <div key={field.key} style={{ marginBottom: 8 }}>
-                                <div style={{ fontSize: '0.65rem', color: '#6b7280', marginBottom: 2 }}>{field.label}</div>
+                                <div style={{ fontSize: '0.65rem', color: '#abafb8', marginBottom: 2 }}>{field.label}</div>
                                 <div style={{ 
                                   fontSize: '0.7rem', color: '#10b981', fontFamily: 'monospace',
                                   background: 'rgba(16,185,129,0.08)', padding: '4px 8px', borderRadius: 4,
@@ -2580,7 +2580,7 @@ function _AgentsTab({ items, onRefresh, onContentResize, modalCardRef }: AgentsT
                               onClick={() => { setIsEditingDescriptor(false); setEditedDescriptor(cliDetailData.descriptor || ''); }}
                               style={{ 
                                 padding: '3px 8px', borderRadius: 4, border: '1px solid rgba(107,114,128,0.3)', 
-                                background: 'transparent', color: '#6b7280', fontSize: '0.65rem', cursor: 'pointer'
+                                background: 'transparent', color: '#abafb8', fontSize: '0.65rem', cursor: 'pointer'
                               }}
                             >
                               Cancel
@@ -2619,7 +2619,7 @@ function _AgentsTab({ items, onRefresh, onContentResize, modalCardRef }: AgentsT
       {/* {activeSubtab === 'app' && (
         <div style={{ marginTop: 8 }}>
           {appAgents.length === 0 && (
-            <div style={{ textAlign: 'center', padding: 50, color: '#6b7280' }}>
+            <div style={{ textAlign: 'center', padding: 50, color: '#abafb8' }}>
               <div style={{ marginBottom: 16, display: 'flex', justifyContent: 'center' }}>
                 <div style={{ width: 56, height: 56, borderRadius: 12, backgroundColor: 'rgba(236,72,153,0.12)', border: '1px solid rgba(236,72,153,0.25)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                   <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#ec4899" strokeWidth="1.6"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="9" y1="9" x2="15" y2="9"/><line x1="9" y1="13" x2="15" y2="13"/><line x1="9" y1="17" x2="13" y2="17"/></svg>
@@ -2664,7 +2664,7 @@ function _AgentsTab({ items, onRefresh, onContentResize, modalCardRef }: AgentsT
                       <div style={{ fontSize: '0.78rem', fontWeight: 600, color: '#e5e7eb' }}>
                         {agent.name || agent.id.replace(/\.agent$/i, '')}
                       </div>
-                      <div style={{ fontSize: '0.62rem', color: '#6b7280' }}>
+                      <div style={{ fontSize: '0.62rem', color: '#abafb8' }}>
                         {agent.id} · {agent.status}
                       </div>
                     </div>

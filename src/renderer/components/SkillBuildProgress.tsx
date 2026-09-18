@@ -8,7 +8,7 @@ function highlightJS(code: string): string {
     // Full-line // comment
     const commentMatch = line.match(/^(\s*)((\/\/.*)$)/);
     if (commentMatch) {
-      return esc(commentMatch[1]) + `<span style="color:#6b7280;font-style:italic">${esc(commentMatch[2])}</span>`;
+      return esc(commentMatch[1]) + `<span style="color:#abafb8;font-style:italic">${esc(commentMatch[2])}</span>`;
     }
     // Inline // comment — split at first //
     const inlineIdx = line.indexOf('//');
@@ -29,7 +29,7 @@ function highlightJS(code: string): string {
         m => `<span style="color:#93c5fd">${m}</span>`);
 
     if (commentPart) {
-      result += `<span style="color:#6b7280;font-style:italic">${esc(commentPart)}</span>`;
+      result += `<span style="color:#abafb8;font-style:italic">${esc(commentPart)}</span>`;
     }
     return result;
   }).join('\n');
@@ -436,7 +436,7 @@ export default function SkillBuildProgress({ state, onAnswer, onCancel, onOpenUr
           <button onClick={onCancel}
             style={{
               background: 'none', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 5,
-              cursor: 'pointer', color: '#6b7280', fontSize: '0.65rem', padding: '2px 7px',
+              cursor: 'pointer', color: '#abafb8', fontSize: '0.65rem', padding: '2px 7px',
             }}>
             Cancel
           </button>
@@ -502,12 +502,12 @@ export default function SkillBuildProgress({ state, onAnswer, onCancel, onOpenUr
                   <div className="flex items-center gap-2 flex-wrap">
                     <SkillBadge
                       label={step.badge}
-                      color={isDoneStep ? '#86efac' : isRunning ? '#93c5fd' : isPaused ? '#fb923c' : isFailed ? '#fca5a5' : '#6b7280'}
+                      color={isDoneStep ? '#86efac' : isRunning ? '#93c5fd' : isPaused ? '#fb923c' : isFailed ? '#fca5a5' : '#abafb8'}
                       bg={isDoneStep ? 'rgba(34,197,94,0.12)' : isRunning ? 'rgba(59,130,246,0.12)' : isPaused ? 'rgba(249,115,22,0.12)' : isFailed ? 'rgba(239,68,68,0.1)' : 'rgba(255,255,255,0.04)'}
                       border={isDoneStep ? 'rgba(34,197,94,0.3)' : isRunning ? 'rgba(59,130,246,0.25)' : isPaused ? 'rgba(249,115,22,0.35)' : isFailed ? 'rgba(239,68,68,0.25)' : 'rgba(255,255,255,0.08)'}
                     />
                     <span style={{
-                      fontSize: '0.71rem', color: isRunning ? '#e5e7eb' : isDoneStep ? '#9ca3af' : isPaused ? '#fb923c' : '#6b7280',
+                      fontSize: '0.71rem', color: isRunning ? '#e5e7eb' : isDoneStep ? '#9ca3af' : isPaused ? '#fb923c' : '#abafb8',
                     }}>
                       {step.label}
                     </span>
@@ -540,13 +540,13 @@ export default function SkillBuildProgress({ state, onAnswer, onCancel, onOpenUr
                           <div key={ii} className="flex items-start gap-1.5" style={{ marginTop: 3 }}>
                             <span style={{
                               fontSize: '0.63rem', flexShrink: 0, marginTop: 1,
-                              color: issue.severity === 'error' ? '#f87171' : issue.severity === 'warning' ? '#f59e0b' : '#6b7280',
+                              color: issue.severity === 'error' ? '#f87171' : issue.severity === 'warning' ? '#f59e0b' : '#abafb8',
                             }}>
                               {issue.severity === 'error' ? '✕' : issue.severity === 'warning' ? '△' : 'ℹ'}
                             </span>
                             <span style={{
                               fontSize: '0.65rem', lineHeight: 1.4,
-                              color: issue.severity === 'error' ? '#fca5a5' : issue.severity === 'warning' ? '#fcd34d' : '#6b7280',
+                              color: issue.severity === 'error' ? '#fca5a5' : issue.severity === 'warning' ? '#fcd34d' : '#abafb8',
                             }}>
                               {issue.line != null && (
                                 <span style={{ fontFamily: 'ui-monospace,monospace', opacity: 0.55, marginRight: 4 }}>L{issue.line}</span>
@@ -610,7 +610,7 @@ export default function SkillBuildProgress({ state, onAnswer, onCancel, onOpenUr
             </span>
             {tokenCount != null && tokenCount > 0 && (phase === 'building' || phase === 'fixing') && (
               <span style={{
-                marginLeft: 'auto', fontSize: '0.6rem', color: '#6b7280',
+                marginLeft: 'auto', fontSize: '0.6rem', color: '#abafb8',
                 fontFamily: 'ui-monospace,monospace', background: 'rgba(255,255,255,0.04)',
                 padding: '1px 5px', borderRadius: 4, border: '1px solid rgba(255,255,255,0.06)',
               }}>
@@ -683,7 +683,7 @@ export default function SkillBuildProgress({ state, onAnswer, onCancel, onOpenUr
                       Recommended
                     </span>
                   </div>
-                  <div style={{ color: '#6b7280', fontSize: '0.67rem', lineHeight: 1.4 }}>
+                  <div style={{ color: '#abafb8', fontSize: '0.67rem', lineHeight: 1.4 }}>
                     We walk you through getting {serviceContext ? `your ${serviceContext} credentials` : 'the required keys'} step by step.
                   </div>
                 </div>
@@ -705,7 +705,7 @@ export default function SkillBuildProgress({ state, onAnswer, onCancel, onOpenUr
                   <div style={{ color: '#a5b4fc', fontSize: '0.72rem', fontWeight: 600, marginBottom: 2 }}>
                     Do it for me
                   </div>
-                  <div style={{ color: '#6b7280', fontSize: '0.67rem', lineHeight: 1.4 }}>
+                  <div style={{ color: '#abafb8', fontSize: '0.67rem', lineHeight: 1.4 }}>
                     ThinkDrop opens the browser and sets up{serviceContext ? ` ${serviceContext}` : ' the service'} for you automatically.
                   </div>
                 </div>
@@ -726,12 +726,12 @@ export default function SkillBuildProgress({ state, onAnswer, onCancel, onOpenUr
                 <div>
                   <div style={{ color: '#9ca3af', fontSize: '0.72rem', fontWeight: 600, marginBottom: 2 }}>
                     Edit the code yourself
-                    <span style={{ marginLeft: 6, fontSize: '0.6rem', color: '#6b7280',
+                    <span style={{ marginLeft: 6, fontSize: '0.6rem', color: '#abafb8',
                       background: 'rgba(107,114,128,0.12)', padding: '1px 5px', borderRadius: 3, fontWeight: 400 }}>
                       Developers only
                     </span>
                   </div>
-                  <div style={{ color: '#6b7280', fontSize: '0.67rem', lineHeight: 1.4 }}>
+                  <div style={{ color: '#abafb8', fontSize: '0.67rem', lineHeight: 1.4 }}>
                     Edit the skill code directly — swap services, add your own logic, hardcode keys.
                   </div>
                 </div>
@@ -743,7 +743,7 @@ export default function SkillBuildProgress({ state, onAnswer, onCancel, onOpenUr
           {setupMode === 'auto' && (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 8, paddingBottom: 12 }}>
               <button onClick={() => setSetupMode('choose')}
-                style={{ alignSelf: 'flex-start', fontSize: '0.65rem', color: '#6b7280',
+                style={{ alignSelf: 'flex-start', fontSize: '0.65rem', color: '#abafb8',
                   background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}>
                 ← Back
               </button>
@@ -757,7 +757,7 @@ export default function SkillBuildProgress({ state, onAnswer, onCancel, onOpenUr
                   <div style={{ color: '#a5b4fc', fontSize: '0.72rem', fontWeight: 600, marginBottom: 2 }}>
                     Opening browser…
                   </div>
-                  <div style={{ color: '#6b7280', fontSize: '0.67rem', lineHeight: 1.4 }}>
+                  <div style={{ color: '#abafb8', fontSize: '0.67rem', lineHeight: 1.4 }}>
                     ThinkDrop is setting up{serviceContext ? ` ${serviceContext}` : ' the service'} automatically.
                     A browser window will open — complete the sign-in and return here.
                   </div>
@@ -790,7 +790,7 @@ export default function SkillBuildProgress({ state, onAnswer, onCancel, onOpenUr
             return (
               <div style={{ display: 'flex', flexDirection: 'column', gap: 8, paddingBottom: 12 }}>
                 <button onClick={() => setSetupMode('choose')}
-                  style={{ alignSelf: 'flex-start', fontSize: '0.65rem', color: '#6b7280',
+                  style={{ alignSelf: 'flex-start', fontSize: '0.65rem', color: '#abafb8',
                     background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}>
                   ← Back
                 </button>
@@ -893,7 +893,7 @@ export default function SkillBuildProgress({ state, onAnswer, onCancel, onOpenUr
           {setupMode === 'developer' && (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 8, paddingBottom: 12 }}>
               <button onClick={() => setSetupMode('choose')}
-                style={{ alignSelf: 'flex-start', fontSize: '0.65rem', color: '#6b7280',
+                style={{ alignSelf: 'flex-start', fontSize: '0.65rem', color: '#abafb8',
                   background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}>
                 ← Back
               </button>

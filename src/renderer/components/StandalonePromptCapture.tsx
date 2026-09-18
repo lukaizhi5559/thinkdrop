@@ -851,7 +851,7 @@ export default function StandalonePromptCapture() {
                     height="14"
                     viewBox="0 0 24 24"
                     fill="none"
-                    stroke={(promptText.trim() || highlights.length > 0) ? '#60a5fa' : '#6b7280'}
+                    stroke={(promptText.trim() || highlights.length > 0) ? '#60a5fa' : '#abafb8'}
                     strokeWidth="2"
                     strokeLinecap="round"
                     strokeLinejoin="round"
@@ -921,7 +921,7 @@ export default function StandalonePromptCapture() {
               width: '26px', height: '26px', borderRadius: '6px',
               backgroundColor: copyButtonGlowing ? 'rgba(59,130,246,0.25)' : 'rgba(255,255,255,0.04)',
               border: `1px solid ${copyButtonGlowing ? 'rgba(59,130,246,0.5)' : 'rgba(255,255,255,0.07)'}`,
-              color: copyButtonGlowing ? '#93c5fd' : '#6b7280',
+              color: copyButtonGlowing ? '#93c5fd' : '#abafb8',
               cursor: copyButtonGlowing ? 'pointer' : 'default',
               transition: 'background-color 0.2s, border-color 0.2s, color 0.2s',
               flexShrink: 0,
@@ -977,7 +977,7 @@ export default function StandalonePromptCapture() {
             padding: '10px 12px',
           }}>
             {/* Settings header */}
-            <div style={{ fontSize: '0.6rem', color: '#6b7280', marginBottom: 10, fontWeight: 600, letterSpacing: '0.05em', textTransform: 'uppercase' }}
+            <div style={{ fontSize: '0.6rem', color: '#abafb8', marginBottom: 10, fontWeight: 600, letterSpacing: '0.05em', textTransform: 'uppercase' }}
             >
               Settings
             </div>
@@ -1053,7 +1053,7 @@ export default function StandalonePromptCapture() {
                     {/* Description */}
                     <div style={{ flex: 1, minWidth: 0 }}>
                       <div style={{ color: '#c4b5fd', fontSize: '0.7rem', fontWeight: 600, marginBottom: 2 }}>{label}</div>
-                      <div style={{ color: '#6b7280', fontSize: '0.64rem', lineHeight: 1.4 }}>{desc}</div>
+                      <div style={{ color: '#abafb8', fontSize: '0.64rem', lineHeight: 1.4 }}>{desc}</div>
                     </div>
                   </div>
                 ))}
@@ -1070,7 +1070,7 @@ export default function StandalonePromptCapture() {
             )}
 
             {skillsLoading ? (
-              <div style={{ color: '#6b7280', fontSize: '0.72rem', padding: '6px 0' }}>Loading…</div>
+              <div style={{ color: '#abafb8', fontSize: '0.72rem', padding: '6px 0' }}>Loading…</div>
             ) : skills.length === 0 ? (
               <div style={{ color: '#4b5563', fontSize: '0.72rem', padding: '6px 0' }}>No installed skills found in ~/.thinkdrop/skills/</div>
             ) : (
@@ -1107,7 +1107,7 @@ export default function StandalonePromptCapture() {
                         {skill.name}
                       </span>
                       {skill.description && (
-                        <span style={{ color: '#6b7280', fontSize: '0.68rem', marginLeft: 6 }}>
+                        <span style={{ color: '#abafb8', fontSize: '0.68rem', marginLeft: 6 }}>
                           — {skill.description.length > 48 ? skill.description.slice(0, 48) + '…' : skill.description}
                         </span>
                       )}
@@ -1144,7 +1144,7 @@ export default function StandalonePromptCapture() {
                             display: 'flex', alignItems: 'center', justifyContent: 'center',
                             width: '22px', height: '22px', background: 'none',
                             border: '1px solid rgba(255,255,255,0.1)', borderRadius: '5px',
-                            cursor: 'pointer', color: '#6b7280',
+                            cursor: 'pointer', color: '#abafb8',
                           }}
                           onMouseEnter={e => {
                             (e.currentTarget as HTMLButtonElement).style.backgroundColor = 'rgba(255,255,255,0.07)';
@@ -1152,7 +1152,7 @@ export default function StandalonePromptCapture() {
                           }}
                           onMouseLeave={e => {
                             (e.currentTarget as HTMLButtonElement).style.backgroundColor = 'transparent';
-                            (e.currentTarget as HTMLButtonElement).style.color = '#6b7280';
+                            (e.currentTarget as HTMLButtonElement).style.color = '#abafb8';
                           }}
                         >
                           <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">

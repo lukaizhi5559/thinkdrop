@@ -337,7 +337,7 @@ function StepIcon({ status, unconfirmed }: { status: StepStatus; unconfirmed?: b
     return (
       <div className="flex-shrink-0 w-4 h-4 rounded-full flex items-center justify-center"
         style={{ backgroundColor: 'rgba(107,114,128,0.12)', border: '1.5px solid #4b5563' }}>
-        <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="#6b7280" strokeWidth="2"
+        <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="#abafb8" strokeWidth="2"
           strokeLinecap="round" strokeLinejoin="round">
           <circle cx="12" cy="12" r="10" />
           <polyline points="12 6 12 12 16 14" />
@@ -748,7 +748,7 @@ function ScoutMatchCard({ scout, onSelect }: { scout: ScoutMatchState; onSelect:
             }}>{match.type}</span>
             <span style={{ color: '#e5e7eb', fontSize: '0.76rem', fontWeight: 600 }}>{match.provider}</span>
             {match.defaultProvider === match.provider && (
-              <span style={{ marginLeft: 'auto', fontSize: '0.62rem', color: '#6b7280', fontStyle: 'italic' }}>recommended</span>
+              <span style={{ marginLeft: 'auto', fontSize: '0.62rem', color: '#abafb8', fontStyle: 'italic' }}>recommended</span>
             )}
             {selected === match.provider && (
               <span style={{ marginLeft: 'auto', color: '#7dd3fc', fontSize: '0.7rem' }}>Building…</span>
@@ -781,7 +781,7 @@ function ScoutMatchCard({ scout, onSelect }: { scout: ScoutMatchState; onSelect:
                 ⚠ {scout.errorHint}
               </div>
             )}
-            <div style={{ color: '#6b7280', fontSize: '0.67rem', marginBottom: 8, lineHeight: 1.4 }}>
+            <div style={{ color: '#abafb8', fontSize: '0.67rem', marginBottom: 8, lineHeight: 1.4 }}>
               {scout.showCarrierDropdown
                 ? 'Select your carrier manually to continue.'
                 : 'Enter your number — carrier is auto-detected. No API key needed.'}
@@ -808,7 +808,7 @@ function ScoutMatchCard({ scout, onSelect }: { scout: ScoutMatchState; onSelect:
                   style={{
                     padding: '5px 8px', borderRadius: 6, fontSize: '0.73rem',
                     backgroundColor: 'rgba(255,255,255,0.07)', border: '1px solid rgba(255,255,255,0.14)',
-                    color: gatewayCarrier ? '#e5e7eb' : '#6b7280', outline: 'none',
+                    color: gatewayCarrier ? '#e5e7eb' : '#abafb8', outline: 'none',
                   }}
                 >
                   <option value="">Select your carrier…</option>
@@ -3799,7 +3799,7 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
                 {projectBuild.message}
               </div>
               {projectBuild.capability && !projectBuild.passed && !projectBuild.failed && (
-                <div style={{ color: '#6b7280', fontSize: '0.66rem', marginTop: 4, fontStyle: 'italic' }}>
+                <div style={{ color: '#abafb8', fontSize: '0.66rem', marginTop: 4, fontStyle: 'italic' }}>
                   Capability: {projectBuild.capability}
                 </div>
               )}
@@ -3807,7 +3807,7 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
                 <div className="flex items-center gap-1.5" style={{ marginTop: 6 }}>
                   <div className="w-2.5 h-2.5 rounded-full border-2 animate-spin flex-shrink-0"
                     style={{ borderColor: '#818cf8', borderTopColor: 'transparent' }} />
-                  <span style={{ color: '#6b7280', fontSize: '0.65rem' }}>
+                  <span style={{ color: '#abafb8', fontSize: '0.65rem' }}>
                     npm install → build → smoke test → retry if needed
                   </span>
                 </div>
@@ -3844,7 +3844,7 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
                 {gatherCredential.question}
               </div>
               {gatherCredential.hint && (
-                <div style={{ color: '#6b7280', fontSize: '0.68rem', marginBottom: 6 }}>
+                <div style={{ color: '#abafb8', fontSize: '0.68rem', marginBottom: 6 }}>
                   {gatherCredential.hint}
                 </div>
               )}
@@ -3908,7 +3908,7 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
               <div style={{ color: '#93bbff', fontSize: '0.76rem', fontWeight: 600, marginBottom: 2 }}>
                 Connect {gatherOAuth.provider.charAt(0).toUpperCase() + gatherOAuth.provider.slice(1)} to continue
               </div>
-              <div style={{ color: '#6b7280', fontSize: '0.68rem', marginBottom: 10 }}>
+              <div style={{ color: '#abafb8', fontSize: '0.68rem', marginBottom: 10 }}>
                 This skill needs {gatherOAuth.provider} access. Click Connect to authenticate via OAuth — your token is stored securely in keychain.
               </div>
               <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -4020,7 +4020,7 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
                         onClick={() => handleGatherAuthAction('use_api', gatherAuthAction.agentId, gatherAuthAction.agentType)}
                         style={{
                           padding: '5px 12px', borderRadius: 6, fontSize: '0.68rem', fontWeight: 400, cursor: 'pointer',
-                          backgroundColor: 'transparent', border: '1px solid rgba(107,114,128,0.25)', color: '#6b7280',
+                          backgroundColor: 'transparent', border: '1px solid rgba(107,114,128,0.25)', color: '#abafb8',
                           alignSelf: 'flex-start',
                         }}
                       >
@@ -4048,7 +4048,7 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
                         onClick={() => handleGatherAuthAction('use_api', gatherAuthAction.agentId, gatherAuthAction.agentType)}
                         style={{
                           padding: '5px 12px', borderRadius: 6, fontSize: '0.68rem', fontWeight: 400, cursor: 'pointer',
-                          backgroundColor: 'transparent', border: '1px solid rgba(107,114,128,0.25)', color: '#6b7280',
+                          backgroundColor: 'transparent', border: '1px solid rgba(107,114,128,0.25)', color: '#abafb8',
                           alignSelf: 'flex-start',
                         }}
                       >
@@ -4086,7 +4086,7 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
                         onClick={() => handleGatherAuthAction(action.value, gatherAuthAction.agentId, gatherAuthAction.agentType)}
                         style={{
                           padding: '6px 12px', borderRadius: 6, fontSize: '0.68rem', fontWeight: 400, cursor: 'pointer',
-                          backgroundColor: 'transparent', border: '1px solid rgba(107,114,128,0.25)', color: '#6b7280',
+                          backgroundColor: 'transparent', border: '1px solid rgba(107,114,128,0.25)', color: '#abafb8',
                           alignSelf: 'flex-start',
                         }}
                       >
@@ -4369,11 +4369,11 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2 flex-wrap">
                       <span className="text-sm" style={{
-                        color: step.status === 'pending' ? '#6b7280'
+                        color: step.status === 'pending' ? '#abafb8'
                           : step.status === 'failed' ? '#fca5a5'
                           : step.status === 'skipped' ? '#fbbf24'
                           : step.status === 'needs_input' ? '#fbbf24'
-                          : step.status === 'deferred' ? '#6b7280'
+                          : step.status === 'deferred' ? '#abafb8'
                           : '#e5e7eb',
                         textDecoration: step.status === 'deferred' ? 'line-through' : undefined,
                         opacity: step.status === 'deferred' ? 0.6 : undefined,
@@ -4424,7 +4424,7 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
                               <span style={{ fontWeight: 600, color: '#818cf8' }}>{agentId}</span>
                               {liveTurn && (
                                 <><span style={{ color: '#4b5563' }}>·</span>
-                                <span style={{ color: '#6b7280' }}>{liveTurn.turn}/{liveTurn.maxTurns} steps</span></>
+                                <span style={{ color: '#abafb8' }}>{liveTurn.turn}/{liveTurn.maxTurns} steps</span></>
                               )}
                             </span>
                           </>
@@ -4435,7 +4435,7 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
                       const out = step.stdout?.trim() || '';
                       if (out.length === 0) {
                         return (
-                          <div className="text-xs mt-0.5" style={{ color: step.unconfirmed ? '#fbbf24' : '#6b7280' }}>
+                          <div className="text-xs mt-0.5" style={{ color: step.unconfirmed ? '#fbbf24' : '#abafb8' }}>
                             {step.unconfirmed ? 'Done — could not verify result' : 'Done'}
                           </div>
                         );
@@ -4446,7 +4446,7 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
                       return (
                         <div className="text-xs mt-0.5 font-mono truncate" style={{ color: step.unconfirmed ? '#fbbf24' : '#6ee7b7' }}>
                           {step.unconfirmed && <span style={{ fontStyle: 'normal' }}>Unverified: </span>}
-                          {preview}<span style={{ color: '#6b7280' }}>{more}</span>
+                          {preview}<span style={{ color: '#abafb8' }}>{more}</span>
                         </div>
                       );
                     })()}
@@ -4471,7 +4471,7 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
                     {step.status === 'running' && !!stepLiveOutput.get(step.index) && (
                       <div style={{ marginTop: 6 }}>
                         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 3 }}>
-                          <span style={{ fontSize: '10px', color: '#6b7280', fontFamily: 'ui-monospace, monospace' }}>terminal output</span>
+                          <span style={{ fontSize: '10px', color: '#abafb8', fontFamily: 'ui-monospace, monospace' }}>terminal output</span>
                           <button
                             onClick={e => { e.stopPropagation(); ipcRenderer?.send('shell:open-terminal', {}); }}
                             style={{ fontSize: '10px', color: '#60a5fa', background: 'none', border: '1px solid rgba(96,165,250,0.3)', borderRadius: 4, padding: '1px 6px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 3 }}
@@ -4551,7 +4551,7 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
                   )}
                   {/* Expand chevron */}
                   {hasOutput && (
-                    <div className="flex-shrink-0 mt-0.5" style={{ color: '#6b7280' }}>
+                    <div className="flex-shrink-0 mt-0.5" style={{ color: '#abafb8' }}>
                       <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor"
                         strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
                         style={{ transform: isExpanded ? 'rotate(180deg)' : 'rotate(0deg)', transition: 'transform 0.15s' }}>
@@ -4644,11 +4644,11 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
                       Please sign in to <strong style={{ color: '#f9fafb' }}>{loginGuidance.serviceDisplay}</strong> in the Chrome window.
                     </div>
                     {loginGuidance.loginUrl && (
-                      <div style={{ fontSize: '10px', color: '#6b7280', marginTop: 3 }}>
+                      <div style={{ fontSize: '10px', color: '#abafb8', marginTop: 3 }}>
                         {loginGuidance.loginUrl}
                       </div>
                     )}
-                    <div style={{ fontSize: '10px', color: '#6b7280', marginTop: 4, fontStyle: 'italic' }}>
+                    <div style={{ fontSize: '10px', color: '#abafb8', marginTop: 4, fontStyle: 'italic' }}>
                       Your request will continue automatically after sign-in.
                     </div>
                     {manualAuthBtnVisible && loginGuidance.sessionId && (
@@ -4697,7 +4697,7 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
                       A browser window is open and waiting. Sign in with Google, Apple, or email — this panel updates automatically once you're in.
                     </div>
                     {taskAuthOverlay.loginUrl && (
-                      <div style={{ fontSize: '10px', color: '#6b7280', marginTop: 6 }}>
+                      <div style={{ fontSize: '10px', color: '#abafb8', marginTop: 6 }}>
                         {taskAuthOverlay.loginUrl}
                       </div>
                     )}
@@ -4746,7 +4746,7 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
                             display: 'flex', alignItems: 'center', gap: 5,
                           }}>
                             <ActionIcon action={t.action} size={11} color={iconColor} />
-                            {t.turn > 0 && <span style={{ color: '#6b7280', fontSize: '10px' }}>{t.turn}.</span>}
+                            {t.turn > 0 && <span style={{ color: '#abafb8', fontSize: '10px' }}>{t.turn}.</span>}
                             {t.action?.action && (
                               <span style={{
                                 color: isFailed ? '#f87171' : isProbeAction ? '#fbbf24' : '#cbd5e1',
@@ -4785,7 +4785,7 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
                             display: 'flex', alignItems: 'center', gap: 5,
                           }}>
                             <ActionIcon action={t.action} size={11} color={iconColor} />
-                            {t.turn > 0 && <span style={{ color: '#6b7280', fontSize: '10px' }}>{t.turn}.</span>}
+                            {t.turn > 0 && <span style={{ color: '#abafb8', fontSize: '10px' }}>{t.turn}.</span>}
                             {t.action?.action && (
                               <span style={{
                                 color: isFailed ? '#f87171' : isProbeAction ? '#fbbf24' : '#cbd5e1',
@@ -4848,7 +4848,7 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
                                 <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                                   <StepIcon status={fs.status === 'pending' ? 'pending' : fs.status === 'running' ? 'running' : fs.status === 'done' ? 'done' : 'failed'} />
                                   <span style={{
-                                    color: fs.status === 'done' ? '#6b7280' : fs.status === 'running' ? '#e2e8f0' : fs.status === 'failed' ? '#fca5a5' : '#94a3b8',
+                                    color: fs.status === 'done' ? '#abafb8' : fs.status === 'running' ? '#e2e8f0' : fs.status === 'failed' ? '#fca5a5' : '#94a3b8',
                                     textDecoration: fs.status === 'done' ? 'line-through' : 'none',
                                   }}>
                                     {fs.action}
@@ -4860,7 +4860,7 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
                                     {subPlan.map((ms) => (
                                       <div key={ms.index} style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: '10px' }}>
                                         <StepIcon status={ms.status === 'pending' ? 'pending' : ms.status === 'running' ? 'running' : ms.status === 'done' ? 'done' : 'failed'} />
-                                        <span style={{ color: ms.status === 'done' ? '#6b7280' : ms.status === 'running' ? '#cbd5e1' : ms.status === 'failed' ? '#fca5a5' : '#94a3b8' }}>
+                                        <span style={{ color: ms.status === 'done' ? '#abafb8' : ms.status === 'running' ? '#cbd5e1' : ms.status === 'failed' ? '#fca5a5' : '#94a3b8' }}>
                                           {ms.action} {ms.target ? `"${ms.target}"` : ''}
                                         </span>
                                       </div>
@@ -4896,7 +4896,7 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
                           const isComplete = entry.type === 'complete';
                           const isFail = isOutcome && entry.outcome && !entry.outcome.ok;
                           const iconColor = isFail ? '#f87171' : isComplete ? (entry.message.startsWith('Completed') ? '#34d399' : '#f87171') : isThought ? '#93c5fd' : '#94a3b8';
-                          const textColor = muted ? '#6b7280' : isFail ? '#fca5a5' : isThought ? '#93c5fd' : '#cbd5e1';
+                          const textColor = muted ? '#abafb8' : isFail ? '#fca5a5' : isThought ? '#93c5fd' : '#cbd5e1';
                           // Live countdown for monitoring entries
                           const remaining = entry.nextCheckInMs
                             ? Math.max(0, Math.ceil((entry.nextCheckInMs - (Date.now() - entry.timestamp)) / 1000))
@@ -4922,7 +4922,7 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
                                 <ActionIcon action={entry.action} size={11} color={iconColor} />
                               )}
                               {entry.turn > 0 && (
-                                <span style={{ color: '#6b7280', fontSize: '10px', flexShrink: 0, minWidth: 18 }}>
+                                <span style={{ color: '#abafb8', fontSize: '10px', flexShrink: 0, minWidth: 18 }}>
                                   {entry.turn}.
                                 </span>
                               )}
@@ -4949,7 +4949,7 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
                             {history.length > 0 && (
                               <div
                                 onClick={toggleExpand}
-                                style={{ fontSize: '10px', color: '#6b7280', cursor: 'pointer', userSelect: 'none', padding: '1px 0' }}
+                                style={{ fontSize: '10px', color: '#abafb8', cursor: 'pointer', userSelect: 'none', padding: '1px 0' }}
                               >
                                 {isExpanded ? '▾ hide' : `▸ ${history.length} previous step${history.length > 1 ? 's' : ''}`}
                               </div>
@@ -5022,7 +5022,7 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
                               }}>
                                 <div style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
                                   <ActionIcon action={t.action} size={11} color={iconColor} />
-                                  <span style={{ color: '#6b7280', fontSize: '10px', flexShrink: 0 }}>
+                                  <span style={{ color: '#abafb8', fontSize: '10px', flexShrink: 0 }}>
                                     {t.turn > 0 ? `${t.turn}.` : ''}
                                   </span>
                                   {t.action?.action && (
@@ -5123,7 +5123,7 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
               </span>
               <button
                 onClick={handlePlanNew}
-                style={{ padding: '2px 8px', borderRadius: 5, backgroundColor: 'transparent', border: '1px solid rgba(107,114,128,0.3)', color: '#6b7280', fontSize: '0.68rem', fontWeight: 500, cursor: 'pointer' }}
+                style={{ padding: '2px 8px', borderRadius: 5, backgroundColor: 'transparent', border: '1px solid rgba(107,114,128,0.3)', color: '#abafb8', fontSize: '0.68rem', fontWeight: 500, cursor: 'pointer' }}
                 onMouseEnter={e => (e.currentTarget.style.backgroundColor = 'rgba(255,255,255,0.07)')}
                 onMouseLeave={e => (e.currentTarget.style.backgroundColor = 'transparent')}
               >
@@ -5198,7 +5198,7 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
             <div style={{ fontSize: '0.67rem', color: '#f87171', marginBottom: 6 }}>{planNameError}</div>
           )}
           {planNameInput && isValidDotName(planNameInput) && (
-            <div style={{ fontSize: '0.67rem', color: '#6b7280', marginBottom: 8, fontStyle: 'italic' }}>
+            <div style={{ fontSize: '0.67rem', color: '#abafb8', marginBottom: 8, fontStyle: 'italic' }}>
               Recall later: &ldquo;Run {planNameInput}&rdquo;
             </div>
           )}
@@ -5221,7 +5221,7 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
             </button>
             <button
               onClick={() => setShowNamePlan(false)}
-              style={{ padding: '5px 12px', borderRadius: 6, fontSize: '0.72rem', cursor: 'pointer', backgroundColor: 'transparent', border: '1px solid rgba(107,114,128,0.3)', color: '#6b7280' }}
+              style={{ padding: '5px 12px', borderRadius: 6, fontSize: '0.72rem', cursor: 'pointer', backgroundColor: 'transparent', border: '1px solid rgba(107,114,128,0.3)', color: '#abafb8' }}
             >
               Skip
             </button>
@@ -5260,7 +5260,7 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
                 <span className="text-xs font-medium truncate" style={{ color: '#93c5fd' }}>
                   {fileName}
                 </span>
-                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="#6b7280" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0, marginLeft: 'auto' }}>
+                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="#abafb8" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0, marginLeft: 'auto' }}>
                   <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
                   <polyline points="15 3 21 3 21 9" />
                   <line x1="10" y1="14" x2="21" y2="3" />
@@ -5601,7 +5601,7 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
 
       {/* ── Planning pulse (no steps yet) ────────────────────────────────── */}
       {phase === 'planning' && steps.length === 0 && (
-        <div className="flex items-center gap-2" style={{ color: '#6b7280' }}>
+        <div className="flex items-center gap-2" style={{ color: '#abafb8' }}>
           <div className="w-1.5 h-1.5 rounded-full bg-blue-500 animate-pulse" />
           <span className="text-xs">{planMessage || 'Analyzing your request...'}</span>
         </div>
@@ -5636,7 +5636,7 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
               {renderWithLinks(guideStep.instruction)}
             </p>
             {guideStep.mode === 'page_event' && (
-              <p className="text-xs mt-2" style={{ color: '#6b7280' }}>
+              <p className="text-xs mt-2" style={{ color: '#abafb8' }}>
                 The browser is highlighting what to click. Once you click it, the guide continues automatically.
               </p>
             )}

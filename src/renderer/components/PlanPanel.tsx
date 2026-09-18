@@ -324,7 +324,7 @@ export default function PlanPanel({ onComplete }: PlanPanelProps) {
               ipcRenderer?.send('plan:new', { planFile });
               setPhase('idle');
             }}
-            style={smallBtnStyle('#6b7280', 'transparent', 'rgba(255,255,255,0.1)')}
+            style={smallBtnStyle('#abafb8', 'transparent', 'rgba(255,255,255,0.1)')}
           >
             New plan
           </button>
@@ -493,7 +493,7 @@ export default function PlanPanel({ onComplete }: PlanPanelProps) {
                 {step.status === 'pending' && <span style={{ color: '#4b5563', fontSize: '0.8rem' }}>○</span>}
               </span>
               <div style={{ minWidth: 0, flex: 1 }}>
-                <span style={{ fontSize: '0.73rem', color: step.status === 'pending' ? '#6b7280' : step.status === 'failed' ? '#fca5a5' : '#d1d5db', lineHeight: 1.4 }}>
+                <span style={{ fontSize: '0.73rem', color: step.status === 'pending' ? '#abafb8' : step.status === 'failed' ? '#fca5a5' : '#d1d5db', lineHeight: 1.4 }}>
                   {step.title}
                 </span>
                 {step.error && (

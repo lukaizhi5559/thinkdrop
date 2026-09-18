@@ -169,7 +169,7 @@ export interface CronItem {
 export function ResultsIcon({ active }: { active: boolean }) {
   return (
     <svg width="13" height="13" viewBox="0 0 24 24" fill="none"
-      stroke={active ? '#60a5fa' : '#6b7280'} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      stroke={active ? '#60a5fa' : '#abafb8'} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
       <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
     </svg>
   );
@@ -178,7 +178,7 @@ export function ResultsIcon({ active }: { active: boolean }) {
 export function QueueIcon({ active }: { active: boolean }) {
   return (
     <svg width="13" height="13" viewBox="0 0 24 24" fill="none"
-      stroke={active ? '#a78bfa' : '#6b7280'} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      stroke={active ? '#a78bfa' : '#abafb8'} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
       <line x1="8" y1="6" x2="21" y2="6"/>
       <line x1="8" y1="12" x2="21" y2="12"/>
       <line x1="8" y1="18" x2="21" y2="18"/>
@@ -192,7 +192,7 @@ export function QueueIcon({ active }: { active: boolean }) {
 export function CronIcon({ active }: { active: boolean }) {
   return (
     <svg width="13" height="13" viewBox="0 0 24 24" fill="none"
-      stroke={active ? '#34d399' : '#6b7280'} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      stroke={active ? '#34d399' : '#abafb8'} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
       <circle cx="12" cy="12" r="10"/>
       <polyline points="12 6 12 12 16 14"/>
     </svg>
@@ -202,7 +202,7 @@ export function CronIcon({ active }: { active: boolean }) {
 export function SkillsIcon({ active }: { active: boolean }) {
   return (
     <svg width="13" height="13" viewBox="0 0 24 24" fill="none"
-      stroke={active ? '#f97316' : '#6b7280'} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      stroke={active ? '#f97316' : '#abafb8'} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
       <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/>
     </svg>
   );
@@ -211,7 +211,7 @@ export function SkillsIcon({ active }: { active: boolean }) {
 export function StoreIcon({ active }: { active: boolean }) {
   return (
     <svg width="13" height="13" viewBox="0 0 24 24" fill="none"
-      stroke={active ? '#a78bfa' : '#6b7280'} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      stroke={active ? '#a78bfa' : '#abafb8'} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
       <path d="M6 2L3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4z"/><line x1="3" y1="6" x2="21" y2="6"/><path d="M16 10a4 4 0 0 1-8 0"/>
     </svg>
   );
@@ -220,7 +220,7 @@ export function StoreIcon({ active }: { active: boolean }) {
 export function ConnectionsIcon({ active }: { active: boolean }) {
   return (
     <svg width="13" height="13" viewBox="0 0 24 24" fill="none"
-      stroke={active ? '#38bdf8' : '#6b7280'} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      stroke={active ? '#38bdf8' : '#abafb8'} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
       <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/>
       <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>
     </svg>
@@ -230,7 +230,7 @@ export function ConnectionsIcon({ active }: { active: boolean }) {
 export function RulesIcon({ active }: { active: boolean }) {
   return (
     <svg width="13" height="13" viewBox="0 0 24 24" fill="none"
-      stroke={active ? '#8b5cf6' : '#6b7280'} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      stroke={active ? '#8b5cf6' : '#abafb8'} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
       <path d="M9 12h.01"/>
       <path d="M15 12h.01"/>
       <path d="M10 16c.5.3 1.2.5 2 .5s1.5-.2 2-.5"/>
@@ -242,7 +242,7 @@ export function RulesIcon({ active }: { active: boolean }) {
 export function SettingsIcon({ active }: { active: boolean }) {
   return (
     <svg width="13" height="13" viewBox="0 0 24 24" fill="none"
-      stroke={active ? '#9ca3af' : '#6b7280'} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      stroke={active ? '#9ca3af' : '#abafb8'} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
       <circle cx="12" cy="12" r="3"/>
       <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/>
     </svg>
@@ -250,7 +250,7 @@ export function SettingsIcon({ active }: { active: boolean }) {
 }
 
 export function AgentsIcon({ active }: { active: boolean }) {
-  const c = active ? '#f59e0b' : '#6b7280';
+  const c = active ? '#f59e0b' : '#abafb8';
   return (
     <svg width="13" height="13" viewBox="0 0 24 24" fill="none"
       stroke={c} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -271,7 +271,7 @@ export function AgentsIcon({ active }: { active: boolean }) {
 }
 
 export function BrainIcon({ active }: { active: boolean }) {
-  const c = active ? '#e879f9' : '#6b7280';
+  const c = active ? '#e879f9' : '#abafb8';
   return (
     <svg width="13" height="13" viewBox="0 0 24 24" fill="none"
       stroke={c} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -321,7 +321,7 @@ export function TabBar({ active, onSelect, queueCount, cronCount, unreadTabs }: 
               border: 'none', background: 'none', cursor: 'pointer',
               borderBottom: isActive ? `2px solid ${tab.activeColor}` : '2px solid transparent',
               marginBottom: -1,
-              color: isActive ? tab.activeColor : '#6b7280',
+              color: isActive ? tab.activeColor : '#abafb8',
               fontSize: '0.65rem', fontWeight: isActive ? 600 : 400,
               transition: 'all 0.15s',
               position: 'relative',
@@ -459,7 +459,7 @@ function QueueItemCard({ item, onRerun, onCancel }: {
                   ✓ {item.skillName}.skill.cjs
                 </div>
                 {item.skillSecrets && item.skillSecrets.length > 0 && (
-                  <div style={{ fontSize: '0.6rem', color: '#6b7280', lineHeight: 1.5 }}>
+                  <div style={{ fontSize: '0.6rem', color: '#abafb8', lineHeight: 1.5 }}>
                     <span style={{ color: '#4b5563' }}>Env vars needed: </span>
                     {item.skillSecrets.map((s, i) => (
                       <span key={s} style={{ color: '#f59e0b', fontFamily: 'ui-monospace,monospace', fontSize: '0.58rem' }}>
@@ -494,7 +494,7 @@ function QueueItemCard({ item, onRerun, onCancel }: {
                 <button onClick={() => setExpanded(e => !e)} style={{
                   marginLeft: 'auto', padding: '1px 6px', borderRadius: 4, fontSize: '0.58rem',
                   cursor: 'pointer', background: 'rgba(255,255,255,0.05)',
-                  border: '1px solid rgba(255,255,255,0.1)', color: '#6b7280',
+                  border: '1px solid rgba(255,255,255,0.1)', color: '#abafb8',
                 }}>{expanded ? '▲ Hide' : `▼ ${rounds.length} round${rounds.length > 1 ? 's' : ''}`}</button>
               )}
             </div>
@@ -522,9 +522,9 @@ function QueueItemCard({ item, onRerun, onCancel }: {
             return (
               <div key={r.round} style={{ fontSize: '0.64rem', color: '#d1d5db' }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 3 }}>
-                  <span style={{ color: '#6b7280', fontFamily: 'ui-monospace,monospace', fontSize: '0.6rem' }}>R{r.round}</span>
+                  <span style={{ color: '#abafb8', fontFamily: 'ui-monospace,monospace', fontSize: '0.6rem' }}>R{r.round}</span>
                   <span style={{ color: vc, fontWeight: 600, fontSize: '0.6rem' }}>{r.verdict}</span>
-                  {r.score != null && <span style={{ color: '#6b7280', fontSize: '0.6rem' }}>score {r.score}</span>}
+                  {r.score != null && <span style={{ color: '#abafb8', fontSize: '0.6rem' }}>score {r.score}</span>}
                 </div>
                 {r.blockers.length > 0 && (
                   <div style={{ paddingLeft: 10, borderLeft: `2px solid rgba(248,113,113,0.3)`, marginBottom: 3 }}>
@@ -564,7 +564,7 @@ export function QueueTab({ items, onRerun, onCancel }: {
         <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
           padding: '36px 16px', gap: 10, opacity: 0.5 }}>
           <QueueIcon active={false} />
-          <span style={{ color: '#6b7280', fontSize: '0.72rem', textAlign: 'center', lineHeight: 1.6 }}>
+          <span style={{ color: '#abafb8', fontSize: '0.72rem', textAlign: 'center', lineHeight: 1.6 }}>
             No tasks in queue.<br/>Complex prompts are planned here in the background.
           </span>
         </div>
@@ -631,7 +631,7 @@ function CronItemCard({ item, onToggle, onDelete, onRerun }: {
               </span>
             )}
           </div>
-          <div style={{ fontSize: '0.65rem', color: '#6b7280', display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+          <div style={{ fontSize: '0.65rem', color: '#abafb8', display: 'flex', flexWrap: 'wrap', gap: 8 }}>
             <span style={{ display: 'flex', alignItems: 'center', gap: 3 }}>
               <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
                 <circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>
@@ -700,7 +700,7 @@ function CronItemCard({ item, onToggle, onDelete, onRerun }: {
               </button>
               <button onClick={(e) => { e.stopPropagation(); setConfirmDelete(false); }} title="Cancel"
                 style={{ padding: '3px 6px', borderRadius: 4, cursor: 'pointer', fontSize: '0.6rem',
-                  background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)', color: '#6b7280' }}>
+                  background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)', color: '#abafb8' }}>
                 No
               </button>
             </div>
@@ -739,7 +739,7 @@ function CronItemCard({ item, onToggle, onDelete, onRerun }: {
                       <div style={{ fontSize: '0.6rem', color: '#f87171', marginTop: 1 }}>{step.error.slice(0, 120)}</div>
                     )}
                     {step.thoughts && (
-                      <div style={{ fontSize: '0.6rem', color: '#6b7280', marginTop: 1, fontStyle: 'italic',
+                      <div style={{ fontSize: '0.6rem', color: '#abafb8', marginTop: 1, fontStyle: 'italic',
                         overflowWrap: 'break-word', wordBreak: 'break-word' }}>
                         → {step.thoughts.slice(0, 500)}
                       </div>
@@ -771,7 +771,7 @@ function _CronTab({ items, onToggle, onDelete, onRerun }: {
       <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
         padding: '36px 16px', gap: 10, opacity: 0.5 }}>
         <CronIcon active={false} />
-        <span style={{ color: '#6b7280', fontSize: '0.72rem', textAlign: 'center', lineHeight: 1.6 }}>
+        <span style={{ color: '#abafb8', fontSize: '0.72rem', textAlign: 'center', lineHeight: 1.6 }}>
           No scheduled tasks.<br/>Queue tasks with schedules appear here.
         </span>
       </div>
@@ -1021,7 +1021,7 @@ function OAuthConnectRow({ conn, skillName, onConnect, onScopesChange, onRepairO
               {meta.label} OAuth
             </div>
             {conn.connected && conn.accountHint && (
-              <div style={{ fontSize: '0.58rem', color: '#6b7280', marginTop: 1 }}>{conn.accountHint}</div>
+              <div style={{ fontSize: '0.58rem', color: '#abafb8', marginTop: 1 }}>{conn.accountHint}</div>
             )}
             {scopesMissing && (
               <div style={{ fontSize: '0.58rem', color: '#f59e0b', marginTop: 2 }}>
@@ -1037,7 +1037,7 @@ function OAuthConnectRow({ conn, skillName, onConnect, onScopesChange, onRepairO
                     padding: '1px 5px', borderRadius: 3, fontSize: '0.54rem', cursor: 'pointer',
                     background: scopeOpen ? 'rgba(99,102,241,0.15)' : 'rgba(255,255,255,0.04)',
                     border: scopeOpen ? '1px solid rgba(99,102,241,0.4)' : '1px solid rgba(255,255,255,0.1)',
-                    color: scopeOpen ? '#a5b4fc' : '#6b7280',
+                    color: scopeOpen ? '#a5b4fc' : '#abafb8',
                     fontFamily: 'ui-monospace,monospace', display: 'flex', alignItems: 'center', gap: 4,
                   }}
                 >
@@ -1052,7 +1052,7 @@ function OAuthConnectRow({ conn, skillName, onConnect, onScopesChange, onRepairO
                     style={{
                       padding: '1px 6px', borderRadius: 3, fontSize: '0.54rem', cursor: repairing ? 'wait' : 'pointer',
                       background: 'rgba(245,158,11,0.1)', border: '1px solid rgba(245,158,11,0.35)',
-                      color: repairing ? '#6b7280' : '#fbbf24', fontFamily: 'ui-monospace,monospace',
+                      color: repairing ? '#abafb8' : '#fbbf24', fontFamily: 'ui-monospace,monospace',
                     }}
                   >
                     {repairing ? 'Scanning…' : '⚠ Repair'}
@@ -1089,7 +1089,7 @@ function OAuthConnectRow({ conn, skillName, onConnect, onScopesChange, onRepairO
           onClick={e => e.stopPropagation()}
           style={{ borderTop: '1px solid rgba(255,255,255,0.06)', padding: '8px 10px', background: 'rgba(0,0,0,0.2)' }}
         >
-          <div style={{ fontSize: '0.58rem', color: '#6b7280', marginBottom: 6 }}>
+          <div style={{ fontSize: '0.58rem', color: '#abafb8', marginBottom: 6 }}>
             Select the permissions this skill needs. Changes apply on next Connect.
             {conn.connected && <span style={{ color: '#f59e0b' }}> You'll need to Reconnect for scope changes to take effect.</span>}
           </div>
@@ -1234,7 +1234,7 @@ function SkillItemCard({ item, onSaveSecret, onOpenCode, onOAuthConnect, onScope
               )}
             </div>
             {item.trigger && (
-              <div style={{ fontSize: '0.6rem', color: '#6b7280', marginTop: 2, fontStyle: 'italic', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              <div style={{ fontSize: '0.6rem', color: '#abafb8', marginTop: 2, fontStyle: 'italic', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                 "{item.trigger}"
               </div>
             )}
@@ -1266,7 +1266,7 @@ function SkillItemCard({ item, onSaveSecret, onOpenCode, onOAuthConnect, onScope
             <div onClick={e => e.stopPropagation()} style={{ display: 'flex', alignItems: 'center', gap: 4, background: 'rgba(239,68,68,0.12)', border: '1px solid rgba(239,68,68,0.35)', borderRadius: 5, padding: '3px 6px' }}>
               <span style={{ fontSize: '0.58rem', color: '#f87171', whiteSpace: 'nowrap' }}>Delete?</span>
               <button onClick={(e) => { e.stopPropagation(); onDelete(item.name); }} style={{ padding: '2px 6px', borderRadius: 4, cursor: 'pointer', fontSize: '0.58rem', fontWeight: 700, background: 'rgba(239,68,68,0.25)', border: '1px solid rgba(239,68,68,0.5)', color: '#fca5a5' }}>Yes</button>
-              <button onClick={(e) => { e.stopPropagation(); setConfirmDelete(false); }} style={{ padding: '2px 6px', borderRadius: 4, cursor: 'pointer', fontSize: '0.58rem', background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)', color: '#6b7280' }}>No</button>
+              <button onClick={(e) => { e.stopPropagation(); setConfirmDelete(false); }} style={{ padding: '2px 6px', borderRadius: 4, cursor: 'pointer', fontSize: '0.58rem', background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)', color: '#abafb8' }}>No</button>
             </div>
           )}
 
@@ -1351,7 +1351,7 @@ function SkillItemCard({ item, onSaveSecret, onOpenCode, onOAuthConnect, onScope
                         style={{
                           flex: 1, padding: '5px 8px', borderRadius: 5, fontSize: '0.65rem',
                           background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.1)',
-                          color: (secret.stored && !isEditing && !isSaved) ? (isVisible ? '#e5e7eb' : '#6b7280') : '#e5e7eb',
+                          color: (secret.stored && !isEditing && !isSaved) ? (isVisible ? '#e5e7eb' : '#abafb8') : '#e5e7eb',
                           outline: 'none', fontFamily: 'ui-monospace,monospace',
                         }}
                       />
@@ -1359,7 +1359,7 @@ function SkillItemCard({ item, onSaveSecret, onOpenCode, onOAuthConnect, onScope
                         <button
                           onClick={(e) => { e.stopPropagation(); handleToggleReveal(secret.key); }}
                           title={isVisible ? 'Hide value' : 'Show value'}
-                          style={{ padding: '3px 5px', borderRadius: 4, cursor: 'pointer', background: 'transparent', border: '1px solid rgba(255,255,255,0.1)', color: '#6b7280', display: 'flex', alignItems: 'center', flexShrink: 0 }}
+                          style={{ padding: '3px 5px', borderRadius: 4, cursor: 'pointer', background: 'transparent', border: '1px solid rgba(255,255,255,0.1)', color: '#abafb8', display: 'flex', alignItems: 'center', flexShrink: 0 }}
                         >
                           {isVisible ? (
                             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -1397,7 +1397,7 @@ function SkillItemCard({ item, onSaveSecret, onOpenCode, onOAuthConnect, onScope
 
           {/* Schedule line */}
           {item.schedule && item.schedule !== 'on_demand' && (
-            <div style={{ marginTop: 4, display: 'flex', alignItems: 'center', gap: 5, fontSize: '0.6rem', color: '#6b7280' }}>
+            <div style={{ marginTop: 4, display: 'flex', alignItems: 'center', gap: 5, fontSize: '0.6rem', color: '#abafb8' }}>
               <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="#34d399" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                 <circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>
               </svg>
@@ -1498,7 +1498,7 @@ function CreateSkillModal({ isOpen, onClose, onCreate, cardRef }: CreateSkillMod
           </div>
           <div>
             <h3 style={{ margin: 0, color: '#fff', fontSize: '0.95rem', fontWeight: 600 }}>Add Skill</h3>
-            <p style={{ margin: 0, color: '#6b7280', fontSize: '0.72rem' }}>Import an instruction skill from URL or file</p>
+            <p style={{ margin: 0, color: '#abafb8', fontSize: '0.72rem' }}>Import an instruction skill from URL or file</p>
           </div>
         </div>
 
@@ -1508,7 +1508,7 @@ function CreateSkillModal({ isOpen, onClose, onCreate, cardRef }: CreateSkillMod
             style={{
               padding: '5px 12px', borderRadius: 6, border: 'none', fontSize: '0.8rem', cursor: 'pointer',
               backgroundColor: mode === 'url' ? 'rgba(99,102,241,0.2)' : 'transparent',
-              color: mode === 'url' ? '#818cf8' : '#6b7280',
+              color: mode === 'url' ? '#818cf8' : '#abafb8',
               fontWeight: mode === 'url' ? 500 : 400,
             }}>
             From URL
@@ -1517,7 +1517,7 @@ function CreateSkillModal({ isOpen, onClose, onCreate, cardRef }: CreateSkillMod
             style={{
               padding: '5px 12px', borderRadius: 6, border: 'none', fontSize: '0.8rem', cursor: 'pointer',
               backgroundColor: mode === 'file' ? 'rgba(99,102,241,0.2)' : 'transparent',
-              color: mode === 'file' ? '#818cf8' : '#6b7280',
+              color: mode === 'file' ? '#818cf8' : '#abafb8',
               fontWeight: mode === 'file' ? 500 : 400,
             }}>
             From File
@@ -1559,7 +1559,7 @@ function CreateSkillModal({ isOpen, onClose, onCreate, cardRef }: CreateSkillMod
                 transition: 'all 0.15s',
               }}
             >
-              <span style={{ fontSize: '0.75rem', color: dragOver ? '#818cf8' : '#6b7280' }}>
+              <span style={{ fontSize: '0.75rem', color: dragOver ? '#818cf8' : '#abafb8' }}>
                 Drop SKILL.md here
               </span>
             </div>
@@ -1568,19 +1568,19 @@ function CreateSkillModal({ isOpen, onClose, onCreate, cardRef }: CreateSkillMod
 
         {/* Optional overrides */}
         <div style={{ marginBottom: 14 }}>
-          <label style={SKILL_MODAL_LABEL_STYLE}>Name override <span style={{ color: '#6b7280', fontWeight: 400 }}>(optional)</span></label>
+          <label style={SKILL_MODAL_LABEL_STYLE}>Name override <span style={{ color: '#abafb8', fontWeight: 400 }}>(optional)</span></label>
           <input type="text" value={nameOverride} onChange={e => setNameOverride(e.target.value)}
             placeholder="react.best.practices" style={SKILL_MODAL_INPUT_STYLE} />
         </div>
         <div style={{ marginBottom: 18 }}>
-          <label style={SKILL_MODAL_LABEL_STYLE}>Description override <span style={{ color: '#6b7280', fontWeight: 400 }}>(optional)</span></label>
+          <label style={SKILL_MODAL_LABEL_STYLE}>Description override <span style={{ color: '#abafb8', fontWeight: 400 }}>(optional)</span></label>
           <input type="text" value={descriptionOverride} onChange={e => setDescriptionOverride(e.target.value)}
             placeholder="React best practices guidance" style={SKILL_MODAL_INPUT_STYLE} />
         </div>
 
         {/* Actions */}
         <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
-          <button onClick={handleClose} style={{ padding: '8px 15px', borderRadius: 6, border: '1px solid rgba(255,255,255,0.15)', backgroundColor: 'transparent', color: '#6b7280', cursor: 'pointer', fontSize: '0.83rem' }}>
+          <button onClick={handleClose} style={{ padding: '8px 15px', borderRadius: 6, border: '1px solid rgba(255,255,255,0.15)', backgroundColor: 'transparent', color: '#abafb8', cursor: 'pointer', fontSize: '0.83rem' }}>
             Cancel
           </button>
           <button onClick={handleCreate} disabled={!canCreate}
@@ -1697,7 +1697,7 @@ export function _SkillsTab({ items, onSaveSecret, onOpenCode, onOAuthConnect, on
           </div>
           <div style={{ textAlign: 'center' }}>
             <div style={{ color: '#9ca3af', fontSize: '0.85rem', marginBottom: 4 }}>No skills installed yet</div>
-            <div style={{ color: '#6b7280', fontSize: '0.72rem' }}>Click + New to add a skill from URL or file.</div>
+            <div style={{ color: '#abafb8', fontSize: '0.72rem' }}>Click + New to add a skill from URL or file.</div>
           </div>
         </div>
       ) : (
@@ -1864,7 +1864,7 @@ function ProviderCard({ item, onConnect, onDisconnect }: {
 
       {/* Provider name + account hint */}
       <div style={{ flex: 1, minWidth: 0 }}>
-        <div style={{ fontSize: '0.71rem', fontWeight: 600, color: item.connected ? '#e5e7eb' : '#6b7280' }}>
+        <div style={{ fontSize: '0.71rem', fontWeight: 600, color: item.connected ? '#e5e7eb' : '#abafb8' }}>
           {item.label}
         </div>
         {item.connected && item.accountHint ? (
@@ -2044,20 +2044,8 @@ const INPUT_META: Record<string, { label: string; color: string }> = {
 
 const ACTION_COLORS: Record<string, string> = {
   notify: '#60a5fa', question: '#fbbf24', prompt: '#a78bfa',
-  skill: '#34d399', remember: '#22d3ee', watch: '#fb923c', skip: '#6b7280',
+  skill: '#34d399', remember: '#22d3ee', watch: '#fb923c', skip: '#abafb8',
 };
-
-/** Evidence trail — group reinforcement traces by input: "prompt ×1 · screen ×2" */
-function evidenceTrail(t: ThoughtItem): string {
-  const counts = new Map<string, number>();
-  for (const tr of t.reinforcements || []) {
-    const k = tr.input || t.input;
-    counts.set(k, (counts.get(k) || 0) + 1);
-  }
-  return [...counts.entries()]
-    .map(([k, n]) => `${(INPUT_META[k]?.label || k)}${n > 1 ? ` ×${n}` : ''}`)
-    .join(' · ');
-}
 
 function timeAgo(iso?: string | null): string {
   if (!iso) return '';
@@ -2078,7 +2066,7 @@ function ThoughtCard({ t, onDecide }: { t: ThoughtItem; onDecide?: (id: string, 
       padding: '8px 10px', borderRadius: 8,
       backgroundColor: awaiting ? 'rgba(251,191,36,0.06)' : 'rgba(255,255,255,0.03)',
       border: `1px solid ${awaiting ? 'rgba(251,191,36,0.3)' : 'rgba(255,255,255,0.07)'}`,
-      opacity: dim ? 0.5 : 1,
+      opacity: dim ? 0.75 : 1,
       display: 'flex', flexDirection: 'column', gap: 5,
     }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
@@ -2086,27 +2074,29 @@ function ThoughtCard({ t, onDecide }: { t: ThoughtItem; onDecide?: (id: string, 
           fontSize: '0.55rem', fontWeight: 700, padding: '1px 5px', borderRadius: 4,
           backgroundColor: `${meta.color}22`, color: meta.color, textTransform: 'uppercase',
         }}>{meta.label}</span>
+        {t.status === 'triggered' && (
+          <span style={{
+            fontSize: '0.55rem', fontWeight: 700, padding: '1px 5px', borderRadius: 4,
+            backgroundColor: 'rgba(232,121,249,0.18)', color: '#e879f9', textTransform: 'uppercase',
+          }}>Acting</span>
+        )}
+        {t.status === 'thought' && t.score >= 1 && (
+          <span style={{
+            fontSize: '0.55rem', fontWeight: 700, padding: '1px 5px', borderRadius: 4,
+            backgroundColor: 'rgba(232,121,249,0.18)', color: '#e879f9', textTransform: 'uppercase',
+          }}>Ready</span>
+        )}
         {DONE_STATUS[t.status] && (
           <span style={{
             fontSize: '0.55rem', fontWeight: 700, padding: '1px 5px', borderRadius: 4,
             backgroundColor: `${DONE_STATUS[t.status].color}22`, color: DONE_STATUS[t.status].color,
           }}>{DONE_STATUS[t.status].label}</span>
         )}
-        <span style={{ fontSize: '0.55rem', color: '#4b5563', marginLeft: 'auto', flexShrink: 0 }}>
+        <span style={{ fontSize: '0.55rem', color: '#abafb8', marginLeft: 'auto', flexShrink: 0 }}>
           {timeAgo(t.updatedAt)}
         </span>
       </div>
       <div style={{ fontSize: '0.68rem', color: '#d1d5db', lineHeight: 1.4 }}>{t.summary}</div>
-      {(t.entityNames?.length ?? 0) > 0 && (
-        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 3 }}>
-          {t.entityNames.slice(0, 6).map((e, i) => (
-            <span key={i} style={{
-              fontSize: '0.55rem', padding: '0px 5px', borderRadius: 4,
-              backgroundColor: 'rgba(255,255,255,0.06)', color: '#9ca3af',
-            }}>{e}</span>
-          ))}
-        </div>
-      )}
       <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
         <div style={{
           flex: 1, height: 3, borderRadius: 2, backgroundColor: 'rgba(255,255,255,0.08)', overflow: 'hidden',
@@ -2117,10 +2107,13 @@ function ThoughtCard({ t, onDecide }: { t: ThoughtItem; onDecide?: (id: string, 
             borderRadius: 2, transition: 'width 0.4s',
           }} />
         </div>
-        <span style={{ fontSize: '0.55rem', color: '#6b7280' }}>{t.score.toFixed(2)}</span>
+        <span style={{
+          fontSize: '0.55rem', fontWeight: 700,
+          color: progress >= 1 ? '#e879f9' : '#9ca3af',
+        }}>{t.score.toFixed(2)}</span>
       </div>
-      <div style={{ fontSize: '0.55rem', color: '#4b5563' }}>
-        {evidenceTrail(t)}{t.silenceEpisode > 1 ? ` · ep.${t.silenceEpisode}` : ''}
+      <div style={{ fontSize: '0.65rem', color: '#abafb8' }}>
+        created {timeAgo(t.createdAt)}{t.updatedAt !== t.createdAt ? ` · updated ${timeAgo(t.updatedAt)}` : ''}
         {DONE_STATUS[t.status] && t.updatedAt && (() => {
           const left = new Date(t.updatedAt).getTime() + EXPIRED_KEEP_DAYS * 86400000 - Date.now();
           if (left <= 0) return '';
@@ -2129,21 +2122,21 @@ function ThoughtCard({ t, onDecide }: { t: ThoughtItem; onDecide?: (id: string, 
         })()}
       </div>
       {t.action && t.action.type !== 'skip' && (
-        <div style={{ fontSize: '0.58rem', color: '#9ca3af', display: 'flex', gap: 5, alignItems: 'center' }}>
+        <div style={{ fontSize: '0.65rem', color: '#d1d5db', display: 'flex', gap: 5, alignItems: 'center' }}>
           <span style={{
-            fontWeight: 700, color: ACTION_COLORS[t.action.type] || '#9ca3af', textTransform: 'uppercase',
-            fontSize: '0.55rem',
+            fontWeight: 700, color: ACTION_COLORS[t.action.type] || '#d1d5db', textTransform: 'uppercase',
+            fontSize: '0.6rem',
           }}>{t.action.type}</span>
-          {t.action.reason ? <span style={{ color: '#6b7280' }}>{t.action.reason}</span> : null}
+          {t.action.reason ? <span>{t.action.reason}</span> : null}
         </div>
       )}
       {t.shadowAction && (
-        <div style={{ fontSize: '0.56rem', color: '#6b7280', fontStyle: 'italic' }}>
+        <div style={{ fontSize: '0.6rem', color: '#9ca3af', fontStyle: 'italic' }}>
           shadow · would {t.shadowAction.type}{t.shadowAction.text ? `: "${t.shadowAction.text}"` : ''}
         </div>
       )}
       {t.outcomeText && (
-        <div style={{ fontSize: '0.58rem', color: '#6b7280', fontStyle: 'italic' }}>{t.outcomeText}</div>
+        <div style={{ fontSize: '0.65rem', color: '#d1d5db' }}>{t.outcomeText}</div>
       )}
       {Array.isArray((t.action?.payload as any)?.artifacts) && (t.action!.payload as any).artifacts.length > 0 && (
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
@@ -2173,11 +2166,11 @@ function ThoughtCard({ t, onDecide }: { t: ThoughtItem; onDecide?: (id: string, 
         </div>
       )}
       {!awaiting && !dim && onDecide && (
-        <button onClick={() => onDecide(t.id, 'snooze', 60)} title="Snooze this thought for 1 hour" style={{
+        <button onClick={() => onDecide(t.id, 'dismiss')} title="Dismiss this thought" style={{
           alignSelf: 'flex-start', padding: '1px 7px', borderRadius: 4, cursor: 'pointer',
           border: '1px solid rgba(255,255,255,0.1)', background: 'rgba(255,255,255,0.03)',
-          color: '#6b7280', fontSize: '0.52rem',
-        }}>snooze 1h</button>
+          color: '#9ca3af', fontSize: '0.55rem',
+        }}>Dismiss</button>
       )}
     </div>
   );
@@ -2199,7 +2192,7 @@ function WatchCard({ t }: { t: ThoughtItem }) {
           backgroundColor: 'rgba(251,146,60,0.18)', color: '#fb923c', textTransform: 'uppercase',
         }}>watching</span>
         {typeof p.checkType === 'string' && (
-          <span style={{ fontSize: '0.55rem', color: '#6b7280' }}>{String(p.checkType)}</span>
+          <span style={{ fontSize: '0.55rem', color: '#abafb8' }}>{String(p.checkType)}</span>
         )}
         <span style={{ fontSize: '0.55rem', color: '#4b5563', marginLeft: 'auto', flexShrink: 0 }}>
           {minsLeft !== null ? `expires in ${minsLeft}m` : timeAgo(t.updatedAt)}
@@ -2217,10 +2210,18 @@ function WatchCard({ t }: { t: ThoughtItem }) {
 
 const DONE_STATUS: Record<string, { label: string; color: string }> = {
   completed: { label: 'done',      color: '#4ade80' },
-  expired:   { label: 'expired',   color: '#6b7280' },
-  dismissed: { label: 'dismissed', color: '#6b7280' },
+  expired:   { label: 'expired',   color: '#abafb8' },
+  dismissed: { label: 'dismissed', color: '#abafb8' },
 };
 const EXPIRED_KEEP_DAYS = 30; // mirrors EXPIRED_KEEP_DAYS in user-memory thoughts.js
+
+type BrainRange = 'all' | 'today' | 'week' | 'month';
+const RANGE_CUTOFF: Record<Exclude<BrainRange, 'all'>, () => number> = {
+  today: () => { const d = new Date(); d.setHours(0, 0, 0, 0); return d.getTime(); },
+  week:  () => Date.now() - 7 * 86400000,
+  month: () => Date.now() - 30 * 86400000,
+};
+const RANGE_LABELS: Record<BrainRange, string> = { all: 'All', today: 'Today', week: 'This week', month: 'This month' };
 
 export function BrainTab({ thoughts, onDecide, onRefresh }: {
   thoughts: ThoughtItem[];
@@ -2228,11 +2229,21 @@ export function BrainTab({ thoughts, onDecide, onRefresh }: {
   onRefresh?: () => void;
 }) {
   const [view, setView] = React.useState<'live' | 'done'>('live');
-  const awaiting = thoughts.filter(t => t.status === 'awaiting_approval');
-  const watching = thoughts.filter(t => t.status === 'watching');
-  const live = thoughts.filter(t => (t.status === 'thought' || t.status === 'triggered') && t.score > 0);
+  const [liveView, setLiveView] = React.useState<'building' | 'ready'>('building');
+  const [range, setRange] = React.useState<BrainRange>('all');
+  const inRange = (t: ThoughtItem) =>
+    range === 'all' || new Date(t.updatedAt || t.createdAt).getTime() >= RANGE_CUTOFF[range]();
+  const awaiting = thoughts.filter(t => t.status === 'awaiting_approval').filter(inRange);
+  const watching = thoughts.filter(t => t.status === 'watching').filter(inRange);
+  const live = thoughts.filter(t => (t.status === 'thought' || t.status === 'triggered') && t.score > 0)
+    .filter(inRange)
+    .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
   const faded = thoughts.filter(t => (t.status === 'thought' || t.status === 'triggered') && t.score <= 0);
+  const ready = live.filter(t => t.status === 'triggered' || t.score >= 1)
+    .sort((a, b) => b.score - a.score);
+  const building = live.filter(t => t.status !== 'triggered' && t.score < 1);
   const done = thoughts.filter(t => t.status === 'completed' || t.status === 'expired' || t.status === 'dismissed')
+    .filter(inRange)
     .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime())
     .slice(0, 30);
   const liveCount = awaiting.length + watching.length + live.length;
@@ -2252,12 +2263,30 @@ export function BrainTab({ thoughts, onDecide, onRefresh }: {
         letterSpacing: '0.03em', textTransform: 'uppercase',
         background: view === v ? 'rgba(232,121,249,0.14)' : 'rgba(255,255,255,0.03)',
         border: `1px solid ${view === v ? 'rgba(232,121,249,0.4)' : 'rgba(255,255,255,0.08)'}`,
-        color: view === v ? '#e879f9' : '#6b7280',
+        color: view === v ? '#e879f9' : '#abafb8',
+      }}>{label} {count > 0 ? `(${count})` : ''}</button>
+  );
+
+  const livePill = (v: 'building' | 'ready', label: string, count: number) => (
+    <button
+      onClick={() => setLiveView(v)}
+      style={{
+        padding: '3px 8px', borderRadius: 5, cursor: 'pointer', fontSize: '0.6rem', fontWeight: 700,
+        letterSpacing: '0.03em', textTransform: 'uppercase',
+        background: liveView === v ? 'rgba(232,121,249,0.14)' : 'rgba(255,255,255,0.03)',
+        border: `1px solid ${liveView === v ? 'rgba(232,121,249,0.4)' : 'rgba(255,255,255,0.08)'}`,
+        color: liveView === v ? '#e879f9' : '#abafb8',
       }}>{label} {count > 0 ? `(${count})` : ''}</button>
   );
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 7 }}>
+      <div style={{
+        position: 'sticky', top: 0, zIndex: 2,
+        backgroundColor: 'rgba(17,17,24,0.92)', backdropFilter: 'blur(10px)',
+        paddingTop: 8, paddingBottom: 6,
+        display: 'flex', flexDirection: 'column', gap: 7,
+      }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
         <span style={{ fontSize: '0.7rem', fontWeight: 700, color: '#e879f9' }}>Brain</span>
         <div style={{ display: 'flex', gap: 4, marginLeft: 'auto' }}>
@@ -2272,9 +2301,26 @@ export function BrainTab({ thoughts, onDecide, onRefresh }: {
           )}
         </div>
       </div>
+      <div style={{ display: 'flex', gap: 4 }}>
+        {(Object.keys(RANGE_LABELS) as BrainRange[]).map(r => (
+          <button key={r} onClick={() => setRange(r)} style={{
+            padding: '2px 8px', borderRadius: 10, cursor: 'pointer', fontSize: '0.58rem',
+            background: range === r ? 'rgba(255,255,255,0.1)' : 'transparent',
+            border: `1px solid ${range === r ? 'rgba(255,255,255,0.25)' : 'rgba(255,255,255,0.08)'}`,
+            color: range === r ? '#d1d5db' : '#abafb8',
+          }}>{RANGE_LABELS[r]}</button>
+        ))}
+      </div>
+      {view === 'live' && (
+        <div style={{ display: 'flex', gap: 6 }}>
+          {livePill('building', 'Building', building.length)}
+          {livePill('ready', 'Ready to Act', ready.length)}
+        </div>
+      )}
+      </div>
       {thoughts.length === 0 && (
         <div style={{
-          padding: '12px 10px', borderRadius: 7, fontSize: '0.62rem', color: '#6b7280',
+          padding: '12px 10px', borderRadius: 7, fontSize: '0.62rem', color: '#abafb8',
           backgroundColor: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.05)',
           lineHeight: 1.5,
         }}>
@@ -2296,11 +2342,18 @@ export function BrainTab({ thoughts, onDecide, onRefresh }: {
               {watching.map(t => <WatchCard key={t.id} t={t} />)}
             </>
           )}
-          {live.length > 0 && (
-            <>
-              {sectionTitle('Live thoughts', live.length)}
-              {live.map(t => <ThoughtCard key={t.id} t={t} onDecide={onDecide} />)}
-            </>
+          {(liveView === 'building' ? building : ready).map(t => (
+            <ThoughtCard key={t.id} t={t} onDecide={onDecide} />
+          ))}
+          {liveView === 'building' && building.length === 0 && liveCount > 0 && (
+            <div style={{ fontSize: '0.6rem', color: '#4b5563', padding: '6px 2px' }}>
+              Nothing building right now.
+            </div>
+          )}
+          {liveView === 'ready' && ready.length === 0 && liveCount > 0 && (
+            <div style={{ fontSize: '0.6rem', color: '#4b5563', padding: '6px 2px' }}>
+              Nothing queued to act.
+            </div>
           )}
           {liveCount === 0 && thoughts.length > 0 && (
             <div style={{ fontSize: '0.6rem', color: '#4b5563', padding: '6px 2px' }}>

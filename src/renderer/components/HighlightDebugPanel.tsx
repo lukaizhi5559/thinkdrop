@@ -52,7 +52,7 @@ function HighlightDebugPanelImpl({ highlightQuery, onQueryChange, onExecute, onC
         }}
         autoFocus
       />
-      <div style={{ display: 'flex', gap: 8, fontSize: '0.75rem', color: '#6b7280' }}>
+      <div style={{ display: 'flex', gap: 8, fontSize: '0.75rem', color: '#abafb8' }}>
         <span style={{ color: '#4ade80' }}>● all</span>
         <span style={{ color: '#3b82f6' }}>● boundaries</span>
         <span style={{ color: '#facc15' }}>● assets</span>

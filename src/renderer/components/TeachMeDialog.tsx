@@ -138,7 +138,7 @@ export function TeachMeDialog({ question, options, snapshot, onAnswer, onSkip }:
             backgroundColor: 'rgba(0,0,0,0.3)',
             borderRadius: 8,
             fontSize: '0.75rem',
-            color: '#6b7280',
+            color: '#abafb8',
             maxHeight: 100,
             overflow: 'hidden',
           }}>
@@ -160,7 +160,7 @@ export function TeachMeDialog({ question, options, snapshot, onAnswer, onSkip }:
               borderRadius: 6,
               border: '1px solid rgba(255,255,255,0.1)',
               backgroundColor: 'transparent',
-              color: '#6b7280',
+              color: '#abafb8',
               fontSize: '0.85rem',
               cursor: 'pointer',
             }}
@@ -175,7 +175,7 @@ export function TeachMeDialog({ question, options, snapshot, onAnswer, onSkip }:
               borderRadius: 6,
               border: 'none',
               backgroundColor: canContinue ? '#3b82f6' : '#374151',
-              color: canContinue ? '#fff' : '#6b7280',
+              color: canContinue ? '#fff' : '#abafb8',
               fontSize: '0.85rem',
               cursor: canContinue ? 'pointer' : 'not-allowed',
               transition: 'all 0.15s ease',

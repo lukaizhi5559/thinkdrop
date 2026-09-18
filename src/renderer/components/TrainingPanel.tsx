@@ -68,7 +68,7 @@ function StepIcon({ type }: { type: RecordedStep['type'] }) {
     case 'extract':
       return <div style={{ ...styles, background: 'rgba(139,92,246,0.15)', color: '#8b5cf6' }}>GET</div>;
     default:
-      return <div style={{ ...styles, background: 'rgba(107,114,128,0.15)', color: '#6b7280' }}>???</div>;
+      return <div style={{ ...styles, background: 'rgba(107,114,128,0.15)', color: '#abafb8' }}>???</div>;
   }
 }
 
@@ -362,7 +362,7 @@ export function TrainingPanel({ agentId, hostname, onDone: _onDone, onCancel, mo
             <div style={{ fontWeight: 700, fontSize: '0.95rem', color: '#d1fae5', marginBottom: 6 }}>
               Saving Skill…
             </div>
-            <div style={{ fontSize: '0.75rem', color: '#6b7280', marginBottom: 24, maxWidth: 260 }}>
+            <div style={{ fontSize: '0.75rem', color: '#abafb8', marginBottom: 24, maxWidth: 260 }}>
               {savingMessage || 'Building waypoint recipe…'}
             </div>
             <div style={{ width: '80%', maxWidth: 240, height: 3, borderRadius: 99, background: 'rgba(16,185,129,0.12)', overflow: 'hidden' }}>
@@ -377,7 +377,7 @@ export function TrainingPanel({ agentId, hostname, onDone: _onDone, onCancel, mo
               <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="#10b981" strokeWidth="2.5" strokeLinecap="round" style={{ animation: 'spin 1s linear infinite', flexShrink: 0 }}>
                 <path d="M21 12a9 9 0 1 1-6.219-8.56"/>
               </svg>
-              <span style={{ fontSize: '0.7rem', color: '#6b7280', fontStyle: 'italic' }}>LLM cleaning &amp; structuring waypoints…</span>
+              <span style={{ fontSize: '0.7rem', color: '#abafb8', fontStyle: 'italic' }}>LLM cleaning &amp; structuring waypoints…</span>
             </div>
             {/* Cancel button on saving overlay */}
             <button
@@ -422,7 +422,7 @@ export function TrainingPanel({ agentId, hostname, onDone: _onDone, onCancel, mo
                 <div style={{ fontWeight: 600, fontSize: '0.88rem', color: '#c7d2fe', marginBottom: 5 }}>
                   Opening browser…
                 </div>
-                <div style={{ fontSize: '0.72rem', color: '#6b7280', marginBottom: 20, fontFamily: 'ui-monospace, monospace', maxWidth: 260, wordBreak: 'break-all' }}>
+                <div style={{ fontSize: '0.72rem', color: '#abafb8', marginBottom: 20, fontFamily: 'ui-monospace, monospace', maxWidth: 260, wordBreak: 'break-all' }}>
                   {launchingUrl || `https://${hostname}`}
                 </div>
                 <div style={{ width: '80%', maxWidth: 240, height: 3, borderRadius: 99, background: 'rgba(99,102,241,0.12)', overflow: 'hidden' }}>
@@ -437,7 +437,7 @@ export function TrainingPanel({ agentId, hostname, onDone: _onDone, onCancel, mo
                   <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="#818cf8" strokeWidth="2.5" strokeLinecap="round" style={{ animation: 'spin 1s linear infinite', flexShrink: 0 }}>
                     <path d="M21 12a9 9 0 1 1-6.219-8.56"/>
                   </svg>
-                  <span style={{ fontSize: '0.7rem', color: '#6b7280', fontStyle: 'italic' }}>Launching browser &amp; injecting recorder…</span>
+                  <span style={{ fontSize: '0.7rem', color: '#abafb8', fontStyle: 'italic' }}>Launching browser &amp; injecting recorder…</span>
                 </div>
               </div>
             ) : (

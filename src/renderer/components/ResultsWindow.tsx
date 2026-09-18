@@ -744,7 +744,7 @@ export default function ResultsWindow() {
             </div>
             <p style={{ color: '#9ca3af', fontSize: '0.75rem', margin: '0 0 6px', lineHeight: 1.4 }}>{reason}</p>
             {toolDescription && (
-              <p style={{ color: '#6b7280', fontSize: '0.72rem', margin: '0 0 8px', lineHeight: 1.4 }}>{toolDescription}</p>
+              <p style={{ color: '#abafb8', fontSize: '0.72rem', margin: '0 0 8px', lineHeight: 1.4 }}>{toolDescription}</p>
             )}
             <code style={{ display: 'block', padding: '4px 8px', borderRadius: 5, backgroundColor: 'rgba(0,0,0,0.3)', color: '#86efac', fontSize: '0.7rem', fontFamily: 'monospace', marginBottom: 10, wordBreak: 'break-all' }}>{installCmd}</code>
             <div className="flex gap-2">
@@ -758,7 +758,7 @@ export default function ResultsWindow() {
               </button>
               <button
                 onClick={() => handleInstallConfirm(false)}
-                style={{ padding: '5px 14px', borderRadius: 6, backgroundColor: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.12)', color: '#6b7280', fontSize: '0.75rem', fontWeight: 500, cursor: 'pointer', transition: 'all 0.15s' }}
+                style={{ padding: '5px 14px', borderRadius: 6, backgroundColor: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.12)', color: '#abafb8', fontSize: '0.75rem', fontWeight: 500, cursor: 'pointer', transition: 'all 0.15s' }}
                 onMouseEnter={e => (e.currentTarget.style.backgroundColor = 'rgba(255,255,255,0.1)')}
                 onMouseLeave={e => (e.currentTarget.style.backgroundColor = 'rgba(255,255,255,0.05)')}
               >
@@ -848,7 +848,7 @@ export default function ResultsWindow() {
               <svg
                 width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor"
                 strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"
-                style={{ color: '#6b7280', transform: showSourcesPanel ? 'rotate(180deg)' : 'rotate(0deg)', transition: 'transform 0.15s' }}
+                style={{ color: '#abafb8', transform: showSourcesPanel ? 'rotate(180deg)' : 'rotate(0deg)', transition: 'transform 0.15s' }}
               >
                 <polyline points="6 9 12 15 18 9" />
               </svg>
@@ -873,7 +873,7 @@ export default function ResultsWindow() {
                 padding: '6px 0',
               }}
             >
-              <div style={{ padding: '6px 12px 4px', fontSize: '0.65rem', fontWeight: 600, color: '#6b7280', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+              <div style={{ padding: '6px 12px 4px', fontSize: '0.65rem', fontWeight: 600, color: '#abafb8', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
                 Sources
               </div>
               {searchSources.map((src, i) => (
@@ -912,7 +912,7 @@ export default function ResultsWindow() {
                       {src.title || src.hostname}
                     </div>
                     <div style={{
-                      fontSize: '0.62rem', color: '#6b7280',
+                      fontSize: '0.62rem', color: '#abafb8',
                       whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
                     }}>
                       {src.hostname}
@@ -1359,7 +1359,7 @@ export default function ResultsWindow() {
                       : '#10b981',
                 animation: bridgeStatus.cronStatus === 'running' ? 'pulse 1.5s ease-in-out infinite' : 'none',
               }} />
-              <span style={{ color: '#6b7280', fontSize: '0.65rem' }}>Bridge watching</span>
+              <span style={{ color: '#abafb8', fontSize: '0.65rem' }}>Bridge watching</span>
               {bridgeStatus.cronSkillName && bridgeStatus.cronStatus && (
                 <>
                   <span style={{ color: '#374151', fontSize: '0.6rem' }}>·</span>

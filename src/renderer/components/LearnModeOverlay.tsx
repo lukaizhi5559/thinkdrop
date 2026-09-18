@@ -132,7 +132,7 @@ function LearnModeOverlayImpl({ learnMode, onCancel, onDone }: LearnModeOverlayP
                   <div>Failed: <span style={{ color: '#ef4444' }}>{learnMode.scanStats.failed}</span></div>
                   <div>States: <span style={{ color: '#fff' }}>{learnMode.scanStats.states}</span></div>
                 </div>
-                <div style={{ marginTop: '8px', fontSize: '0.7rem', color: '#6b7280' }}>
+                <div style={{ marginTop: '8px', fontSize: '0.7rem', color: '#abafb8' }}>
                   Duration: {learnMode.scanStats.duration}s
                 </div>
               </div>
@@ -194,7 +194,7 @@ function LearnModeOverlayImpl({ learnMode, onCancel, onDone }: LearnModeOverlayP
             </div>
 
             {/* Status message */}
-            <p style={{ margin: '0 0 20px 0', color: '#6b7280', fontSize: '0.75rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={learnMode.message}>
+            <p style={{ margin: '0 0 20px 0', color: '#abafb8', fontSize: '0.75rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={learnMode.message}>
               {learnMode.message}
             </p>
 

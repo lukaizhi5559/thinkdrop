@@ -369,7 +369,7 @@ function PromptInputBarImpl(
               backgroundColor: copyButtonGlowing ? 'rgba(59,130,246,0.25)' : 'rgba(255,255,255,0.05)',
               border: '1px solid',
               borderColor: copyButtonGlowing ? 'rgba(59,130,246,0.5)' : 'rgba(255,255,255,0.1)',
-              color: copyButtonGlowing ? '#93c5fd' : '#6b7280',
+              color: copyButtonGlowing ? '#93c5fd' : '#abafb8',
               cursor: copyButtonGlowing ? 'pointer' : 'default',
               transition: 'background-color 0.2s, border-color 0.2s, color 0.2s',
             }}
@@ -454,7 +454,7 @@ function PromptInputBarImpl(
                 height="14"
                 viewBox="0 0 24 24"
                 fill="none"
-                stroke={hasContent ? '#60a5fa' : '#6b7280'}
+                stroke={hasContent ? '#60a5fa' : '#abafb8'}
                 strokeWidth="2"
                 strokeLinecap="round"
                 strokeLinejoin="round"

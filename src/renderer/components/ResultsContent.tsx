@@ -80,6 +80,8 @@ interface ResultsContentProps {
   bridgeStatus: BridgeStatus | null;
   // Skill build
   skillBuild: SkillBuildState | null;
+  // Thought-engine outreach appended under the response like follow-up messages
+  proactiveMessages: Array<{ id: string; thoughtId: string; text: string; kind: string; ts: number; pending?: boolean }>;
   // AutomationProgress forwarding
   deferredTab: string;
   // Callbacks (all must be useCallback-stabilized)
@@ -117,6 +119,7 @@ function ResultsContentImpl({
   schedulePending,
   bridgeStatus,
   skillBuild,
+  proactiveMessages,
   deferredTab,
   setIsSubmitting,
   setPreflightAuthPending,
@@ -180,7 +183,7 @@ function ResultsContentImpl({
             </div>
             <p style={{ color: '#9ca3af', fontSize: '0.75rem', margin: '0 0 6px', lineHeight: 1.4 }}>{reason}</p>
             {toolDescription && (
-              <p style={{ color: '#6b7280', fontSize: '0.72rem', margin: '0 0 8px', lineHeight: 1.4 }}>{toolDescription}</p>
+              <p style={{ color: '#abafb8', fontSize: '0.72rem', margin: '0 0 8px', lineHeight: 1.4 }}>{toolDescription}</p>
             )}
             <code style={{ display: 'block', padding: '4px 8px', borderRadius: 5, backgroundColor: 'rgba(0,0,0,0.3)', color: '#86efac', fontSize: '0.7rem', fontFamily: 'monospace', marginBottom: 10, wordBreak: 'break-all' }}>{installCmd}</code>
             <div className="flex gap-2">
@@ -192,7 +195,7 @@ function ResultsContentImpl({
               </button>
               <button
                 onClick={() => onInstallConfirm(false)}
-                style={{ padding: '5px 14px', borderRadius: 6, backgroundColor: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.12)', color: '#6b7280', fontSize: '0.75rem', fontWeight: 500, cursor: 'pointer' }}
+                style={{ padding: '5px 14px', borderRadius: 6, backgroundColor: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.12)', color: '#abafb8', fontSize: '0.75rem', fontWeight: 500, cursor: 'pointer' }}
               >
                 Skip
               </button>
@@ -228,14 +231,14 @@ function ResultsContentImpl({
           </div>
           <span style={{ color: '#9ca3af', fontSize: '0.7rem', fontWeight: 500, display: 'flex', alignItems: 'center', gap: 3 }}>
             {searchSources.length} {searchSources.length === 1 ? 'site' : 'sites'}
-            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ color: '#6b7280', transform: showSourcesPanel ? 'rotate(180deg)' : 'rotate(0deg)', transition: 'transform 0.15s' }}>
+            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ color: '#abafb8', transform: showSourcesPanel ? 'rotate(180deg)' : 'rotate(0deg)', transition: 'transform 0.15s' }}>
               <polyline points="6 9 12 15 18 9" />
             </svg>
           </span>
         </button>
         {showSourcesPanel && (
           <div data-sources-panel style={{ position: 'absolute', top: 'calc(100% + 6px)', left: 0, zIndex: 50, width: 280, maxHeight: 320, overflowY: 'auto', backgroundColor: '#1c1c1e', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 10, boxShadow: '0 8px 32px rgba(0,0,0,0.5)', padding: '6px 0' }}>
-            <div style={{ padding: '6px 12px 4px', fontSize: '0.65rem', fontWeight: 600, color: '#6b7280', textTransform: 'uppercase', letterSpacing: '0.06em' }}>Sources</div>
+            <div style={{ padding: '6px 12px 4px', fontSize: '0.65rem', fontWeight: 600, color: '#abafb8', textTransform: 'uppercase', letterSpacing: '0.06em' }}>Sources</div>
             {searchSources.map((src, i) => (
               <div
                 key={src.url + i}
@@ -251,7 +254,7 @@ function ResultsContentImpl({
                   <div style={{ fontSize: '0.72rem', fontWeight: 500, color: '#e5e7eb', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                     {src.title || src.hostname}
                   </div>
-                  <div style={{ fontSize: '0.65rem', color: '#6b7280', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                  <div style={{ fontSize: '0.65rem', color: '#abafb8', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                     {src.hostname}
                   </div>
                 </div>
@@ -459,7 +462,7 @@ function ResultsContentImpl({
       {bridgeStatus && bridgeStatus.state !== 'stopped' && (
         <div style={{ marginBottom: 8, display: 'flex', alignItems: 'center', gap: 5, opacity: bridgeStatus.cronStatus === 'running' ? 1 : (bridgeStatus.cronStatus ? 0.85 : 0.45) }}>
           <div style={{ width: 5, height: 5, borderRadius: '50%', flexShrink: 0, backgroundColor: bridgeStatus.cronStatus === 'running' ? '#3b82f6' : bridgeStatus.cronStatus === 'failed' ? '#ef4444' : bridgeStatus.cronStatus === 'done' ? '#22c55e' : '#10b981', animation: bridgeStatus.cronStatus === 'running' ? 'pulse 1.5s ease-in-out infinite' : 'none' }} />
-          <span style={{ color: '#6b7280', fontSize: '0.65rem' }}>Bridge watching</span>
+          <span style={{ color: '#abafb8', fontSize: '0.65rem' }}>Bridge watching</span>
         </div>
       )}
 
@@ -494,6 +497,29 @@ function ResultsContentImpl({
       )}
 
       {renderResults()}
+
+      {/* Thought-engine outreach appended like follow-up messages from the
+          assistant — deduped per thought upstream, 🧠 marks it as proactive. */}
+      {proactiveMessages.length > 0 && (
+        <div className="mt-4 space-y-2">
+          {proactiveMessages.map(m => (
+            <div key={m.id} className="flex items-start gap-2">
+              <span className="text-sm leading-5 select-none" style={{ opacity: 0.8 }}>🧠</span>
+              {m.pending ? (
+                <div className="flex gap-1.5 pt-1.5">
+                  <div className="w-1.5 h-1.5 rounded-full bg-violet-400 animate-pulse" style={{ animationDelay: '0ms' }} />
+                  <div className="w-1.5 h-1.5 rounded-full bg-violet-400 animate-pulse" style={{ animationDelay: '200ms' }} />
+                  <div className="w-1.5 h-1.5 rounded-full bg-violet-400 animate-pulse" style={{ animationDelay: '400ms' }} />
+                </div>
+              ) : (
+                <div className="flex-1 min-w-0" style={{ overflowX: 'hidden', wordBreak: 'break-word', overflowWrap: 'break-word' }}>
+                  <RichContentRenderer content={m.text} animated className="text-sm" />
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
       <div ref={scrollBottomRef} />
     </div>
   );

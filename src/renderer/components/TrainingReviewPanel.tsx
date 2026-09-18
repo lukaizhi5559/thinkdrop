@@ -201,7 +201,7 @@ function SortableSkillCard({
                       className="ml-1 px-1.5 py-0.5 rounded text-[9px] font-bold transition-colors"
                       style={{
                         background: wp.paramRef ? 'rgba(245, 158, 11, 0.2)' : 'rgba(255, 255, 255, 0.05)',
-                        color: wp.paramRef ? '#f59e0b' : '#6b7280',
+                        color: wp.paramRef ? '#f59e0b' : '#abafb8',
                         border: wp.paramRef ? '1px solid rgba(245, 158, 11, 0.4)' : '1px solid rgba(255, 255, 255, 0.1)',
                       }}
                     >
@@ -294,7 +294,7 @@ function ParamRow({
           className="text-[9px] px-1.5 py-0.5 rounded font-bold flex-shrink-0"
           style={{
             background: param.required ? 'rgba(239, 68, 68, 0.15)' : 'rgba(255, 255, 255, 0.05)',
-            color: param.required ? '#ef4444' : '#6b7280',
+            color: param.required ? '#ef4444' : '#abafb8',
           }}
         >
           {param.required ? 'REQUIRED' : 'OPTIONAL'}

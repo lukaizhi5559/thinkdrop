@@ -51,6 +51,15 @@ function safeSendUnified(channel, ...args) {
   // Drive the GhostLayer progress "drop" + panel lifecycle off the same events.
   if (channel === 'automation:progress') {
     try { driveProgressDrop(args[0]).catch(() => {}); } catch (_) {}
+    // Task blocked on a question — surface a real notification so the user
+    // knows to come back. Task-scoped questions live in Queue; global gather
+    // questions live in the Results panel.
+    try {
+      const _am = args[0];
+      if (_am?.type === 'ask_user' && (_am?.question || _am?.text)) {
+        _notifyQuestion(_am.question || _am.text, _am.taskId ? 'queue' : 'results');
+      }
+    } catch (_) {}
   }
 }
 
@@ -695,8 +704,15 @@ function startOverlayControlServer() {
           // so the engine's outreach is visible even when the overlay is hidden.
           if (evt.kind === 'notify' || evt.kind === 'question') {
             try {
-              const { Notification, nativeImage } = require('electron');
+              const { Notification, nativeImage, app } = require('electron');
               const path = require('path');
+              // Thought chime — the engine's own sound (distinct from the
+              // water-drip used for answers/reminders).
+              try {
+                require('child_process').exec(
+                  `afplay "${path.join(__dirname, '..', 'renderer', 'assets', 'thought-chime.wav')}"`);
+              } catch (_) {}
+              try { app.dock?.bounce('informational'); } catch (_) {}
               if (Notification.isSupported()) {
                 const text = (evt.thought && (evt.thought.summary || evt.thought.action?.payload?.text)) || 'ThinkDrop';
                 const n = new Notification({
@@ -705,15 +721,20 @@ function startOverlayControlServer() {
                   silent: false,
                   icon: nativeImage.createFromPath(path.join(__dirname, '..', 'renderer', 'assets', 'logo.jpg')),
                 });
+                n.on('show', () => console.log('[ThoughtEvent] Notification shown'));
+                n.on('failed', (e) => console.warn('[ThoughtEvent] Notification failed:', e?.message || 'unknown'));
                 n.on('click', () => {
                   try {
                     if (unifiedWindow && !unifiedWindow.isDestroyed()) {
                       unifiedWindow.showInactive();
                       unifiedWindow.moveTop();
                     }
+                    safeSendUnified('ui:switch-tab', { tab: 'brain' });
                   } catch (_) {}
                 });
                 n.show();
+              } else {
+                console.warn('[ThoughtEvent] Notification not supported on this platform');
               }
             } catch (notifErr) {
               console.warn('[ThoughtEvent] Notification failed:', notifErr?.message || 'unknown');
@@ -1441,6 +1462,45 @@ let pendingGatherQuestion = null; // Stored so we can re-send gather:pending on 
 // renderer sends gather:answer_batch with a map of { questionId: answer }.
 let pendingGatherBatchResolve = null;
 let pendingGatherBatchData = null; // { batchId, questions } stored for re-send on window re-activation
+
+// ── Proactive Q&A hooks ──────────────────────────────────────────────────────
+// Feed question engagement into the thought engine (grill answers reinforce the
+// topic Thought; dismissals are weaker evidence) and pop a real macOS
+// notification whenever the assistant is blocked on a question.
+const PERSONALITY_PORT_QA = parseInt(process.env.PERSONALITY_SERVICE_PORT || '3012', 10);
+function _postThoughtInput(text) {
+  try {
+    const body = JSON.stringify({ payload: { type: 'queue', text, sessionId: 'local_user' }, requestId: 'qa_' + Date.now() });
+    const req = http.request({
+      hostname: '127.0.0.1', port: PERSONALITY_PORT_QA, path: '/thought.input', method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) },
+      timeout: 5000,
+    }, (res) => { res.resume(); });
+    req.on('error', () => {});
+    req.on('timeout', () => { try { req.destroy(); } catch (_) {} });
+    req.end(body);
+  } catch (_) {}
+}
+
+function _notifyQuestion(body, tab) {
+  try {
+    const { Notification, nativeImage } = require('electron');
+    if (!Notification.isSupported()) return;
+    const n = new Notification({
+      title: 'ThinkDrop has a question',
+      body: String(body || 'Tap to answer').slice(0, 200),
+      silent: false,
+      icon: nativeImage.createFromPath(require('path').join(__dirname, '..', 'renderer', 'assets', 'logo.jpg')),
+    });
+    n.on('click', () => {
+      try {
+        if (unifiedWindow && !unifiedWindow.isDestroyed()) { unifiedWindow.showInactive(); unifiedWindow.moveTop(); }
+        if (tab) safeSendUnified('ui:switch-tab', { tab });
+      } catch (_) {}
+    });
+    n.show();
+  } catch (_) {}
+}
 
 // Active schedule countdown — set when a schedule step is running, cleared when done/cancelled
 // Used to warn the user before closing the app mid-countdown
@@ -3415,6 +3475,7 @@ app.whenReady().then(async () => {
       const handoffRunner = require('./handoffRunner');
       if (taskId && handoffRunner.hasPendingQuestion && handoffRunner.hasPendingQuestion(taskId)) {
         console.log(`[HandoffRunner] prompt-queue:submit → answerQuestion for task=${taskId}: "${trimmedPrompt.slice(0, 60)}"`);
+        _postThoughtInput(`User answered a question on task ${taskId} — "${trimmedPrompt.slice(0, 160)}"`);
         handoffRunner.answerQuestion(taskId, trimmedPrompt).catch(err => {
           console.error(`[HandoffRunner] answerQuestion failed for ${taskId}:`, err.message);
         });
@@ -4491,9 +4552,11 @@ app.whenReady().then(async () => {
     console.log(`[GatherContext] IPC received: gather:answer — "${(answer || '').slice(0, 60)}"`);
     if (pendingGatherResolve) {
       const resolve = pendingGatherResolve;
+      const answeredQuestion = pendingGatherQuestion;
       pendingGatherResolve = null;
       pendingGatherQuestion = null;
       safeSendUnified('gather:pending', { active: false, question: null });
+      _postThoughtInput(`User answered a clarifying question — "${(answeredQuestion || '').slice(0, 120)}" → "${String(answer || '').slice(0, 160)}"`);
       resolve(answer || '');
     } else {
       console.warn('[GatherContext] Received gather:answer but no pending resolve — ignoring');
@@ -4507,8 +4570,20 @@ app.whenReady().then(async () => {
     if (pendingGatherBatchResolve) {
       const resolve = pendingGatherBatchResolve;
       pendingGatherBatchResolve = null;
+      const questions = pendingGatherBatchData?.questions || [];
       pendingGatherBatchData = null;
       safeSendUnified('gather:question_batch', { active: false, batchId: null, questions: null });
+      // Engagement → thought engine. Empty answers = the user dismissed the card.
+      const answered = Object.entries(answers || {}).filter(([, v]) => String(v ?? '').trim());
+      if (answered.length) {
+        const qa = answered.map(([qid, v]) => {
+          const q = questions.find((x) => x && x.id === qid);
+          return `"${(q?.question || q?.text || qid).slice(0, 80)}" → "${String(v).slice(0, 100)}"`;
+        }).join('; ');
+        _postThoughtInput(`User answered clarifying questions about their request — ${qa}`);
+      } else {
+        _postThoughtInput('User dismissed the clarifying questions without answering.');
+      }
       resolve(answers || {});
     } else {
       console.warn('[GatherContext] Received gather:answer_batch but no pending batch resolve — ignoring');
@@ -4897,6 +4972,10 @@ app.whenReady().then(async () => {
             questions: questions || [],
             routeConfirmation: routeConfirmation || null,
           });
+          _notifyQuestion(
+            questions?.[0]?.question || questions?.[0]?.text || 'I have a few questions before I start',
+            'results'
+          );
           // 10-minute timeout
           setTimeout(() => {
             if (pendingGatherBatchResolve === resolve) {
@@ -4904,6 +4983,7 @@ app.whenReady().then(async () => {
               pendingGatherBatchResolve = null;
               pendingGatherBatchData = null;
               safeSendUnified('gather:question_batch', { active: false, batchId: null, questions: null });
+              _postThoughtInput('User did not answer the clarifying questions — they went unanswered until timeout.');
               resolve({});
             }
           }, 10 * 60 * 1000);

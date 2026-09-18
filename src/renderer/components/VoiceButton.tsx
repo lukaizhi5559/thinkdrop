@@ -64,7 +64,7 @@ export default function VoiceButton({ compact = false, icon = 'mic', style = {} 
   };
 
   const stateIconColors: Record<VoiceState, string> = {
-    idle:       '#6b7280',
+    idle:       '#abafb8',
     listening:  '#60a5fa',
     error:      '#f87171',
   };

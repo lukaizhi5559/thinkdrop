@@ -65,6 +65,16 @@ export function UnifiedOverlay() {
   const [isExpanded, setIsExpanded] = useState(false);
   const [unreadTabs, setUnreadTabs] = useState<Set<TabId>>(new Set());
 
+  // Proactive outreach (Results panel). questionAlert: assistant is blocked
+  // on a question (ask_user / grill batch) — click navigates to where the
+  // QuestionCard lives. proactiveMessages: thought-engine outreach (notify /
+  // question actions) appended under the response like follow-up messages —
+  // deduped per thought (nudge 2/3 updates its line), capped, cleared on the
+  // next prompt.
+  const [questionAlert, setQuestionAlert] = useState<{ text: string; tab: 'queue' | 'results'; ts: number } | null>(null);
+  const [proactiveMessages, setProactiveMessages] = useState<Array<{ id: string; thoughtId: string; text: string; kind: string; ts: number; pending?: boolean }>>([]);
+  const MAX_PROACTIVE_MESSAGES = 5;
+
   // Modal card element — when set (modal open), useDynamicHeight grows the window
   // to fit the modal's full content. Cleared automatically when the modal unmounts.
   const [modalCardEl, setModalCardEl] = useState<HTMLDivElement | null>(null);
@@ -167,6 +177,7 @@ export function UnifiedOverlay() {
   const [isScrolledUp, setIsScrolledUp] = useState(false);
   // const [, setPromptTextHeader] = useState('');
   const contentRef = useRef<HTMLDivElement>(null);
+  const resultsMeasureRef = useRef<HTMLDivElement>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const scrollBottomRef = useRef<HTMLDivElement>(null);
   // Fixed sections measured by useDynamicHeight (intrinsic content height, not the clipped root).
@@ -227,7 +238,7 @@ export function UnifiedOverlay() {
   // Collapse is measurement-driven: results content ~0 → COLLAPSED_HEIGHT.
   // Sends one IPC (unified:set-content-height); main owns clamping + anchoring.
   const contentRefs = useMemo(() => ({
-    results: contentRef,
+    results: resultsMeasureRef,
     queue: queueTabRef,
     cron: cronTabRef,
     agents: agentsTabRef,
@@ -361,6 +372,7 @@ export function UnifiedOverlay() {
       setInstallOutput([]);
       setGatherPending(false);
       setGatherQuestion(null);
+      setProactiveMessages([]); // new exchange — proactive follow-ups belong to the prior response
       setStreamingStartedRef(false);
     });
     hasDroppedRef.current = false;
@@ -943,6 +955,10 @@ export function UnifiedOverlay() {
       } else if (data?.type === 'ask_user') {
         setIsInstalling(false);
         setInstallPrompt(null);
+        // Alert card: task-scoped questions live on the Queue card, global
+        // gather questions live here in Results — click navigates to it.
+        const qText = data?.question || data?.text || 'I have a question before I continue';
+        setQuestionAlert({ text: String(qText), tab: data?.taskId ? 'queue' : 'results', ts: Date.now() });
         // Scroll to the question so the user sees the action-required banner/options
         setTimeout(scrollToBottom, 50);
       } else if (data?.type === 'skill_setup_complete') {
@@ -1164,6 +1180,7 @@ export function UnifiedOverlay() {
       console.log('[UNIFIED] Gather pending:', active, question);
       setGatherPending(active);
       setGatherQuestion(active && question ? question : null);
+      if (!active) setQuestionAlert(null); // question answered/timed out — drop the alert card
     };
 
     // --- Queue Enqueued Handler ---
@@ -1685,6 +1702,14 @@ export function UnifiedOverlay() {
         return next;
       });
     }, token);
+    // Generic tab navigation (notification clicks, alert cards)
+    ipcRenderer.on('ui:switch-tab', (data: { tab?: string }) => {
+      const tab = data?.tab;
+      if (tab === 'results' || tab === 'queue' || tab === 'cron' || tab === 'agents' || tab === 'skills' || tab === 'store' || tab === 'connections' || tab === 'brain') {
+        setActiveTab(tab);
+        setUnreadTabs(prev => { const next = new Set(prev); next.delete(tab as TabId); return next; });
+      }
+    }, token);
     // Preflight auth routing: switch to agents tab when user clicks "Open Agents Tab"
     ipcRenderer.on('preflight:open-agents-tab', (data: any) => {
       if (data?.agentId) {
@@ -1779,6 +1804,24 @@ export function UnifiedOverlay() {
       // Badge the Brain tab — a proactive notification/approval request
       // deserves the unread dot (cleared when the user opens the tab).
       setUnreadTabs(prev => new Set(prev).add('brain'));
+      // Proactive outreach (notify/question actions) → appended message under
+      // the Results response — reads like a follow-up from the assistant.
+      // Deduped per thought (a re-nudge updates its line), capped, cleared on
+      // the user's next prompt.
+      if (evt.kind === 'notify' || evt.kind === 'question') {
+        const text = String(t.summary || t.action?.payload?.text || 'ThinkDrop');
+        const pendingId = `pending-${t.id}`;
+        setProactiveMessages(prev => {
+          const next = prev.filter(m => m.thoughtId !== t.id);
+          next.push({ id: pendingId, thoughtId: t.id, text: '', kind: evt.kind!, ts: Date.now(), pending: true });
+          return next.slice(-MAX_PROACTIVE_MESSAGES);
+        });
+        // Brief "incoming message…" beat, then the text lands.
+        setTimeout(() => {
+          setProactiveMessages(prev => prev.map(m =>
+            m.id === pendingId ? { ...m, id: `${t.id}-${m.ts}`, text, pending: false } : m));
+        }, 700);
+      }
     }, token);
 
     // ── comms-graph task events ──────────────────────────────────────────────
@@ -2124,7 +2167,29 @@ export function UnifiedOverlay() {
             className="h-full overflow-y-auto overflow-x-hidden p-4"
             style={{ display: deferredTab === 'results' ? 'block' : 'none' }}
           >
+            {/* Measured wrapper — alert cards + results content count toward
+                the dynamic-height measurement. */}
+            <div ref={resultsMeasureRef}>
+              {/* Proactive alert cards — question blocks + thought-engine outreach */}
+              {questionAlert && (
+                <div
+                  className="mb-3 rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 cursor-pointer hover:bg-amber-500/20 transition-colors"
+                  onClick={() => { setActiveTab(questionAlert.tab); setQuestionAlert(null); }}
+                >
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="text-[0.72rem] text-amber-200">❓ {questionAlert.text}</div>
+                    <button
+                      className="text-amber-400/70 hover:text-amber-300 text-xs leading-none"
+                      onClick={(e) => { e.stopPropagation(); setQuestionAlert(null); }}
+                    >✕</button>
+                  </div>
+                  <div className="text-[0.6rem] text-amber-400/60 mt-0.5">
+                    {new Date(questionAlert.ts).toLocaleTimeString()} · tap to answer{questionAlert.tab === 'queue' ? ' in Queue' : ''}
+                  </div>
+                </div>
+              )}
               <ResultsContent
+                proactiveMessages={proactiveMessages}
                 contentRef={contentRef}
                 scrollBottomRef={scrollBottomRef}
                 installOutputRef={installOutputRef}
@@ -2159,6 +2224,7 @@ export function UnifiedOverlay() {
                 onActiveChange={handleAutomationActiveChange}
               />
             </div>
+          </div>
 
           {/* Queue Tab — no top padding so the sticky filter bar sits flush under the tab bar */}
           <div 
@@ -2293,7 +2359,7 @@ export function UnifiedOverlay() {
           {/* Brain Tab — Thought/Trigger engine visibility */}
           <div
             ref={brainTabRef}
-            className="overflow-y-auto overflow-x-hidden p-4"
+            className="overflow-y-auto overflow-x-hidden px-4 pb-4"
             style={{ display: deferredTab === 'brain' ? 'block' : 'none', height: 'auto', maxHeight: '100%' }}
           >
               <BrainTab
