@@ -1,20 +1,21 @@
 /**
- * VoiceButton — Companion window toggle
+ * VoiceButton — Voice session toggle
  *
- * Click = open Chrome companion window (localhost:5173?mode=voice-companion).
- * Click again = close it via SSE signal.
- * Chrome handles all STT (webkitSpeechRecognition) and TTS (speechSynthesis).
+ * Click = start the voice session (main → voice-bridge → hidden Chrome worker
+ * does webkitSpeechRecognition). Click again = stop the session.
+ * Active/idle state is driven by `voice:session` events from main; the
+ * listening/speaking tint follows `voice:state` events.
  */
 
 import React, { useState, useEffect } from 'react';
 
 const ipcRenderer = (window as any).electron?.ipcRenderer;
 
-type VoiceState = 'idle' | 'listening' | 'error';
+type VoiceState = 'idle' | 'listening' | 'speaking' | 'processing' | 'error';
 
 interface VoiceButtonProps {
   compact?: boolean;
-  // Legacy props kept for call-site compatibility — unused in companion mode
+  // Legacy props kept for call-site compatibility — unused in session mode
   mode?: string;
   onTranscript?: (text: string, language: string) => void;
   onResponse?: (text: string, audioBase64: string, format: string) => void;
@@ -23,30 +24,35 @@ interface VoiceButtonProps {
 }
 
 export default function VoiceButton({ compact = false, icon = 'mic', style = {} }: VoiceButtonProps) {
+  const [active, setActive] = useState(false);
   const [voiceState, setVoiceState] = useState<VoiceState>('idle');
-  const [companionOpen, setCompanionOpen] = useState(false);
 
-  // Listen for companion closed signal (e.g. user closes Chrome tab)
+  // Session + worker state events from main (relayed from the voice bridge)
   useEffect(() => {
     if (!ipcRenderer) return;
-    const onClosed = () => {
-      setCompanionOpen(false);
-      setVoiceState('idle');
+    const onSession = (data: { active: boolean }) => {
+      setActive(!!data?.active);
+      if (!data?.active) setVoiceState('idle');
     };
-    ipcRenderer.on('voice:companion-closed', onClosed);
-    return () => { ipcRenderer.removeAllListeners?.('voice:companion-closed'); };
+    const onState = (data: { state: string }) => {
+      const s = data?.state;
+      if (s === 'listening' || s === 'speaking' || s === 'processing' || s === 'idle' || s === 'error' || s === 'ready') {
+        setVoiceState(s === 'ready' ? 'listening' : s as VoiceState);
+      }
+    };
+    const onError = () => setVoiceState('error');
+    ipcRenderer.on('voice:session', onSession);
+    ipcRenderer.on('voice:state', onState);
+    ipcRenderer.on('voice:error', onError);
+    return () => {
+      ipcRenderer.removeAllListeners?.('voice:session');
+      ipcRenderer.removeAllListeners?.('voice:state');
+      ipcRenderer.removeAllListeners?.('voice:error');
+    };
   }, []);
 
   const handleClick = () => {
-    if (companionOpen) {
-      ipcRenderer?.send('voice:companion-close');
-      setCompanionOpen(false);
-      setVoiceState('idle');
-    } else {
-      ipcRenderer?.send('voice:companion-open');
-      setCompanionOpen(true);
-      setVoiceState('listening');
-    }
+    ipcRenderer?.send(active ? 'voice:session-stop' : 'voice:session-start');
   };
 
   // ── Styles ────────────────────────────────────────────────────────────────
@@ -54,24 +60,32 @@ export default function VoiceButton({ compact = false, icon = 'mic', style = {} 
   const stateColors: Record<VoiceState, string> = {
     idle:       'rgba(255,255,255,0.04)',
     listening:  'rgba(59,130,246,0.18)',
+    speaking:   'rgba(168,85,247,0.18)',
+    processing: 'rgba(251,191,36,0.15)',
     error:      'rgba(239,68,68,0.18)',
   };
 
   const stateBorders: Record<VoiceState, string> = {
     idle:       'rgba(255,255,255,0.07)',
     listening:  'rgba(59,130,246,0.4)',
+    speaking:   'rgba(168,85,247,0.4)',
+    processing: 'rgba(251,191,36,0.35)',
     error:      'rgba(239,68,68,0.4)',
   };
 
   const stateIconColors: Record<VoiceState, string> = {
     idle:       '#abafb8',
     listening:  '#60a5fa',
+    speaking:   '#c084fc',
+    processing: '#fbbf24',
     error:      '#f87171',
   };
 
-  const title = companionOpen
-    ? 'Voice companion open — click to close'
-    : 'Click to open voice companion';
+  const displayState: VoiceState = active ? voiceState : 'idle';
+
+  const title = active
+    ? 'Voice session active — click to stop'
+    : 'Click to start voice session';
 
   return (
     <div style={{ display: 'flex', alignItems: 'center', gap: '4px', position: 'relative', zIndex: 20 }}>
@@ -84,9 +98,9 @@ export default function VoiceButton({ compact = false, icon = 'mic', style = {} 
           gap: '4px',
           padding: '9px',
           borderRadius: '6px',
-          backgroundColor: stateColors[voiceState],
-          border: `1px solid ${stateBorders[voiceState]}`,
-          color: stateIconColors[voiceState],
+          backgroundColor: stateColors[displayState],
+          border: `1px solid ${stateBorders[displayState]}`,
+          color: stateIconColors[displayState],
           cursor: 'pointer',
           fontSize: '0.7rem',
           userSelect: 'none',
@@ -97,27 +111,27 @@ export default function VoiceButton({ compact = false, icon = 'mic', style = {} 
           ...style,
         }}
         onMouseEnter={e => {
-          if (voiceState === 'idle') {
+          if (displayState === 'idle') {
             (e.currentTarget as HTMLButtonElement).style.backgroundColor = 'rgba(59,130,246,0.1)';
             (e.currentTarget as HTMLButtonElement).style.borderColor = 'rgba(59,130,246,0.25)';
             (e.currentTarget as HTMLButtonElement).style.color = '#93c5fd';
           }
         }}
         onMouseLeave={(e: React.MouseEvent<HTMLButtonElement>) => {
-          if (voiceState === 'idle') {
+          if (displayState === 'idle') {
             e.currentTarget.style.backgroundColor = stateColors.idle;
             e.currentTarget.style.borderColor = stateBorders.idle;
             e.currentTarget.style.color = stateIconColors.idle;
           }
         }}
       >
-        {/* Pulse ring while companion is open */}
-        {voiceState === 'listening' && (
+        {/* Pulse ring while session is active */}
+        {active && (
           <span style={{
             position: 'absolute', inset: 0,
             borderRadius: '6px',
             animation: 'voice-pulse 1.4s ease-in-out infinite',
-            backgroundColor: 'rgba(59,130,246,0.15)',
+            backgroundColor: displayState === 'speaking' ? 'rgba(168,85,247,0.15)' : 'rgba(59,130,246,0.15)',
           }} />
         )}
 
@@ -141,7 +155,7 @@ export default function VoiceButton({ compact = false, icon = 'mic', style = {} 
         {/* Label */}
         {!compact && (
           <span style={{ fontSize: '0.68rem', lineHeight: 1, fontWeight: 500 }}>
-            {companionOpen ? 'on' : 'mic'}
+            {active ? 'on' : 'mic'}
           </span>
         )}
       </button>

@@ -1,4 +1,3 @@
-import VoiceCompanion from './components/VoiceCompanion';
 import { UnifiedOverlay } from './components/UnifiedOverlay';
 import { GhostLayer } from './components/GhostLayer';
 
@@ -8,10 +7,6 @@ function App() {
 
   if (mode === 'unified') {
     return <UnifiedOverlay />;
-  }
-
-  if (mode === 'voice-companion') {
-    return <VoiceCompanion />;
   }
 
   if (mode === 'ghostlayer') {

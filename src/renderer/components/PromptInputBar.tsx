@@ -1,6 +1,7 @@
 import React, { useState, useRef, useEffect, useImperativeHandle, forwardRef, useCallback } from 'react';
 import { flushSync } from 'react-dom';
 import VoiceButton from './VoiceButton';
+import VoiceBars from './VoiceBars';
 import type { RefObject } from 'react';
 import type { AIActivityPanelHandle } from './AIActivityPanel';
 
@@ -39,6 +40,15 @@ interface PromptInputBarProps {
   /** "Continue Thread" — recalled task context pinned for the next prompt. */
   threadContext?: { prompt: string } | null;
   onThreadContextClear?: () => void;
+  /** Voice session — when active, the textarea is replaced by voice bars +
+   *  the live transcript line. */
+  voiceSession?: {
+    active: boolean;
+    state: string;       // ready | listening | speaking | processing | idle | error
+    interimText: string;
+    finalText?: string;
+    level?: number;
+  } | null;
 }
 
 // ── Chip icons (inline SVG — no emojis) ────────────────────────────────────────
@@ -98,6 +108,7 @@ function PromptInputBarImpl(
     aiActivityPanelRef,
     threadContext,
     onThreadContextClear,
+    voiceSession,
   }: PromptInputBarProps,
   ref: React.Ref<PromptInputBarHandle>,
 ) {
@@ -314,31 +325,58 @@ function PromptInputBarImpl(
       {/* Highlights */}
       {renderHighlightChips()}
 
-      {/* Textarea with $ prefix in debug mode */}
-      <div className="relative">
-        {isDebugMode && (
-          <span className="absolute left-0 top-0 text-green-400 font-mono text-sm select-none pointer-events-none">
-            $
-          </span>
-        )}
-        <textarea
-          ref={textareaRef}
-          value={promptText}
-          onChange={handleTextareaChange}
-          onKeyDown={handleTextareaKeyDown}
-          onPaste={onPaste}
-          placeholder={
-            gatherPending && gatherQuestion
-              ? gatherQuestion
-              : isDebugMode
-                ? "Enter command..."
-                : "Ask or Drag-Drop anything here"
-          }
-          className={`w-full bg-transparent text-white placeholder-gray-500 resize-none outline-none text-sm mb-3 ${isDebugMode ? 'pl-4' : ''}`}
-          style={{ minHeight: '24px', maxHeight: '200px' }}
-          rows={1}
-        />
-      </div>
+      {/* Voice session: bars + live transcript replace the textarea */}
+      {voiceSession?.active ? (
+        <div className="mb-3" style={{ minHeight: '24px' }}>
+          <VoiceBars state={voiceSession.state} level={voiceSession.level ?? 0} />
+          <div
+            className="text-sm text-center px-2"
+            style={{
+              color: voiceSession.interimText ? '#9ca3af' : '#e5e7eb',
+              fontStyle: voiceSession.interimText ? 'italic' : 'normal',
+              minHeight: '20px',
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+              whiteSpace: 'nowrap',
+            }}
+            title={voiceSession.interimText || voiceSession.finalText || ''}
+          >
+            {voiceSession.interimText
+              || voiceSession.finalText
+              || (voiceSession.state === 'speaking'
+                ? 'Speaking…'
+                : voiceSession.state === 'processing'
+                  ? 'Thinking…'
+                  : 'Listening…')}
+          </div>
+        </div>
+      ) : (
+        /* Textarea with $ prefix in debug mode */
+        <div className="relative">
+          {isDebugMode && (
+            <span className="absolute left-0 top-0 text-green-400 font-mono text-sm select-none pointer-events-none">
+              $
+            </span>
+          )}
+          <textarea
+            ref={textareaRef}
+            value={promptText}
+            onChange={handleTextareaChange}
+            onKeyDown={handleTextareaKeyDown}
+            onPaste={onPaste}
+            placeholder={
+              gatherPending && gatherQuestion
+                ? gatherQuestion
+                : isDebugMode
+                  ? "Enter command..."
+                  : "Ask or Drag-Drop anything here"
+            }
+            className={`w-full bg-transparent text-white placeholder-gray-500 resize-none outline-none text-sm mb-3 ${isDebugMode ? 'pl-4' : ''}`}
+            style={{ minHeight: '24px', maxHeight: '200px' }}
+            rows={1}
+          />
+        </div>
+      )}
 
       {/* Action Buttons */}
       <div className="flex items-center justify-between">

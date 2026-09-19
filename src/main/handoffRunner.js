@@ -165,7 +165,7 @@ function _makeProgressCallback(taskId, agentId) {
  * @param {string[]|null} [args.preflightAuthBypass] - Agent IDs to treat as authed for this run only
  * @param {Object|null}  [args._resumeState] - Paused finalState to resume from (ask_user answer)
  */
-async function execute({ taskId, prompt, agentId, source, originalPrompt, sessionId, planFile, preflightAuthBypass, _resumeState }) {
+async function execute({ taskId, prompt, agentId, source, originalPrompt, sessionId, planFile, preflightAuthBypass, userApproved, _resumeState }) {
   if (!_mcpAdapter || !_llmBackend) {
     console.error('[HandoffRunner] Not initialized — call init() first');
     _notifyComplete(taskId, agentId, 'failed', 'HandoffRunner not initialized', null, sessionId);
@@ -223,6 +223,9 @@ async function execute({ taskId, prompt, agentId, source, originalPrompt, sessio
           // Auth bypass: user chose "proceed without" — treat listed agents as
           // authed for this run only (not persisted to auth cache or authed_at)
           ...(preflightAuthBypass?.length ? { preflightAuthBypass } : {}),
+          // Proactive dispatch whose thought was already approved in the Brain —
+          // planSkillsV2 skips the duplicate Queue plan-approval gate for it.
+          ...(userApproved ? { userApproved: true } : {}),
         };
 
     // Always normalize to a mutable array — main.js pushes mid-run
@@ -514,6 +517,21 @@ async function resume(taskId, planFile) {
   });
 }
 
+// ── Pending plan approvals ────────────────────────────────────────────────────
+/**
+ * Returns tasks currently paused at the plan-approval gate.
+ * Used by the free-form confirmation intercept in main.js so a spoken/typed
+ * "yes send it" can approve instead of spawning a duplicate task.
+ * @returns {Array<{taskId: string, planFile: string|null, prompt: string}>}
+ */
+function getPendingPlanApprovals() {
+  return Array.from(_pendingPlanContexts.entries()).map(([taskId, ctx]) => ({
+    taskId,
+    planFile: ctx.planFile || null,
+    prompt: ctx.originalPrompt || ctx.prompt || '',
+  }));
+}
+
 // ── Answer a pending question for a task ──────────────────────────────────────
 /** @param {string} taskId */
 function hasPendingQuestion(taskId) {
@@ -778,8 +796,15 @@ async function answerQuestion(taskId, answer) {
 // ── Cancel a running task ──────────────────────────────────────────────────────
 function cancel(taskId) {
   _pendingQuestions.delete(taskId);
+  // Also drop a pending plan-approval context — a task paused at the approval
+  // gate has no active run to abort, but cancelling it must prevent a later
+  // resume() from re-executing it.
+  const hadPendingPlan = _pendingPlanContexts.delete(taskId);
   const run = _activeRuns.get(taskId);
-  if (!run) return false;
+  if (!run) {
+    if (hadPendingPlan) console.log(`[HandoffRunner] Cancelled task ${taskId} (pending plan approval)`);
+    return hadPendingPlan;
+  }
   run.abortController.abort();
   console.log(`[HandoffRunner] Cancelled task ${taskId}`);
   return true;
@@ -811,4 +836,4 @@ function getLiveRun(taskId) {
   return _activeRuns.get(taskId) || null;
 }
 
-module.exports = { init, execute, resume, answerQuestion, hasPendingQuestion, cancel, getActiveCount, getActiveTaskIds, getProgressCallback, getLiveRun };
+module.exports = { init, execute, resume, answerQuestion, hasPendingQuestion, getPendingPlanApprovals, cancel, getActiveCount, getActiveTaskIds, getProgressCallback, getLiveRun };

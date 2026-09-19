@@ -175,6 +175,17 @@ export function UnifiedOverlay() {
   const [bridgeStatus, setBridgeStatus] = useState<BridgeStatus | null>(null);
   const [isCopied, setIsCopied] = useState(false);
   const [isScrolledUp, setIsScrolledUp] = useState(false);
+
+  // --- Voice session (hidden-Chrome voice bridge via voice-service) ---
+  // active → PromptInputBar swaps the textarea for VoiceBars + transcript line.
+  const [voiceSession, setVoiceSession] = useState<{
+    active: boolean;
+    state: string;      // ready | listening | speaking | processing | idle | error
+    interimText: string;
+    finalText: string;
+    level: number;      // 0..1 mic amplitude
+  }>({ active: false, state: 'idle', interimText: '', finalText: '', level: 0 });
+  const _lastVoiceLevelAtRef = useRef(0);
   // const [, setPromptTextHeader] = useState('');
   const contentRef = useRef<HTMLDivElement>(null);
   const resultsMeasureRef = useRef<HTMLDivElement>(null);
@@ -403,7 +414,12 @@ export function UnifiedOverlay() {
     // continues that discussion even without a session pin (belt-and-suspenders:
     // sessionId covers sliding-window history; this excerpt guarantees context).
     if (threadContext) {
-      const excerpt = (threadContext.result || '').replace(/【[^】]*】/g, '').trim().slice(0, 2000);
+      // 12000 chars keeps full code snippets/documents intact (the old 2000 cap
+      // cut mid-file) while staying well under the 50k message limit.
+      const rawResult = (threadContext.result || '').replace(/【[^】]*】/g, '').trim();
+      const excerpt = rawResult.length > 12000
+        ? rawResult.slice(0, 12000) + '\n… [truncated — full result retained in session history]'
+        : rawResult;
       finalPrompt += `[Resumed task discussion]\nEarlier request: "${threadContext.prompt}"\n`;
       if (excerpt) finalPrompt += `Earlier result (excerpt):\n${excerpt}\n`;
       finalPrompt += '\n';
@@ -858,6 +874,7 @@ export function UnifiedOverlay() {
       setIsStreaming(false);
       setIsThinking(true);
       setIsSubmitting(true); // Task starting - set submitting state
+      setProactiveMessages([]); // new exchange — voice/comms-routed submits clear proactive follow-ups too
       setActiveTab('results'); // Auto-switch to results panel
       setIsAutomationMode(false); // AutomationProgress will self-activate on 'planning' event
       // Keep refs in sync immediately — the 'done' handler checks these refs and
@@ -1133,6 +1150,31 @@ export function UnifiedOverlay() {
       setIsRecording(false);
     };
 
+    // --- Voice bridge session events (main relays POST /voice.event) ---
+    const handleVoiceSession = (data: { active: boolean }) => {
+      setVoiceSession(v => ({
+        ...v,
+        active: !!data?.active,
+        ...(data?.active ? {} : { state: 'idle', interimText: '', finalText: '', level: 0 }),
+      }));
+    };
+    const handleVoiceState = (data: { state: string }) => {
+      setVoiceSession(v => ({ ...v, state: data?.state || 'idle' }));
+    };
+    const handleVoiceInterim = (data: { text: string }) => {
+      setVoiceSession(v => ({ ...v, interimText: data?.text || '', state: 'listening' }));
+    };
+    const handleVoiceFinal = (data: { text: string }) => {
+      setVoiceSession(v => ({ ...v, interimText: '', finalText: data?.text || '', state: 'processing' }));
+    };
+    const handleVoiceLevel = (data: { level: number }) => {
+      // Mic level arrives ~10Hz — throttle re-renders to ~6Hz.
+      const now = Date.now();
+      if (now - _lastVoiceLevelAtRef.current < 150) return;
+      _lastVoiceLevelAtRef.current = now;
+      setVoiceSession(v => ({ ...v, level: data?.level || 0 }));
+    };
+
     // --- File Drop Response ---
     const handleFileDropResult = (data: { highlights: string[] }) => {
       console.log('[File Drop] Received result:', data);
@@ -1198,6 +1240,7 @@ export function UnifiedOverlay() {
           setInstallPrompt(null);
           setGatherPending(false);
           setGatherQuestion(null);
+          setProactiveMessages([]); // new exchange — proactive follow-ups belong to the prior response
           setStreamingStartedRef(false); // Reset streaming started flag
         }
       });
@@ -1681,6 +1724,11 @@ export function UnifiedOverlay() {
     const token = listenerToken.current;
     ipcRenderer.on('ws-bridge:message', handleWsMessage, token);
     ipcRenderer.on('unified:set-prompt', handleSetPrompt, token);
+    ipcRenderer.on('voice:session', handleVoiceSession, token);
+    ipcRenderer.on('voice:state', handleVoiceState, token);
+    ipcRenderer.on('voice:interim', handleVoiceInterim, token);
+    ipcRenderer.on('voice:final', handleVoiceFinal, token);
+    ipcRenderer.on('voice:level', handleVoiceLevel, token);
     ipcRenderer.on('unified:clear', handleClear, token);
     ipcRenderer.on('automation:progress', handleAutomationProgress, token);
     ipcRenderer.on('is-streaming', (data: { isStreaming: boolean }) => {
@@ -2422,6 +2470,7 @@ export function UnifiedOverlay() {
           aiActivityPanelRef={aiActivityPanelRef}
           threadContext={threadContext}
           onThreadContextClear={handleThreadContextClear}
+          voiceSession={voiceSession}
         />
       </div>
 

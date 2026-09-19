@@ -395,46 +395,70 @@ let activeProgressCallback = null;
 // thoughts and turn events reach the Cron tab independently of user prompts.
 let activeCronProgressCallback = null;
 
-// SSE clients connected to GET /voice/companion/events (Chrome companion windows)
-const companionSseClients = new Set();
+// ── Voice bridge session state ──────────────────────────────────────────────
+// The rewritten voice-service (voice-bridge) drives STT/TTS through a hidden
+// Playwright Chrome worker and relays events to POST /voice.event below.
+let _voiceSessionActive = false;
+let _voiceLang = 'en';
+// Populated once routeThroughCommsGraph is defined inside the IPC registrar —
+// the /voice.event endpoint needs it for auto-submitting final transcripts.
+let _routeViaCommsGraph = null;
 
-function broadcastCompanionEvent(eventName, data = {}) {
-  const payload = `event: ${eventName}\ndata: ${JSON.stringify(data)}\n\n`;
-  for (const res of companionSseClients) {
-    try { res.write(payload); } catch (_) {}
-  }
+/** POST JSON to a localhost service; resolves on any HTTP status. */
+function _postJson(url, payload, timeoutMs = 15000) {
+  return new Promise((resolve, reject) => {
+    const body = JSON.stringify(payload || {});
+    const req = http.request({
+      hostname: url.hostname,
+      port: parseInt(url.port || '80', 10),
+      path: url.pathname,
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) },
+      timeout: timeoutMs,
+    }, (res) => {
+      const chunks = [];
+      res.on('data', c => chunks.push(c));
+      res.on('end', () => {
+        try { resolve(JSON.parse(Buffer.concat(chunks).toString() || '{}')); }
+        catch (_) { resolve({}); }
+      });
+    });
+    req.on('error', reject);
+    req.on('timeout', () => req.destroy(new Error('timeout')));
+    req.write(body);
+    req.end();
+  });
+}
+
+/** Strip markdown and cap text for TTS (~2 sentences / 400 chars). */
+function _spokenSummary(text) {
+  const clean = String(text || '')
+    .replace(/```[\s\S]*?```/g, ' ')
+    .replace(/[*_`#>]/g, '')
+    .replace(/\[([^\]]*)\]\([^)]*\)/g, '$1')
+    .replace(/\s+/g, ' ')
+    .trim();
+  const sentences = clean.match(/[^.!?]+[.!?]+/g);
+  const spoken = (sentences && sentences.length > 2) ? sentences.slice(0, 2).join(' ') : clean;
+  return spoken.slice(0, 400);
+}
+
+/** Fire-and-forget TTS through the voice bridge. */
+function _voiceSay(text, lang) {
+  const spoken = _spokenSummary(text);
+  if (!spoken) return;
+  const svcUrl = process.env.VOICE_SERVICE_URL || 'http://127.0.0.1:3006';
+  _postJson(new URL('/voice.say', svcUrl), { text: spoken, lang: lang || _voiceLang || 'en' })
+    .catch(err => console.warn('[Voice] say failed:', err.message));
 }
 
 function startOverlayControlServer() {
   const server = http.createServer((req, res) => {
-    // ── CORS — allow Chrome companion window (localhost:5173) to call us ─────
-    res.setHeader('Access-Control-Allow-Origin', 'http://localhost:5173');
+    // ── CORS — voice-bridge (:3006) relays worker events to /voice.event ────
+    res.setHeader('Access-Control-Allow-Origin', '*');
     res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
     res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
     if (req.method === 'OPTIONS') { res.writeHead(204).end(); return; }
-
-    // ── GET /voice/companion/events — SSE stream for Chrome companion close signal ──
-    if (req.method === 'GET' && req.url === '/voice/companion/events') {
-      res.writeHead(200, {
-        'Content-Type': 'text/event-stream',
-        'Cache-Control': 'no-cache',
-        'Connection': 'keep-alive',
-        'Access-Control-Allow-Origin': 'http://localhost:5173',
-      });
-      res.write(':ok\n\n'); // initial comment to confirm connection
-      companionSseClients.add(res);
-      req.on('close', () => {
-        companionSseClients.delete(res);
-        // When the last Chrome tab disconnects (user closed it manually),
-        // notify the renderer so VoiceButton can reset its companion state.
-        if (companionSseClients.size === 0) {
-          if (promptCaptureWindow && !promptCaptureWindow.isDestroyed()) {
-            safeSend(promptCaptureWindow, 'voice:companion-closed');
-          }
-        }
-      });
-      return;
-    }
 
     res.setHeader('Content-Type', 'application/json');
 
@@ -644,6 +668,70 @@ function startOverlayControlServer() {
       return;
     }
 
+    // ── POST /voice.event — voice-bridge relays worker events ────────────────
+    // Events: ready | state | interim | final | level | error | interrupted |
+    // speak-done. 'final' auto-submits through comms-graph exactly like a typed
+    // prompt (source:'voice' so handoffs land in QueueTaskCard and TTS fan-out
+    // knows to speak the answer).
+    if (req.url === '/voice.event') {
+      let body = '';
+      req.on('data', chunk => { body += chunk; });
+      req.on('end', () => {
+        try {
+          const evt = JSON.parse(body || '{}');
+          switch (evt.type) {
+            case 'interim':
+              safeSendUnified('voice:interim', { text: evt.text || '', lang: evt.lang });
+              break;
+            case 'level':
+              safeSendUnified('voice:level', { level: evt.level || 0 });
+              break;
+            case 'state': {
+              const state = evt.state || 'idle';
+              safeSendUnified('voice:state', { state, reason: evt.reason });
+              if (state === 'disconnected' || state === 'error') {
+                _voiceSessionActive = false;
+                safeSendUnified('voice:session', { active: false, reason: evt.reason });
+              }
+              break;
+            }
+            case 'error':
+              safeSendUnified('voice:error', { error: evt.error || 'unknown' });
+              break;
+            case 'interrupted':
+              safeSendUnified('voice:state', { state: 'listening' });
+              break;
+            case 'final': {
+              const text = (evt.text || '').trim();
+              if (!text) break;
+              const lang = evt.lang || _voiceLang || 'en';
+              _voiceLang = lang;
+              safeSendUnified('voice:final', { text, lang });
+              console.log(`🎙️ [Voice] Final transcript → comms-graph: "${text.substring(0, 80)}" (lang=${lang})`);
+              const responseLanguage = lang !== 'en' ? lang : null;
+              // A spoken "yes send it" resolves a pending plan approval instead of
+              // spawning a duplicate task (previously caused double dispatches).
+              if (!_tryResolvePendingApproval(text)) {
+                const routed = _routeViaCommsGraph
+                  ? _routeViaCommsGraph(text, { responseLanguage, sessionId: currentSessionId, source: 'voice' })
+                  : false;
+                if (!routed) {
+                  promptQueue.enqueue(text, { responseLanguage, sessionId: currentSessionId });
+                }
+              }
+              break;
+            }
+            default:
+              break;
+          }
+          res.writeHead(200).end(JSON.stringify({ ok: true }));
+        } catch (err) {
+          res.writeHead(400).end(JSON.stringify({ error: err.message }));
+        }
+      });
+      return;
+    }
+
     // ── POST /comms.handoff — comms-graph sends async handoff tasks ───────────
     // Each handoff spawns an independent stategraph instance (concurrent, not serial)
     if (req.url === '/comms.handoff') {
@@ -651,7 +739,7 @@ function startOverlayControlServer() {
       req.on('data', chunk => { body += chunk; });
       req.on('end', () => {
         try {
-          const { taskId, prompt, agentId, source, originalPrompt, guessedIntent, sessionId: handoffSessionId } = JSON.parse(body || '{}');
+          const { taskId, prompt, agentId, source, originalPrompt, guessedIntent, sessionId: handoffSessionId, userApproved } = JSON.parse(body || '{}');
           console.log(`[CommsGraph] Handoff received — task=${taskId} agent=${agentId || 'auto'} source=${source} guessedIntent=${guessedIntent || 'null'} session=${handoffSessionId || 'none'}`);
 
           // Emit task:created BEFORE starting the stategraph run so the queue card
@@ -664,6 +752,7 @@ function startOverlayControlServer() {
             prompt: originalPrompt || prompt,
             agentId: agentId || null,
             parked: false,
+            source: source || 'text',
             guessedIntent: guessedIntent !== undefined ? guessedIntent : null,
           });
 
@@ -676,6 +765,7 @@ function startOverlayControlServer() {
             source: source || 'text',
             originalPrompt: originalPrompt || null,
             sessionId: handoffSessionId || currentSessionId,
+            userApproved: userApproved === true,
           }).catch(err => {
             console.error(`[CommsGraph] Handoff ${taskId} error:`, err.message);
           });
@@ -1482,6 +1572,59 @@ function _postThoughtInput(text) {
   } catch (_) {}
 }
 
+// ── Pending plan-approval confirmation intercept ──────────────────────────────
+// A task paused at the plan-approval gate previously could only be resolved by
+// clicking Approve/Cancel in the Queue. A spoken or typed "yes send it" fell
+// through to the classifier and spawned a DUPLICATE task (observed: a voice
+// "yes send it to that email" created a second email task → duplicate sends).
+// When exactly one approval is pending and the message is a short confirm/deny,
+// resolve it here instead of routing it as a new prompt.
+const APPROVAL_CONFIRM_RE = /^(?:yes|yeah|yep|yup|sure|ok(?:ay)?|approve[ds]?|confirm(?:ed)?|go\s+ahead|do\s+it|send\b|that'?s?\s+correct|correct|looks?\s+good|perfect|sounds?\s+good|please\s+do|go\s+for\s+it|absolutely|definitely|of\s+course)\b/i;
+// Words that flip a leading "yes" into a NEW instruction — "yes, but change
+// the subject" must not approve. These veto an otherwise-confirming message.
+const APPROVAL_VETO_RE = /\b(but|however|instead|actually|wait|change|edit|fix|don'?t|do\s+not|not\s+yet|hold|stop|cancel|different|before\s+you)\b/i;
+const APPROVAL_DENY_RE = /^(?:no|nope|nah|cancel(?:led| it| that)?|stop|don'?t(?:\s+send|\s+do)?|do\s+not|reject|decline|never\s*mind|forget\s+it|hold\s+off|wait)[\s.!,'"]*/i;
+
+/**
+ * If exactly one task is awaiting plan approval and `text` is a short
+ * confirm/deny, resolve it (resume or cancel). Returns true when handled.
+ * Synchronous — the comms-graph cancel notify is fire-and-forget.
+ * @param {string} text
+ * @returns {boolean}
+ */
+function _tryResolvePendingApproval(text) {
+  try {
+    const handoffRunner = require('./handoffRunner');
+    if (typeof handoffRunner.getPendingPlanApprovals !== 'function') return false;
+    const pending = handoffRunner.getPendingPlanApprovals();
+    if (pending.length !== 1) return false; // 0 → nothing to resolve; >1 → ambiguous
+    const trimmed = (text || '').trim();
+    // Long messages are new prompts that merely start with "yes" — don't hijack
+    if (!trimmed || trimmed.length > 80) return false;
+    const { taskId, planFile } = pending[0];
+    if (APPROVAL_CONFIRM_RE.test(trimmed) && !APPROVAL_VETO_RE.test(trimmed) && !trimmed.includes('?')) {
+      console.log(`[Approval] Free-form confirm "${trimmed.slice(0, 60)}" → resuming task ${taskId}`);
+      _postThoughtInput(`User approved plan for task ${taskId} — "${trimmed.slice(0, 120)}"`);
+      safeSendUnified('automation:progress', { type: 'plan:approved', planFile, taskId });
+      handoffRunner.resume(taskId, planFile).catch(err => {
+        console.error(`[HandoffRunner] resume failed for ${taskId}:`, err.message);
+      });
+      return true;
+    }
+    if (APPROVAL_DENY_RE.test(trimmed)) {
+      console.log(`[Approval] Free-form deny "${trimmed.slice(0, 60)}" → cancelling task ${taskId}`);
+      handoffRunner.cancel(taskId);
+      _commsHttp('/comms.cancel', { taskId }).catch(() => {});
+      safeSendUnified('task:complete', { taskId, status: 'cancelled', error: 'cancelled by user' });
+      return true;
+    }
+    return false;
+  } catch (e) {
+    console.warn('[Approval] pending-approval intercept failed:', e.message);
+    return false;
+  }
+}
+
 function _notifyQuestion(body, tab) {
   try {
     const { Notification, nativeImage } = require('electron');
@@ -1695,6 +1838,12 @@ function initStateGraph() {
           }
           if (unifiedWindow && !unifiedWindow.isDestroyed()) {
             safeSend(unifiedWindow, channel, data);
+          }
+          // Voice TTS fan-out — a handoff task submitted by voice speaks its
+          // final answer when it completes (the ack was already spoken).
+          if (channel === 'task:complete' && data && data.source === 'voice'
+              && data.status === 'done' && data.answer && _voiceSessionActive) {
+            _voiceSay(data.answer, _voiceLang);
           }
         },
         setPendingPreflightPrompt: (taskId, ctx) => _pendingPreflightPromptsByTask.set(taskId, ctx),
@@ -3370,12 +3519,12 @@ app.whenReady().then(async () => {
   // When COMMS_GRAPH_ENABLED=true, sends the prompt to comms-graph /comms.process.
   // On success: streams the response to the renderer and returns true (skip promptQueue).
   // On failure/timeout: returns false so the caller can fall back to promptQueue.
-  function routeThroughCommsGraph(prompt, { selectedText = '', responseLanguage = null, sessionId = null } = {}) {
+  function routeThroughCommsGraph(prompt, { selectedText = '', responseLanguage = null, sessionId = null, source = 'text' } = {}) {
     if (process.env.COMMS_GRAPH_ENABLED !== 'true') return false;
 
     const commsPort = parseInt(process.env.COMMS_GRAPH_PORT || '3015', 10);
-    console.log('🧠 [CommsGraph] Routing prompt through comms-graph:', prompt.substring(0, 80));
-    const commsBody = JSON.stringify({ text: prompt, source: 'text', language: responseLanguage || null, sessionId: sessionId || null });
+    console.log(`🧠 [CommsGraph] Routing prompt through comms-graph (source=${source}):`, prompt.substring(0, 80));
+    const commsBody = JSON.stringify({ text: prompt, source, language: responseLanguage || null, sessionId: sessionId || null });
     const commsReq = http.request({
       hostname: '127.0.0.1',
       port: commsPort,
@@ -3419,6 +3568,12 @@ app.whenReady().then(async () => {
                 guessedIntent,
               });
             }
+            // Voice TTS fan-out — speak the response. For handoffs (intent=0)
+            // this is the short ack phrase; the real answer is spoken on
+            // task:complete via the ipcBroadcast hook in handoffRunner.init.
+            if (source === 'voice' && _voiceSessionActive) {
+              _voiceSay(responseText, responseLanguage);
+            }
             return;
           }
         } catch (_) {}
@@ -3444,6 +3599,8 @@ app.whenReady().then(async () => {
     commsReq.end();
     return true; // request dispatched — caller should NOT also enqueue
   }
+  // Expose to the /voice.event endpoint so voice finals route identically.
+  _routeViaCommsGraph = routeThroughCommsGraph;
 
   ipcMain.on('prompt-queue:submit', (_event, { prompt, selectedText = '', responseLanguage = null, isAskUserAnswer = false, taskId = null, sessionId: pinnedSessionId = null } = {}) => {
     const trimmedPrompt = prompt?.trim();
@@ -3490,6 +3647,14 @@ app.whenReady().then(async () => {
         safeSendUnified('automation:progress', { type: 'all_done', cancelled: true, completedCount: 0, totalCount: 0, ...(taskId ? { taskId } : {}) });
         return;
       }
+    }
+
+    // ── Intercept: free-form confirm/deny for a pending plan approval ────────
+    // A task paused at the approval gate used to only be resolvable via the
+    // Queue card buttons; a typed/voice "yes send it" fell through to the
+    // classifier and spawned a duplicate task. Resolve it here instead.
+    if (!isAskUserAnswer && _tryResolvePendingApproval(trimmedPrompt)) {
+      return;
     }
 
     if (pendingPlanContext && PLAN_MODE_CANCEL_RE.test(trimmedPrompt)) {
@@ -4246,21 +4411,35 @@ app.whenReady().then(async () => {
     }
   });
 
-  // voice:companion-open — open Chrome companion window
-  ipcMain.on('voice:companion-open', () => {
-    console.log('🎙️ [Companion] Opening Chrome companion window');
-    const { shell } = require('electron');
-    const isDev = process.env.NODE_ENV === 'development' || !app.isPackaged;
-    const companionUrl = isDev
-      ? 'http://localhost:5173?mode=voice-companion'
-      : `file://${path.join(__dirname, '../../dist-renderer/index.html')}?mode=voice-companion`;
-    shell.openExternal(companionUrl).catch(err => console.warn('[Companion] openExternal failed:', err));
+  // voice:session-start — ask the voice-bridge to launch its hidden Chrome
+  // worker and begin listening. Events flow back via POST /voice.event.
+  ipcMain.on('voice:session-start', async () => {
+    console.log('🎙️ [Voice] Session start → voice-bridge');
+    try {
+      const url = new URL('/voice.session.start', VOICE_SERVICE_URL);
+      await _postJson(url, {});
+      _voiceSessionActive = true;
+      safeSendUnified('voice:session', { active: true });
+    } catch (err) {
+      console.warn('[Voice] session start failed:', err.message);
+      _voiceSessionActive = false;
+      safeSendUnified('voice:session', { active: false, error: err.message });
+      safeSendUnified('voice:error', { error: err.message });
+    }
   });
 
-  // voice:companion-close — send SSE close event so Chrome tab closes itself
-  ipcMain.on('voice:companion-close', () => {
-    console.log('🎙️ [Companion] Broadcasting close to companion windows');
-    broadcastCompanionEvent('close');
+  // voice:session-stop — suspend listening; the hidden Chrome stays resident
+  // for instant re-entry.
+  ipcMain.on('voice:session-stop', async () => {
+    console.log('🎙️ [Voice] Session stop → voice-bridge');
+    try {
+      const url = new URL('/voice.session.stop', VOICE_SERVICE_URL);
+      await _postJson(url, {});
+    } catch (err) {
+      console.warn('[Voice] session stop failed:', err.message);
+    }
+    _voiceSessionActive = false;
+    safeSendUnified('voice:session', { active: false });
   });
 
   // voice:stop — deactivate voice
