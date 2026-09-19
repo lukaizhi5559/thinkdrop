@@ -141,6 +141,7 @@ contextBridge.exposeInMainWorld('electron', {
         'parallel:login:decision',
         'thoughts:list',
         'thought:decide',
+        'conversation:list',
       ];
       if (validChannels.includes(channel)) {
         ipcRenderer.send(channel, data);
@@ -243,6 +244,7 @@ contextBridge.exposeInMainWorld('electron', {
         'thought:update',
         'thoughts:list',
         'thought:decided',
+        'conversation:list',
       ];
       if (validChannels.includes(channel)) {
         const wrapped = (_event, ...args) => func(...args);
@@ -312,6 +314,7 @@ contextBridge.exposeInMainWorld('electron', {
         'plan:error',
         'preflight:open-agents-tab',
         'preflight:recheck',
+        'conversation:list',
       ];
       if (validChannels.includes(channel)) {
         ipcRenderer.removeAllListeners(channel);
@@ -405,6 +408,7 @@ contextBridge.exposeInMainWorld('electron', {
         'task:complete',
         'preflight:open-agents-tab',
         'preflight:recheck',
+        'conversation:list',
       ];
       if (validChannels.includes(channel)) {
         const chMap = _wiredListeners.get(channel);
@@ -482,6 +486,7 @@ contextBridge.exposeInMainWorld('electron', {
         'agents:trained-skills-list',
         'agents:train-review-saved',
         'agents:train-review-error',
+        'conversation:list',
       ];
       if (validChannels.includes(channel)) {
         // Legacy path: func-reference removal won't work across contextBridge.

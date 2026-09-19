@@ -13,6 +13,22 @@ require('dotenv').config({
 });
 const { app, BrowserWindow, ipcMain, screen, globalShortcut, clipboard, safeStorage } = require('electron');
 
+// ── EPIPE guard ────────────────────────────────────────────────────────────
+// If the dev terminal / concurrently wrapper exits while the app keeps running,
+// stdout/stderr writes throw 'write EPIPE' — either synchronously inside
+// console.log (uncaughtException → Electron error dialog) or via stream
+// 'error'. Swallow EPIPE in both paths; real errors still surface.
+const _isEpipe = (e) => !!e && (e.code === 'EPIPE' || /EPIPE/.test(e.message || ''));
+for (const _m of ['log', 'info', 'warn', 'error', 'debug', 'trace', 'dir']) {
+  const _orig = console[_m].bind(console);
+  console[_m] = (...a) => { try { _orig(...a); } catch (e) { if (!_isEpipe(e)) throw e; } };
+}
+for (const _s of [process.stdout, process.stderr]) {
+  if (_s && typeof _s.on === 'function') {
+    _s.on('error', (e) => { if (!_isEpipe(e)) throw e; });
+  }
+}
+
 // Enable webkitSpeechRecognition network access — must be called before app is ready.
 // Without these flags Electron blocks the connection to Google's speech API,
 // causing a 'network' error immediately on recognition.start().
@@ -3445,6 +3461,45 @@ app.whenReady().then(async () => {
     const list = await postToPersonality('/thought.list', { userId: 'local_user', all: true, limit: 200 });
     safeSendUnified('thoughts:list', list?.data || { thoughts: [], total: 0 });
     safeSendUnified('thought:decided', { id, decision, result: res?.data || null });
+  });
+
+  // ─── Results feed: cross-session conversation history ─────────────────────
+  // Renderer asks for pages of conversation_messages (newest-first, cursor by
+  // endDate) to back the scroll-up pagination in the Results feed.
+  const CONVERSATION_PORT = parseInt(process.env.CONVERSATION_SERVICE_PORT || '3004', 10);
+  const CONV_API_KEY = process.env.MCP_CONVERSATION_API_KEY || process.env.MCP_API_KEY || '';
+  ipcMain.on('conversation:list', async (_event, { limit = 20, endDate = null } = {}) => {
+    const payload = { limit };
+    if (endDate) {
+      payload.startDate = '1970-01-01T00:00:00.000Z';
+      payload.endDate = endDate;
+      payload.sortOrder = 'DESC';
+    }
+    const body = JSON.stringify({
+      version: 'mcp.v1', service: 'conversation', action: 'message.listByDate',
+      payload, requestId: `conv_list_${Date.now()}`,
+    });
+    const res = await new Promise((resolve) => {
+      const req = http.request({
+        hostname: '127.0.0.1', port: CONVERSATION_PORT, path: '/message.listByDate',
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Content-Length': Buffer.byteLength(body),
+          ...(CONV_API_KEY ? { 'x-api-key': CONV_API_KEY } : {}),
+        },
+        timeout: 8000,
+      }, (resp) => {
+        let raw = '';
+        resp.on('data', c => { raw += c; });
+        resp.on('end', () => { try { resolve(JSON.parse(raw)); } catch (_) { resolve(null); } });
+      });
+      req.on('error', () => resolve(null));
+      req.on('timeout', () => { req.destroy(); resolve(null); });
+      req.write(body);
+      req.end();
+    });
+    safeSendUnified('conversation:list', { messages: res?.data?.messages || [] });
   });
 
   // Ensure the Brain artifact directory exists — prompt actions save generated

@@ -254,6 +254,19 @@ interface AutomationProgressProps {
   /** For queue card recovery: task.planFile from task:complete. If set on mount,
    *  initializes phase='plan_review' even if the plan:generated event was missed. */
   planFile?: string;
+  /** Results feed: called once when a run reaches a terminal state (done/failed/
+   *  cancelled) with a snapshot of the run for the collapsed history card. */
+  onRunSummary?: (summary: RunSummary) => void;
+}
+
+export interface RunSummary {
+  title: string;
+  status: 'done' | 'failed' | 'cancelled';
+  steps: { title: string; status: string }[];
+  savedFilePaths: string[];
+  planFile: string | null;
+  error: string | null;
+  durationMs: number | null;
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -878,7 +891,7 @@ function parsePlanStepTitles(content: string): string[] {
   return titles;
 }
 
-export default function AutomationProgress({ onHeightChange, onActiveChange, onOpenRules, onAskUserShown, setIsSubmitting, onAuthPending, suppressIfScheduled, activeTab, taskId, planFile }: AutomationProgressProps) {
+export default function AutomationProgress({ onHeightChange, onActiveChange, onOpenRules, onAskUserShown, setIsSubmitting, onAuthPending, suppressIfScheduled, activeTab, taskId, planFile, onRunSummary }: AutomationProgressProps) {
   const [phase, setPhase] = useState<AutomationPhase>('idle');
   const planReviewRef = useRef<HTMLDivElement>(null);
   const [steps, setSteps] = useState<Step[]>([]);
@@ -1134,6 +1147,50 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
   useEffect(() => {
     onActiveChange?.(phase === 'planning' || phase === 'executing' || phase === 'preflight' || phase === 'plan_review');
   }, [phase]);
+
+  // ── Run-summary snapshot for the Results feed ─────────────────────────────
+  // Refs synced every render so the IPC handler (mounted once) and the terminal
+  // emit can read pre-reset values — resetToIdle wipes state on cancel/new prompt.
+  const onRunSummaryRef = useRef(onRunSummary);
+  const stepsSnapshotRef = useRef<Step[]>([]);
+  const savedFilePathsSnapshotRef = useRef<string[]>([]);
+  const planReviewSnapshotRef = useRef(planReview);
+  const runSummaryEmittedRef = useRef(false);
+  useEffect(() => {
+    onRunSummaryRef.current = onRunSummary;
+    stepsSnapshotRef.current = steps;
+    savedFilePathsSnapshotRef.current = savedFilePaths;
+    planReviewSnapshotRef.current = planReview;
+  });
+
+  const emitRunSummary = useCallback((status: 'done' | 'failed' | 'cancelled', error: string | null = null) => {
+    if (runSummaryEmittedRef.current) return;
+    const s = stepsSnapshotRef.current;
+    // A 'done' with no steps is a non-run completion (e.g. pipeline:done on a
+    // plain answer) — nothing meaningful to collapse into a card.
+    if (s.length === 0 && status === 'done') return;
+    runSummaryEmittedRef.current = true;
+    const pr = planReviewSnapshotRef.current;
+    onRunSummaryRef.current?.({
+      title: pr?.title || 'Automation run',
+      status,
+      steps: s.map(x => ({ title: x.description || x.skill || 'Step', status: x.status })),
+      savedFilePaths: savedFilePathsSnapshotRef.current,
+      planFile: pr?.planFile || _planFileRef.current || null,
+      error,
+      durationMs: executionStartRef.current ? Date.now() - executionStartRef.current : null,
+    });
+  }, []);
+
+  // done/failed emit here once merged state has flushed; cancelled emits inline
+  // in the all_done handler (before resetToIdle clears the snapshot refs).
+  useEffect(() => {
+    if (phase === 'done' || phase === 'failed') {
+      emitRunSummary(phase, globalError || failureAnswer || null);
+    } else {
+      runSummaryEmittedRef.current = false;
+    }
+  }, [phase, emitRunSummary, globalError, failureAnswer]);
 
   // Live countdown tick for monitoring entries — re-renders every 1s while
   // any step's latest log entry has a nextCheckInMs (monitoring phase active).
@@ -2710,6 +2767,8 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
           if (phaseRef.current === 'plan_review') break;
           isResumeInProgressRef.current = false;
           if (data.cancelled) {
+            // Emit the feed snapshot BEFORE wiping — resetToIdle clears steps.
+            emitRunSummary('cancelled');
             // Cancel = wipe the panel back to idle — no done summary, no step rows.
             resetToIdle();
             break;

@@ -17,7 +17,7 @@ import {
   type TabId,
   type ThoughtItem,
 } from './TabComponents';
-import { QueueTaskList, TaskCompleteBanner, type CommsTask } from './QueueTaskCard';
+import { QueueTaskList, type CommsTask } from './QueueTaskCard';
 import type { WebResultItem } from './rich-content/WebResultCard';
 import { SlideoutDrawer } from './SlideoutDrawer';
 import { SettingsTab } from './SettingsTab';
@@ -28,6 +28,14 @@ import { LearnModeOverlay, type LearnModeState } from './LearnModeOverlay';
 import { HighlightDebugPanel } from './HighlightDebugPanel';
 import { OverlayHeader } from './OverlayHeader';
 import { ResultsContent, type SkillBuildState, type BridgeStatus, type SearchSource, type ActionChip, type InstallPrompt, type SchedulePending } from './ResultsContent';
+import { ResultsFeed, friendlyErrorMessage, type FeedEntry } from './ResultsFeed';
+import type { RunSummary } from './AutomationProgress';
+
+// New entries: FeedEntry minus the assigned fields (id/ts optional). The
+// conditional distributes over the union so each variant keeps its props.
+type FeedEntryInput = FeedEntry extends infer T
+  ? T extends FeedEntry ? Omit<T, 'id' | 'ts'> & { id?: string; ts?: number } : never
+  : never;
 // TrainingBanner removed — training now handled by TrainingPanel in AgentsTab
 import { TeachMeDialog } from './TeachMeDialog';
 import type { AIActivityPanelHandle } from './AIActivityPanel';
@@ -65,15 +73,10 @@ export function UnifiedOverlay() {
   const [isExpanded, setIsExpanded] = useState(false);
   const [unreadTabs, setUnreadTabs] = useState<Set<TabId>>(new Set());
 
-  // Proactive outreach (Results panel). questionAlert: assistant is blocked
-  // on a question (ask_user / grill batch) — click navigates to where the
-  // QuestionCard lives. proactiveMessages: thought-engine outreach (notify /
-  // question actions) appended under the response like follow-up messages —
-  // deduped per thought (nudge 2/3 updates its line), capped, cleared on the
-  // next prompt.
+  // questionAlert: assistant is blocked on a question (ask_user / grill
+  // batch) — click navigates to where the QuestionCard lives. Proactive
+  // thought-engine outreach now lands directly in the Results feed.
   const [questionAlert, setQuestionAlert] = useState<{ text: string; tab: 'queue' | 'results'; ts: number } | null>(null);
-  const [proactiveMessages, setProactiveMessages] = useState<Array<{ id: string; thoughtId: string; text: string; kind: string; ts: number; pending?: boolean }>>([]);
-  const MAX_PROACTIVE_MESSAGES = 5;
 
   // Modal card element — when set (modal open), useDynamicHeight grows the window
   // to fit the modal's full content. Cleared automatically when the modal unmounts.
@@ -96,6 +99,42 @@ export function UnifiedOverlay() {
   // --- Results State ---
   const [streamingResponse, setStreamingResponse] = useState('');
   const [resultItems, setResultItems] = useState<WebResultItem[]>([]);
+
+  // --- Conversation feed ---
+  // Committed timeline: user bubbles, assistant messages, collapsed run cards,
+  // proactive outreach, system lines. The live exchange (streamingResponse,
+  // AutomationProgress, question cards) renders below it and settles into
+  // entries when the run completes.
+  const [feedEntries, setFeedEntries] = useState<FeedEntry[]>([]);
+  const feedEntriesRef = useRef<FeedEntry[]>([]);
+  // Recently-appended user prompts — synchronous dedupe log. Unlike
+  // feedEntriesRef (synced via useEffect → lags a render cycle), this is
+  // updated inside appendUserEntry itself, so submit → set-prompt echo →
+  // task:created all see each other immediately even when other entry kinds
+  // (run cards, system lines) interleave.
+  const recentUserPromptsRef = useRef<{ text: string; ts: number }[]>([]);
+  useEffect(() => { feedEntriesRef.current = feedEntries; }, [feedEntries]);
+  const feedSeqRef = useRef(0);
+  // Live AutomationProgress hides once its run summary commits to the feed —
+  // the collapsed run entry represents it. Unhidden on the next prompt.
+  const [liveRunHidden, setLiveRunHidden] = useState(false);
+  // Mirrors of streamed state for commit-time reads — IPC handlers are mounted
+  // once so state closures are stale; refs hold the latest values.
+  const streamAccRef = useRef('');       // accumulated text of the current stream segment
+  const streamSegmentRef = useRef('');   // last completed segment (committed at done/all_done)
+  const placeholderStreamRef = useRef(false); // stream was a handoff placeholder (task:complete patches it)
+  const resultItemsRef = useRef<WebResultItem[]>([]);
+  const searchSourcesRef = useRef<SearchSource[]>([]);
+  const lastPromptRef = useRef('');      // last user text — stored on entries for redo
+  // History pagination (conversation-service). sessionBoundary: entries logged
+  // after mount are live entries — history pages only look strictly older.
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const [hasMoreHistory, setHasMoreHistory] = useState(false);
+  const historyCursorRef = useRef<string | null>(null);
+  const historyLoadingRef = useRef(false);
+  const hasMoreHistoryRef = useRef(false);
+  const sessionBoundaryRef = useRef<string>(new Date().toISOString());
+  const pendingPrependRef = useRef<{ prevScrollHeight: number } | null>(null);
   const [isStreaming, setIsStreaming] = useState(false);
   const [isThinking, setIsThinking] = useState(false);
   const [thinkingElapsed, setThinkingElapsed] = useState(0);
@@ -156,7 +195,8 @@ export function UnifiedOverlay() {
 
   // --- comms-graph task state (concurrent handoff tasks) ---
   const [commsTasks, setCommsTasks] = useState<CommsTask[]>([]);
-  const [taskNotification, setTaskNotification] = useState<{ taskId: string; prompt: string; answer?: string; error?: string; status?: string; planFile?: string | null } | null>(null);
+  // taskNotification state retired — TaskCompleteBanner commented out; feed
+  // run cards handle completion/approval surfacing.
   // Deep-link target for the queue tab — set when navigating from a notification
   const [queueFocus, setQueueFocus] = useState<{ taskId: string; status?: string; nonce: number } | null>(null);
 
@@ -235,11 +275,19 @@ export function UnifiedOverlay() {
   const dragOffsetY = useRef(0);
   // Epoch ms until which content-driven resize is suppressed after a manual collapse click.
   const manualCollapseUntilRef = useRef(0);
+  // Epoch ms of the last mouseup — keeps resize suppressed briefly after a
+  // drag ends so a queued/debounced set-content-height can't snap the window.
+  const dragEndedAtRef = useRef(0);
+  const dragRafRef = useRef<number | null>(null);
+  const pendingMoveRef = useRef<{ x: number; y: number } | null>(null);
 
   // Suppress all resize IPC while user is dragging, using the native resize handle,
-  // or within the brief hold window after a manual collapse via the width toggle.
+  // within the brief hold window after a manual collapse via the width toggle, or
+  // just after a drag ends (a queued animated setBounds mid/post-drag = visible snap).
   const shouldSuppressResize = () =>
-    isDraggingRef.current || isResizingRef.current || Date.now() < manualCollapseUntilRef.current;
+    isDraggingRef.current || isResizingRef.current ||
+    Date.now() < manualCollapseUntilRef.current ||
+    Date.now() - dragEndedAtRef.current < 180;
 
   // --- Dynamic Height Management ---
   // Single consolidated pipeline: measures fixed sections (header + input bar)
@@ -279,6 +327,8 @@ export function UnifiedOverlay() {
     overlayEl: modalCardEl,
     getWidth: () => (isExpanded ? 900 : 400),
     // While expanded, pin the window at MAX_HEIGHT (expand = 900xMAX).
+    // NOTE: isScrolledUp intentionally does NOT force height — scroll/hover
+    // resize caused visible snapping; the feed scrolls inside the panel.
     forceHeight: isExpanded ? MAX_HEIGHT : null,
     debounceMs: 120,
     suppress: shouldSuppressResize,
@@ -312,6 +362,98 @@ export function UnifiedOverlay() {
     }
     console.log('[Width Toggle] Sent IPC unified:set-content-height');
   }, [isExpanded, measureNow]);
+
+  // --- Feed helpers ---
+  const appendFeedEntry = useCallback((e: FeedEntryInput): string => {
+    const id = e.id || `fe_${Date.now()}_${feedSeqRef.current++}`;
+    const ts = e.ts ?? Date.now();
+    setFeedEntries(prev => [...prev, { ...e, id, ts } as FeedEntry]);
+    return id;
+  }, []);
+
+  const patchFeedEntry = useCallback((id: string, updates: Partial<FeedEntry>) => {
+    setFeedEntries(prev => prev.map(e => (e.id === id ? ({ ...e, ...updates } as FeedEntry) : e)));
+  }, []);
+
+  const patchFeedEntryByTask = useCallback((taskId: string, updates: Partial<FeedEntry>) => {
+    setFeedEntries(prev => prev.map(e =>
+      (e.kind === 'assistant' || e.kind === 'run') && e.taskId === taskId
+        ? ({ ...e, ...updates } as FeedEntry)
+        : e
+    ));
+  }, []);
+
+  // User-bubble append with dedupe — local submit, the unified:set-prompt
+  // echo, and task:created all fire for the same prompt. The echo carries the
+  // full wrapped text (highlight tags + thread context) so match on suffix,
+  // not equality. Dedupe state lives in recentUserPromptsRef (synchronous) —
+  // not feedEntriesRef — so rapid interleaved appends can't slip through.
+  const appendUserEntry = useCallback((text: string) => {
+    const clean = (text || '').trim();
+    if (!clean) return;
+    const now = Date.now();
+    recentUserPromptsRef.current = recentUserPromptsRef.current.filter(p => now - p.ts < 4000);
+    const isDup = recentUserPromptsRef.current.some(p =>
+      p.text === clean || clean.endsWith(p.text) || p.text.endsWith(clean));
+    if (isDup) return;
+    recentUserPromptsRef.current.push({ text: clean, ts: now });
+    lastPromptRef.current = clean;
+    appendFeedEntry({ kind: 'user', text: clean });
+  }, [appendFeedEntry]);
+
+  // Commit any in-flight (un-'done') stream text before a new prompt wipes it —
+  // otherwise a resubmit mid-stream silently drops the partial AI message.
+  const commitInFlightStream = useCallback(() => {
+    const text = streamAccRef.current;
+    if (!text || !text.trim()) return;
+    appendFeedEntry({
+      kind: 'assistant',
+      text,
+      items: resultItemsRef.current,
+      sources: searchSourcesRef.current,
+      prompt: lastPromptRef.current || undefined,
+    });
+    streamAccRef.current = '';
+    placeholderStreamRef.current = false;
+  }, [appendFeedEntry]);
+
+  // Active exchange = the last user entry onward (drives window height).
+  const activeExchangeId = useMemo(() => {
+    for (let i = feedEntries.length - 1; i >= 0; i--) {
+      if (feedEntries[i].kind === 'user') return feedEntries[i].id;
+    }
+    return null;
+  }, [feedEntries]);
+
+  const scrollToBottom = useCallback(() => {
+    scrollBottomRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
+  }, []);
+
+  // Page older history in from the conversation service (20 at a time).
+  // endDate bounds pages strictly below the session boundary so live entries
+  // never collide with fetched history.
+  const requestHistoryPage = useCallback((endDate: string | null) => {
+    if (!ipcRenderer || historyLoadingRef.current) return;
+    historyLoadingRef.current = true;
+    setHistoryLoading(true);
+    ipcRenderer.send('conversation:list', { limit: 20, endDate, sortOrder: 'DESC' });
+  }, []);
+
+  const loadOlderHistory = useCallback(() => {
+    if (!hasMoreHistoryRef.current || historyLoadingRef.current) return;
+    const container = scrollContainerRef.current;
+    pendingPrependRef.current = container ? { prevScrollHeight: container.scrollHeight } : null;
+    requestHistoryPage(historyCursorRef.current);
+  }, [requestHistoryPage]);
+
+  // After older entries prepend, keep the viewport anchored where the user was.
+  useEffect(() => {
+    const pending = pendingPrependRef.current;
+    const container = scrollContainerRef.current;
+    if (!pending || !container) return;
+    pendingPrependRef.current = null;
+    container.scrollTop += container.scrollHeight - pending.prevScrollHeight;
+  }, [feedEntries]);
 
   // --- Tab Switching ---
   const handleTabSelect = useCallback((tab: TabId | 'settings' | 'rules') => {
@@ -367,6 +509,10 @@ export function UnifiedOverlay() {
   const handleSubmitFromInputBar = useCallback(async (finalPromptText: string, finalHighlights: string[], wasGatherPending: boolean) => {
     dbg('🚀 [UNIFIED] handleSubmit called');
 
+    // Preserve any still-streaming AI text before the reset below wipes it —
+    // a resubmit mid-stream shouldn't silently drop the partial message.
+    commitInFlightStream();
+
     // Reset parent state via startTransition — non-blocking, lets the browser paint
     // the child's cleared text before the parent re-renders.
     startTransition(() => {
@@ -383,9 +529,10 @@ export function UnifiedOverlay() {
       setInstallOutput([]);
       setGatherPending(false);
       setGatherQuestion(null);
-      setProactiveMessages([]); // new exchange — proactive follow-ups belong to the prior response
+      setLiveRunHidden(false);
       setStreamingStartedRef(false);
     });
+    streamAccRef.current = '';
     hasDroppedRef.current = false;
 
     if (!finalPromptText.trim() && finalHighlights.length === 0) {
@@ -448,12 +595,17 @@ export function UnifiedOverlay() {
       if (ipcRenderer) {
         ipcRenderer.send('results-window:show-error', errorMessage);
       }
+      appendFeedEntry({ kind: 'system', text: '⚠️ Message too long — trim highlights or split into multiple parts.' });
       setIsSubmitting(false);
       return;
     }
 
     dbg('📤 [UNIFIED] Final prompt to send:', finalPrompt.trim());
     dbg('🔍 [UNIFIED] ipcRenderer available?', !!ipcRenderer);
+
+    // Commit the user bubble + zoom the window to the fresh exchange
+    appendUserEntry(finalPromptText);
+    scrollToBottom();
 
     // Send to main process - match StandalonePromptCapture exactly
     ipcRenderer?.send('prompt-queue:submit', {
@@ -465,7 +617,7 @@ export function UnifiedOverlay() {
     dbg('✅ [UNIFIED] Prompt enqueued');
 
     // Note: isSubmitting stays true until task completes (handled in all_done)
-  }, [isSubmitting, threadContext]);
+  }, [isSubmitting, threadContext, appendUserEntry, appendFeedEntry, scrollToBottom, commitInFlightStream]);
 
   const handleHighlightRemove = useCallback((index: number) => {
     setHighlights(prev => prev.filter((_, i) => i !== index));
@@ -585,9 +737,15 @@ export function UnifiedOverlay() {
   // discussion as context (chip + sessionId) for the user's next prompt.
   const handleContinueThread = useCallback((task: any) => {
     if (task.result) {
-      setStreamingResponse(task.result);
-      setResultItems(task.items || []);
+      appendFeedEntry({
+        kind: 'assistant',
+        text: task.result,
+        items: task.items || undefined,
+        taskId: task.id,
+        prompt: task.prompt || undefined,
+      });
       setActiveTab('results');
+      scrollToBottom();
     }
     setThreadContext({
       taskId: task.id,
@@ -595,7 +753,7 @@ export function UnifiedOverlay() {
       prompt: task.prompt || '',
       result: task.result || null,
     });
-  }, []);
+  }, [appendFeedEntry, scrollToBottom]);
   const handleThreadContextClear = useCallback(() => setThreadContext(null), []);
   const handleQueueHeightChange = useCallback(() => {
     if (shouldSuppressResize()) return;
@@ -652,12 +810,37 @@ export function UnifiedOverlay() {
   }, []);
 
   const handleCopy = useCallback(() => {
-    if (streamingResponse) {
-      ipcRenderer?.send('clipboard:write-text', streamingResponse);
+    const lastAssistant = [...feedEntriesRef.current].reverse().find(e => e.kind === 'assistant' && e.text);
+    const text = streamingResponse
+      || (lastAssistant && lastAssistant.kind === 'assistant' ? lastAssistant.text : '')
+      || '';
+    if (text) {
+      ipcRenderer?.send('clipboard:write-text', text);
       setIsCopied(true);
       setTimeout(() => setIsCopied(false), 2000);
     }
   }, [streamingResponse]);
+
+  // --- Feed row actions ---
+  const handleFeedCopy = useCallback((text: string) => {
+    ipcRenderer?.send('clipboard:write-text', text);
+  }, []);
+
+  const handleFeedRedo = useCallback((prompt: string) => {
+    ipcRenderer?.send('prompt-queue:submit', { prompt, selectedText: '' });
+  }, []);
+
+  const handleFeedPlanApprove = useCallback((taskId: string, planFile: string | null) => {
+    ipcRenderer?.send('plan:approve', { taskId, planFile });
+  }, []);
+
+  const handleFeedPlanCancel = useCallback((taskId: string, planFile: string | null) => {
+    ipcRenderer?.send('plan:cancel', { taskId, planFile });
+  }, []);
+
+  const handleFeedOpenPath = useCallback((path: string) => {
+    ipcRenderer?.send('shell:open-path', path);
+  }, []);
 
   const handleToggleSlideout = useCallback(() => {
     setIsSlideoutOpen(prev => !prev);
@@ -730,10 +913,25 @@ export function UnifiedOverlay() {
       const newX = Math.round(e.screenX - dragOffsetX.current);
       const newY = Math.round(e.screenY - dragOffsetY.current);
       if (!Number.isFinite(newX) || !Number.isFinite(newY)) return;
-      ipcRenderer.send('window:move', { x: newX, y: newY });
+      // rAF-throttle: raw mousemove can fire faster than the main process can
+      // apply setPosition — queued IPCs make the window lag then jump to catch
+      // up. Coalesce to one move per frame.
+      pendingMoveRef.current = { x: newX, y: newY };
+      if (dragRafRef.current == null) {
+        dragRafRef.current = requestAnimationFrame(() => {
+          dragRafRef.current = null;
+          const p = pendingMoveRef.current;
+          if (p) ipcRenderer.send('window:move', p);
+        });
+      }
     };
 
     const handleMouseUp = () => {
+      // Flush any pending coalesced move so the window ends under the cursor.
+      if (dragRafRef.current != null) { cancelAnimationFrame(dragRafRef.current); dragRafRef.current = null; }
+      const p = pendingMoveRef.current;
+      if (p) { ipcRenderer?.send('window:move', p); pendingMoveRef.current = null; }
+      dragEndedAtRef.current = Date.now(); // post-drag resize suppression window
       isDraggingRef.current = false; // Clear ref synchronously
       setIsDragging(false);
       // Tell main to clamp the panel back into the work area (animated snap-back
@@ -802,25 +1000,28 @@ export function UnifiedOverlay() {
         if (msgText.startsWith('\x00SOURCES\x00')) {
           try {
             const sources = JSON.parse(msgText.slice('\x00SOURCES\x00'.length));
-            if (Array.isArray(sources)) setSearchSources(sources);
+            if (Array.isArray(sources)) { setSearchSources(sources); searchSourcesRef.current = sources; }
           } catch (_) {}
           return;
         } else if (msgText.startsWith('\x00ITEMS\x00')) {
           try {
             const items = JSON.parse(msgText.slice('\x00ITEMS\x00'.length));
-            if (Array.isArray(items)) setResultItems(items);
+            if (Array.isArray(items)) { setResultItems(items); resultItemsRef.current = items; }
           } catch (_) {}
           return;
         } else if (msgText.startsWith('\x00REPLACE\x00')) {
           const newText = msgText.slice('\x00REPLACE\x00'.length);
           dbg('🔄 [UNIFIED] Replacing text, new length:', newText.length);
+          streamAccRef.current = newText;
           setStreamingResponse(newText);
         } else {
           dbg('➕ [UNIFIED] Appending text, length:', msgText.length);
+          if (message.isPlaceholder) placeholderStreamRef.current = true;
           setStreamingResponse(prev => {
             // If this is the first chunk of a new stream, discard prev (old answer) atomically.
             const base = isNewStream ? '' : prev;
             const combined = base + msgText;
+            streamAccRef.current = combined;
             dbg('📝 [UNIFIED] Combined length:', combined.length, isNewStream ? '(new stream — cleared prev)' : '');
             return combined;
           });
@@ -841,6 +1042,37 @@ export function UnifiedOverlay() {
         streamCompletedRef.current = true;
         dbg('✅ [UNIFIED] Streaming complete, final streamingResponse length:', streamingResponse.length);
         glowOffTimerRef.current = setTimeout(() => setIsGlowActive(false), 300);
+
+        // ── Feed commit ─────────────────────────────────────────────────
+        // Mid-run 'done's during automation only snapshot the segment — the
+        // final commit happens at all_done (plan-gen text is discarded, the
+        // synth summary is what settles into the feed).
+        if (isAutomationModeRef.current) {
+          if (streamAccRef.current.trim()) streamSegmentRef.current = streamAccRef.current;
+          streamAccRef.current = '';
+        } else {
+          const finalText = streamAccRef.current;
+          if (finalText.trim()) {
+            const wasPlaceholder = placeholderStreamRef.current;
+            appendFeedEntry({
+              kind: 'assistant',
+              text: finalText,
+              items: resultItemsRef.current,
+              sources: searchSourcesRef.current,
+              taskId: message.taskId || undefined,
+              pending: wasPlaceholder || undefined,
+              prompt: lastPromptRef.current || undefined,
+            });
+            if (wasPlaceholder) placeholderStreamRef.current = false;
+            streamSegmentRef.current = '';
+            setStreamingResponse('');
+            setResultItems([]);
+            setSearchSources([]);
+            resultItemsRef.current = [];
+            searchSourcesRef.current = [];
+          }
+          streamAccRef.current = '';
+        }
       } else if (message.type === 'ready') {
         dbg('✅ [UNIFIED] VS Code extension ready');
       }
@@ -862,11 +1094,32 @@ export function UnifiedOverlay() {
       setStreamingStartedRef(false); // Reset streaming started flag
       hasDroppedRef.current = false;
       streamCompletedRef.current = false;
+      streamAccRef.current = '';
+      streamSegmentRef.current = '';
+      resultItemsRef.current = [];
+      searchSourcesRef.current = [];
+      setFeedEntries([]);
+      setLiveRunHidden(false);
     };
 
     const handleSetPrompt = (_text: string) => {
       // Reset all state for new prompt — do NOT setPromptText here,
       // PromptInputBar already cleared it synchronously via flushSync (child-local).
+      // Echo of the submitted prompt — commit the user bubble (deduped against
+      // the local append in handleSubmitFromInputBar; this also catches
+      // external submits like voice injection and queue retries).
+      commitInFlightStream(); // preserve any abandoned stream text first
+      const clean = (_text || '').trim();
+      if (clean) {
+        if (clean.startsWith('Building skill:') || clean.startsWith('Skill execution:') ||
+            clean.startsWith('Scheduled:')) {
+          appendFeedEntry({ kind: 'system', text: clean.length > 140 ? clean.slice(0, 140) + '…' : clean });
+        } else {
+          appendUserEntry(clean);
+        }
+      }
+      setLiveRunHidden(false);
+      streamAccRef.current = '';
       setStreamingResponse('');
       setResultItems([]);
       setSearchSources([]);
@@ -874,7 +1127,6 @@ export function UnifiedOverlay() {
       setIsStreaming(false);
       setIsThinking(true);
       setIsSubmitting(true); // Task starting - set submitting state
-      setProactiveMessages([]); // new exchange — voice/comms-routed submits clear proactive follow-ups too
       setActiveTab('results'); // Auto-switch to results panel
       setIsAutomationMode(false); // AutomationProgress will self-activate on 'planning' event
       // Keep refs in sync immediately — the 'done' handler checks these refs and
@@ -1001,6 +1253,7 @@ export function UnifiedOverlay() {
             .slice(0, 24);
           if (extractedItems.length > 0) {
             setResultItems(extractedItems);
+            resultItemsRef.current = extractedItems;
           }
         }
         if (data?.cancelled) {
@@ -1022,6 +1275,26 @@ export function UnifiedOverlay() {
         setInstallPrompt(null);
         setIsInstalling(false);
         glowOffTimerRef.current = setTimeout(() => setIsGlowActive(false), 400);
+
+        // ── Feed commit: the synth summary settles into the feed. The live
+        // AutomationProgress hides via its own onRunSummary → collapsed run card.
+        const autoText = (streamAccRef.current.trim() ? streamAccRef.current : streamSegmentRef.current).trim();
+        if (autoText && !data?.cancelled) {
+          appendFeedEntry({
+            kind: 'assistant',
+            text: autoText,
+            items: resultItemsRef.current,
+            sources: searchSourcesRef.current,
+            prompt: lastPromptRef.current || undefined,
+          });
+          setStreamingResponse('');
+          setResultItems([]);
+          setSearchSources([]);
+        }
+        streamAccRef.current = '';
+        streamSegmentRef.current = '';
+        resultItemsRef.current = [];
+        searchSourcesRef.current = [];
       }
     };
 
@@ -1240,7 +1513,6 @@ export function UnifiedOverlay() {
           setInstallPrompt(null);
           setGatherPending(false);
           setGatherQuestion(null);
-          setProactiveMessages([]); // new exchange — proactive follow-ups belong to the prior response
           setStreamingStartedRef(false); // Reset streaming started flag
         }
       });
@@ -1250,6 +1522,7 @@ export function UnifiedOverlay() {
     // --- Search Sources ---
     const handleSearchSources = (sources: SearchSource[]) => {
       setSearchSources(sources);
+      searchSourcesRef.current = sources;
     };
 
     // --- Agent Learn Progress ---
@@ -1833,6 +2106,39 @@ export function UnifiedOverlay() {
     ipcRenderer.on('gather:pending', handleGatherPending, token);
     ipcRenderer.on('queue:enqueued', handleQueueEnqueued, token);
 
+    // ── Conversation history pages (Results feed scroll-up pagination) ───────
+    // Response: { messages } newest-first, bounded above by sessionBoundary.
+    ipcRenderer.on('conversation:list', (data: { messages?: any[] }) => {
+      historyLoadingRef.current = false;
+      setHistoryLoading(false);
+      const msgs = Array.isArray(data?.messages) ? data.messages : [];
+      if (msgs.length > 0) {
+        const mapped: FeedEntry[] = msgs
+          .map((m: any) => {
+            const ts = Date.parse(m.timestamp || m.created_at || '') || Date.now();
+            const id = `db_${m.id}`;
+            // sender: 'user' | 'assistant' | 'system' (system = recovery/ask_user
+            // turns — kept out of the feed).
+            if (m.sender === 'user') return { id, ts, kind: 'user', text: String(m.text || '') } as FeedEntry;
+            if (m.sender === 'assistant') {
+              return { id, ts, kind: 'assistant', text: String(m.text || '') } as FeedEntry;
+            }
+            return null;
+          })
+          .filter((e): e is FeedEntry => e !== null && (e as any).text !== undefined)
+          .sort((a, b) => a.ts - b.ts); // chronological for the feed
+        const oldest = msgs.reduce((a: any, b: any) =>
+          (String(a.timestamp || a.created_at) < String(b.timestamp || b.created_at) ? a : b));
+        historyCursorRef.current = String(oldest.timestamp || oldest.created_at);
+        setFeedEntries(prev => {
+          const existing = new Set(prev.map(e => e.id));
+          return [...mapped.filter(e => !existing.has(e.id)), ...prev];
+        });
+      }
+      setHasMoreHistory(msgs.length >= 20);
+      hasMoreHistoryRef.current = msgs.length >= 20;
+    }, token);
+
     // ── Brain tab / Thought engine events ────────────────────────────────────
     // thoughts:list — full list refresh (after tab open, refresh, or a decision)
     ipcRenderer.on('thoughts:list', (data: { thoughts?: ThoughtItem[] }) => {
@@ -1852,22 +2158,19 @@ export function UnifiedOverlay() {
       // Badge the Brain tab — a proactive notification/approval request
       // deserves the unread dot (cleared when the user opens the tab).
       setUnreadTabs(prev => new Set(prev).add('brain'));
-      // Proactive outreach (notify/question actions) → appended message under
-      // the Results response — reads like a follow-up from the assistant.
-      // Deduped per thought (a re-nudge updates its line), capped, cleared on
-      // the user's next prompt.
+      // Proactive outreach (notify/question actions) → feed entries at the
+      // exchange tail — they open the window via the measured zone.
       if (evt.kind === 'notify' || evt.kind === 'question') {
         const text = String(t.summary || t.action?.payload?.text || 'ThinkDrop');
-        const pendingId = `pending-${t.id}`;
-        setProactiveMessages(prev => {
-          const next = prev.filter(m => m.thoughtId !== t.id);
-          next.push({ id: pendingId, thoughtId: t.id, text: '', kind: evt.kind!, ts: Date.now(), pending: true });
-          return next.slice(-MAX_PROACTIVE_MESSAGES);
+        const pendingId = `proactive-pending-${t.id}`;
+        // A re-nudge replaces its pending line (deduped per thought).
+        setFeedEntries(prev => {
+          const filtered = prev.filter(e => !(e.kind === 'proactive' && e.thoughtId === t.id));
+          return [...filtered, { id: pendingId, ts: Date.now(), kind: 'proactive', thoughtId: t.id, text: '', pending: true } as FeedEntry];
         });
         // Brief "incoming message…" beat, then the text lands.
         setTimeout(() => {
-          setProactiveMessages(prev => prev.map(m =>
-            m.id === pendingId ? { ...m, id: `${t.id}-${m.ts}`, text, pending: false } : m));
+          patchFeedEntry(pendingId, { text, pending: false } as Partial<FeedEntry>);
         }, 700);
       }
     }, token);
@@ -1923,6 +2226,21 @@ export function UnifiedOverlay() {
         });
         if (!isRestored) {
           setUnreadTabs(prev => { const n = new Set(prev); n.add('queue'); return n; });
+
+          // ── Feed: bubble + run card ────────────────────────────────────
+          // The prompt echo also arrives via unified:set-prompt — deduped there.
+          // Service-dispatched handoffs (scheduled runs, voice, API) have no
+          // local submit, so ensure the bubble exists here too.
+          if (data.prompt) appendUserEntry(data.prompt);
+          if (data.guessedIntent === 'command_automate') {
+            appendFeedEntry({
+              kind: 'run',
+              taskId: data.taskId,
+              title: data.prompt || 'Automation run',
+              status: 'queued',
+              prompt: data.prompt || undefined,
+            });
+          }
         }
       }
     }, token);
@@ -1942,6 +2260,7 @@ export function UnifiedOverlay() {
             },
           };
         }));
+        patchFeedEntryByTask(data.taskId, { status: 'running' } as Partial<FeedEntry>);
       }
     }, token);
 
@@ -1984,28 +2303,86 @@ export function UnifiedOverlay() {
         }
 
         if (!isRestored) {
-          if (status === 'done' && !isCommandAutomate && data.answer) {
-            // ── Non-command_automate: replace placeholder text with real answer ──
-            // Directly update the streaming response state — the ws-bridge:message
-            // handler is designed for main→renderer IPC, not renderer→main.
-            setStreamingResponse(data.answer);
-            setResultItems(Array.isArray(data.items) ? data.items : []);
+          // ── Feed: settle run card + placeholder answer ────────────────────
+          // The task-notification banner is retired — the Results feed is the
+          // single surface. Sounds preserved.
+          const settlePendingAssistant = (text: string, items?: any[]) => {
+            const hit = [...feedEntriesRef.current].reverse().find(e =>
+              e.kind === 'assistant' && (e.taskId === data.taskId || e.pending));
+            if (hit) {
+              patchFeedEntry(hit.id, { text, pending: false, items } as Partial<FeedEntry>);
+            } else {
+              appendFeedEntry({ kind: 'assistant', text, items, taskId: data.taskId, prompt: lastPromptRef.current || undefined });
+            }
+          };
+
+          if (isCommandAutomate) {
+            // Patch (or append) the run card for this task.
+            setFeedEntries(prev => {
+              const runPatch = { status: status as any, error: data.error || null, planFile: data.planFile || undefined };
+              const idx = prev.findIndex(e => e.kind === 'run' && e.taskId === data.taskId);
+              if (idx < 0) {
+                return [...prev, { id: `fe_${Date.now()}_${feedSeqRef.current++}`, ts: Date.now(), kind: 'run', taskId: data.taskId, title: data.prompt || 'Automation run', prompt: data.prompt || undefined, ...runPatch } as FeedEntry];
+              }
+              const next = prev.slice();
+              next[idx] = { ...next[idx], ...runPatch } as FeedEntry;
+              return next;
+            });
+            if (status === 'done' && data.answer) {
+              settlePendingAssistant(data.answer, Array.isArray(data.items) ? data.items : undefined);
+            } else if (status === 'failed' || status === 'cancelled') {
+              // Settle any pending placeholder ("Give me a sec…") into a
+              // friendly error card so it doesn't spin forever under the
+              // failed run card.
+              const raw = data.error || `Task ${status}`;
+              const pendingHit = [...feedEntriesRef.current].reverse().find(e =>
+                e.kind === 'assistant' && (e.taskId === data.taskId || e.pending));
+              if (pendingHit) {
+                patchFeedEntry(pendingHit.id, {
+                  text: friendlyErrorMessage(raw), pending: false, isError: true,
+                  errorRaw: raw,
+                  prompt: (pendingHit.kind === 'assistant' ? pendingHit.prompt : undefined) || lastPromptRef.current || undefined,
+                } as Partial<FeedEntry>);
+              }
+            }
+            // Water-drip used to live on TaskCompleteBanner — moved here.
+            if (status === 'done' || status === 'failed' || status === 'cancelled') playDropSound();
+          } else if (status === 'done' && data.answer) {
+            // ── Non-command_automate: settle the placeholder into the real answer ──
+            settlePendingAssistant(data.answer, Array.isArray(data.items) ? data.items : undefined);
+            setStreamingResponse('');
+            setResultItems([]);
             setIsStreaming(false);
             setIsTaskWorking(false);
             streamCompletedRef.current = true;
             playDropSound();
-            // NO notification banner for non-command_automate
-          } else if (status === 'done' || status === 'failed' || status === 'cancelled' || status === 'auth-required' || status === 'awaiting-approval') {
-            // ── Command_automate or error states: show notification banner ──
-            // (TaskCompleteBanner plays water-drip when it appears, so no need to play here)
-            setTaskNotification({
-              taskId: data.taskId,
-              prompt: data.prompt || '',
-              answer: data.answer,
-              error: data.error,
-              status,
-              planFile: data.planFile || null,
-            });
+          } else if (status === 'failed' || status === 'cancelled') {
+            // Failed run → friendly error card in the feed (raw error kept in
+            // errorRaw). Patch the active-exchange assistant entry — including
+            // preamble streams like "Give me a sec" that may not carry
+            // pending/taskId — so the preamble is replaced, not stranded.
+            const raw = data.error || `Task ${status}`;
+            const friendly = friendlyErrorMessage(raw);
+            const entries = feedEntriesRef.current;
+            let lastUserIdx = -1;
+            for (let i = entries.length - 1; i >= 0; i--) {
+              if (entries[i].kind === 'user') { lastUserIdx = i; break; }
+            }
+            const hit = [...entries].reverse().find(e =>
+              e.kind === 'assistant' &&
+              (e.taskId === data.taskId || e.pending ||
+                (lastUserIdx >= 0 && entries.indexOf(e) > lastUserIdx)));
+            if (hit) {
+              patchFeedEntry(hit.id, {
+                text: friendly, pending: false, isError: true, errorRaw: raw,
+                prompt: (hit.kind === 'assistant' ? hit.prompt : undefined) || lastPromptRef.current || undefined,
+              } as Partial<FeedEntry>);
+            } else {
+              appendFeedEntry({
+                kind: 'assistant', text: friendly, isError: true, errorRaw: raw,
+                taskId: data.taskId, prompt: lastPromptRef.current || undefined,
+              });
+            }
           }
           setUnreadTabs(prev => { const n = new Set(prev); n.add('queue'); return n; });
         }
@@ -2020,6 +2397,8 @@ export function UnifiedOverlay() {
     }, token);
 
     // Request initial data
+    historyCursorRef.current = sessionBoundaryRef.current;
+    requestHistoryPage(sessionBoundaryRef.current);
     ipcRenderer.send('queue:list');
     ipcRenderer.send('cron:list');
     ipcRenderer.send('skills:list');
@@ -2068,6 +2447,7 @@ export function UnifiedOverlay() {
       ipcRenderer.removeListenerByToken('task:created', token);
       ipcRenderer.removeListenerByToken('task:progress', token);
       ipcRenderer.removeListenerByToken('task:complete', token);
+      ipcRenderer.removeListenerByToken('conversation:list', token);
       ipcRenderer.removeListenerByToken('ui:switch-to-results', token);
       ipcRenderer.removeListenerByToken('preflight:open-agents-tab', token);
       ipcRenderer.removeListenerByToken('preflight:recheck', token);
@@ -2082,16 +2462,12 @@ export function UnifiedOverlay() {
   // Skips auto-scroll when the user has scrolled up to read earlier content.
   useEffect(() => {
     const container = scrollContainerRef.current;
-    if (!container || isScrolledUp) return;
-    if (!isStreaming && !isThinking) return;
+    if (!container || isScrolledUp || pendingPrependRef.current) return;
+    if (!isStreaming && !isThinking && feedEntries.length === 0) return;
     container.scrollTop = container.scrollHeight;
-  }, [streamingResponse, isStreaming, isThinking, isScrolledUp]);
+  }, [streamingResponse, feedEntries, isStreaming, isThinking, isScrolledUp]);
 
-  // --- Scroll-to-bottom tracking ---
-  const scrollToBottom = useCallback(() => {
-    scrollBottomRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
-  }, []);
-
+  // --- Scroll tracking + history pagination ---
   useEffect(() => {
     const el = scrollContainerRef.current;
     if (!el) return;
@@ -2100,13 +2476,15 @@ export function UnifiedOverlay() {
       const threshold = 24;
       const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight <= threshold;
       setIsScrolledUp(!atBottom);
+      // Near the top → pull the next older 20
+      if (el.scrollTop < 60) loadOlderHistory();
     };
 
     el.addEventListener('scroll', updateScroll, { passive: true });
     updateScroll();
 
     return () => el.removeEventListener('scroll', updateScroll);
-  }, []);
+  }, [loadOlderHistory]);
 
   // Window height is driven by:
   // 1. useDynamicHeight hook - resizes on tab switches and tab content changes
@@ -2147,6 +2525,23 @@ export function UnifiedOverlay() {
     setIsAutomationMode(active);
     setIsGlowActive(active);
   }, [streamingStartedRef]);
+
+  // AutomationProgress terminal summary → collapsed run card in the feed, and
+  // the live component hides (it stays mounted for the next run's IPC events).
+  const handleRunSummary = useCallback((summary: RunSummary) => {
+    appendFeedEntry({
+      kind: 'run',
+      title: summary.title,
+      status: summary.status,
+      steps: summary.steps,
+      savedFilePaths: summary.savedFilePaths,
+      planFile: summary.planFile,
+      error: summary.error,
+      durationMs: summary.durationMs,
+      prompt: lastPromptRef.current || undefined,
+    });
+    setLiveRunHidden(true);
+  }, [appendFeedEntry]);
 
   const handleOpenRules = useCallback(() => {
     handleTabSelect('rules');
@@ -2210,14 +2605,26 @@ export function UnifiedOverlay() {
         {/* Main Content Area - constrained for scroll */}
         <div className="flex-1 overflow-hidden relative">
           {/* Results Tab - Always mounted, hidden with CSS when inactive */}
-          <div 
-            ref={scrollContainerRef} 
+          <div
+            ref={scrollContainerRef}
             className="h-full overflow-y-auto overflow-x-hidden p-4"
             style={{ display: deferredTab === 'results' ? 'block' : 'none' }}
           >
-            {/* Measured wrapper — alert cards + results content count toward
-                the dynamic-height measurement. */}
-            <div ref={resultsMeasureRef}>
+            {/* Conversation feed — history renders above the measured zone;
+                only the active exchange (children slot) drives window height. */}
+            <ResultsFeed
+              entries={feedEntries}
+              activeExchangeId={activeExchangeId}
+              measureRef={resultsMeasureRef}
+              historyLoading={historyLoading}
+              hasMoreHistory={hasMoreHistory}
+              onRedo={handleFeedRedo}
+              onCopy={handleFeedCopy}
+              onPlanApprove={handleFeedPlanApprove}
+              onPlanCancel={handleFeedPlanCancel}
+              onOpenPath={handleFeedOpenPath}
+              onOpenSourceUrl={(url) => ipcRenderer?.send('shell:open-url', url)}
+            >
               {/* Proactive alert cards — question blocks + thought-engine outreach */}
               {questionAlert && (
                 <div
@@ -2237,7 +2644,7 @@ export function UnifiedOverlay() {
                 </div>
               )}
               <ResultsContent
-                proactiveMessages={proactiveMessages}
+                liveRunHidden={liveRunHidden}
                 contentRef={contentRef}
                 scrollBottomRef={scrollBottomRef}
                 installOutputRef={installOutputRef}
@@ -2270,8 +2677,9 @@ export function UnifiedOverlay() {
                 onOpenRules={handleOpenRules}
                 onHeightChange={handleAutomationHeightChange}
                 onActiveChange={handleAutomationActiveChange}
+                onRunSummary={handleRunSummary}
               />
-            </div>
+            </ResultsFeed>
           </div>
 
           {/* Queue Tab — no top padding so the sticky filter bar sits flush under the tab bar */}
@@ -2516,7 +2924,10 @@ export function UnifiedOverlay() {
         />
       )}
 
-      {/* comms-graph task completion banner */}
+      {/* comms-graph task completion banner — retired: the Results feed is now
+          the single surface for handoff completions/approvals. The water-drip
+          sound moved to the task:complete handler; Approve&Run lives on the
+          feed's run cards (plan:approve with taskId+planFile).
       <TaskCompleteBanner
         notification={taskNotification}
         onDismiss={() => setTaskNotification(null)}
@@ -2536,6 +2947,7 @@ export function UnifiedOverlay() {
           setTaskNotification(null);
         }}
       />
+      */}
     </div>
   );
 }

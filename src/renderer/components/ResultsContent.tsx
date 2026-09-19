@@ -1,7 +1,7 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import type { RefObject } from 'react';
 import { Favicon } from './DefaultFaviconIcon';
-import AutomationProgress from './AutomationProgress';
+import AutomationProgress, { type RunSummary } from './AutomationProgress';
 import { RichContentRenderer } from './rich-content';
 import { WebResultsGrid, stripItemImageMarkdown } from './rich-content';
 import type { WebResultItem } from './rich-content/WebResultCard';
@@ -80,8 +80,9 @@ interface ResultsContentProps {
   bridgeStatus: BridgeStatus | null;
   // Skill build
   skillBuild: SkillBuildState | null;
-  // Thought-engine outreach appended under the response like follow-up messages
-  proactiveMessages: Array<{ id: string; thoughtId: string; text: string; kind: string; ts: number; pending?: boolean }>;
+  // Live run visibility — once the run summary commits to the feed the live
+  // AutomationProgress collapses away (its feed card represents it).
+  liveRunHidden: boolean;
   // AutomationProgress forwarding
   deferredTab: string;
   // Callbacks (all must be useCallback-stabilized)
@@ -96,6 +97,7 @@ interface ResultsContentProps {
   onOpenRules: () => void;
   onHeightChange: () => void;
   onActiveChange: (active: boolean) => void;
+  onRunSummary: (summary: RunSummary) => void;
 }
 
 function ResultsContentImpl({
@@ -119,7 +121,7 @@ function ResultsContentImpl({
   schedulePending,
   bridgeStatus,
   skillBuild,
-  proactiveMessages,
+  liveRunHidden,
   deferredTab,
   setIsSubmitting,
   setPreflightAuthPending,
@@ -132,7 +134,17 @@ function ResultsContentImpl({
   onOpenRules,
   onHeightChange,
   onActiveChange,
+  onRunSummary,
 }: ResultsContentProps) {
+  // Live-run collapse — manual toggle while running; the run auto-expands when
+  // a new automation starts (isAutomationMode flips true). Once the terminal
+  // summary commits, liveRunHidden removes the whole block — the feed's run
+  // card represents it.
+  const [runCollapsed, setRunCollapsed] = useState(false);
+  useEffect(() => {
+    if (isAutomationMode) setRunCollapsed(false);
+  }, [isAutomationMode]);
+
   // --- Install Card ---
   const renderInstallCard = () => {
     if (!installPrompt && !isInstalling) return null;
@@ -466,16 +478,29 @@ function ResultsContentImpl({
         </div>
       )}
 
-      <AutomationProgress
-        suppressIfScheduled={false}
-        setIsSubmitting={setIsSubmitting}
-        onAuthPending={setPreflightAuthPending}
-        activeTab={deferredTab}
-        onHeightChange={onHeightChange}
-        onActiveChange={onActiveChange}
-        onAskUserShown={onScrollToBottom}
-        onOpenRules={onOpenRules}
-      />
+      {!liveRunHidden && isAutomationMode && (
+        <button
+          onClick={() => setRunCollapsed(prev => !prev)}
+          className="flex items-center gap-2 w-full text-left"
+          style={{ background: 'none', border: 'none', padding: '2px 0', cursor: 'pointer' }}
+        >
+          <span style={{ color: '#6b7280', fontSize: '0.7rem', width: 10, flexShrink: 0 }}>{runCollapsed ? '▸' : '▾'}</span>
+          <span style={{ color: '#93c5fd', fontSize: '0.78rem', fontWeight: 600 }}>AI: Automation run</span>
+        </button>
+      )}
+      <div style={{ display: liveRunHidden || runCollapsed ? 'none' : 'block' }}>
+        <AutomationProgress
+          suppressIfScheduled={false}
+          setIsSubmitting={setIsSubmitting}
+          onAuthPending={setPreflightAuthPending}
+          activeTab={deferredTab}
+          onHeightChange={onHeightChange}
+          onActiveChange={onActiveChange}
+          onAskUserShown={onScrollToBottom}
+          onOpenRules={onOpenRules}
+          onRunSummary={onRunSummary}
+        />
+      </div>
 
       {skillBuild && (
         <SkillBuildProgress
@@ -498,28 +523,8 @@ function ResultsContentImpl({
 
       {renderResults()}
 
-      {/* Thought-engine outreach appended like follow-up messages from the
-          assistant — deduped per thought upstream, 🧠 marks it as proactive. */}
-      {proactiveMessages.length > 0 && (
-        <div className="mt-4 space-y-2">
-          {proactiveMessages.map(m => (
-            <div key={m.id} className="flex items-start gap-2">
-              <span className="text-sm leading-5 select-none" style={{ opacity: 0.8 }}>🧠</span>
-              {m.pending ? (
-                <div className="flex gap-1.5 pt-1.5">
-                  <div className="w-1.5 h-1.5 rounded-full bg-violet-400 animate-pulse" style={{ animationDelay: '0ms' }} />
-                  <div className="w-1.5 h-1.5 rounded-full bg-violet-400 animate-pulse" style={{ animationDelay: '200ms' }} />
-                  <div className="w-1.5 h-1.5 rounded-full bg-violet-400 animate-pulse" style={{ animationDelay: '400ms' }} />
-                </div>
-              ) : (
-                <div className="flex-1 min-w-0" style={{ overflowX: 'hidden', wordBreak: 'break-word', overflowWrap: 'break-word' }}>
-                  <RichContentRenderer content={m.text} animated className="text-sm" />
-                </div>
-              )}
-            </div>
-          ))}
-        </div>
-      )}
+      {/* Thought-engine outreach is now committed as proactive feed entries
+          (ResultsFeed) instead of a live block here. */}
       <div ref={scrollBottomRef} />
     </div>
   );

@@ -11,9 +11,47 @@ const SyntaxHighlighter = SyntaxHighlighterBase as any;
 
 // react-markdown's defaultUrlTransform strips any URL whose protocol isn't in
 // its allowlist (http/https/irc/mailto/xmpp) — our thinkdrop-image: cache
-// protocol would be zeroed out before it ever reaches the img renderer.
+// protocol and file:// links would be zeroed out before they ever reach the
+// img/a renderers.
 const urlTransform = (url: string) =>
-  /^thinkdrop-image:/i.test(url) ? url : defaultUrlTransform(url);
+  /^(thinkdrop-image|file):/i.test(url) ? url : defaultUrlTransform(url);
+
+// ── Bare file-path linkification ─────────────────────────────────────────────
+// AI answers often contain raw absolute paths (/Users/…/file.rtf, ~/notes). GFM
+// only autolinks URL schemes, so we wrap bare paths in `file://` links ourselves
+// → they render as clickable basename chips via the custom `a` component below.
+// Code spans/blocks are excluded so paths inside `…`/```…``` stay literal.
+const CODE_SPLIT_RE = /(```[\s\S]*?```|`[^`\n]*`)/g;
+// ≥2 path segments, unicode-safe (covers e.g. /家庭/), excludes whitespace and
+// markdown/shell delimiters. Lookbehind keeps us out of URLs (':'), existing
+// markdown links ('(','['), image syntax ('!'), quotes and attr assignments.
+const BARE_PATH_RE = /(?<![\w/([~'"=:!])~?(?:\/[^\s'"()[\]<>|*?\\`]+){2,}\/?/g;
+
+const linkifyFilePaths = (content: string): string => {
+  if (!content || content.indexOf('/') === -1 && content.indexOf('~') === -1) return content;
+  const segments = content.split(CODE_SPLIT_RE);
+  for (let i = 0; i < segments.length; i += 2) { // even indices = prose
+    segments[i] = segments[i].replace(BARE_PATH_RE, (m) => {
+      const trimmed = m.replace(/[.,;:!?]+$/, '');
+      const trailing = m.slice(trimmed.length);
+      const hasExt = /\.[A-Za-z0-9]{1,10}$/.test(trimmed);
+      const isDir = m.endsWith('/');
+      const slashes = (trimmed.match(/\//g) || []).length;
+      // Require file-extension, trailing-slash dir, or ≥3 slashes — keeps prose
+      // like "and/or" or "/a/b" mentions from becoming bogus chips.
+      if (!hasExt && !isDir && slashes < 3) return m;
+      const name = trimmed.replace(/\/+$/, '').split('/').pop() || trimmed;
+      return `[${name}](file://${encodeURI(trimmed)})${trailing}`;
+    });
+  }
+  return segments.join('');
+};
+
+// Injected once per container: loose markdown lists wrap item text in a block
+// <p>, which pushes the text below the • marker. First paragraph inline keeps
+// "• text" on one line; later paragraphs stay block-level.
+const LIST_FIX_CSS =
+  '.rich-content-container li > p:first-of-type{display:inline;margin:0}';
 
 // ── Overlay-safe colors ────────────────────────────────────────────────────────
 // The UnifiedOverlay has a dark background. prose-invert is present but
@@ -30,15 +68,18 @@ const makeLinkComponent = (onFileLinkClick?: (filePath: string) => void) => {
   const Link: React.FC<any> = ({ node, children, href, ...props }) => {
     const isFilePath = href?.startsWith('file://');
     const ipcRenderer = (window as any).electron?.ipcRenderer;
+    const filePath = isFilePath ? decodeURIComponent(href.replace(/^file:\/\//, '')) : '';
     return (
       <a
         href={href}
         onClick={(e) => {
           e.preventDefault();
           if (!href) return;
-          if (isFilePath && onFileLinkClick) {
-            const filePath = href.replace(/^file:\/\//, '');
-            onFileLinkClick(filePath);
+          if (isFilePath) {
+            // Prefer the caller's handler; fall back to the main-process opener
+            // so file chips work on every surface without prop drilling.
+            if (onFileLinkClick) onFileLinkClick(filePath);
+            else ipcRenderer?.send('shell:open-path', filePath);
           } else if (ipcRenderer) {
             ipcRenderer.send('shell:open-url', href);
           } else {
@@ -46,15 +87,20 @@ const makeLinkComponent = (onFileLinkClick?: (filePath: string) => void) => {
           }
         }}
         className={isFilePath
-          ? 'inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-xs font-mono cursor-pointer transition-colors'
+          ? 'inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-mono cursor-pointer transition-colors align-middle'
           : 'text-blue-300 hover:text-blue-200 underline cursor-pointer transition-colors'
         }
         style={isFilePath ? {
-          backgroundColor: 'rgba(59,130,246,0.12)',
-          border: '1px solid rgba(59,130,246,0.3)',
+          backgroundColor: 'rgba(59,130,246,0.14)',
+          border: '1px solid rgba(59,130,246,0.35)',
           color: '#93c5fd',
+          maxWidth: '100%',
+          overflow: 'hidden',
+          textOverflow: 'ellipsis',
+          whiteSpace: 'nowrap',
+          verticalAlign: 'middle',
         } : undefined}
-        title={isFilePath ? href.replace(/^file:\/\//, '') : undefined}
+        title={isFilePath ? filePath : undefined}
         {...props}
       >
         {isFilePath && (
@@ -252,10 +298,10 @@ const RichContentRenderer: React.FC<RichContentRendererProps> = ({
   onFileLinkClick,
   searchResults,
 }) => {
-  // Bare URLs are autolinked by remark-gfm's autolink-literal feature — no
-  // manual pre-processing needed. Using content directly avoids raw <a> HTML
-  // injection that could render as literal text in some markdown contexts.
-  const processedContent = content;
+  // Bare URLs are autolinked by remark-gfm's autolink-literal feature; bare
+  // absolute file paths are wrapped in file:// links by linkifyFilePaths so
+  // they render as clickable basename chips.
+  const processedContent = useMemo(() => linkifyFilePaths(content), [content]);
   
   // Build lookup map from image URL to original source URL for click-to-view
   const imageUrlToOriginal = useMemo(() => {
@@ -270,9 +316,10 @@ const RichContentRenderer: React.FC<RichContentRendererProps> = ({
     return map;
   }, [searchResults]);
   
-  // Check if content has multiple consecutive images for carousel
+  // Check if content has 2+ images for the carousel — they don't need to be
+  // adjacent; interleaved text/image content otherwise stacks <img>s vertically.
   // The `!` is REQUIRED — plain [text](url) links must NOT trigger the carousel.
-  const hasImageGroups = /(?:!\[[^\]]*\]\([^\)]+\)\s*\n?){2,}/.test(content);
+  const hasImageGroups = (processedContent.match(/!\[[^\]]*\]\(/g) || []).length >= 2;
 
   // Use carousel rendering for content with multiple image groups
   if (hasImageGroups) {
@@ -281,6 +328,7 @@ const RichContentRenderer: React.FC<RichContentRendererProps> = ({
         className={`rich-content-container prose-sm max-w-none ${animated ? 'animate-fade-in' : ''} ${className}`}
         style={{ overflowWrap: 'break-word', wordBreak: 'break-word', minWidth: 0, ...(animated ? { animation: 'fadeIn 0.3s ease-in-out' } : {}) }}
       >
+        <style>{LIST_FIX_CSS}</style>
         {renderContentWithCarousels(processedContent, imageUrlToOriginal, onFileLinkClick)}
       </div>
     );
@@ -293,6 +341,7 @@ const RichContentRenderer: React.FC<RichContentRendererProps> = ({
       className={`rich-content-container prose-sm max-w-none ${animated ? 'animate-fade-in' : ''} ${className}`}
       style={{ overflowWrap: 'break-word', wordBreak: 'break-word', minWidth: 0, ...(animated ? { animation: 'fadeIn 0.3s ease-in-out' } : {}) }}
     >
+      <style>{LIST_FIX_CSS}</style>
       <ReactMarkdown
         remarkPlugins={[remarkGfm, remarkBreaks]}
         rehypePlugins={[rehypeRaw]}
