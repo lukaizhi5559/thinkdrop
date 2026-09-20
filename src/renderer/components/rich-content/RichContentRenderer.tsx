@@ -27,22 +27,40 @@ const CODE_SPLIT_RE = /(```[\s\S]*?```|`[^`\n]*`)/g;
 // markdown links ('(','['), image syntax ('!'), quotes and attr assignments.
 const BARE_PATH_RE = /(?<![\w/([~'"=:!])~?(?:\/[^\s'"()[\]<>|*?\\`]+){2,}\/?/g;
 
+const WHOLE_CODE_PATH_RE = /^~?(\/[^\s'"()[\]<>|*?\\`]+){2,}\/?$/;
+
+const pathToChip = (path: string): string | null => {
+  const trimmed = path.replace(/[.,;:!?]+$/, '');
+  const trailing = path.slice(trimmed.length);
+  const hasExt = /\.[A-Za-z0-9]{1,10}$/.test(trimmed);
+  const isDir = path.endsWith('/');
+  const slashes = (trimmed.match(/\//g) || []).length;
+  // Require file-extension, trailing-slash dir, or ≥3 slashes — keeps prose
+  // like "and/or" or "/a/b" mentions from becoming bogus chips.
+  if (!hasExt && !isDir && slashes < 3) return null;
+  const name = trimmed.replace(/\/+$/, '').split('/').pop() || trimmed;
+  return `[${name}](file://${encodeURI(trimmed)})${trailing}`;
+};
+
 const linkifyFilePaths = (content: string): string => {
-  if (!content || content.indexOf('/') === -1 && content.indexOf('~') === -1) return content;
+  if (!content || (content.indexOf('/') === -1 && content.indexOf('~') === -1)) return content;
   const segments = content.split(CODE_SPLIT_RE);
-  for (let i = 0; i < segments.length; i += 2) { // even indices = prose
-    segments[i] = segments[i].replace(BARE_PATH_RE, (m) => {
-      const trimmed = m.replace(/[.,;:!?]+$/, '');
-      const trailing = m.slice(trimmed.length);
-      const hasExt = /\.[A-Za-z0-9]{1,10}$/.test(trimmed);
-      const isDir = m.endsWith('/');
-      const slashes = (trimmed.match(/\//g) || []).length;
-      // Require file-extension, trailing-slash dir, or ≥3 slashes — keeps prose
-      // like "and/or" or "/a/b" mentions from becoming bogus chips.
-      if (!hasExt && !isDir && slashes < 3) return m;
-      const name = trimmed.replace(/\/+$/, '').split('/').pop() || trimmed;
-      return `[${name}](file://${encodeURI(trimmed)})${trailing}`;
-    });
+  for (let i = 0; i < segments.length; i++) {
+    if (i % 2 === 1) {
+      // Code segment — single-backtick spans that are ENTIRELY a path become
+      // chips too (AI often wraps paths in backticks). Fenced blocks and
+      // partial-path code (`path.join("/a/b")`) stay literal.
+      const seg = segments[i];
+      if (seg.startsWith('`') && seg.endsWith('`') && !seg.startsWith('```')) {
+        const inner = seg.slice(1, -1).trim();
+        if (WHOLE_CODE_PATH_RE.test(inner)) {
+          const chip = pathToChip(inner);
+          if (chip) segments[i] = chip;
+        }
+      }
+      continue;
+    }
+    segments[i] = segments[i].replace(BARE_PATH_RE, (m) => pathToChip(m) ?? m);
   }
   return segments.join('');
 };
@@ -104,9 +122,15 @@ const makeLinkComponent = (onFileLinkClick?: (filePath: string) => void) => {
         {...props}
       >
         {isFilePath && (
-          <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
-            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/>
-          </svg>
+          filePath.endsWith('/') ? (
+            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
+              <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
+            </svg>
+          ) : (
+            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
+              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/>
+            </svg>
+          )
         )}
         {children}
       </a>
@@ -249,8 +273,10 @@ const renderContentWithCarousels = (
       );
     }
     
-    // Add carousel for all extracted images
-    const imageItems = allImages.map(img => ({
+    // Add carousel for all extracted images — dedupe identical srcs so a
+    // repeated embed doesn't produce duplicate tiles.
+    const seenSrc = new Set<string>();
+    const imageItems = allImages.filter(img => !!img.src && !seenSrc.has(img.src) && !!seenSrc.add(img.src)).map(img => ({
       src: img.src,
       alt: img.alt,
       title: img.title,

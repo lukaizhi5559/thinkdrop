@@ -3,7 +3,7 @@
  * Used when content contains multiple images to display them in a nice grid/carousel layout
  */
 
-import React, { useState, useRef, useCallback, useEffect } from 'react';
+import React, { useState, useRef, useCallback, useEffect, useMemo } from 'react';
 import './ImageCarousel.css';
 
 export interface ImageItem {
@@ -22,30 +22,67 @@ export const ImageCarousel: React.FC<ImageCarouselProps> = ({
   images, 
   maxHeight = 300 
 }) => {
+  // Reset keyed on the serialized src set — NOT the array identity. Callers
+  // rebuild `images` on every render (the feed re-renders on each stream tick),
+  // so identity-based resets wiped load state mid-flight and, since onLoad
+  // never refires on an already-mounted <img>, left permanent skeletons.
+  const imagesKey = images.map(i => i.src).join('\u0001');
+  // Dedupe identical srcs — the same photo can surface twice via differing
+  // escaped/parameterized URLs upstream.
+  const dedupedImages = useMemo(() => {
+    const seen = new Set<string>();
+    return images.filter(i => !!i.src && (seen.has(i.src) ? false : (seen.add(i.src), true)));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [imagesKey]);
+
   const [currentIndex, setCurrentIndex] = useState(0);
   const [failedImages, setFailedImages] = useState<Set<number>>(new Set());
-  const [loadingImages, setLoadingImages] = useState<Set<number>>(new Set(images.map((_, i) => i)));
+  const [loadingImages, setLoadingImages] = useState<Set<number>>(new Set(dedupedImages.map((_, i) => i)));
   const [loadedImages, setLoadedImages] = useState<Set<number>>(new Set());
+  // Per-image src overrides — onError retries once with originalUrl when it
+  // differs (thumbnail hotlink-blocked → try the full-size source).
+  const [srcOverride, setSrcOverride] = useState<Map<number, string>>(new Map());
+  const retriedRef = useRef<Set<number>>(new Set());
   const scrollRef = useRef<HTMLDivElement>(null);
   const itemRefs = useRef<(HTMLDivElement | null)[]>([]);
   const scrollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // Reset state when the images array identity changes (new result set arrived)
+  // Reset state only when the actual src set changes (new result set arrived)
   useEffect(() => {
     setCurrentIndex(0);
     setFailedImages(new Set());
-    setLoadingImages(new Set(images.map((_, i) => i)));
+    setLoadingImages(new Set(dedupedImages.map((_, i) => i)));
     setLoadedImages(new Set());
-  }, [images]);
+    setSrcOverride(new Map());
+    retriedRef.current = new Set();
+    // Watchdog — an image that neither loads nor errors within 12s is marked
+    // failed so the skeleton doesn't linger forever (e.g. lazy/clipped loads).
+    const watchdog = setTimeout(() => {
+      setLoadingImages(prev => {
+        if (prev.size === 0) return prev;
+        const stuck = [...prev];
+        setFailedImages(f => new Set([...f, ...stuck]));
+        return new Set();
+      });
+    }, 12000);
+    return () => clearTimeout(watchdog);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [imagesKey]);
 
   const handleImageError = useCallback((index: number) => {
+    const img = dedupedImages[index];
+    if (img?.originalUrl && img.originalUrl !== img.src && !retriedRef.current.has(index)) {
+      retriedRef.current.add(index);
+      setSrcOverride(prev => new Map(prev).set(index, img.originalUrl!));
+      return; // stays in loadingImages — the retried src will fire load/error
+    }
     setFailedImages(prev => new Set(prev).add(index));
     setLoadingImages(prev => {
       const next = new Set(prev);
       next.delete(index);
       return next;
     });
-  }, []);
+  }, [dedupedImages]);
 
   const handleImageLoad = useCallback((index: number) => {
     setLoadedImages(prev => new Set(prev).add(index));
@@ -94,14 +131,14 @@ export const ImageCarousel: React.FC<ImageCarouselProps> = ({
   }, []);
 
   const handlePrev = useCallback(() => {
-    const newIndex = currentIndex > 0 ? currentIndex - 1 : images.length - 1;
+    const newIndex = currentIndex > 0 ? currentIndex - 1 : dedupedImages.length - 1;
     scrollToImage(newIndex);
-  }, [currentIndex, images.length, scrollToImage]);
+  }, [currentIndex, dedupedImages.length, scrollToImage]);
 
   const handleNext = useCallback(() => {
-    const newIndex = currentIndex < images.length - 1 ? currentIndex + 1 : 0;
+    const newIndex = currentIndex < dedupedImages.length - 1 ? currentIndex + 1 : 0;
     scrollToImage(newIndex);
-  }, [currentIndex, images.length, scrollToImage]);
+  }, [currentIndex, dedupedImages.length, scrollToImage]);
 
   const openImageInBrowser = useCallback((image: ImageItem) => {
     // Use original source URL if available, otherwise use the src (thumbnail)
@@ -114,11 +151,11 @@ export const ImageCarousel: React.FC<ImageCarouselProps> = ({
     }
   }, []);
 
-  if (images.length === 0) return null;
+  if (dedupedImages.length === 0) return null;
 
   // Single image - render without carousel chrome
-  if (images.length === 1) {
-    const img = images[0];
+  if (dedupedImages.length === 1) {
+    const img = dedupedImages[0];
     const isLoading = loadingImages.has(0);
     const isFailed = failedImages.has(0);
     const isLoaded = loadedImages.has(0);
@@ -151,7 +188,7 @@ export const ImageCarousel: React.FC<ImageCarouselProps> = ({
         )}
         
         <img
-          src={img.src}
+          src={srcOverride.get(0) || img.src}
           alt={img.alt || ''}
           title={img.title || img.alt}
           className={`max-w-full h-auto rounded-lg shadow-lg border border-gray-600/30 cursor-pointer hover:border-blue-500/50 transition-all ${
@@ -159,7 +196,6 @@ export const ImageCarousel: React.FC<ImageCarouselProps> = ({
           }`}
           style={{ maxHeight: `${maxHeight}px`, objectFit: 'contain' }}
           referrerPolicy="no-referrer"
-          loading="lazy"
           onError={() => handleImageError(0)}
           onLoad={() => handleImageLoad(0)}
           onClick={() => openImageInBrowser(img)}
@@ -189,7 +225,7 @@ export const ImageCarousel: React.FC<ImageCarouselProps> = ({
             scrollSnapType: 'x mandatory'
           }}
         >
-          {images.map((img, index) => {
+          {dedupedImages.map((img, index) => {
             const isLoading = loadingImages.has(index);
             const isFailed = failedImages.has(index);
             const isLoaded = loadedImages.has(index);
@@ -230,7 +266,7 @@ export const ImageCarousel: React.FC<ImageCarouselProps> = ({
                     )}
                     
                     <img
-                      src={img.src}
+                      src={srcOverride.get(index) || img.src}
                       alt={img.alt || ''}
                       title={img.title || img.alt}
                       className={`rounded-lg shadow-lg border border-gray-600/30 cursor-pointer hover:border-blue-500/50 transition-all hover:shadow-xl ${
@@ -243,7 +279,6 @@ export const ImageCarousel: React.FC<ImageCarouselProps> = ({
                         objectFit: 'contain'
                       }}
                       referrerPolicy="no-referrer"
-                      loading="lazy"
                       onError={() => handleImageError(index)}
                       onLoad={() => handleImageLoad(index)}
                       onClick={() => openImageInBrowser(img)}
@@ -262,7 +297,7 @@ export const ImageCarousel: React.FC<ImageCarouselProps> = ({
         </div>
 
         {/* Navigation arrows */}
-        {images.length > 1 && (
+        {dedupedImages.length > 1 && (
           <>
             <button
               onClick={handlePrev}
@@ -287,9 +322,9 @@ export const ImageCarousel: React.FC<ImageCarouselProps> = ({
       </div>
 
       {/* Thumbnail navigation */}
-      {images.length > 1 && (
+      {dedupedImages.length > 1 && (
         <div className="flex justify-center gap-1.5 mt-3">
-          {images.map((_img, index) => (
+          {dedupedImages.map((_img, index) => (
             <button
               key={`thumb-${index}`}
               onClick={() => scrollToImage(index)}
@@ -306,7 +341,7 @@ export const ImageCarousel: React.FC<ImageCarouselProps> = ({
 
       {/* Image counter */}
       <div className="text-center text-xs text-gray-500 mt-2">
-        {currentIndex + 1} / {images.length} images
+        {currentIndex + 1} / {dedupedImages.length} images
       </div>
     </div>
   );

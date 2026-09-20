@@ -107,14 +107,21 @@ export function UnifiedOverlay() {
   // entries when the run completes.
   const [feedEntries, setFeedEntries] = useState<FeedEntry[]>([]);
   const feedEntriesRef = useRef<FeedEntry[]>([]);
-  // Recently-appended user prompts — synchronous dedupe log. Unlike
-  // feedEntriesRef (synced via useEffect → lags a render cycle), this is
-  // updated inside appendUserEntry itself, so submit → set-prompt echo →
-  // task:created all see each other immediately even when other entry kinds
-  // (run cards, system lines) interleave.
-  const recentUserPromptsRef = useRef<{ text: string; ts: number }[]>([]);
+  // Exchange correlation — one exchangeId per user submission, shared by every
+  // entry that belongs to it (user bubble, assistant replies, run cards).
+  // Dedupe is structural (one user bubble per exchangeId) rather than
+  // time-windowed, so late echoes can never double-append.
+  const taskExchangeRef = useRef<Map<string, string>>(new Map()); // taskId → exchangeId
+  const lastExchangeIdRef = useRef<string | null>(null);         // newest exchange
+  // Synchronous {text, xid} of the last appendUserEntry call — feedEntriesRef
+  // syncs via useEffect, so same-tick calls (submit → task:created) adopt the
+  // just-minted exchange instead of each minting their own.
+  const lastSubmittedRef = useRef<{ text: string; xid: string } | null>(null);
   useEffect(() => { feedEntriesRef.current = feedEntries; }, [feedEntries]);
   const feedSeqRef = useRef(0);
+  // taskId → original prompt — tagged automation:progress events don't carry
+  // the prompt, so lazily-created run cards look the title up here.
+  const taskPromptsRef = useRef<Map<string, string>>(new Map());
   // Live AutomationProgress hides once its run summary commits to the feed —
   // the collapsed run entry represents it. Unhidden on the next prompt.
   const [liveRunHidden, setLiveRunHidden] = useState(false);
@@ -383,23 +390,101 @@ export function UnifiedOverlay() {
     ));
   }, []);
 
-  // User-bubble append with dedupe — local submit, the unified:set-prompt
-  // echo, and task:created all fire for the same prompt. The echo carries the
-  // full wrapped text (highlight tags + thread context) so match on suffix,
-  // not equality. Dedupe state lives in recentUserPromptsRef (synchronous) —
-  // not feedEntriesRef — so rapid interleaved appends can't slip through.
-  const appendUserEntry = useCallback((text: string) => {
-    const clean = (text || '').trim();
-    if (!clean) return;
-    const now = Date.now();
-    recentUserPromptsRef.current = recentUserPromptsRef.current.filter(p => now - p.ts < 4000);
-    const isDup = recentUserPromptsRef.current.some(p =>
-      p.text === clean || clean.endsWith(p.text) || p.text.endsWith(clean));
-    if (isDup) return;
-    recentUserPromptsRef.current.push({ text: clean, ts: now });
+  // Resolve the exchange an entry belongs to: taskId correlation wins (a
+  // task's whole lifecycle shares its submission's exchange); then a matching
+  // user bubble's exchange; finally the newest exchange — the current submit.
+  const exchangeForTask = (taskId?: string | null, prompt?: string | null): string | undefined => {
+    if (taskId && taskExchangeRef.current.has(taskId)) return taskExchangeRef.current.get(taskId);
+    const clean = prompt ? toDisplayPrompt(prompt) : '';
+    if (clean) {
+      const hit = [...feedEntriesRef.current].reverse().find(e => e.kind === 'user' && e.text === clean);
+      if (hit?.exchangeId) {
+        if (taskId) taskExchangeRef.current.set(taskId, hit.exchangeId);
+        return hit.exchangeId;
+      }
+    }
+    const xid = lastExchangeIdRef.current || undefined;
+    if (taskId && xid) taskExchangeRef.current.set(taskId, xid);
+    return xid;
+  };
+
+  // Lazily create a run card for a task. Tagged automation:progress events
+  // prove a real automation is running even when task:created's guessedIntent
+  // filter missed it — comms' regex guess is unreliable (e.g. guessed
+  // web_search for a task the stategraph resolved as command_automate).
+  const ensureRunEntry = useCallback((taskId: string, prompt?: string | null) => {
+    if (!taskId) return;
+    const p = prompt || taskPromptsRef.current.get(taskId) || '';
+    if (p && !taskPromptsRef.current.has(taskId)) taskPromptsRef.current.set(taskId, p);
+    const exchangeId = exchangeForTask(taskId, p);
+    setFeedEntries(prev => {
+      if (prev.some(e => e.kind === 'run' && e.taskId === taskId)) return prev;
+      return [...prev, {
+        id: `fe_${Date.now()}_${feedSeqRef.current++}`,
+        ts: Date.now(),
+        kind: 'run',
+        taskId,
+        title: toDisplayPrompt(p) || 'Automation run',
+        prompt: p || undefined,
+        exchangeId,
+        status: 'running',
+      } as FeedEntry];
+    });
+  }, []);
+
+  // Strip context wrappers from the text shown in the user bubble. The
+  // submitted prompt can arrive wrapped — "[Resumed task discussion]…\n\n",
+  // "[Highlighted:…]"/"[File:…]" header blocks (both added by the submit
+  // path), and a trailing "(Context from prior turn: …)" appended by the
+  // stategraph's gatherPlanContext — whichever append path wins, the bubble
+  // shows only the user's real text.
+  const toDisplayPrompt = (raw: string): string => {
+    let t = raw;
+    if (t.startsWith('[Resumed task discussion]')) {
+      const idx = t.lastIndexOf('\n\n');
+      if (idx > 0) t = t.slice(idx + 2);
+    }
+    while (/^\[(?:Highlighted|File|Folder):[^\n]*\]\n?/.test(t)) {
+      t = t.replace(/^\[(?:Highlighted|File|Folder):[^\n]*\]\n?/, '');
+    }
+    t = t.replace(/^\s*\n+/, '');
+    t = t.replace(/\n*\s*\(Context from prior turn:[^)]*\)\s*$/, '');
+    return t.trim();
+  };
+
+  // User-bubble append with exchange correlation — local submit, the
+  // unified:set-prompt echo, and task:created all fire for the same prompt.
+  // The echo carries the full wrapped text (highlight tags + thread context);
+  // sanitizing first normalizes all variants to the same display text.
+  // Returns the resolved exchangeId so callers can correlate task/run entries.
+  const appendUserEntry = useCallback((text: string): string | null => {
+    const clean = toDisplayPrompt(text);
+    if (!clean) return null;
+    // Resolve the exchange: an identical bubble heading the newest exchange
+    // means this is the same submission's echo/task:created — adopt its id.
+    // Anything else mints a new exchange.
+    const lastUser = [...feedEntriesRef.current].reverse().find(e => e.kind === 'user');
+    const xid = lastSubmittedRef.current?.text === clean
+      ? lastSubmittedRef.current.xid
+      : (lastUser && lastUser.text === clean && lastUser.exchangeId)
+        ? lastUser.exchangeId
+        : `x_${Date.now()}_${feedSeqRef.current++}`;
+    lastSubmittedRef.current = { text: clean, xid };
+    // Structural dedupe: one user bubble per exchangeId — a delayed echo or a
+    // task:created re-append is skipped regardless of timing.
+    setFeedEntries(prev => prev.some(e => e.kind === 'user' && e.exchangeId === xid)
+      ? prev
+      : [...prev, {
+          id: `fe_${Date.now()}_${feedSeqRef.current++}`,
+          ts: Date.now(),
+          kind: 'user',
+          text: clean,
+          exchangeId: xid,
+        } as FeedEntry]);
+    lastExchangeIdRef.current = xid;
     lastPromptRef.current = clean;
-    appendFeedEntry({ kind: 'user', text: clean });
-  }, [appendFeedEntry]);
+    return xid;
+  }, []);
 
   // Commit any in-flight (un-'done') stream text before a new prompt wipes it —
   // otherwise a resubmit mid-stream silently drops the partial AI message.
@@ -412,6 +497,7 @@ export function UnifiedOverlay() {
       items: resultItemsRef.current,
       sources: searchSourcesRef.current,
       prompt: lastPromptRef.current || undefined,
+      exchangeId: lastExchangeIdRef.current || undefined,
     });
     streamAccRef.current = '';
     placeholderStreamRef.current = false;
@@ -743,6 +829,7 @@ export function UnifiedOverlay() {
         items: task.items || undefined,
         taskId: task.id,
         prompt: task.prompt || undefined,
+        exchangeId: exchangeForTask(task.id, task.prompt),
       });
       setActiveTab('results');
       scrollToBottom();
@@ -1062,6 +1149,7 @@ export function UnifiedOverlay() {
               taskId: message.taskId || undefined,
               pending: wasPlaceholder || undefined,
               prompt: lastPromptRef.current || undefined,
+              exchangeId: exchangeForTask(message.taskId, lastPromptRef.current),
             });
             if (wasPlaceholder) placeholderStreamRef.current = false;
             streamSegmentRef.current = '';
@@ -1162,6 +1250,17 @@ export function UnifiedOverlay() {
       if (data?.type === 'intent:decided') {
         return;
       }
+      // ── Task-scoped events ─────────────────────────────────────────────
+      // Tagged events are owned by the feed card's task-scoped
+      // AutomationProgress (QueueTaskCard) — the untagged live instance ignores
+      // them, so the global UI setters below must too. Automation-indicating
+      // tagged events also lazily create the feed card: task:created's
+      // guessedIntent filter is unreliable (comms regex can guess web_search
+      // for a task the stategraph resolves as command_automate).
+      const isTaskScoped = !!data?.taskId;
+      if (isTaskScoped && /^(plan:|step_|executing|preflight|pipeline:|ask_user|resuming)/.test(data?.type || '')) {
+        ensureRunEntry(data.taskId);
+      }
       if (data?.type === 'reminder_fired') {
         // Scheduled run starting — AIActivityPanel is intentionally disabled, so let
         // AutomationProgress handle the deferred step progress. Do NOT suppress it.
@@ -1191,43 +1290,57 @@ export function UnifiedOverlay() {
         setIsGlowActive(true);
       } else if (data?.type === 'plan:generated' || data?.type === 'plan:found_existing') {
         setIsThinking(false);
-        setIsAutomationMode(true);
-        setInstallPrompt(null);
-        setActionChips([]);
+        if (!isTaskScoped) {
+          // Tagged plans render inside the feed's QueueTaskCard — flipping the
+          // global automation flag would show the empty untagged live region.
+          setIsAutomationMode(true);
+          setInstallPrompt(null);
+          setActionChips([]);
+        }
         if (glowOffTimerRef.current) clearTimeout(glowOffTimerRef.current);
         setIsGlowActive(true);
       } else if (data?.type === 'needs_install') {
-        setInstallPrompt({
-          tool: data.tool,
-          installCmd: data.installCmd,
-          reason: data.reason,
-          source: data.source || 'brew',
-          toolDescription: data.toolDescription || undefined,
-        });
-        setIsInstalling(false);
+        if (!isTaskScoped) {
+          setInstallPrompt({
+            tool: data.tool,
+            installCmd: data.installCmd,
+            reason: data.reason,
+            source: data.source || 'brew',
+            toolDescription: data.toolDescription || undefined,
+          });
+          setIsInstalling(false);
+        }
         if (glowOffTimerRef.current) clearTimeout(glowOffTimerRef.current);
         setIsGlowActive(true);
       } else if (data?.type === 'install_output') {
-        setInstallOutput(prev => {
-          const next = [...prev, data.line];
-          return next.length > 200 ? next.slice(-200) : next;
-        });
-        setTimeout(() => installOutputRef.current?.scrollTo({ top: installOutputRef.current.scrollHeight, behavior: 'smooth' }), 30);
+        if (!isTaskScoped) {
+          setInstallOutput(prev => {
+            const next = [...prev, data.line];
+            return next.length > 200 ? next.slice(-200) : next;
+          });
+          setTimeout(() => installOutputRef.current?.scrollTo({ top: installOutputRef.current.scrollHeight, behavior: 'smooth' }), 30);
+        }
       } else if (data?.type === 'step_done' && data?.skill === 'needs_install') {
-        setIsInstalling(false);
-        setInstallPrompt(null);
-        setInstallOutput([]);
+        if (!isTaskScoped) {
+          setIsInstalling(false);
+          setInstallPrompt(null);
+          setInstallOutput([]);
+        }
       } else if (data?.type === 'step_failed' && data?.skill === 'needs_install') {
-        setIsInstalling(false);
-        setInstallPrompt(null);
-        setInstallOutput([]);
+        if (!isTaskScoped) {
+          setIsInstalling(false);
+          setInstallPrompt(null);
+          setInstallOutput([]);
+        }
       } else if (data?.type === 'ask_user') {
-        setIsInstalling(false);
-        setInstallPrompt(null);
-        // Alert card: task-scoped questions live on the Queue card, global
-        // gather questions live here in Results — click navigates to it.
+        if (!isTaskScoped) {
+          setIsInstalling(false);
+          setInstallPrompt(null);
+        }
+        // Alert card: task-scoped questions live on the feed's run card (and
+        // the Queue card), global gather questions live here in Results.
         const qText = data?.question || data?.text || 'I have a question before I continue';
-        setQuestionAlert({ text: String(qText), tab: data?.taskId ? 'queue' : 'results', ts: Date.now() });
+        setQuestionAlert({ text: String(qText), tab: 'results', ts: Date.now() });
         // Scroll to the question so the user sees the action-required banner/options
         setTimeout(scrollToBottom, 50);
       } else if (data?.type === 'skill_setup_complete') {
@@ -1246,7 +1359,9 @@ export function UnifiedOverlay() {
         setIsThinking(false);
         setIsStreaming(false);
         // Extract structured items from skillResults (web.crawl extractItems, browser.agent extract_items)
-        if (Array.isArray(data.skillResults)) {
+        // Tagged runs commit via task:complete (settlePendingAssistant + data.items) —
+        // extracting them here into the untagged live region would double-commit.
+        if (!isTaskScoped && Array.isArray(data.skillResults)) {
           const extractedItems = data.skillResults
             .filter((r: any) => r && Array.isArray(r.items) && r.items.length > 0)
             .flatMap((r: any) => r.items)
@@ -1278,14 +1393,16 @@ export function UnifiedOverlay() {
 
         // ── Feed commit: the synth summary settles into the feed. The live
         // AutomationProgress hides via its own onRunSummary → collapsed run card.
+        // Tagged runs: task:complete owns the commit — skip to avoid a duplicate.
         const autoText = (streamAccRef.current.trim() ? streamAccRef.current : streamSegmentRef.current).trim();
-        if (autoText && !data?.cancelled) {
+        if (autoText && !data?.cancelled && !isTaskScoped) {
           appendFeedEntry({
             kind: 'assistant',
             text: autoText,
             items: resultItemsRef.current,
             sources: searchSourcesRef.current,
             prompt: lastPromptRef.current || undefined,
+            exchangeId: lastExchangeIdRef.current || undefined,
           });
           setStreamingResponse('');
           setResultItems([]);
@@ -2224,22 +2341,26 @@ export function UnifiedOverlay() {
             sessionId: data.sessionId || null,
           }];
         });
+        if (data.prompt) taskPromptsRef.current.set(data.taskId, data.prompt);
         if (!isRestored) {
           setUnreadTabs(prev => { const n = new Set(prev); n.add('queue'); return n; });
 
-          // ── Feed: bubble + run card ────────────────────────────────────
-          // The prompt echo also arrives via unified:set-prompt — deduped there.
-          // Service-dispatched handoffs (scheduled runs, voice, API) have no
-          // local submit, so ensure the bubble exists here too.
-          if (data.prompt) appendUserEntry(data.prompt);
+          // ── Feed: run entry for automations ─────────────────────────────
+          // The entry renders the real QueueTaskCard (task-scoped
+          // AutomationProgress) while the comms task lives — no duplicate live
+          // UI. command_automate gets an early card here; misguessed intents
+          // are caught by ensureRunEntry on the first tagged automation event.
+          // The prompt echo also arrives via unified:set-prompt — deduped
+          // there. Service-dispatched handoffs (scheduled runs, voice, API)
+          // have no local submit, so ensure the bubble exists here too.
+          if (data.prompt) {
+            // Correlation first — the run card below (and every later
+            // task-scoped event) joins this exchange via taskExchangeRef.
+            const xid = appendUserEntry(data.prompt);
+            if (xid) taskExchangeRef.current.set(data.taskId, xid);
+          }
           if (data.guessedIntent === 'command_automate') {
-            appendFeedEntry({
-              kind: 'run',
-              taskId: data.taskId,
-              title: data.prompt || 'Automation run',
-              status: 'queued',
-              prompt: data.prompt || undefined,
-            });
+            ensureRunEntry(data.taskId, data.prompt);
           }
         }
       }
@@ -2312,20 +2433,35 @@ export function UnifiedOverlay() {
             if (hit) {
               patchFeedEntry(hit.id, { text, pending: false, items } as Partial<FeedEntry>);
             } else {
-              appendFeedEntry({ kind: 'assistant', text, items, taskId: data.taskId, prompt: lastPromptRef.current || undefined });
+              appendFeedEntry({ kind: 'assistant', text, items, taskId: data.taskId, prompt: lastPromptRef.current || undefined, exchangeId: exchangeForTask(data.taskId, lastPromptRef.current) });
             }
           };
 
           if (isCommandAutomate) {
-            // Patch (or append) the run card for this task.
+            // Patch (or append) the run card for this task. The card renders
+            // the real QueueTaskCard while the comms task lives, so it's always
+            // wanted — incl. non-terminal parked states (awaiting-approval →
+            // Approve & Run buttons). A card written by onRunSummary moments
+            // ago has no taskId — match by recency so we don't duplicate.
             setFeedEntries(prev => {
               const runPatch = { status: status as any, error: data.error || null, planFile: data.planFile || undefined };
-              const idx = prev.findIndex(e => e.kind === 'run' && e.taskId === data.taskId);
+              let idx = prev.findIndex(e => e.kind === 'run' && e.taskId === data.taskId);
               if (idx < 0) {
-                return [...prev, { id: `fe_${Date.now()}_${feedSeqRef.current++}`, ts: Date.now(), kind: 'run', taskId: data.taskId, title: data.prompt || 'Automation run', prompt: data.prompt || undefined, ...runPatch } as FeedEntry];
+                // Recency fallback: patch the most recent run card settled in
+                // the last ~15s (the onRunSummary card) rather than appending.
+                for (let i = prev.length - 1; i >= 0; i--) {
+                  const e = prev[i];
+                  if (e.kind !== 'run') break;
+                  if (Date.now() - e.ts < 15000 && !e.taskId) { idx = i; break; }
+                }
+              }
+              const exchangeId = exchangeForTask(data.taskId, data.prompt);
+              if (idx < 0) {
+                return [...prev, { id: `fe_${Date.now()}_${feedSeqRef.current++}`, ts: Date.now(), kind: 'run', taskId: data.taskId, title: data.prompt ? toDisplayPrompt(data.prompt) || 'Automation run' : 'Automation run', prompt: data.prompt || undefined, exchangeId, ...runPatch } as FeedEntry];
               }
               const next = prev.slice();
-              next[idx] = { ...next[idx], ...runPatch } as FeedEntry;
+              const prevRun = next[idx];
+              next[idx] = { ...prevRun, taskId: (prevRun.kind === 'run' ? prevRun.taskId : undefined) || data.taskId, exchangeId: prevRun.exchangeId || exchangeId, ...runPatch } as FeedEntry;
               return next;
             });
             if (status === 'done' && data.answer) {
@@ -2333,10 +2469,18 @@ export function UnifiedOverlay() {
             } else if (status === 'failed' || status === 'cancelled') {
               // Settle any pending placeholder ("Give me a sec…") into a
               // friendly error card so it doesn't spin forever under the
-              // failed run card.
+              // failed run card. The search includes any assistant entry in
+              // the active exchange — preamble commits can lack taskId/pending.
               const raw = data.error || `Task ${status}`;
-              const pendingHit = [...feedEntriesRef.current].reverse().find(e =>
-                e.kind === 'assistant' && (e.taskId === data.taskId || e.pending));
+              const entries = feedEntriesRef.current;
+              let lastUserIdx = -1;
+              for (let i = entries.length - 1; i >= 0; i--) {
+                if (entries[i].kind === 'user') { lastUserIdx = i; break; }
+              }
+              const pendingHit = [...entries].reverse().find(e =>
+                e.kind === 'assistant' &&
+                (e.taskId === data.taskId || e.pending ||
+                  (lastUserIdx >= 0 && entries.indexOf(e) > lastUserIdx)));
               if (pendingHit) {
                 patchFeedEntry(pendingHit.id, {
                   text: friendlyErrorMessage(raw), pending: false, isError: true,
@@ -2381,6 +2525,7 @@ export function UnifiedOverlay() {
               appendFeedEntry({
                 kind: 'assistant', text: friendly, isError: true, errorRaw: raw,
                 taskId: data.taskId, prompt: lastPromptRef.current || undefined,
+                exchangeId: exchangeForTask(data.taskId, lastPromptRef.current),
               });
             }
           }
@@ -2529,8 +2674,7 @@ export function UnifiedOverlay() {
   // AutomationProgress terminal summary → collapsed run card in the feed, and
   // the live component hides (it stays mounted for the next run's IPC events).
   const handleRunSummary = useCallback((summary: RunSummary) => {
-    appendFeedEntry({
-      kind: 'run',
+    const summaryPatch = {
       title: summary.title,
       status: summary.status,
       steps: summary.steps,
@@ -2539,9 +2683,29 @@ export function UnifiedOverlay() {
       error: summary.error,
       durationMs: summary.durationMs,
       prompt: lastPromptRef.current || undefined,
-    });
+      exchangeId: exchangeForTask(summary.taskId, lastPromptRef.current),
+    };
+    if (summary.taskId) {
+      // Task-scoped emit — the feed card renders the live QueueTaskCard while
+      // the comms task exists; keep the entry's static fields current so the
+      // fallback card has data after the task is purged/removed.
+      patchFeedEntryByTask(summary.taskId, summaryPatch as Partial<FeedEntry>);
+      return;
+    }
+    // Patch the most recent *active* run card if one exists (e.g. a parked-task
+    // card written by task:complete) — otherwise append the settled card.
+    const entries = feedEntriesRef.current;
+    const activeHit = [...entries].reverse().find(e =>
+      e.kind === 'run' &&
+      (e.status === 'running' || e.status === 'queued' || e.status === 'awaiting-approval' ||
+       e.status === 'waiting-for-input' || e.status === 'auth-required'));
+    if (activeHit) {
+      patchFeedEntry(activeHit.id, summaryPatch as Partial<FeedEntry>);
+    } else {
+      appendFeedEntry({ kind: 'run', ...summaryPatch });
+    }
     setLiveRunHidden(true);
-  }, [appendFeedEntry]);
+  }, [appendFeedEntry, patchFeedEntry, patchFeedEntryByTask]);
 
   const handleOpenRules = useCallback(() => {
     handleTabSelect('rules');
@@ -2624,6 +2788,9 @@ export function UnifiedOverlay() {
               onPlanCancel={handleFeedPlanCancel}
               onOpenPath={handleFeedOpenPath}
               onOpenSourceUrl={(url) => ipcRenderer?.send('shell:open-url', url)}
+              resolveTask={(id) => commsTasks.find(t => t.id === id)}
+              onContinueThread={handleContinueThread}
+              onRunSummaryForTask={(_taskId, s) => handleRunSummary(s)}
             >
               {/* Proactive alert cards — question blocks + thought-engine outreach */}
               {questionAlert && (

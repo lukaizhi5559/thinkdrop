@@ -4,21 +4,27 @@ import { Favicon } from './DefaultFaviconIcon';
 import { ThinkDropLogo } from './SlideoutDrawer';
 import { RichContentRenderer } from './rich-content';
 import { WebResultsGrid, stripItemImageMarkdown } from './rich-content';
+import { StepIcon, SkillBadge, SkillIcon } from './AutomationProgress';
+import type { RunSummary } from './AutomationProgress';
+import { QueueTaskCard } from './QueueTaskCard';
+import type { CommsTask } from './QueueTaskCard';
 import type { WebResultItem } from './rich-content/WebResultCard';
 
 // ── Feed entry model ─────────────────────────────────────────────────────────
-// One item per row in the conversation feed. `ts` drives ordering + day
-// dividers; `exchangeId` isn't stored — the active exchange is derived by the
-// parent as "everything from the last user entry onward".
+// One item per row in the conversation feed. `ts` drives day dividers.
+// `exchangeId` correlates every entry that belongs to one user submission —
+// entries sharing an exchangeId render contiguously (user → assistant → run)
+// regardless of the order async events appended them in. Entries without one
+// (proactive, system, history) keep their own slot in the list.
 
 export type FeedRunStatus = 'queued' | 'running' | 'awaiting-approval' | 'auth-required' | 'waiting-for-input' | 'done' | 'failed' | 'cancelled';
 
 export type FeedEntry =
-  | { id: string; ts: number; kind: 'user'; text: string }
-  | { id: string; ts: number; kind: 'assistant'; text: string; items?: WebResultItem[]; sources?: { url: string; hostname: string; title?: string }[]; taskId?: string; pending?: boolean; prompt?: string; isError?: boolean; errorRaw?: string }
-  | { id: string; ts: number; kind: 'run'; title: string; status: FeedRunStatus; steps?: { title: string; status: string }[]; savedFilePaths?: string[]; error?: string | null; taskId?: string; planFile?: string | null; durationMs?: number | null; prompt?: string }
-  | { id: string; ts: number; kind: 'proactive'; text: string; thoughtId?: string; pending?: boolean }
-  | { id: string; ts: number; kind: 'system'; text: string };
+  | { id: string; ts: number; kind: 'user'; text: string; exchangeId?: string }
+  | { id: string; ts: number; kind: 'assistant'; text: string; items?: WebResultItem[]; sources?: { url: string; hostname: string; title?: string }[]; taskId?: string; pending?: boolean; prompt?: string; isError?: boolean; errorRaw?: string; exchangeId?: string }
+  | { id: string; ts: number; kind: 'run'; title: string; status: FeedRunStatus; steps?: { title: string; status: string; skill?: string; output?: string; savedFilePath?: string }[]; savedFilePaths?: string[]; error?: string | null; taskId?: string; planFile?: string | null; durationMs?: number | null; prompt?: string; exchangeId?: string }
+  | { id: string; ts: number; kind: 'proactive'; text: string; thoughtId?: string; pending?: boolean; exchangeId?: string }
+  | { id: string; ts: number; kind: 'system'; text: string; exchangeId?: string };
 
 interface ResultsFeedProps {
   entries: FeedEntry[];
@@ -35,6 +41,13 @@ interface ResultsFeedProps {
   onPlanCancel: (taskId: string, planFile: string | null) => void;
   onOpenPath: (path: string) => void;
   onOpenSourceUrl: (url: string) => void;
+  /** Look up a live comms task by id — run entries with a match render the real
+   *  QueueTaskCard (task-scoped AutomationProgress inside). */
+  resolveTask?: (taskId: string) => CommsTask | undefined;
+  onContinueThread?: (task: CommsTask) => void;
+  /** Terminal snapshot emitted by a live card's embedded AutomationProgress —
+   *  used to keep the static fallback data current after the task is purged. */
+  onRunSummaryForTask?: (taskId: string, summary: RunSummary) => void;
   /** Live exchange region — rendered at the bottom of the measured zone. */
   children?: React.ReactNode;
 }
@@ -54,6 +67,38 @@ function _dayLabel(ts: number): string {
   if (_dayKey(ts) === _dayKey(today.getTime())) return 'Today';
   if (_dayKey(ts) === _dayKey(yesterday.getTime())) return 'Yesterday';
   return d.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric', year: d.getFullYear() !== today.getFullYear() ? 'numeric' : undefined });
+}
+
+// ── Exchange grouping ─────────────────────────────────────────────────────────
+// Display-order transform over the append-only entry list. Entries sharing an
+// exchangeId render as one contiguous block positioned at the exchange's first
+// entry, sorted user → assistant → run. Entries with no exchangeId (proactive
+// thoughts, system notes, loaded history) are singletons — they can never
+// split an exchange mid-render, so a thought arriving between a prompt and its
+// reply lands after the whole exchange, not inside it.
+const EXCHANGE_KIND_ORDER: Partial<Record<FeedEntry['kind'], number>> = {
+  user: 0,
+  assistant: 1,
+  run: 2,
+};
+
+export function groupForDisplay(list: FeedEntry[]): FeedEntry[] {
+  if (list.length < 2) return list;
+  const groups: FeedEntry[][] = [];
+  const byExchange = new Map<string, FeedEntry[]>();
+  for (const e of list) {
+    const xid = e.exchangeId;
+    if (!xid) { groups.push([e]); continue; }
+    let g = byExchange.get(xid);
+    if (!g) { g = []; byExchange.set(xid, g); groups.push(g); }
+    g.push(e);
+  }
+  return groups.flatMap(g =>
+    g.length > 1
+      ? [...g].sort((a, b) =>
+          (EXCHANGE_KIND_ORDER[a.kind] ?? 1) - (EXCHANGE_KIND_ORDER[b.kind] ?? 1) || a.ts - b.ts)
+      : g
+  );
 }
 
 function DayDivider({ ts }: { ts: number }) {
@@ -105,19 +150,6 @@ const RUN_STATUS_META: Record<FeedRunStatus, { label: string; color: string }> =
   'cancelled':          { label: 'Cancelled',        color: '#abafb8' },
 };
 
-function StepStatusGlyph({ status }: { status: string }) {
-  const map: Record<string, { ch: string; color: string }> = {
-    done: { ch: '✓', color: '#4ade80' },
-    failed: { ch: '✕', color: '#f87171' },
-    skipped: { ch: '–', color: '#6b7280' },
-    deferred: { ch: '⏸', color: '#a78bfa' },
-    running: { ch: '…', color: '#60a5fa' },
-    pending: { ch: '○', color: '#4b5563' },
-  };
-  const m = map[status] || map.pending;
-  return <span style={{ color: m.color, fontSize: '0.7rem', width: 14, textAlign: 'center', flexShrink: 0 }}>{m.ch}</span>;
-}
-
 function CopyIcon() {
   return (
     <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -156,15 +188,17 @@ function CollapsibleContent({ text, children }: { text: string; children: React.
   if (!needsClamp) return <>{children}</>;
   return (
     <div>
-      <div style={{ maxHeight: expanded ? 'none' : COLLAPSE_HEIGHT, overflow: 'hidden', position: 'relative' }}>
+      <div style={{
+        maxHeight: expanded ? 'none' : COLLAPSE_HEIGHT,
+        overflow: 'hidden',
+        // Fade the content itself via mask — flush with the panel's translucent
+        // background (a solid overlay div leaves a visible color box).
+        ...(expanded ? {} : {
+          WebkitMaskImage: 'linear-gradient(to bottom, black 60%, transparent 100%)',
+          maskImage: 'linear-gradient(to bottom, black 60%, transparent 100%)',
+        }),
+      }}>
         {children}
-        {!expanded && (
-          <div style={{
-            position: 'absolute', bottom: 0, left: 0, right: 0, height: 48,
-            background: 'linear-gradient(rgba(18,20,24,0), rgba(18,20,24,0.97) 75%)',
-            pointerEvents: 'none',
-          }} />
-        )}
       </div>
       <div style={{ textAlign: 'center', marginTop: 4 }}>
         <button
@@ -196,6 +230,9 @@ function ResultsFeedImpl({
   onPlanCancel,
   onOpenPath,
   onOpenSourceUrl,
+  resolveTask,
+  onContinueThread,
+  onRunSummaryForTask,
   children,
 }: ResultsFeedProps) {
   // Manually-toggled run cards; default = expanded while active, collapsed when
@@ -203,12 +240,16 @@ function ResultsFeedImpl({
   const [toggledRuns, setToggledRuns] = useState<Set<string>>(new Set());
   const [copiedId, setCopiedId] = useState<string | null>(null);
 
+  // Group FIRST, then split — the active exchange's block must stay together
+  // inside the measured zone even if its entries were appended out of order
+  // (e.g. a user bubble that arrived after the reply committed).
+  const grouped = useMemo(() => groupForDisplay(entries), [entries]);
   const splitIdx = useMemo(
-    () => (activeExchangeId ? entries.findIndex(e => e.id === activeExchangeId) : -1),
-    [entries, activeExchangeId]
+    () => (activeExchangeId ? grouped.findIndex(e => e.id === activeExchangeId) : -1),
+    [grouped, activeExchangeId]
   );
-  const historyEntries = splitIdx >= 0 ? entries.slice(0, splitIdx) : entries;
-  const currentEntries = splitIdx >= 0 ? entries.slice(splitIdx) : [];
+  const historyEntries = splitIdx >= 0 ? grouped.slice(0, splitIdx) : grouped;
+  const currentEntries = splitIdx >= 0 ? grouped.slice(splitIdx) : [];
 
   const toggleRun = (id: string) => {
     setToggledRuns(prev => {
@@ -271,7 +312,7 @@ function ResultsFeedImpl({
 
       case 'assistant':
         return (
-          <div key={entry.id} className="feed-entry" style={{ position: 'relative', margin: '2px 0 14px', paddingBottom: 14 }}>
+          <div key={entry.id} className="feed-entry" style={{ position: 'relative', margin: '2px 0 12px', paddingBottom: 10 }}>
             {/* ThinkDrop avatar row — visual handoff from user bubble to AI reply */}
             <div className="flex items-center gap-1.5 select-none" style={{ marginBottom: 5, opacity: 0.85 }}>
               <ThinkDropLogo size={14} />
@@ -342,47 +383,120 @@ function ResultsFeedImpl({
         );
 
       case 'run': {
+        // Live task → render the real QueueTaskCard: status-tinted card chrome
+        // with a task-scoped AutomationProgress inside (plan review, QuestionCard,
+        // Approve & Run all native). Falls back to the static summary card once
+        // the comms task is purged/removed.
+        const liveTask = entry.taskId ? resolveTask?.(entry.taskId) : undefined;
+        if (liveTask) {
+          return (
+            <div key={entry.id} style={{ margin: '4px 0 12px' }}>
+              <QueueTaskCard
+                task={liveTask}
+                onContinueThread={onContinueThread}
+                onHeightChange={() => {}}
+                onRunSummary={entry.taskId ? (s) => onRunSummaryForTask?.(entry.taskId!, s) : undefined}
+                autoCollapseOnSettle
+              />
+            </div>
+          );
+        }
         const meta = RUN_STATUS_META[entry.status] || RUN_STATUS_META.done;
         const isActive = entry.status === 'running' || entry.status === 'queued' || entry.status === 'awaiting-approval' || entry.status === 'waiting-for-input' || entry.status === 'auth-required';
         const expanded = toggledRuns.has(entry.id) ? !isActive : isActive;
+        const steps = entry.steps || [];
+        const doneCount = steps.filter(s => s.status === 'done' || s.status === 'skipped').length;
+        // Step title colors mirror the live AutomationProgress step rows.
+        const stepColor = (status: string) =>
+          status === 'pending' ? '#abafb8'
+          : status === 'failed' ? '#fca5a5'
+          : status === 'skipped' || status === 'needs_input' ? '#fbbf24'
+          : '#e5e7eb';
         return (
-          <div key={entry.id} className="feed-entry" style={{ position: 'relative', margin: '8px 0', paddingBottom: 14 }}>
+          <div key={entry.id} className="feed-entry" style={{ position: 'relative', margin: '4px 0 12px', paddingBottom: 10 }}>
             <button
               onClick={() => toggleRun(entry.id)}
-              className="flex items-center gap-2 w-full text-left"
-              style={{ background: 'none', border: 'none', padding: '2px 0', cursor: 'pointer' }}
+              className="feed-run-toggle flex items-center gap-2 w-full text-left"
+              style={{ background: 'none', border: 'none', padding: '4px 6px', margin: '0 -6px', borderRadius: 6, cursor: 'pointer' }}
             >
-              <span style={{ color: '#6b7280', fontSize: '0.7rem', width: 10, flexShrink: 0 }}>{expanded ? '▾' : '▸'}</span>
               <span style={{ color: '#93c5fd', fontSize: '0.78rem', fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                AI: {entry.title}
+                {entry.title}
+              </span>
+              <span style={{ color: '#6b7280', fontSize: '0.65rem', flexShrink: 0 }}>
+                {steps.length > 0 && `${doneCount}/${steps.length} tasks`}
+                {entry.durationMs != null ? ` · ${Math.round(entry.durationMs / 1000)}s` : ''}
               </span>
               <span style={{ color: meta.color, fontSize: '0.65rem', fontWeight: 500, marginLeft: 'auto', flexShrink: 0 }}>
-                {meta.label}{entry.durationMs != null ? ` · ${Math.round(entry.durationMs / 1000)}s` : ''}
+                {meta.label}
+              </span>
+              {/* Chevron chip — matches QueueTaskCard / "Show more" prominence */}
+              <span style={{
+                marginLeft: 6, padding: '5px 9px', borderRadius: 5, flexShrink: 0,
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                background: expanded ? 'rgba(99,102,241,0.15)' : 'rgba(255,255,255,0.04)',
+                border: expanded ? '1px solid rgba(99,102,241,0.25)' : '1px solid rgba(255,255,255,0.1)',
+                color: expanded ? '#818cf8' : '#abafb8',
+              }}>
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round">
+                  {expanded ? <polyline points="18,15 12,9 6,15"/> : <polyline points="6,9 12,15 18,9"/>}
+                </svg>
               </span>
             </button>
             {expanded && (
-              <div style={{ marginLeft: 18, marginTop: 6 }}>
-                {entry.steps && entry.steps.length > 0 && (
-                  <div className="flex flex-col gap-1" style={{ marginBottom: 6 }}>
-                    {entry.steps.map((s, i) => (
-                      <div key={i} className="flex items-center gap-2">
-                        <StepStatusGlyph status={s.status} />
-                        <span style={{ color: '#9ca3af', fontSize: '0.72rem' }}>{s.title}</span>
-                      </div>
-                    ))}
-                  </div>
+              <div className="flex flex-col gap-2" style={{ marginLeft: 14, marginTop: 8 }}>
+                {steps.length === 0 && !entry.error && (!entry.savedFilePaths || entry.savedFilePaths.length === 0) && (
+                  <div style={{ color: '#6b7280', fontSize: '0.7rem', fontStyle: 'italic' }}>No step details recorded.</div>
                 )}
+                {steps.map((s, i) => (
+                  <div key={i} className="flex items-start gap-2.5">
+                    <div className="mt-0.5"><StepIcon status={s.status as any} /></div>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="text-sm" style={{
+                          color: stepColor(s.status),
+                          textDecoration: s.status === 'deferred' ? 'line-through' : undefined,
+                          opacity: s.status === 'deferred' ? 0.6 : undefined,
+                        }}>{s.title}</span>
+                        {s.skill && <><SkillIcon skill={s.skill} /><SkillBadge skill={s.skill} /></>}
+                      </div>
+                      {s.savedFilePath && (
+                        <button
+                          onClick={() => onOpenPath(s.savedFilePath!)}
+                          className="flex items-center gap-1.5"
+                          style={{ marginTop: 3, padding: '2px 8px', borderRadius: 10, backgroundColor: 'rgba(59,130,246,0.10)', border: '1px solid rgba(59,130,246,0.25)', color: '#93c5fd', fontSize: '0.65rem', fontFamily: 'monospace', cursor: 'pointer' }}
+                          title={s.savedFilePath}
+                        >
+                          {s.savedFilePath.split('/').pop() || s.savedFilePath}
+                        </button>
+                      )}
+                      {s.output && (
+                        <div style={{
+                          marginTop: 4, padding: '6px 8px', borderRadius: 6,
+                          backgroundColor: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)',
+                          color: '#9ca3af', fontSize: '0.68rem', fontFamily: 'monospace',
+                          whiteSpace: 'pre-wrap', wordBreak: 'break-word',
+                          maxHeight: 120, overflow: 'hidden',
+                          WebkitMaskImage: 'linear-gradient(to bottom, black 60%, transparent 100%)',
+                          maskImage: 'linear-gradient(to bottom, black 60%, transparent 100%)',
+                        }}>
+                          {s.output.length > 300 ? s.output.slice(0, 300) + '…' : s.output}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                ))}
                 {entry.error && (
-                  <div style={{ color: '#f87171', fontSize: '0.72rem', marginBottom: 6, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{friendlyErrorMessage(entry.error)}</div>
+                  <div style={{ color: '#f87171', fontSize: '0.72rem', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{friendlyErrorMessage(entry.error)}</div>
                 )}
                 {entry.savedFilePaths && entry.savedFilePaths.length > 0 && (
-                  <div className="flex flex-col gap-1" style={{ marginBottom: 6 }}>
+                  <div className="flex flex-wrap gap-1.5">
                     {entry.savedFilePaths.map(fp => (
                       <button
                         key={fp}
                         onClick={() => onOpenPath(fp)}
-                        className="flex items-center gap-2"
-                        style={{ padding: '4px 8px', borderRadius: 6, backgroundColor: 'rgba(59,130,246,0.08)', border: '1px solid rgba(59,130,246,0.2)', color: '#93c5fd', fontSize: '0.7rem', cursor: 'pointer', textAlign: 'left' }}
+                        className="flex items-center gap-1.5"
+                        style={{ padding: '3px 9px', borderRadius: 10, backgroundColor: 'rgba(59,130,246,0.10)', border: '1px solid rgba(59,130,246,0.25)', color: '#93c5fd', fontSize: '0.65rem', fontFamily: 'monospace', cursor: 'pointer' }}
+                        title={fp}
                       >
                         {fp.split('/').pop() || fp}
                       </button>
@@ -414,7 +528,7 @@ function ResultsFeedImpl({
 
       case 'proactive':
         return (
-          <div key={entry.id} className="flex items-start gap-2" style={{ margin: '8px 0' }}>
+          <div key={entry.id} className="flex items-start gap-2" style={{ margin: '4px 0' }}>
             <span className="text-sm leading-5 select-none" style={{ opacity: 0.8 }}>🧠</span>
             {entry.pending ? (
               <PendingDots color="#a78bfa" />
@@ -453,7 +567,7 @@ function ResultsFeedImpl({
 
   return (
     <>
-      <style>{`.feed-entry:hover .feed-actions { opacity: 1 !important; }`}</style>
+      <style>{`.feed-entry:hover .feed-actions { opacity: 1 !important; } .feed-run-toggle:hover { background-color: rgba(255,255,255,0.04) !important; }`}</style>
 
       {/* History zone — unmeasured: window height ignores it. */}
       {(historyEntries.length > 0 || hasMoreHistory || historyLoading) && (

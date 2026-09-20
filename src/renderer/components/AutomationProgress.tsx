@@ -262,11 +262,13 @@ interface AutomationProgressProps {
 export interface RunSummary {
   title: string;
   status: 'done' | 'failed' | 'cancelled';
-  steps: { title: string; status: string }[];
+  steps: { title: string; status: string; skill?: string; output?: string; savedFilePath?: string }[];
   savedFilePaths: string[];
   planFile: string | null;
   error: string | null;
   durationMs: number | null;
+  /** Set for queue-card (task-scoped) instances — lets the feed patch the right entry. */
+  taskId?: string;
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -280,7 +282,7 @@ function isUnconfirmedStep(description: string | undefined, stdout: string | und
   return /cannot confirm|can't confirm|unable to (?:confirm|verify)|could not (?:confirm|verify)|not able to (?:confirm|verify)|cannot verify|no text content|no data (?:collected|available)|insufficient (?:data|information|evidence)|does not appear|do not appear/i.test(stdout);
 }
 
-function StepIcon({ status, unconfirmed }: { status: StepStatus; unconfirmed?: boolean }) {
+export function StepIcon({ status, unconfirmed }: { status: StepStatus; unconfirmed?: boolean }) {
   if (status === 'done' && unconfirmed) {
     // Amber "?" — the step ran but could not confirm/verify its outcome.
     return (
@@ -511,7 +513,7 @@ function formatActionLabel(action: { action?: string; url?: string; selector?: s
   }
 }
 
-function SkillBadge({ skill }: { skill: string }) {
+export function SkillBadge({ skill }: { skill: string }) {
   return (
     <span className="text-xs font-mono px-1.5 py-0.5 rounded"
       style={{ backgroundColor: 'rgba(59,130,246,0.15)', color: '#93c5fd', border: '1px solid rgba(59,130,246,0.25)' }}>
@@ -521,7 +523,7 @@ function SkillBadge({ skill }: { skill: string }) {
 }
 
 // ── SkillIcon — inline SVG icon for each skill type (Feather/Lucide style) ──
-function SkillIcon({ skill, size = 14, color = '#94a3b8' }: { skill: string; size?: number; color?: string }) {
+export function SkillIcon({ skill, size = 14, color = '#94a3b8' }: { skill: string; size?: number; color?: string }) {
   const common = {
     width: size, height: size, viewBox: '0 0 24 24',
     fill: 'none', stroke: color, strokeWidth: 2,
@@ -891,7 +893,13 @@ function parsePlanStepTitles(content: string): string[] {
   return titles;
 }
 
+// Per-instance sequence for ipcBus tokens — a queue card and a Results-feed card
+// for the same taskId must not share a token (ipcBus keys handlers by token, so
+// a second mount would overwrite the first's handler and unmounting one kills both).
+let _apInstanceSeq = 0;
+
 export default function AutomationProgress({ onHeightChange, onActiveChange, onOpenRules, onAskUserShown, setIsSubmitting, onAuthPending, suppressIfScheduled, activeTab, taskId, planFile, onRunSummary }: AutomationProgressProps) {
+  const [instanceSeq] = useState(() => ++_apInstanceSeq);
   const [phase, setPhase] = useState<AutomationPhase>('idle');
   const planReviewRef = useRef<HTMLDivElement>(null);
   const [steps, setSteps] = useState<Step[]>([]);
@@ -1174,13 +1182,21 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
     onRunSummaryRef.current?.({
       title: pr?.title || 'Automation run',
       status,
-      steps: s.map(x => ({ title: x.description || x.skill || 'Step', status: x.status })),
+      steps: s.map(x => ({
+        title: x.description || x.skill || 'Step',
+        status: x.status,
+        skill: x.skill || undefined,
+        // Output preview for the feed card — capped so the settled entry stays light.
+        output: (x.error || x.stdout || '').trim().slice(0, 4000) || undefined,
+        savedFilePath: x.savedFilePath || undefined,
+      })),
       savedFilePaths: savedFilePathsSnapshotRef.current,
       planFile: pr?.planFile || _planFileRef.current || null,
       error,
       durationMs: executionStartRef.current ? Date.now() - executionStartRef.current : null,
+      taskId,
     });
-  }, []);
+  }, [taskId]);
 
   // done/failed emit here once merged state has flushed; cancelled emits inline
   // in the all_done handler (before resetToIdle clears the snapshot refs).
@@ -3037,7 +3053,7 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
     // (Results tab + one per queue card). Subscriptions go through ipcBus so all
     // instances share ONE real ipcRenderer listener per channel — without it, N
     // mounted queue cards = N listeners per channel and EventEmitter warns at 11.
-    const AP_TOKEN = `automation-progress-${taskId || 'results'}`;
+    const AP_TOKEN = `automation-progress-${taskId || 'results'}-${instanceSeq}`;
     if (taskId) {
       // Task-scoped queue cards only consume task-tagged automation:progress and
       // plan:approved events — every other handler early-returns on taskId, so

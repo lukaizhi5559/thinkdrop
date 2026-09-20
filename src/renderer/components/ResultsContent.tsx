@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import type { RefObject } from 'react';
 import { Favicon } from './DefaultFaviconIcon';
+import { ThinkDropLogo } from './SlideoutDrawer';
 import AutomationProgress, { type RunSummary } from './AutomationProgress';
 import { RichContentRenderer } from './rich-content';
 import { WebResultsGrid, stripItemImageMarkdown } from './rich-content';
@@ -311,13 +312,19 @@ function ResultsContentImpl({
         : thinkingElapsed >= 5 ? 'Thinking...'
         : '';
       return (
-        <div className="flex items-center gap-3">
-          <div className="flex gap-1">
-            <div className="w-2 h-2 rounded-full bg-blue-500 animate-pulse" style={{ animationDelay: '0ms' }} />
-            <div className="w-2 h-2 rounded-full bg-blue-500 animate-pulse" style={{ animationDelay: '150ms' }} />
-            <div className="w-2 h-2 rounded-full bg-blue-500 animate-pulse" style={{ animationDelay: '300ms' }} />
+        <div>
+          {/* ThinkDrop avatar — matches the settled feed entry's header row */}
+          <div className="flex items-center gap-1.5 select-none" style={{ marginBottom: 5, opacity: 0.85 }}>
+            <ThinkDropLogo size={14} />
           </div>
-          {thinkingText && <span className="text-gray-400 text-sm">{thinkingText}</span>}
+          <div className="flex items-center gap-3">
+            <div className="flex gap-1">
+              <div className="w-2 h-2 rounded-full bg-blue-500 animate-pulse" style={{ animationDelay: '0ms' }} />
+              <div className="w-2 h-2 rounded-full bg-blue-500 animate-pulse" style={{ animationDelay: '150ms' }} />
+              <div className="w-2 h-2 rounded-full bg-blue-500 animate-pulse" style={{ animationDelay: '300ms' }} />
+            </div>
+            {thinkingText && <span className="text-gray-400 text-sm">{thinkingText}</span>}
+          </div>
         </div>
       );
     }
@@ -329,6 +336,10 @@ function ResultsContentImpl({
 
     return (
       <div className={`space-y-4${isDropping ? ' drop-animate' : ''} mt-4`}>
+        {/* ThinkDrop avatar — matches the settled feed entry's header row */}
+        <div className="flex items-center gap-1.5 select-none" style={{ opacity: 0.85 }}>
+          <ThinkDropLogo size={14} />
+        </div>
         {renderInstallCard()}
         {searchSources.length > 0 && renderSourcePill()}
 

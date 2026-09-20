@@ -7103,15 +7103,39 @@ app.whenReady().then(async () => {
     }
   });
 
+  // Resolve a path that may contain unicode punctuation the model emitted —
+  // e.g. non-breaking hyphen U+2011 in place of '-', NBSP instead of space.
+  // Tries the raw path first, then dash/space normalization and NFC/NFD, and
+  // returns the first variant that exists (or the raw path for the error log).
+  const resolveExistingPath = (filePath) => {
+    const fs = require('fs');
+    const os = require('os');
+    const base = filePath.startsWith('~/') ? filePath.replace('~', os.homedir()) : filePath;
+    const deDash = (p) => p.replace(/[‐-―−]/g, '-');
+    const deSpace = (p) => p.replace(/[  -   　]/g, ' ');
+    const variants = [
+      base,
+      deDash(base),
+      deSpace(base),
+      deSpace(deDash(base)),
+      base.normalize('NFC'),
+      base.normalize('NFD'),
+      deSpace(deDash(base.normalize('NFC'))),
+    ];
+    for (const v of variants) {
+      try { if (v && fs.existsSync(v)) return v; } catch (_) { /* try next */ }
+    }
+    return base;
+  };
+
   // Open a file path in its default app, or reveal in Finder if it's a directory.
   // Registered as handle (invoke) so the renderer can receive error feedback.
   ipcMain.handle('shell:open-path', async (_event, filePath) => {
     if (!filePath || typeof filePath !== 'string') return { error: 'Invalid path' };
     const { shell } = require('electron');
     const fs = require('fs');
-    const os = require('os');
-    // Expand ~/path → absolute (Node.js fs and Electron shell do not expand ~)
-    const resolvedPath = filePath.startsWith('~/') ? filePath.replace('~', os.homedir()) : filePath;
+    // Expand ~ and normalize unicode punctuation (see resolveExistingPath)
+    const resolvedPath = resolveExistingPath(filePath);
     console.log(`[Shell] Opening path: ${resolvedPath}`);
     try {
       const stat = fs.statSync(resolvedPath);
@@ -7137,8 +7161,7 @@ app.whenReady().then(async () => {
     if (!filePath || typeof filePath !== 'string') return;
     const { shell } = require('electron');
     const fs = require('fs');
-    const os = require('os');
-    const resolvedPath = filePath.startsWith('~/') ? filePath.replace('~', os.homedir()) : filePath;
+    const resolvedPath = resolveExistingPath(filePath);
     try {
       const stat = fs.statSync(resolvedPath);
       if (stat.isDirectory()) { shell.showItemInFolder(resolvedPath); }

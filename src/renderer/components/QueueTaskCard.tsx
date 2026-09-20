@@ -1,5 +1,6 @@
 import React from 'react';
 import AutomationProgress from './AutomationProgress';
+import type { RunSummary } from './AutomationProgress';
 import { playDropSound } from '../utils/thinkDropSound';
 import { Favicon } from './DefaultFaviconIcon';
 import RichContentRenderer from './rich-content/RichContentRenderer';
@@ -219,13 +220,19 @@ export function PromptText({ text, maxLen = 80 }: { text: string; maxLen?: numbe
 }
 
 // ── QueueTaskCard — wraps AutomationProgress in an expandable card ────────────
-export function QueueTaskCard({ task, onContinueThread, onHeightChange, flash }: {
+export function QueueTaskCard({ task, onContinueThread, onHeightChange, flash, onRunSummary, autoCollapseOnSettle }: {
   task: CommsTask;
   onContinueThread?: (task: CommsTask) => void;
   onHeightChange?: () => void;
   flash?: boolean;
+  /** Forwarded to the embedded AutomationProgress — feed cards use it to keep
+   *  a static snapshot for after the live task is purged. */
+  onRunSummary?: (summary: RunSummary) => void;
+  /** Results feed only: collapse the card when the run reaches a terminal state. */
+  autoCollapseOnSettle?: boolean;
 }) {
   const [expanded, setExpanded] = React.useState(false);
+  const [headerHover, setHeaderHover] = React.useState(false);
   const [thinkingExpanded, setThinkingExpanded] = React.useState(false);
   const [confirmingDelete, setConfirmingDelete] = React.useState(false);
   const cfg = TASK_STATUS_CONFIG[task.status] || TASK_STATUS_CONFIG.queued;
@@ -260,6 +267,15 @@ export function QueueTaskCard({ task, onContinueThread, onHeightChange, flash }:
     }
   }, [flash, notifyHeightChange]);
 
+  // Results feed only: settle → collapse so the card doesn't hog the chat.
+  React.useEffect(() => {
+    if (!autoCollapseOnSettle) return;
+    if (task.status === 'done' || task.status === 'failed' || task.status === 'cancelled') {
+      setExpanded(false);
+      notifyHeightChange();
+    }
+  }, [task.status, autoCollapseOnSettle, notifyHeightChange]);
+
   // Require a second click before permanently deleting an individual task.
   React.useEffect(() => {
     if (!confirmingDelete) return;
@@ -290,7 +306,16 @@ export function QueueTaskCard({ task, onContinueThread, onHeightChange, flash }:
       ...(flash ? { animation: 'td-queue-flash 0.8s ease-in-out 3' } : {}),
     }}>
       {/* ── Card header (always visible) ── */}
-      <div style={{ padding: '10px 12px', cursor: 'pointer' }} onClick={handleExpand}>
+      <div
+        style={{
+          padding: '10px 12px', cursor: 'pointer',
+          backgroundColor: headerHover ? 'rgba(255,255,255,0.03)' : 'transparent',
+          transition: 'background-color 0.15s',
+        }}
+        onClick={handleExpand}
+        onMouseEnter={() => setHeaderHover(true)}
+        onMouseLeave={() => setHeaderHover(false)}
+      >
         <div style={{ display: 'flex', alignItems: 'flex-start', gap: 9 }}>
           {/* Status icon */}
           <div style={{ flexShrink: 0, paddingTop: 2 }}>
@@ -444,7 +469,7 @@ export function QueueTaskCard({ task, onContinueThread, onHeightChange, flash }:
                   onClick={(e) => { e.stopPropagation(); handleExpand(); }}
                   title={expanded ? 'Collapse' : 'Show details'}
                   style={{
-                    padding: '4px 7px', borderRadius: 5, cursor: 'pointer',
+                    padding: '5px 9px', borderRadius: 5, cursor: 'pointer',
                     display: 'flex', alignItems: 'center', justifyContent: 'center',
                     background: expanded ? 'rgba(99,102,241,0.15)' : 'rgba(255,255,255,0.04)',
                     border: expanded ? '1px solid rgba(99,102,241,0.25)' : '1px solid rgba(255,255,255,0.1)',
@@ -453,7 +478,7 @@ export function QueueTaskCard({ task, onContinueThread, onHeightChange, flash }:
                   onMouseEnter={e => (e.currentTarget.style.background = expanded ? 'rgba(99,102,241,0.25)' : 'rgba(255,255,255,0.1)')}
                   onMouseLeave={e => (e.currentTarget.style.background = expanded ? 'rgba(99,102,241,0.15)' : 'rgba(255,255,255,0.04)')}
                 >
-                  <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round">
                     {expanded ? <polyline points="18,15 12,9 6,15"/> : <polyline points="6,9 12,15 18,9"/>}
                   </svg>
                 </button>
@@ -482,6 +507,7 @@ export function QueueTaskCard({ task, onContinueThread, onHeightChange, flash }:
             activeTab="queue"
             onHeightChange={notifyHeightChange}
             onActiveChange={() => {}}
+            onRunSummary={onRunSummary}
           />
         </div>
 
