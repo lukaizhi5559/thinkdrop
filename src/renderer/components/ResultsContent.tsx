@@ -5,8 +5,8 @@ import { ThinkDropLogo } from './SlideoutDrawer';
 import AutomationProgress, { type RunSummary } from './AutomationProgress';
 import { RichContentRenderer } from './rich-content';
 import { WebResultsGrid, stripItemImageMarkdown } from './rich-content';
-import type { WebResultItem } from './rich-content/WebResultCard';
 import SkillBuildProgress from './SkillBuildProgress';
+import { useFeedStore } from '../state/feedSelectors';
 
 // --- Shared types (exported for use by UnifiedOverlay) ---
 
@@ -58,9 +58,8 @@ interface ResultsContentProps {
   contentRef: RefObject<HTMLDivElement>;
   scrollBottomRef: RefObject<HTMLDivElement>;
   installOutputRef: RefObject<HTMLDivElement>;
-  // Results state
-  streamingResponse: string;
-  resultItems: WebResultItem[];
+  // Results state (streamText/resultItems/searchSources subscribe internally
+  // via useFeedStore — hot path stays off the parent's render pass)
   isStreaming: boolean;
   isThinking: boolean;
   thinkingElapsed: number;
@@ -74,7 +73,6 @@ interface ResultsContentProps {
   // Action chips
   actionChips: ActionChip[];
   // Search sources
-  searchSources: SearchSource[];
   showSourcesPanel: boolean;
   // Schedule + bridge
   schedulePending: SchedulePending | null;
@@ -105,8 +103,6 @@ function ResultsContentImpl({
   contentRef,
   scrollBottomRef,
   installOutputRef,
-  streamingResponse,
-  resultItems,
   isStreaming,
   isThinking,
   thinkingElapsed,
@@ -117,7 +113,6 @@ function ResultsContentImpl({
   isInstalling,
   installOutput,
   actionChips,
-  searchSources,
   showSourcesPanel,
   schedulePending,
   bridgeStatus,
@@ -137,6 +132,11 @@ function ResultsContentImpl({
   onActiveChange,
   onRunSummary,
 }: ResultsContentProps) {
+  // Hot-path subscriptions live here so per-chunk stream updates re-render
+  // only this live region, not the whole overlay (header/tabs/input).
+  const streamingResponse = useFeedStore(s => s.streamText);
+  const resultItems = useFeedStore(s => s.resultItems);
+  const searchSources = useFeedStore(s => s.searchSources);
   // Live-run collapse — manual toggle while running; the run auto-expands when
   // a new automation starts (isAutomationMode flips true). Once the terminal
   // summary commits, liveRunHidden removes the whole block — the feed's run

@@ -593,6 +593,10 @@ async function answerQuestion(taskId, answer) {
     recoveryContext: null,
     answer: undefined, commandExecuted: false,
     stepRetryCount: 0, _planFile: null, _skillPlanFile: null,
+    // The paused run already persisted the user turn when it routed through
+    // logConversation — without this flag every ask_user resume writes another
+    // identical user row (history shows the prompt once per pause).
+    _skipUserLog: true,
   };
 
   console.log(`[HandoffRunner] answerQuestion task=${taskId} answer="${chosen.slice(0, 60)}" agent=${_agentId} step=${_stepIdx}`);
@@ -764,10 +768,22 @@ async function answerQuestion(taskId, answer) {
   // the message with prior state retained; the graph re-processes it in context.
   if (pq._isAgentAskUser !== true && !paused.failedStep) {
     _emitResuming();
+    // Deliver the answer through _gatheredVars[varName] so {{_var}} tokens in
+    // later steps resolve (mirrors the serial flow's gatherCredentialCallback
+    // write in executeCommand.js). Also patch the paused ask_user's skillResults
+    // stdout — otherwise it keeps "[Waiting for user input: …]" and any
+    // {{PREV_OUTPUT}} consumer injects that placeholder text.
+    const _gv = pq.varName
+      ? { ...(paused._gatheredVars || {}), [pq.varName]: chosen }
+      : paused._gatheredVars;
+    const _patchedResults = (paused.skillResults || []).map(r =>
+      r && r.skill === 'ask_user' && r.step === _stepIdx + 1 ? { ...r, stdout: chosen } : r);
     return _reExecute({
       ..._baseResume,
       message: chosen,
       resolvedMessage: chosen,
+      _gatheredVars: _gv,
+      skillResults: _patchedResults,
     });
   }
 

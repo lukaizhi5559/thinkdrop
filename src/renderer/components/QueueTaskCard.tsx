@@ -251,13 +251,24 @@ export function QueueTaskCard({ task, onContinueThread, onHeightChange, flash, o
     }
   }, [onHeightChange]);
 
-  // Auto-expand when task is active or needs attention
+  // Auto-expand/collapse on STATUS TRANSITIONS only. The elapsed-time tick and
+  // parent re-renders change notifyHeightChange's identity constantly — gating
+  // on an actual status change keeps a manual collapse/expand from being undone
+  // on the next render (feed cards) while still surfacing new attention states.
+  const lastStatusRef = React.useRef<string | undefined>(undefined);
   React.useEffect(() => {
+    if (lastStatusRef.current === task.status) return;
+    lastStatusRef.current = task.status;
     if (isActive || needsAttention) {
       setExpanded(true);
       notifyHeightChange();
+    } else if (autoCollapseOnSettle &&
+               (task.status === 'done' || task.status === 'failed' || task.status === 'cancelled')) {
+      // Results feed only: settle → collapse so the card doesn't hog the chat.
+      setExpanded(false);
+      notifyHeightChange();
     }
-  }, [task.status, notifyHeightChange]);
+  }, [task.status, isActive, needsAttention, autoCollapseOnSettle, notifyHeightChange]);
 
   // Deep-link from a notification: force expand while flashed
   React.useEffect(() => {
@@ -266,15 +277,6 @@ export function QueueTaskCard({ task, onContinueThread, onHeightChange, flash, o
       notifyHeightChange();
     }
   }, [flash, notifyHeightChange]);
-
-  // Results feed only: settle → collapse so the card doesn't hog the chat.
-  React.useEffect(() => {
-    if (!autoCollapseOnSettle) return;
-    if (task.status === 'done' || task.status === 'failed' || task.status === 'cancelled') {
-      setExpanded(false);
-      notifyHeightChange();
-    }
-  }, [task.status, autoCollapseOnSettle, notifyHeightChange]);
 
   // Require a second click before permanently deleting an individual task.
   React.useEffect(() => {
@@ -298,7 +300,9 @@ export function QueueTaskCard({ task, onContinueThread, onHeightChange, flash, o
       width: '100%',
       margin: '1px 0',
       borderRadius: 9,
-      backgroundColor: cfg.bg,
+      // Transparent chrome — the status border/ring and inner chips carry the
+      // color signal; a tinted wash reads as a solid colored card in the feed.
+      backgroundColor: 'transparent',
       border: `1px solid ${cfg.border}`,
       transition: 'border-color 0.15s, background-color 0.15s',
       overflow: 'hidden',
@@ -1077,7 +1081,7 @@ const ApprovalIcon = ({ size = 22 }: { size?: number }) => (
   </svg>
 );
 
-const BrainIcon = ({ size = 14, color = '#818cf8' }: { size?: number; color?: string }) => (
+export const BrainIcon = ({ size = 14, color = '#818cf8' }: { size?: number; color?: string }) => (
   <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
     <path d="M9.5 2a2.5 2.5 0 0 0-2.45 2.5A2.5 2.5 0 0 0 5 7a2.5 2.5 0 0 0-1 4.5A2.5 2.5 0 0 0 5 16a2.5 2.5 0 0 0 2.5 2.5A2.5 2.5 0 0 0 10 21V4a2 2 0 0 0-.5-2z"/>
     <path d="M14.5 2a2.5 2.5 0 0 1 2.45 2.5A2.5 2.5 0 0 1 19 7a2.5 2.5 0 0 1 1 4.5A2.5 2.5 0 0 1 19 16a2.5 2.5 0 0 1-2.5 2.5A2.5 2.5 0 0 1 14 21V4a2 2 0 0 1 .5-2z"/>

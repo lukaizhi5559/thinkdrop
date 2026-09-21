@@ -6,7 +6,7 @@ import { RichContentRenderer } from './rich-content';
 import { WebResultsGrid, stripItemImageMarkdown } from './rich-content';
 import { StepIcon, SkillBadge, SkillIcon } from './AutomationProgress';
 import type { RunSummary } from './AutomationProgress';
-import { QueueTaskCard } from './QueueTaskCard';
+import { QueueTaskCard, BrainIcon } from './QueueTaskCard';
 import type { CommsTask } from './QueueTaskCard';
 import type { WebResultItem } from './rich-content/WebResultCard';
 
@@ -98,6 +98,35 @@ export function groupForDisplay(list: FeedEntry[]): FeedEntry[] {
       ? [...g].sort((a, b) =>
           (EXCHANGE_KIND_ORDER[a.kind] ?? 1) - (EXCHANGE_KIND_ORDER[b.kind] ?? 1) || a.ts - b.ts)
       : g
+  );
+}
+
+// Stable no-op so QueueTaskCard's effect deps never churn — an inline
+// `() => {}` gets a fresh identity per render and retriggers the card's
+// transition watcher (it still early-returns, but only by luck).
+const NOOP_HEIGHT = () => {};
+
+// Collapsible group for consecutive proactive thought-runs in the feed.
+// Starts expanded — collapse hides the cards, keeping one summary line.
+function ThoughtsGroup({ children }: { children: React.ReactNode }) {
+  const [open, setOpen] = useState(true);
+  const count = React.Children.count(children);
+  return (
+    <div style={{ margin: '4px 0' }}>
+      <button
+        type="button"
+        onClick={() => setOpen(v => !v)}
+        className="flex items-center gap-1.5 text-left"
+        style={{ background: 'none', border: 'none', padding: '2px 0', cursor: 'pointer' }}
+      >
+        <BrainIcon size={13} />
+        <span className="text-[11px] font-medium" style={{ color: 'rgba(129,140,248,0.9)' }}>
+          Thoughts{count > 1 ? ` · ${count}` : ''}
+        </span>
+        <span className="text-[10px]" style={{ color: 'rgba(255,255,255,0.4)' }}>{open ? '▾' : '▸'}</span>
+      </button>
+      {open && children}
+    </div>
   );
 }
 
@@ -218,6 +247,332 @@ function CollapsibleContent({ text, children }: { text: string; children: React.
 
 // ── Component ─────────────────────────────────────────────────────────────────
 
+// ── Memoized row ────────────────────────────────────────────────────────────
+// One memo boundary per entry: `entries` array identity changes on every
+// append/patch/task-progress, but untouched entry objects keep identity — so
+// only the patched row re-renders. `liveTask` is resolved by the parent so a
+// task:progress object swap re-renders only that row, not every row.
+
+interface FeedEntryRowProps {
+  entry: FeedEntry;
+  liveTask: CommsTask | undefined;
+  runToggled: boolean;
+  copied: boolean;
+  onRedo: (prompt: string) => void;
+  onCopy: (id: string, text: string) => void;
+  onPlanApprove: (taskId: string, planFile: string | null) => void;
+  onPlanCancel: (taskId: string, planFile: string | null) => void;
+  onOpenPath: (path: string) => void;
+  onOpenSourceUrl: (url: string) => void;
+  onContinueThread?: (task: CommsTask) => void;
+  onRunSummaryForTask?: (taskId: string, summary: RunSummary) => void;
+  onToggleRun: (id: string) => void;
+}
+
+const FeedEntryRow = React.memo(function FeedEntryRow({
+  entry, liveTask, runToggled, copied,
+  onRedo, onCopy, onPlanApprove, onPlanCancel, onOpenPath, onOpenSourceUrl,
+  onContinueThread, onRunSummaryForTask, onToggleRun,
+}: FeedEntryRowProps) {
+  const hoverActions = (e: { id: string; text?: string; prompt?: string }) => (
+    <div className="feed-actions" style={{ position: 'absolute', right: 4, bottom: 2, display: 'flex', gap: 4, opacity: 0, transition: 'opacity 0.15s' }}>
+      {e.prompt && (
+        <button
+          onClick={() => onRedo(e.prompt!)}
+          title="Re-run this prompt"
+          style={{ padding: 4, borderRadius: 5, border: '1px solid rgba(255,255,255,0.12)', background: 'rgba(30,30,32,0.9)', color: '#9ca3af', cursor: 'pointer', display: 'flex', alignItems: 'center' }}
+        >
+          <RedoIcon />
+        </button>
+      )}
+      {!!e.text && (
+        <button
+          onClick={() => onCopy(e.id, e.text!)}
+          title="Copy response"
+          style={{ padding: 4, borderRadius: 5, border: '1px solid rgba(255,255,255,0.12)', background: 'rgba(30,30,32,0.9)', color: '#9ca3af', cursor: 'pointer', display: 'flex', alignItems: 'center' }}
+        >
+          {copied ? <CheckIcon /> : <CopyIcon />}
+        </button>
+      )}
+    </div>
+  );
+
+  switch (entry.kind) {
+    case 'user':
+      return (
+        <div className="flex justify-end" style={{ margin: '16px 0 6px' }}>
+          <div style={{
+            maxWidth: '85%',
+            padding: '7px 12px',
+            borderRadius: '12px 12px 4px 12px',
+            backgroundColor: 'rgba(59,130,246,0.16)',
+            border: '1px solid rgba(59,130,246,0.3)',
+            color: '#dbeafe',
+            fontSize: '0.8rem',
+            lineHeight: 1.45,
+            whiteSpace: 'pre-wrap',
+            wordBreak: 'break-word',
+          }}>
+            <CollapsibleContent text={entry.text}>{entry.text}</CollapsibleContent>
+          </div>
+        </div>
+      );
+
+    case 'assistant':
+      return (
+        <div className="feed-entry" style={{ position: 'relative', margin: '2px 0 12px', paddingBottom: 10 }}>
+          {/* ThinkDrop avatar row — visual handoff from user bubble to AI reply */}
+          <div className="flex items-center gap-1.5 select-none" style={{ marginBottom: 5, opacity: 0.85 }}>
+            <ThinkDropLogo size={14} />
+          </div>
+          {entry.pending ? (
+            (() => {
+              // Dots only while the task is actively progressing — a paused
+              // (awaiting-approval/waiting-for-input/auth-required) or
+              // terminal task shouldn't look like it's still working.
+              const working = !liveTask || liveTask.status === 'queued' || liveTask.status === 'waiting-for-agent' || liveTask.status === 'running';
+              return entry.text ? (
+                // Pending ack (e.g. "Let me find you a solid answer on that.") —
+                // stays visible above the run card until settlePendingAssistant
+                // swaps in the real answer.
+                <div>
+                  <RichContentRenderer content={entry.text} className="text-sm" onFileLinkClick={onOpenPath} />
+                  {working && <PendingDots />}
+                </div>
+              ) : (
+                working ? <PendingDots /> : null
+              );
+            })()
+          ) : entry.isError ? (
+            <div style={{
+              border: '1px solid rgba(248,113,113,0.28)',
+              backgroundColor: 'rgba(248,113,113,0.07)',
+              borderRadius: 10,
+              padding: '8px 12px',
+            }}>
+              <div className="flex items-start gap-2">
+                <span style={{ fontSize: '0.85rem', lineHeight: 1.4, flexShrink: 0 }}>⚠️</span>
+                <div className="flex-1 min-w-0">
+                  <div style={{ color: '#fca5a5', fontSize: '0.8rem', lineHeight: 1.45 }}>{entry.text}</div>
+                  {entry.errorRaw && (
+                    <div style={{ color: 'rgba(252,165,165,0.5)', fontSize: '0.62rem', marginTop: 4, fontFamily: 'monospace', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={entry.errorRaw}>
+                      {entry.errorRaw}
+                    </div>
+                  )}
+                  {entry.prompt && (
+                    <button
+                      onClick={() => onRedo(entry.prompt!)}
+                      style={{
+                        marginTop: 6, padding: '3px 12px', borderRadius: 8, fontSize: '0.68rem', cursor: 'pointer',
+                        color: '#93c5fd', backgroundColor: 'rgba(59,130,246,0.12)',
+                        border: '1px solid rgba(59,130,246,0.3)',
+                      }}
+                    >
+                      Try again
+                    </button>
+                  )}
+                </div>
+              </div>
+            </div>
+          ) : (
+            <div style={{ overflowX: 'hidden', wordBreak: 'break-word', overflowWrap: 'break-word' }}>
+              {entry.items && entry.items.length > 0 && <WebResultsGrid items={entry.items} />}
+              <CollapsibleContent text={entry.text}>
+                <RichContentRenderer
+                  content={stripItemImageMarkdown(entry.text, entry.items || [])}
+                  animated
+                  className="text-sm"
+                  onFileLinkClick={onOpenPath}
+                  searchResults={entry.items}
+                />
+              </CollapsibleContent>
+              {entry.sources && entry.sources.length > 0 && (
+                <div className="flex flex-wrap gap-1.5" style={{ marginTop: 8 }}>
+                  {entry.sources.map((s, i) => (
+                    <button
+                      key={s.url + i}
+                      onClick={() => onOpenSourceUrl(s.url)}
+                      className="flex items-center gap-1.5"
+                      style={{ padding: '2px 8px', borderRadius: 10, backgroundColor: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.09)', cursor: 'pointer' }}
+                    >
+                      <Favicon domain={s.hostname} size={11} alt="" />
+                      <span style={{ color: '#9ca3af', fontSize: '0.65rem' }}>{s.hostname}</span>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+          {hoverActions(entry)}
+        </div>
+      );
+
+    case 'run': {
+      // Live task → render the real QueueTaskCard: status-tinted card chrome
+      // with a task-scoped AutomationProgress inside (plan review, QuestionCard,
+      // Approve & Run all native). Falls back to the static summary card once
+      // the comms task is purged/removed.
+      if (liveTask) {
+        return (
+          <div style={{ margin: '4px 0 12px' }}>
+            <QueueTaskCard
+              task={liveTask}
+              onContinueThread={onContinueThread}
+              onHeightChange={NOOP_HEIGHT}
+              onRunSummary={entry.taskId ? (s) => onRunSummaryForTask?.(entry.taskId!, s) : undefined}
+              autoCollapseOnSettle
+            />
+          </div>
+        );
+      }
+      const meta = RUN_STATUS_META[entry.status] || RUN_STATUS_META.done;
+      const isActive = entry.status === 'running' || entry.status === 'queued' || entry.status === 'awaiting-approval' || entry.status === 'waiting-for-input' || entry.status === 'auth-required';
+      const expanded = runToggled ? !isActive : isActive;
+      const steps = entry.steps || [];
+      const doneCount = steps.filter(s => s.status === 'done' || s.status === 'skipped').length;
+      // Step title colors mirror the live AutomationProgress step rows.
+      const stepColor = (status: string) =>
+        status === 'pending' ? '#abafb8'
+        : status === 'failed' ? '#fca5a5'
+        : status === 'skipped' || status === 'needs_input' ? '#fbbf24'
+        : '#e5e7eb';
+      return (
+        <div className="feed-entry" style={{ position: 'relative', margin: '4px 0 12px', paddingBottom: 10 }}>
+          <button
+            onClick={() => onToggleRun(entry.id)}
+            className="feed-run-toggle flex items-center gap-2 w-full text-left"
+            style={{ background: 'none', border: 'none', padding: '4px 6px', margin: '0 -6px', borderRadius: 6, cursor: 'pointer' }}
+          >
+            <span style={{ color: '#93c5fd', fontSize: '0.78rem', fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              {entry.title}
+            </span>
+            <span style={{ color: '#6b7280', fontSize: '0.65rem', flexShrink: 0 }}>
+              {steps.length > 0 && `${doneCount}/${steps.length} tasks`}
+              {entry.durationMs != null ? ` · ${Math.round(entry.durationMs / 1000)}s` : ''}
+            </span>
+            <span style={{ color: meta.color, fontSize: '0.65rem', fontWeight: 500, marginLeft: 'auto', flexShrink: 0 }}>
+              {meta.label}
+            </span>
+            {/* Chevron chip — matches QueueTaskCard / "Show more" prominence */}
+            <span style={{
+              marginLeft: 6, padding: '5px 9px', borderRadius: 5, flexShrink: 0,
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              background: expanded ? 'rgba(99,102,241,0.15)' : 'rgba(255,255,255,0.04)',
+              border: expanded ? '1px solid rgba(99,102,241,0.25)' : '1px solid rgba(255,255,255,0.1)',
+              color: expanded ? '#818cf8' : '#abafb8',
+            }}>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round">
+                {expanded ? <polyline points="18,15 12,9 6,15"/> : <polyline points="6,9 12,15 18,9"/>}
+              </svg>
+            </span>
+          </button>
+          {expanded && (
+            <div className="flex flex-col gap-2" style={{ marginLeft: 14, marginTop: 8 }}>
+              {steps.length === 0 && !entry.error && (!entry.savedFilePaths || entry.savedFilePaths.length === 0) && (
+                <div style={{ color: '#6b7280', fontSize: '0.7rem', fontStyle: 'italic' }}>No step details recorded.</div>
+              )}
+              {steps.map((s, i) => (
+                <div key={i} className="flex items-start gap-2.5">
+                  <div className="mt-0.5"><StepIcon status={s.status as any} /></div>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="text-sm" style={{
+                        color: stepColor(s.status),
+                        textDecoration: s.status === 'deferred' ? 'line-through' : undefined,
+                        opacity: s.status === 'deferred' ? 0.6 : undefined,
+                      }}>{s.title}</span>
+                      {s.skill && <><SkillIcon skill={s.skill} /><SkillBadge skill={s.skill} /></>}
+                    </div>
+                    {s.savedFilePath && (
+                      <button
+                        onClick={() => onOpenPath(s.savedFilePath!)}
+                        className="flex items-center gap-1.5"
+                        style={{ marginTop: 3, padding: '2px 8px', borderRadius: 10, backgroundColor: 'rgba(59,130,246,0.10)', border: '1px solid rgba(59,130,246,0.25)', color: '#93c5fd', fontSize: '0.65rem', fontFamily: 'monospace', cursor: 'pointer' }}
+                        title={s.savedFilePath}
+                      >
+                        {s.savedFilePath.split('/').pop() || s.savedFilePath}
+                      </button>
+                    )}
+                    {s.output && (
+                      <div style={{
+                        marginTop: 4, padding: '6px 8px', borderRadius: 6,
+                        backgroundColor: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)',
+                        color: '#9ca3af', fontSize: '0.68rem', fontFamily: 'monospace',
+                        whiteSpace: 'pre-wrap', wordBreak: 'break-word',
+                        maxHeight: 120, overflow: 'hidden',
+                        WebkitMaskImage: 'linear-gradient(to bottom, black 60%, transparent 100%)',
+                        maskImage: 'linear-gradient(to bottom, black 60%, transparent 100%)',
+                      }}>
+                        {s.output.length > 300 ? s.output.slice(0, 300) + '…' : s.output}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              ))}
+              {entry.error && (
+                <div style={{ color: '#f87171', fontSize: '0.72rem', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{friendlyErrorMessage(entry.error)}</div>
+              )}
+              {entry.savedFilePaths && entry.savedFilePaths.length > 0 && (
+                <div className="flex flex-wrap gap-1.5">
+                  {entry.savedFilePaths.map(fp => (
+                    <button
+                      key={fp}
+                      onClick={() => onOpenPath(fp)}
+                      className="flex items-center gap-1.5"
+                      style={{ padding: '3px 9px', borderRadius: 10, backgroundColor: 'rgba(59,130,246,0.10)', border: '1px solid rgba(59,130,246,0.25)', color: '#93c5fd', fontSize: '0.65rem', fontFamily: 'monospace', cursor: 'pointer' }}
+                      title={fp}
+                    >
+                      {fp.split('/').pop() || fp}
+                    </button>
+                  ))}
+                </div>
+              )}
+              {entry.status === 'awaiting-approval' && entry.taskId && (
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => onPlanApprove(entry.taskId!, entry.planFile || null)}
+                    style={{ padding: '5px 14px', borderRadius: 6, backgroundColor: 'rgba(59,130,246,0.18)', border: '1px solid rgba(59,130,246,0.45)', color: '#93c5fd', fontSize: '0.72rem', fontWeight: 600, cursor: 'pointer' }}
+                  >
+                    Approve &amp; Run
+                  </button>
+                  <button
+                    onClick={() => onPlanCancel(entry.taskId!, entry.planFile || null)}
+                    style={{ padding: '5px 12px', borderRadius: 6, backgroundColor: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.25)', color: '#f87171', fontSize: '0.72rem', cursor: 'pointer' }}
+                  >
+                    Cancel
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
+          {hoverActions({ id: entry.id, text: entry.error || entry.title, prompt: entry.prompt })}
+        </div>
+      );
+    }
+
+    case 'proactive':
+      return (
+        <div className="flex items-start gap-2" style={{ margin: '4px 0' }}>
+          <span className="select-none inline-flex pt-0.5" style={{ opacity: 0.8 }}><BrainIcon size={14} /></span>
+          {entry.pending ? (
+            <PendingDots color="#a78bfa" />
+          ) : (
+            <div className="flex-1 min-w-0" style={{ overflowX: 'hidden', wordBreak: 'break-word', overflowWrap: 'break-word' }}>
+              <RichContentRenderer content={entry.text} animated className="text-sm" onFileLinkClick={onOpenPath} />
+            </div>
+          )}
+        </div>
+      );
+
+    case 'system':
+      return (
+        <div style={{ margin: '6px 0', textAlign: 'center' }}>
+          <span style={{ color: '#6b7280', fontSize: '0.68rem', fontStyle: 'italic' }}>{entry.text}</span>
+        </div>
+      );
+  }
+});
+
 function ResultsFeedImpl({
   entries,
   activeExchangeId,
@@ -265,301 +620,65 @@ function ResultsFeedImpl({
     setTimeout(() => setCopiedId(prev => (prev === id ? null : prev)), 1600);
   };
 
-  const renderHoverActions = (entry: { id: string; text?: string; prompt?: string }) => (
-    <div className="feed-actions" style={{ position: 'absolute', right: 4, bottom: 2, display: 'flex', gap: 4, opacity: 0, transition: 'opacity 0.15s' }}>
-      {entry.prompt && (
-        <button
-          onClick={() => onRedo(entry.prompt!)}
-          title="Re-run this prompt"
-          style={{ padding: 4, borderRadius: 5, border: '1px solid rgba(255,255,255,0.12)', background: 'rgba(30,30,32,0.9)', color: '#9ca3af', cursor: 'pointer', display: 'flex', alignItems: 'center' }}
-        >
-          <RedoIcon />
-        </button>
-      )}
-      {!!entry.text && (
-        <button
-          onClick={() => handleCopy(entry.id, entry.text!)}
-          title="Copy response"
-          style={{ padding: 4, borderRadius: 5, border: '1px solid rgba(255,255,255,0.12)', background: 'rgba(30,30,32,0.9)', color: '#9ca3af', cursor: 'pointer', display: 'flex', alignItems: 'center' }}
-        >
-          {copiedId === entry.id ? <CheckIcon /> : <CopyIcon />}
-        </button>
-      )}
-    </div>
+  // Row render — memo boundary per entry (FeedEntryRow). `liveTask` resolves
+  // here so a comms-task object swap re-renders only that task's row.
+  const renderEntry = (entry: FeedEntry) => (
+    <FeedEntryRow
+      key={entry.id}
+      entry={entry}
+      liveTask={(entry.kind === 'assistant' || entry.kind === 'run') && entry.taskId ? resolveTask?.(entry.taskId) : undefined}
+      runToggled={toggledRuns.has(entry.id)}
+      copied={copiedId === entry.id}
+      onRedo={onRedo}
+      onCopy={handleCopy}
+      onPlanApprove={onPlanApprove}
+      onPlanCancel={onPlanCancel}
+      onOpenPath={onOpenPath}
+      onOpenSourceUrl={onOpenSourceUrl}
+      onContinueThread={onContinueThread}
+      onRunSummaryForTask={onRunSummaryForTask}
+      onToggleRun={toggleRun}
+    />
   );
 
-  const renderEntry = (entry: FeedEntry) => {
-    switch (entry.kind) {
-      case 'user':
-        return (
-          <div key={entry.id} className="flex justify-end" style={{ margin: '16px 0 6px' }}>
-            <div style={{
-              maxWidth: '85%',
-              padding: '7px 12px',
-              borderRadius: '12px 12px 4px 12px',
-              backgroundColor: 'rgba(59,130,246,0.16)',
-              border: '1px solid rgba(59,130,246,0.3)',
-              color: '#dbeafe',
-              fontSize: '0.8rem',
-              lineHeight: 1.45,
-              whiteSpace: 'pre-wrap',
-              wordBreak: 'break-word',
-            }}>
-              <CollapsibleContent text={entry.text}>{entry.text}</CollapsibleContent>
-            </div>
-          </div>
-        );
 
-      case 'assistant':
-        return (
-          <div key={entry.id} className="feed-entry" style={{ position: 'relative', margin: '2px 0 12px', paddingBottom: 10 }}>
-            {/* ThinkDrop avatar row — visual handoff from user bubble to AI reply */}
-            <div className="flex items-center gap-1.5 select-none" style={{ marginBottom: 5, opacity: 0.85 }}>
-              <ThinkDropLogo size={14} />
-            </div>
-            {entry.pending ? (
-              <PendingDots />
-            ) : entry.isError ? (
-              <div style={{
-                border: '1px solid rgba(248,113,113,0.28)',
-                backgroundColor: 'rgba(248,113,113,0.07)',
-                borderRadius: 10,
-                padding: '8px 12px',
-              }}>
-                <div className="flex items-start gap-2">
-                  <span style={{ fontSize: '0.85rem', lineHeight: 1.4, flexShrink: 0 }}>⚠️</span>
-                  <div className="flex-1 min-w-0">
-                    <div style={{ color: '#fca5a5', fontSize: '0.8rem', lineHeight: 1.45 }}>{entry.text}</div>
-                    {entry.errorRaw && (
-                      <div style={{ color: 'rgba(252,165,165,0.5)', fontSize: '0.62rem', marginTop: 4, fontFamily: 'monospace', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={entry.errorRaw}>
-                        {entry.errorRaw}
-                      </div>
-                    )}
-                    {entry.prompt && (
-                      <button
-                        onClick={() => onRedo(entry.prompt!)}
-                        style={{
-                          marginTop: 6, padding: '3px 12px', borderRadius: 8, fontSize: '0.68rem', cursor: 'pointer',
-                          color: '#93c5fd', backgroundColor: 'rgba(59,130,246,0.12)',
-                          border: '1px solid rgba(59,130,246,0.3)',
-                        }}
-                      >
-                        Try again
-                      </button>
-                    )}
-                  </div>
-                </div>
-              </div>
-            ) : (
-              <div style={{ overflowX: 'hidden', wordBreak: 'break-word', overflowWrap: 'break-word' }}>
-                {entry.items && entry.items.length > 0 && <WebResultsGrid items={entry.items} />}
-                <CollapsibleContent text={entry.text}>
-                  <RichContentRenderer
-                    content={stripItemImageMarkdown(entry.text, entry.items || [])}
-                    animated
-                    className="text-sm"
-                    onFileLinkClick={onOpenPath}
-                  />
-                </CollapsibleContent>
-                {entry.sources && entry.sources.length > 0 && (
-                  <div className="flex flex-wrap gap-1.5" style={{ marginTop: 8 }}>
-                    {entry.sources.map((s, i) => (
-                      <button
-                        key={s.url + i}
-                        onClick={() => onOpenSourceUrl(s.url)}
-                        className="flex items-center gap-1.5"
-                        style={{ padding: '2px 8px', borderRadius: 10, backgroundColor: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.09)', cursor: 'pointer' }}
-                      >
-                        <Favicon domain={s.hostname} size={11} alt="" />
-                        <span style={{ color: '#9ca3af', fontSize: '0.65rem' }}>{s.hostname}</span>
-                      </button>
-                    ))}
-                  </div>
-                )}
-              </div>
-            )}
-            {renderHoverActions(entry)}
-          </div>
-        );
-
-      case 'run': {
-        // Live task → render the real QueueTaskCard: status-tinted card chrome
-        // with a task-scoped AutomationProgress inside (plan review, QuestionCard,
-        // Approve & Run all native). Falls back to the static summary card once
-        // the comms task is purged/removed.
-        const liveTask = entry.taskId ? resolveTask?.(entry.taskId) : undefined;
-        if (liveTask) {
-          return (
-            <div key={entry.id} style={{ margin: '4px 0 12px' }}>
-              <QueueTaskCard
-                task={liveTask}
-                onContinueThread={onContinueThread}
-                onHeightChange={() => {}}
-                onRunSummary={entry.taskId ? (s) => onRunSummaryForTask?.(entry.taskId!, s) : undefined}
-                autoCollapseOnSettle
-              />
-            </div>
-          );
-        }
-        const meta = RUN_STATUS_META[entry.status] || RUN_STATUS_META.done;
-        const isActive = entry.status === 'running' || entry.status === 'queued' || entry.status === 'awaiting-approval' || entry.status === 'waiting-for-input' || entry.status === 'auth-required';
-        const expanded = toggledRuns.has(entry.id) ? !isActive : isActive;
-        const steps = entry.steps || [];
-        const doneCount = steps.filter(s => s.status === 'done' || s.status === 'skipped').length;
-        // Step title colors mirror the live AutomationProgress step rows.
-        const stepColor = (status: string) =>
-          status === 'pending' ? '#abafb8'
-          : status === 'failed' ? '#fca5a5'
-          : status === 'skipped' || status === 'needs_input' ? '#fbbf24'
-          : '#e5e7eb';
-        return (
-          <div key={entry.id} className="feed-entry" style={{ position: 'relative', margin: '4px 0 12px', paddingBottom: 10 }}>
-            <button
-              onClick={() => toggleRun(entry.id)}
-              className="feed-run-toggle flex items-center gap-2 w-full text-left"
-              style={{ background: 'none', border: 'none', padding: '4px 6px', margin: '0 -6px', borderRadius: 6, cursor: 'pointer' }}
-            >
-              <span style={{ color: '#93c5fd', fontSize: '0.78rem', fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                {entry.title}
-              </span>
-              <span style={{ color: '#6b7280', fontSize: '0.65rem', flexShrink: 0 }}>
-                {steps.length > 0 && `${doneCount}/${steps.length} tasks`}
-                {entry.durationMs != null ? ` · ${Math.round(entry.durationMs / 1000)}s` : ''}
-              </span>
-              <span style={{ color: meta.color, fontSize: '0.65rem', fontWeight: 500, marginLeft: 'auto', flexShrink: 0 }}>
-                {meta.label}
-              </span>
-              {/* Chevron chip — matches QueueTaskCard / "Show more" prominence */}
-              <span style={{
-                marginLeft: 6, padding: '5px 9px', borderRadius: 5, flexShrink: 0,
-                display: 'flex', alignItems: 'center', justifyContent: 'center',
-                background: expanded ? 'rgba(99,102,241,0.15)' : 'rgba(255,255,255,0.04)',
-                border: expanded ? '1px solid rgba(99,102,241,0.25)' : '1px solid rgba(255,255,255,0.1)',
-                color: expanded ? '#818cf8' : '#abafb8',
-              }}>
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round">
-                  {expanded ? <polyline points="18,15 12,9 6,15"/> : <polyline points="6,9 12,15 18,9"/>}
-                </svg>
-              </span>
-            </button>
-            {expanded && (
-              <div className="flex flex-col gap-2" style={{ marginLeft: 14, marginTop: 8 }}>
-                {steps.length === 0 && !entry.error && (!entry.savedFilePaths || entry.savedFilePaths.length === 0) && (
-                  <div style={{ color: '#6b7280', fontSize: '0.7rem', fontStyle: 'italic' }}>No step details recorded.</div>
-                )}
-                {steps.map((s, i) => (
-                  <div key={i} className="flex items-start gap-2.5">
-                    <div className="mt-0.5"><StepIcon status={s.status as any} /></div>
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2 flex-wrap">
-                        <span className="text-sm" style={{
-                          color: stepColor(s.status),
-                          textDecoration: s.status === 'deferred' ? 'line-through' : undefined,
-                          opacity: s.status === 'deferred' ? 0.6 : undefined,
-                        }}>{s.title}</span>
-                        {s.skill && <><SkillIcon skill={s.skill} /><SkillBadge skill={s.skill} /></>}
-                      </div>
-                      {s.savedFilePath && (
-                        <button
-                          onClick={() => onOpenPath(s.savedFilePath!)}
-                          className="flex items-center gap-1.5"
-                          style={{ marginTop: 3, padding: '2px 8px', borderRadius: 10, backgroundColor: 'rgba(59,130,246,0.10)', border: '1px solid rgba(59,130,246,0.25)', color: '#93c5fd', fontSize: '0.65rem', fontFamily: 'monospace', cursor: 'pointer' }}
-                          title={s.savedFilePath}
-                        >
-                          {s.savedFilePath.split('/').pop() || s.savedFilePath}
-                        </button>
-                      )}
-                      {s.output && (
-                        <div style={{
-                          marginTop: 4, padding: '6px 8px', borderRadius: 6,
-                          backgroundColor: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)',
-                          color: '#9ca3af', fontSize: '0.68rem', fontFamily: 'monospace',
-                          whiteSpace: 'pre-wrap', wordBreak: 'break-word',
-                          maxHeight: 120, overflow: 'hidden',
-                          WebkitMaskImage: 'linear-gradient(to bottom, black 60%, transparent 100%)',
-                          maskImage: 'linear-gradient(to bottom, black 60%, transparent 100%)',
-                        }}>
-                          {s.output.length > 300 ? s.output.slice(0, 300) + '…' : s.output}
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                ))}
-                {entry.error && (
-                  <div style={{ color: '#f87171', fontSize: '0.72rem', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{friendlyErrorMessage(entry.error)}</div>
-                )}
-                {entry.savedFilePaths && entry.savedFilePaths.length > 0 && (
-                  <div className="flex flex-wrap gap-1.5">
-                    {entry.savedFilePaths.map(fp => (
-                      <button
-                        key={fp}
-                        onClick={() => onOpenPath(fp)}
-                        className="flex items-center gap-1.5"
-                        style={{ padding: '3px 9px', borderRadius: 10, backgroundColor: 'rgba(59,130,246,0.10)', border: '1px solid rgba(59,130,246,0.25)', color: '#93c5fd', fontSize: '0.65rem', fontFamily: 'monospace', cursor: 'pointer' }}
-                        title={fp}
-                      >
-                        {fp.split('/').pop() || fp}
-                      </button>
-                    ))}
-                  </div>
-                )}
-                {entry.status === 'awaiting-approval' && entry.taskId && (
-                  <div className="flex gap-2">
-                    <button
-                      onClick={() => onPlanApprove(entry.taskId!, entry.planFile || null)}
-                      style={{ padding: '5px 14px', borderRadius: 6, backgroundColor: 'rgba(59,130,246,0.18)', border: '1px solid rgba(59,130,246,0.45)', color: '#93c5fd', fontSize: '0.72rem', fontWeight: 600, cursor: 'pointer' }}
-                    >
-                      Approve &amp; Run
-                    </button>
-                    <button
-                      onClick={() => onPlanCancel(entry.taskId!, entry.planFile || null)}
-                      style={{ padding: '5px 12px', borderRadius: 6, backgroundColor: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.25)', color: '#f87171', fontSize: '0.72rem', cursor: 'pointer' }}
-                    >
-                      Cancel
-                    </button>
-                  </div>
-                )}
-              </div>
-            )}
-            {renderHoverActions({ id: entry.id, text: entry.error || entry.title, prompt: entry.prompt })}
-          </div>
-        );
-      }
-
-      case 'proactive':
-        return (
-          <div key={entry.id} className="flex items-start gap-2" style={{ margin: '4px 0' }}>
-            <span className="text-sm leading-5 select-none" style={{ opacity: 0.8 }}>🧠</span>
-            {entry.pending ? (
-              <PendingDots color="#a78bfa" />
-            ) : (
-              <div className="flex-1 min-w-0" style={{ overflowX: 'hidden', wordBreak: 'break-word', overflowWrap: 'break-word' }}>
-                <RichContentRenderer content={entry.text} animated className="text-sm" onFileLinkClick={onOpenPath} />
-              </div>
-            )}
-          </div>
-        );
-
-      case 'system':
-        return (
-          <div key={entry.id} style={{ margin: '6px 0', textAlign: 'center' }}>
-            <span style={{ color: '#6b7280', fontSize: '0.68rem', fontStyle: 'italic' }}>{entry.text}</span>
-          </div>
-        );
-    }
-  };
-
+  // Renders a slice with day dividers. Consecutive proactive `run` entries
+  // (thought-engine automations, ≥2) collapse under one "Thoughts" header.
   const renderList = (list: FeedEntry[], leadingTs?: number) => {
     const nodes: React.ReactNode[] = [];
     let prevDay = leadingTs != null ? _dayKey(leadingTs) : null;
+    let runBuf: FeedEntry[] = [];
+    const flushRuns = () => {
+      if (!runBuf.length) return;
+      const els = runBuf.map(r => renderEntry(r));
+      if (runBuf.length >= 2) {
+        nodes.push(<ThoughtsGroup key={`thoughts-${runBuf[0].id}`}>{els}</ThoughtsGroup>);
+      } else {
+        nodes.push(...els);
+      }
+      runBuf = [];
+    };
     for (const e of list) {
       const day = _dayKey(e.ts);
       if (day !== prevDay) {
+        flushRuns();
         nodes.push(<DayDivider key={`div-${e.id}`} ts={e.ts} />);
         prevDay = day;
       }
+      // Thought-engine runs: the live task is source:'proactive'; after purge
+      // the prompt's brain-outdir tail is the surviving marker.
+      const isThoughtRun = e.kind === 'run' && (
+        resolveTask?.(e.taskId || '')?.source === 'proactive' ||
+        /\.thinkdrop[\/\\]brain[\/\\]/.test(e.prompt || '')
+      );
+      if (isThoughtRun) {
+        runBuf.push(e);
+        continue;
+      }
+      flushRuns();
       nodes.push(renderEntry(e));
     }
+    flushRuns();
     return nodes;
   };
 

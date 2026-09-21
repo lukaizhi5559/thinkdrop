@@ -5,7 +5,8 @@ import remarkBreaks from 'remark-breaks';
 import rehypeRaw from 'rehype-raw';
 import { Prism as SyntaxHighlighterBase } from 'react-syntax-highlighter';
 import { vscDarkPlus } from 'react-syntax-highlighter/dist/esm/styles/prism';
-import { ImageCarousel } from './ImageCarousel';
+import WebResultsGrid from './WebResultsGrid';
+import type { WebResultItem } from './WebResultCard';
 
 const SyntaxHighlighter = SyntaxHighlighterBase as any;
 
@@ -273,17 +274,20 @@ const renderContentWithCarousels = (
       );
     }
     
-    // Add carousel for all extracted images — dedupe identical srcs so a
-    // repeated embed doesn't produce duplicate tiles.
+    // Render extracted images as WebResultCards — the same grid the Queue tab
+    // uses (thumbnail + title + favicon/domain), so feed/queue/live surfaces
+    // share one visual language. Dedupe identical srcs so a repeated embed
+    // doesn't produce duplicate cards.
     const seenSrc = new Set<string>();
-    const imageItems = allImages.filter(img => !!img.src && !seenSrc.has(img.src) && !!seenSrc.add(img.src)).map(img => ({
-      src: img.src,
-      alt: img.alt,
-      title: img.title,
-      originalUrl: imageUrlToOriginal?.get(img.src) // Look up original URL if available
-    }));
+    const pseudoItems: WebResultItem[] = allImages
+      .filter(img => !!img.src && !seenSrc.has(img.src) && !!seenSrc.add(img.src))
+      .map(img => ({
+        imageUrl: img.src,
+        url: imageUrlToOriginal?.get(img.src) || img.src, // click → source page when known
+        title: img.title || img.alt || undefined,
+      }));
     parts.push(
-      <ImageCarousel key={`carousel-${partIndex++}`} images={imageItems} maxHeight={280} />
+      <WebResultsGrid key={`images-${partIndex++}`} items={pseudoItems} />
     );
     
     return parts;
@@ -334,8 +338,9 @@ const RichContentRenderer: React.FC<RichContentRendererProps> = ({
     const map = new Map<string, string>();
     if (searchResults) {
       searchResults.forEach(result => {
-        if (result.imageUrl && result.originalUrl) {
-          map.set(result.imageUrl, result.originalUrl);
+        const orig = result.originalUrl || result.url;
+        if (result.imageUrl && orig) {
+          map.set(result.imageUrl, orig);
         }
       });
     }
