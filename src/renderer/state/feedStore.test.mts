@@ -2,10 +2,11 @@
  * feedStore tests — node --test --experimental-strip-types (Node ≥22.16).
  * Pins the stream/feed semantics that used to live in ref-mirror updaters:
  * these are the behaviors that regressed silently before the store existed.
- *   cd to repo root: node --test --experimental-strip-types src/renderer/state/feedStore.test.ts
+ *   cd to repo root: node --test --experimental-strip-types src/renderer/state/feedStore.test.mts
  */
+/// <reference types="node" />
 import { test } from 'node:test';
-import assert from 'node:assert/strict';
+import { strict as assert } from 'node:assert';
 import {
   createFeedStore,
 

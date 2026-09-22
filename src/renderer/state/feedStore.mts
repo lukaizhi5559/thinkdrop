@@ -7,7 +7,7 @@
  * are synchronous — the stale-closure bug class disappears by construction.
  *
  * Purity rule: this module must stay free of React/DOM/IPC imports and use
- * `import type` for component types — `feedStore.test.ts` runs it under
+ * `import type` for component types — `feedStore.test.mts` runs it under
  * `node --test --experimental-strip-types` with no bundler.
  */
 import type { FeedEntry } from '../components/ResultsFeed';

@@ -305,8 +305,12 @@ const FeedEntryRow = React.memo(function FeedEntryRow({
   onRedo, onCopy, onPlanApprove, onPlanCancel, onOpenPath, onOpenSourceUrl,
   onContinueThread, onRunSummaryForTask, onToggleRun, onOpenQueue, onIsolateContext, isContextActive,
 }: FeedEntryRowProps) {
-  const hoverActions = (e: { id: string; text?: string; prompt?: string; taskId?: string }) => (
-    <div className="feed-actions" style={{ position: 'absolute', right: 4, bottom: 2, display: 'flex', gap: 4, opacity: 0, transition: 'opacity 0.15s' }}>
+  const hoverActions = (e: { id: string; text?: string; prompt?: string; taskId?: string }) => {
+    // Isolated bodies keep their actions strip visible — the cyan target reads
+    // as a persistent "this is your context" badge, not just a hover affordance.
+    const isolated = !!(e.text && isContextActive?.(e.text));
+    return (
+    <div className="feed-actions" style={{ position: 'absolute', right: 4, bottom: 2, display: 'flex', gap: 4, opacity: isolated ? 1 : 0, transition: 'opacity 0.15s' }}>
       {e.taskId && onOpenQueue && (
         <button
           onClick={() => onOpenQueue(e.taskId!)}
@@ -338,25 +342,23 @@ const FeedEntryRow = React.memo(function FeedEntryRow({
           {copied ? <CheckIcon /> : <CopyIcon />}
         </button>
       )}
-      {!!e.text && onIsolateContext && (() => {
-        const active = isContextActive?.(e.text!) ?? false;
-        return (
-          <button
-            onClick={() => onIsolateContext(e.text!)}
-            title={active ? 'Remove context isolation' : 'Isolate context — reply to just this'}
-            style={{
-              padding: 4, borderRadius: 5, cursor: 'pointer', display: 'flex', alignItems: 'center',
-              border: active ? '1px solid rgba(34,211,238,0.35)' : '1px solid rgba(255,255,255,0.12)',
-              background: 'rgba(30,30,32,0.9)',
-              color: active ? '#67e8f9' : '#9ca3af',
-            }}
-          >
-            <TargetIcon />
-          </button>
-        );
-      })()}
+      {!!e.text && onIsolateContext && (
+        <button
+          onClick={() => onIsolateContext(e.text!)}
+          title={isolated ? 'Remove context isolation' : 'Isolate context — reply to just this'}
+          style={{
+            padding: 4, borderRadius: 5, cursor: 'pointer', display: 'flex', alignItems: 'center',
+            border: isolated ? '1px solid rgba(34,211,238,0.35)' : '1px solid rgba(255,255,255,0.12)',
+            background: 'rgba(30,30,32,0.9)',
+            color: isolated ? '#67e8f9' : '#9ca3af',
+          }}
+        >
+          <TargetIcon />
+        </button>
+      )}
     </div>
-  );
+    );
+  };
 
   switch (entry.kind) {
     case 'user':
