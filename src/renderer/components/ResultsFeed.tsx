@@ -48,6 +48,13 @@ interface ResultsFeedProps {
   /** Terminal snapshot emitted by a live card's embedded AutomationProgress —
    *  used to keep the static fallback data current after the task is purged. */
   onRunSummaryForTask?: (taskId: string, summary: RunSummary) => void;
+  /** Deep-link into the Queue tab — scrolls to + flashes the task card. */
+  onOpenQueue?: (taskId: string) => void;
+  /** Target-icon action — pin a body as an isolated [Context:] chip; the next
+   *  submit pins a fresh iso_* session so only tagged bodies ride as context. */
+  onIsolateContext?: (text: string) => void;
+  /** Is this body's [Context:] chip currently in the input bar? (icon tint) */
+  isContextActive?: (text: string) => boolean;
   /** Live exchange region — rendered at the bottom of the measured zone. */
   children?: React.ReactNode;
 }
@@ -110,20 +117,27 @@ const NOOP_HEIGHT = () => {};
 // Starts expanded — collapse hides the cards, keeping one summary line.
 function ThoughtsGroup({ children }: { children: React.ReactNode }) {
   const [open, setOpen] = useState(true);
+  const [hover, setHover] = useState(false);
   const count = React.Children.count(children);
   return (
     <div style={{ margin: '4px 0' }}>
       <button
         type="button"
         onClick={() => setOpen(v => !v)}
+        onMouseEnter={() => setHover(true)}
+        onMouseLeave={() => setHover(false)}
         className="flex items-center gap-1.5 text-left"
-        style={{ background: 'none', border: 'none', padding: '2px 0', cursor: 'pointer' }}
+        style={{
+          background: hover ? 'rgba(129,140,248,0.12)' : 'none',
+          border: 'none', padding: '3px 8px', margin: '0 -8px', borderRadius: 6,
+          cursor: 'pointer', transition: 'background 0.15s',
+        }}
       >
-        <BrainIcon size={13} />
-        <span className="text-[11px] font-medium" style={{ color: 'rgba(129,140,248,0.9)' }}>
+        <BrainIcon size={15} />
+        <span className="text-[12px] font-medium" style={{ color: 'rgba(129,140,248,0.9)' }}>
           Thoughts{count > 1 ? ` · ${count}` : ''}
         </span>
-        <span className="text-[10px]" style={{ color: 'rgba(255,255,255,0.4)' }}>{open ? '▾' : '▸'}</span>
+        <span className="text-[24px]" style={{ color: 'rgba(255,255,255,0.55)', marginBottom: '3px', lineHeight: 0 }}>{open ? '▾' : '▸'}</span>
       </button>
       {open && children}
     </div>
@@ -203,6 +217,17 @@ function RedoIcon() {
   );
 }
 
+// Context-isolation icon — crosshair/target. Clicking pins the body text as a
+// [Context:] chip; the next submit pins a fresh session so only that body
+// rides as context (no conversation history).
+function TargetIcon() {
+  return (
+    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <circle cx="12" cy="12" r="10" /><line x1="22" y1="12" x2="18" y2="12" /><line x1="6" y1="12" x2="2" y2="12" /><line x1="12" y1="6" x2="12" y2="2" /><line x1="12" y1="22" x2="12" y2="18" />
+    </svg>
+  );
+}
+
 // ── Long-message collapse ────────────────────────────────────────────────────
 // Height-based clamp (not char-slicing) — markdown stays intact; the fade hints
 // at hidden content and the pill toggles the full message.
@@ -233,7 +258,7 @@ function CollapsibleContent({ text, children }: { text: string; children: React.
         <button
           onClick={() => setExpanded(v => !v)}
           style={{
-            padding: '2px 12px', borderRadius: 10, fontSize: '0.65rem', cursor: 'pointer',
+            padding: '4px 14px', borderRadius: 10, fontSize: '0.78rem', cursor: 'pointer',
             color: '#93c5fd', backgroundColor: 'rgba(59,130,246,0.10)',
             border: '1px solid rgba(59,130,246,0.28)',
           }}
@@ -256,6 +281,9 @@ function CollapsibleContent({ text, children }: { text: string; children: React.
 interface FeedEntryRowProps {
   entry: FeedEntry;
   liveTask: CommsTask | undefined;
+  /** A run card exists for this entry's task/exchange — it is the progress
+   *  indicator, so pending dots are suppressed once it lands (handoff). */
+  hasRunCard: boolean;
   runToggled: boolean;
   copied: boolean;
   onRedo: (prompt: string) => void;
@@ -267,15 +295,31 @@ interface FeedEntryRowProps {
   onContinueThread?: (task: CommsTask) => void;
   onRunSummaryForTask?: (taskId: string, summary: RunSummary) => void;
   onToggleRun: (id: string) => void;
+  onOpenQueue?: (taskId: string) => void;
+  onIsolateContext?: (text: string) => void;
+  isContextActive?: (text: string) => boolean;
 }
 
 const FeedEntryRow = React.memo(function FeedEntryRow({
-  entry, liveTask, runToggled, copied,
+  entry, liveTask, hasRunCard, runToggled, copied,
   onRedo, onCopy, onPlanApprove, onPlanCancel, onOpenPath, onOpenSourceUrl,
-  onContinueThread, onRunSummaryForTask, onToggleRun,
+  onContinueThread, onRunSummaryForTask, onToggleRun, onOpenQueue, onIsolateContext, isContextActive,
 }: FeedEntryRowProps) {
-  const hoverActions = (e: { id: string; text?: string; prompt?: string }) => (
+  const hoverActions = (e: { id: string; text?: string; prompt?: string; taskId?: string }) => (
     <div className="feed-actions" style={{ position: 'absolute', right: 4, bottom: 2, display: 'flex', gap: 4, opacity: 0, transition: 'opacity 0.15s' }}>
+      {e.taskId && onOpenQueue && (
+        <button
+          onClick={() => onOpenQueue(e.taskId!)}
+          title="View in Queue"
+          style={{ padding: 4, borderRadius: 5, border: '1px solid rgba(255,255,255,0.12)', background: 'rgba(30,30,32,0.9)', color: '#9ca3af', cursor: 'pointer', display: 'flex', alignItems: 'center' }}
+        >
+          {/* Queue icon — stacked list rows */}
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/>
+            <line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/>
+          </svg>
+        </button>
+      )}
       {e.prompt && (
         <button
           onClick={() => onRedo(e.prompt!)}
@@ -294,13 +338,30 @@ const FeedEntryRow = React.memo(function FeedEntryRow({
           {copied ? <CheckIcon /> : <CopyIcon />}
         </button>
       )}
+      {!!e.text && onIsolateContext && (() => {
+        const active = isContextActive?.(e.text!) ?? false;
+        return (
+          <button
+            onClick={() => onIsolateContext(e.text!)}
+            title={active ? 'Remove context isolation' : 'Isolate context — reply to just this'}
+            style={{
+              padding: 4, borderRadius: 5, cursor: 'pointer', display: 'flex', alignItems: 'center',
+              border: active ? '1px solid rgba(34,211,238,0.35)' : '1px solid rgba(255,255,255,0.12)',
+              background: 'rgba(30,30,32,0.9)',
+              color: active ? '#67e8f9' : '#9ca3af',
+            }}
+          >
+            <TargetIcon />
+          </button>
+        );
+      })()}
     </div>
   );
 
   switch (entry.kind) {
     case 'user':
       return (
-        <div className="flex justify-end" style={{ margin: '16px 0 6px' }}>
+        <div className="feed-entry flex justify-end" style={{ margin: '16px 0 6px', position: 'relative', paddingBottom: 10 }}>
           <div style={{
             maxWidth: '85%',
             padding: '7px 12px',
@@ -315,6 +376,7 @@ const FeedEntryRow = React.memo(function FeedEntryRow({
           }}>
             <CollapsibleContent text={entry.text}>{entry.text}</CollapsibleContent>
           </div>
+          {hoverActions({ id: entry.id, text: entry.text, prompt: entry.text })}
         </div>
       );
 
@@ -327,10 +389,11 @@ const FeedEntryRow = React.memo(function FeedEntryRow({
           </div>
           {entry.pending ? (
             (() => {
-              // Dots only while the task is actively progressing — a paused
-              // (awaiting-approval/waiting-for-input/auth-required) or
-              // terminal task shouldn't look like it's still working.
-              const working = !liveTask || liveTask.status === 'queued' || liveTask.status === 'waiting-for-agent' || liveTask.status === 'running';
+              // Dots only while the task is actively progressing AND no run
+              // card exists yet — once the card lands (handoff) it carries
+              // progress itself. Paused (awaiting-approval/waiting-for-input/
+              // auth-required) or terminal tasks shouldn't look busy either.
+              const working = !hasRunCard && (!liveTask || liveTask.status === 'queued' || liveTask.status === 'waiting-for-agent' || liveTask.status === 'running');
               return entry.text ? (
                 // Pending ack (e.g. "Let me find you a solid answer on that.") —
                 // stays visible above the run card until settlePendingAssistant
@@ -545,22 +608,28 @@ const FeedEntryRow = React.memo(function FeedEntryRow({
               )}
             </div>
           )}
-          {hoverActions({ id: entry.id, text: entry.error || entry.title, prompt: entry.prompt })}
+          {hoverActions({ id: entry.id, text: entry.error || entry.title, prompt: entry.prompt, taskId: entry.taskId || undefined })}
         </div>
       );
     }
 
     case 'proactive':
       return (
-        <div className="flex items-start gap-2" style={{ margin: '4px 0' }}>
-          <span className="select-none inline-flex pt-0.5" style={{ opacity: 0.8 }}><BrainIcon size={14} /></span>
+        <div className="feed-entry flex items-start gap-2" style={{ margin: '4px 0', position: 'relative', paddingBottom: 10 }}>
+          <span className="select-none inline-flex pt-0.5" style={{ opacity: 0.8 }}>
+            {/* <BrainIcon size={14} /> */}
+          </span>
           {entry.pending ? (
             <PendingDots color="#a78bfa" />
           ) : (
-            <div className="flex-1 min-w-0" style={{ overflowX: 'hidden', wordBreak: 'break-word', overflowWrap: 'break-word' }}>
+            <div
+              className="flex-1 min-w-0 thought-body"
+              style={{ overflowX: 'hidden', wordBreak: 'break-word', overflowWrap: 'break-word' }}
+            >
               <RichContentRenderer content={entry.text} animated className="text-sm" onFileLinkClick={onOpenPath} />
             </div>
           )}
+          {!entry.pending && hoverActions({ id: entry.id, text: entry.text })}
         </div>
       );
 
@@ -588,6 +657,9 @@ function ResultsFeedImpl({
   resolveTask,
   onContinueThread,
   onRunSummaryForTask,
+  onOpenQueue,
+  onIsolateContext,
+  isContextActive,
   children,
 }: ResultsFeedProps) {
   // Manually-toggled run cards; default = expanded while active, collapsed when
@@ -622,11 +694,20 @@ function ResultsFeedImpl({
 
   // Row render — memo boundary per entry (FeedEntryRow). `liveTask` resolves
   // here so a comms-task object swap re-renders only that task's row.
-  const renderEntry = (entry: FeedEntry) => (
+  const renderEntry = (entry: FeedEntry) => {
+    const eTaskId = (entry.kind === 'assistant' || entry.kind === 'run') ? entry.taskId : undefined;
+    // A run card in the same task/exchange is the progress indicator — its
+    // presence suppresses pending dots on the exchange's ack bubble.
+    const hasRunCard = grouped.some(e =>
+      e.kind === 'run' && (
+        (eTaskId && e.taskId === eTaskId) ||
+        (entry.exchangeId != null && e.exchangeId === entry.exchangeId)));
+    return (
     <FeedEntryRow
       key={entry.id}
       entry={entry}
-      liveTask={(entry.kind === 'assistant' || entry.kind === 'run') && entry.taskId ? resolveTask?.(entry.taskId) : undefined}
+      hasRunCard={hasRunCard}
+      liveTask={eTaskId ? resolveTask?.(eTaskId) : undefined}
       runToggled={toggledRuns.has(entry.id)}
       copied={copiedId === entry.id}
       onRedo={onRedo}
@@ -638,12 +719,16 @@ function ResultsFeedImpl({
       onContinueThread={onContinueThread}
       onRunSummaryForTask={onRunSummaryForTask}
       onToggleRun={toggleRun}
+      onOpenQueue={onOpenQueue}
+      onIsolateContext={onIsolateContext}
+      isContextActive={isContextActive}
     />
-  );
+    );
+  };
 
-
-  // Renders a slice with day dividers. Consecutive proactive `run` entries
-  // (thought-engine automations, ≥2) collapse under one "Thoughts" header.
+  // Renders a slice with day dividers. Consecutive proactive entries
+  // (thought-engine nudges + thought-runs, ≥2) collapse under one
+  // "Thoughts" header.
   const renderList = (list: FeedEntry[], leadingTs?: number) => {
     const nodes: React.ReactNode[] = [];
     let prevDay = leadingTs != null ? _dayKey(leadingTs) : null;
@@ -651,7 +736,7 @@ function ResultsFeedImpl({
     const flushRuns = () => {
       if (!runBuf.length) return;
       const els = runBuf.map(r => renderEntry(r));
-      if (runBuf.length >= 2) {
+      if (runBuf.length >= 1) {
         nodes.push(<ThoughtsGroup key={`thoughts-${runBuf[0].id}`}>{els}</ThoughtsGroup>);
       } else {
         nodes.push(...els);
@@ -665,13 +750,14 @@ function ResultsFeedImpl({
         nodes.push(<DayDivider key={`div-${e.id}`} ts={e.ts} />);
         prevDay = day;
       }
-      // Thought-engine runs: the live task is source:'proactive'; after purge
-      // the prompt's brain-outdir tail is the surviving marker.
-      const isThoughtRun = e.kind === 'run' && (
+      // Thought items: proactive nudge entries (text bubbles) plus
+      // thought-engine run cards — the live task is source:'proactive';
+      // after purge the prompt's brain-outdir tail is the surviving marker.
+      const isThought = e.kind === 'proactive' || (e.kind === 'run' && (
         resolveTask?.(e.taskId || '')?.source === 'proactive' ||
         /\.thinkdrop[\/\\]brain[\/\\]/.test(e.prompt || '')
-      );
-      if (isThoughtRun) {
+      ));
+      if (isThought) {
         runBuf.push(e);
         continue;
       }

@@ -168,7 +168,7 @@ export function installFeedIpc(store: FeedStore, ui: FeedIpcUi): () => void {
     s.setHistoryLoading(false);
     const msgs = Array.isArray(data?.messages) ? data.messages : [];
     if (msgs.length > 0) {
-      const mapped = mapHistoryMessages(msgs);
+      const mapped = mapHistoryMessages(msgs, { tasks: s.getState().commsTasks });
       const cursor = oldestMessageCursor(msgs);
       // Only the real prepend may consume the scroll anchor — stray feed
       // updates during this round-trip must not eat it first.
@@ -293,7 +293,12 @@ export function installFeedIpc(store: FeedStore, ui: FeedIpcUi): () => void {
       const hit = [...s.getState().entries].reverse().find(e =>
         e.kind === 'assistant' && (e.taskId === data.taskId || e.pending));
       if (hit) {
-        s.patchEntry(hit.id, { text, pending: false, items: resolvedItems } as any);
+        // Stamp taskId too — the feed's queue-icon deep-link keys off it. And a
+        // prompt fallback so redo survives entries committed before lastPrompt.
+        s.patchEntry(hit.id, {
+          text, pending: false, items: resolvedItems, taskId: data.taskId,
+          prompt: (hit as any).prompt || s.internal.lastPrompt || undefined,
+        } as any);
       } else {
         s.appendEntry({ kind: 'assistant', text, items: resolvedItems, taskId: data.taskId, prompt: s.internal.lastPrompt || undefined, exchangeId: s.exchangeForTask(data.taskId, s.internal.lastPrompt) });
       }
@@ -316,7 +321,7 @@ export function installFeedIpc(store: FeedStore, ui: FeedIpcUi): () => void {
       if (hit) {
         s.patchEntry(hit.id, {
           text: friendlyErrorMessage(raw), pending: false, isError: true,
-          errorRaw: raw,
+          errorRaw: raw, taskId: data.taskId,
           prompt: (hit.kind === 'assistant' ? hit.prompt : undefined) || s.internal.lastPrompt || undefined,
         } as any);
         return true;
@@ -325,29 +330,37 @@ export function installFeedIpc(store: FeedStore, ui: FeedIpcUi): () => void {
     };
 
     if (isCommandAutomate) {
-      // Patch (or append) the run card for this task. A card written by
-      // onRunSummary moments ago has no taskId — match by recency.
+      // Patch (or append) the run card for this task — except on 'done': a
+      // completed run leaves no card in the feed (the answer bubble carries the
+      // result; details stay reachable via the Queue icon / Queue tab). Removal
+      // matches by taskId only — never the recency fallback, which could eat a
+      // neighbouring untagged card. Failed/cancelled keep their card + error.
       {
         const prev = s.getState().entries;
-        const runPatch = { status: status as any, error: data.error || null, planFile: data.planFile || undefined };
-        let idx = prev.findIndex(e => e.kind === 'run' && e.taskId === data.taskId);
-        if (idx < 0) {
-          for (let i = prev.length - 1; i >= 0; i--) {
-            const e = prev[i];
-            if (e.kind !== 'run') break;
-            if (Date.now() - e.ts < 15000 && !e.taskId) { idx = i; break; }
-          }
-        }
-        const exchangeId = s.exchangeForTask(data.taskId, data.prompt);
-        let next;
-        if (idx < 0) {
-          next = [...prev, { id: `fe_${Date.now()}_${s.internal.feedSeq++}`, ts: Date.now(), kind: 'run', taskId: data.taskId, title: data.prompt ? toDisplayPrompt(data.prompt) || 'Automation run' : 'Automation run', prompt: data.prompt || undefined, exchangeId, ...runPatch } as any];
+        if (status === 'done') {
+          const idx = prev.findIndex(e => e.kind === 'run' && e.taskId === data.taskId);
+          if (idx >= 0) s.set({ entries: prev.filter((_, i) => i !== idx) });
         } else {
-          next = prev.slice();
-          const prevRun = next[idx];
-          next[idx] = { ...prevRun, taskId: (prevRun.kind === 'run' ? prevRun.taskId : undefined) || data.taskId, exchangeId: prevRun.exchangeId || exchangeId, ...runPatch } as any;
+          const runPatch = { status: status as any, error: data.error || null, planFile: data.planFile || undefined };
+          let idx = prev.findIndex(e => e.kind === 'run' && e.taskId === data.taskId);
+          if (idx < 0) {
+            for (let i = prev.length - 1; i >= 0; i--) {
+              const e = prev[i];
+              if (e.kind !== 'run') break;
+              if (Date.now() - e.ts < 15000 && !e.taskId) { idx = i; break; }
+            }
+          }
+          const exchangeId = s.exchangeForTask(data.taskId, data.prompt);
+          let next;
+          if (idx < 0) {
+            next = [...prev, { id: `fe_${Date.now()}_${s.internal.feedSeq++}`, ts: Date.now(), kind: 'run', taskId: data.taskId, title: data.prompt ? toDisplayPrompt(data.prompt) || 'Automation run' : 'Automation run', prompt: data.prompt || undefined, exchangeId, ...runPatch } as any];
+          } else {
+            next = prev.slice();
+            const prevRun = next[idx];
+            next[idx] = { ...prevRun, taskId: (prevRun.kind === 'run' ? prevRun.taskId : undefined) || data.taskId, exchangeId: prevRun.exchangeId || exchangeId, ...runPatch } as any;
+          }
+          s.set({ entries: next });
         }
-        s.set({ entries: next });
       }
       if (status === 'done' && data.answer) {
         settlePendingAssistant(data.answer, Array.isArray(data.items) ? data.items : undefined);
@@ -380,6 +393,9 @@ export function installFeedIpc(store: FeedStore, ui: FeedIpcUi): () => void {
   const handleTaskRemoved = (data: any) => {
     if (data?.taskId) {
       s.setCommsTasks(prev => prev.filter(t => t.id !== data.taskId));
+      // Task deleted from Queue — drop its feed card too or it dangles as a
+      // static fallback with no live data behind it.
+      s.set({ entries: s.getState().entries.filter(e => !(e.kind === 'run' && e.taskId === data.taskId)) });
     }
   };
 

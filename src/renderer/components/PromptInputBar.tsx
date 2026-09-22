@@ -4,6 +4,7 @@ import VoiceButton from './VoiceButton';
 import VoiceBars from './VoiceBars';
 import type { RefObject } from 'react';
 import type { AIActivityPanelHandle } from './AIActivityPanel';
+import { BrainIcon } from './QueueTaskCard';
 
 export interface PromptInputBarHandle {
   setPromptText: (text: string) => void;
@@ -68,6 +69,11 @@ const ThreadIcon = () => (
     <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
   </svg>
 );
+const TargetIcon = () => (
+  <svg {..._iconProps}>
+    <circle cx="12" cy="12" r="10" /><line x1="22" y1="12" x2="18" y2="12" /><line x1="6" y1="12" x2="2" y2="12" /><line x1="12" y1="6" x2="12" y2="2" /><line x1="12" y1="22" x2="12" y2="18" />
+  </svg>
+);
 
 /** Display label for a highlight chip — basename for paths, excerpt for text. */
 function _chipLabel(h: string): string {
@@ -76,6 +82,8 @@ function _chipLabel(h: string): string {
     const base = m[2].split('/').filter(Boolean).pop() || m[2];
     return base;
   }
+  const t = h.match(/^\[(Thought|Context):\s*(.+)\s*\]$/s);
+  if (t) return t[2];
   return h;
 }
 
@@ -87,6 +95,7 @@ function _promptLabel(p: string): string {
     .replace(/\[(File|Folder):\s*([^\]]+)\]/g,
       (_m, _k, inner: string) => inner.trim().split('/').filter(Boolean).pop() || inner.trim())
     .replace(/\[Highlighted:\s*([^\]]+)\]/g, '$1')
+    .replace(/\[(Thought|Context):\s*([^\]]+)\]/g, '$2')
     .trim();
 }
 
@@ -159,7 +168,9 @@ function PromptInputBarImpl(
 
     // Guard: nothing to submit
     if (!text.trim() && currentHighlights.length === 0) return;
-    if (isSubmitting && !gatherPending) return;
+    // No isSubmitting gate — concurrent prompts are supported (quick replies
+    // route around a running automation). The button shows Cancel while a task
+    // runs, but Enter must always send.
 
     // Save to prompt history (normal prompts only, not gather answers)
     if (!gatherPending && text.trim()) {
@@ -171,7 +182,10 @@ function PromptInputBarImpl(
     }
 
     // Clear the textarea synchronously — fast because this component is small.
+    // Debounce double-fires for 600ms, but don't latch on isSubmitting — a
+    // long-running task would otherwise deadlock every later submit.
     localSubmittingRef.current = true;
+    setTimeout(() => { localSubmittingRef.current = false; }, 600);
     flushSync(() => {
       setPromptText('');
     });
@@ -282,9 +296,11 @@ function PromptInputBarImpl(
         {highlights.map((highlight, index) => {
           const isFolder = highlight.includes('[Folder:');
           const isFile = highlight.includes('[File:');
-          const bgColor = isFolder ? 'rgba(74, 222, 128, 0.15)' : isFile ? 'rgba(59, 130, 246, 0.15)' : 'rgba(255, 255, 255, 0.1)';
-          const borderColor = isFolder ? 'rgba(74, 222, 128, 0.3)' : isFile ? 'rgba(59, 130, 246, 0.3)' : 'rgba(255, 255, 255, 0.2)';
-          const textColor = isFolder ? '#4ade80' : isFile ? '#93c5fd' : '#e5e7eb';
+          const isThought = highlight.startsWith('[Thought:');
+          const isContext = highlight.startsWith('[Context:');
+          const bgColor = isFolder ? 'rgba(74, 222, 128, 0.15)' : isFile ? 'rgba(59, 130, 246, 0.15)' : isThought ? 'rgba(129, 140, 248, 0.15)' : isContext ? 'rgba(34, 211, 238, 0.15)' : 'rgba(255, 255, 255, 0.1)';
+          const borderColor = isFolder ? 'rgba(74, 222, 128, 0.3)' : isFile ? 'rgba(59, 130, 246, 0.3)' : isThought ? 'rgba(129, 140, 248, 0.35)' : isContext ? 'rgba(34, 211, 238, 0.35)' : 'rgba(255, 255, 255, 0.2)';
+          const textColor = isFolder ? '#4ade80' : isFile ? '#93c5fd' : isThought ? '#a5b4fc' : isContext ? '#67e8f9' : '#e5e7eb';
 
           return (
             <div
@@ -299,6 +315,8 @@ function PromptInputBarImpl(
             >
               {isFolder && <FolderIcon />}
               {isFile && <FileIcon />}
+              {isThought && <BrainIcon size={11} />}
+              {isContext && <TargetIcon />}
               <span className="truncate max-w-[150px]">{_chipLabel(highlight)}</span>
               <button
                 onClick={() => onHighlightRemove(index)}

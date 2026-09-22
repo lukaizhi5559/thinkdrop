@@ -3748,8 +3748,8 @@ app.whenReady().then(async () => {
       // Robust: skip plan correction mode if this is a different session OR if a new session was created
       const planSessionId = pendingPlanContext.sessionId;
       
-      if (planSessionId !== currentSessionId) {
-        console.log(`[Plan] Skipping correction mode - different session: plan=${planSessionId} vs current=${currentSessionId}`);
+      if (planSessionId !== effectiveSessionId) {
+        console.log(`[Plan] Skipping correction mode - different session: plan=${planSessionId} vs effective=${effectiveSessionId}`);
         pendingPlanContext = null;
       } else {
         // Check if StateGraph created a new session (this will be set after resolveReferencesV2 runs)

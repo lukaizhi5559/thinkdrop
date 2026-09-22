@@ -12,6 +12,7 @@ import {
   dedupePlannerTail,
   mapHistoryMessages,
   oldestMessageCursor,
+  toDisplayPrompt,
 } from './feedStore.mts';
 
 const mkStore = () => createFeedStore();
@@ -102,6 +103,54 @@ test('appendUserEntry strips the proactive save-dir tail', () => {
   assert.equal((s.getState().entries[0] as any).text, 'do the thing');
 });
 
+// Isolated-context submits carry [Context: …] prefixes — the user bubble must
+// show only the prompt text, and the echo must dedupe against the local append.
+test('toDisplayPrompt strips [Context:] prefixes', () => {
+  assert.equal(
+    toDisplayPrompt('[Context: some isolated body]\n[Highlighted: more]\n\nactual question'),
+    'actual question',
+  );
+  // Two stacked [Context:] chips strip cleanly too.
+  assert.equal(
+    toDisplayPrompt('[Context: body one]\n[Context: body two]\n\nreply here'),
+    'reply here',
+  );
+});
+
+// A re-asked message after a reply is a NEW exchange — the set-prompt echo
+// dedupe must not eat identical texts once the turn has advanced.
+test('re-asked identical text after a reply mints a new exchange', () => {
+  const s = mkStore();
+  const x1 = s.appendUserEntry('no');
+  s.appendEntry({ kind: 'assistant', text: 'Understood.' });
+  const x2 = s.appendUserEntry('no');
+  assert.notEqual(x1, x2);
+  assert.equal(s.getState().entries.filter(e => e.kind === 'user').length, 2);
+});
+
+// run/proactive entries don't advance the turn — a run card can land before
+// the echo, and the echo must still dedupe against the pending user bubble.
+test('a run entry between identical submits still dedupes (echo semantics)', () => {
+  const s = mkStore();
+  const x1 = s.appendUserEntry('go to amazon')!;
+  s.internal.taskExchange.set('t5', x1);
+  s.ensureRunEntry('t5', 'go to amazon');
+  const x2 = s.appendUserEntry('go to amazon');
+  assert.equal(x1, x2);
+  assert.equal(s.getState().entries.filter(e => e.kind === 'user').length, 1);
+});
+
+// The echo dedupe is scoped to the OPEN turn — a proactive nudge sitting
+// between the bubble and the echo doesn't break it either.
+test('proactive interleave does not break echo dedupe', () => {
+  const s = mkStore();
+  const x1 = s.appendUserEntry('no')!;
+  s.appendEntry({ kind: 'proactive', text: 'a thought nudge' } as any);
+  const x2 = s.appendUserEntry('no');
+  assert.equal(x1, x2);
+  assert.equal(s.getState().entries.filter(e => e.kind === 'user').length, 1);
+});
+
 // ── ensureRunEntry / exchangeForTask ────────────────────────────────────────
 
 test('ensureRunEntry is idempotent and joins the prompt exchange', () => {
@@ -144,6 +193,43 @@ test('thought_engine metadata reloads as proactive with thoughtId', () => {
   const out = mapHistoryMessages(msgs);
   assert.equal(out[0].kind, 'proactive');
   assert.equal((out[0] as any).thoughtId, 'th_1');
+});
+
+// Reloaded assistant rows keep their actions: prompt propagates from the
+// preceding user message (redo), metadata.taskId maps through (queue link).
+test('history rows carry prompt (redo) + taskId (queue) across reload', () => {
+  const msgs = [
+    { id: 1, sender: 'user', text: '[Context: pinned body]\n\nwhat is this', timestamp: '2026-01-01T00:00:00Z' },
+    { id: 2, sender: 'assistant', text: 'It is a thing.', timestamp: '2026-01-01T00:00:01Z', metadata: { taskId: 'task_42' } },
+    { id: 3, sender: 'assistant', text: 'Unprompted thought', timestamp: '2026-01-01T00:00:02Z', metadata: { source: 'thought_engine', thoughtId: 'th_9' } },
+  ];
+  const out = mapHistoryMessages(msgs);
+  assert.equal((out[1] as any).prompt, '[Context: pinned body]\n\nwhat is this');
+  assert.equal((out[1] as any).taskId, 'task_42');
+  assert.equal(out[2].kind, 'proactive'); // thoughts don't inherit the prompt
+});
+
+// Rows logged before metadata.taskId existed still deep-link to Queue when a
+// journal-restored task shares the session + normalized prompt.
+test('history rows retroactively link tasks by session + prompt match', () => {
+  const tasks = [
+    { id: 'task_yes', prompt: 'show  me   the page', sessionId: 'sess_1' },
+    { id: 'task_other_session', prompt: 'show  me   the page', sessionId: 'sess_2' },
+    { id: 'task_wrong_text', prompt: 'different prompt', sessionId: 'sess_1' },
+  ];
+  const msgs = [
+    { id: 1, sender: 'user', text: 'show me the page', sessionId: 'sess_1', timestamp: '2026-01-01T00:00:00Z' },
+    { id: 2, sender: 'assistant', text: 'Here it is.', sessionId: 'sess_1', timestamp: '2026-01-01T00:00:01Z' },
+    { id: 3, sender: 'user', text: 'hi', sessionId: 'sess_9', timestamp: '2026-01-01T00:00:02Z' },
+    { id: 4, sender: 'assistant', text: 'hello', sessionId: 'sess_9', timestamp: '2026-01-01T00:00:03Z' },
+    // metadata.taskId wins over correlation
+    { id: 5, sender: 'user', text: 'show me the page', sessionId: 'sess_1', timestamp: '2026-01-01T00:00:04Z' },
+    { id: 6, sender: 'assistant', text: 'Again.', sessionId: 'sess_1', timestamp: '2026-01-01T00:00:05Z', metadata: { taskId: 'task_meta' } },
+  ];
+  const out = mapHistoryMessages(msgs, { tasks });
+  assert.equal((out[1] as any).taskId, 'task_yes');        // correlated
+  assert.equal((out[3] as any).taskId, undefined);         // no match → absent
+  assert.equal((out[5] as any).taskId, 'task_meta');       // metadata wins
 });
 
 test('consecutive identical entries collapse (paused-run re-logs)', () => {

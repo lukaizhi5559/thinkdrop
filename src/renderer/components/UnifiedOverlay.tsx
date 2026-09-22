@@ -474,40 +474,47 @@ export function UnifiedOverlay() {
   const handleSubmitFromInputBar = useCallback(async (finalPromptText: string, finalHighlights: string[], wasGatherPending: boolean) => {
     dbg('🚀 [UNIFIED] handleSubmit called');
 
-    // Preserve any still-streaming AI text before the reset below wipes it —
-    // a resubmit mid-stream shouldn't silently drop the partial message.
-    commitInFlightStream();
+    // Concurrent submit: a task is already in flight. Don't touch its stream
+    // accumulator or display flags — the new message queues alongside it.
+    const concurrent = isSubmitting && !wasGatherPending;
 
-    // Reset parent state via startTransition — non-blocking, lets the browser paint
-    // the child's cleared text before the parent re-renders.
-    startTransition(() => {
+    if (!concurrent) {
+      // Preserve any still-streaming AI text before the reset below wipes it —
+      // a resubmit mid-stream shouldn't silently drop the partial message.
+      commitInFlightStream();
+
+      // Reset parent state via startTransition — non-blocking, lets the browser paint
+      // the child's cleared text before the parent re-renders.
+      startTransition(() => {
+        setHighlights([]);
+        setStreamingResponse('');
+        setResultItems([]);
+        setSearchSources([]);
+        setIsStreaming(false);
+        setIsThinking(true);
+        setIsSubmitting(true); // Show cancel/stop button during preflight and automation
+        setIsAutomationMode(false);
+        setInstallPrompt(null);
+        setActionChips([]);
+        setInstallOutput([]);
+        setGatherPending(false);
+        setGatherQuestion(null);
+        setLiveRunHidden(false);
+        setStreamingStartedRef(false);
+      });
+      feedStore.internal.streamAcc = '';
+      feedStore.internal.hasDropped = false;
+    } else {
+      // Light reset only: clear chips for the next message + show pending dots
+      // for this exchange. The running task's flags stay untouched.
       setHighlights([]);
-      setStreamingResponse('');
-      setResultItems([]);
-      setSearchSources([]);
-      setIsStreaming(false);
       setIsThinking(true);
-      setIsSubmitting(true); // Show cancel/stop button during preflight and automation
-      setIsAutomationMode(false);
-      setInstallPrompt(null);
-      setActionChips([]);
-      setInstallOutput([]);
-      setGatherPending(false);
-      setGatherQuestion(null);
-      setLiveRunHidden(false);
-      setStreamingStartedRef(false);
-    });
-    feedStore.internal.streamAcc = '';
-    feedStore.internal.hasDropped = false;
+    }
 
     if (!finalPromptText.trim() && finalHighlights.length === 0) {
       dbg('⚠️ [UNIFIED] No text or highlights, skipping submit');
       setIsThinking(false);
-      setIsSubmitting(false);
-      return;
-    }
-    if (isSubmitting && !wasGatherPending) {
-      setIsThinking(false);
+      if (!concurrent) setIsSubmitting(false);
       return;
     }
 
@@ -522,10 +529,18 @@ export function UnifiedOverlay() {
 
     let finalPrompt = '';
 
+    // Context isolation: a [Context:] chip pins a fresh iso_* session so the
+    // turn runs with only the tagged bodies + prompt — no conversation history.
+    const hasIsolatedContext = finalHighlights.some(h => h.startsWith('[Context:'));
+    const isoSessionId = hasIsolatedContext
+      ? `iso_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
+      : null;
+
     // "Continue Thread" — inject the recalled task's context so the next prompt
     // continues that discussion even without a session pin (belt-and-suspenders:
     // sessionId covers sliding-window history; this excerpt guarantees context).
-    if (threadContext) {
+    // Skipped while isolating — the excerpt would leak prior context.
+    if (threadContext && !hasIsolatedContext) {
       // 12000 chars keeps full code snippets/documents intact (the old 2000 cap
       // cut mid-file) while staying well under the 50k message limit.
       const rawResult = (threadContext.result || '').replace(/【[^】]*】/g, '').trim();
@@ -537,9 +552,21 @@ export function UnifiedOverlay() {
       finalPrompt += '\n';
     }
 
-    if (finalHighlights.length > 0) {
-      finalPrompt += finalHighlights.map(h =>
-        (h.startsWith('[File:') || h.startsWith('[Folder:')) ? h : `[Highlighted: ${h}]`
+    // Auto-context: when the feed tail is a just-delivered thought, a reply is
+    // almost certainly aimed at it — attach it (same [Thought:] form as the
+    // click-to-attach chip) so context survives session-route misses.
+    // Skipped while isolating — the [Context:] chip is the ONLY context.
+    const tailEntry = feedStore.getState().entries[feedStore.getState().entries.length - 1];
+    const tailThought = !hasIsolatedContext && tailEntry && tailEntry.kind === 'proactive' && !(tailEntry as any).pending && (tailEntry as any).text
+      ? `[Thought: ${(tailEntry as any).text.replace(/\s+/g, ' ').trim()}]`
+      : null;
+    const allHighlights = tailThought && !finalHighlights.includes(tailThought)
+      ? [tailThought, ...finalHighlights]
+      : finalHighlights;
+
+    if (allHighlights.length > 0) {
+      finalPrompt += allHighlights.map(h =>
+        (h.startsWith('[File:') || h.startsWith('[Folder:') || h.startsWith('[Thought:') || h.startsWith('[Context:')) ? h : `[Highlighted: ${h}]`
       ).join('\n') + '\n\n';
     }
 
@@ -568,21 +595,24 @@ export function UnifiedOverlay() {
     dbg('📤 [UNIFIED] Final prompt to send:', finalPrompt.trim());
     dbg('🔍 [UNIFIED] ipcRenderer available?', !!ipcRenderer);
 
-    // Commit the user bubble + zoom the window to the fresh exchange
+    // Commit the user bubble + stick the viewport to the fresh exchange.
+    // Clearing isScrolledUp first lets the store.subscribe auto-scroll fire
+    // (rAF-deferred, post-commit) when this append lands.
+    isScrolledUpRef.current = false;
+    setIsScrolledUp(false);
     appendUserEntry(finalPromptText);
-    scrollToBottom();
 
     // Send to main process - match StandalonePromptCapture exactly
     ipcRenderer?.send('prompt-queue:submit', {
       prompt: finalPrompt.trim(),
       selectedText: finalHighlights.join('\n'),
-      sessionId: threadContext?.sessionId || undefined,
+      sessionId: isoSessionId || threadContext?.sessionId || undefined,
     });
     setThreadContext(null); // one-shot chip — the session stays current via resolvedSessionId
     dbg('✅ [UNIFIED] Prompt enqueued');
 
     // Note: isSubmitting stays true until task completes (handled in all_done)
-  }, [isSubmitting, threadContext, appendUserEntry, appendFeedEntry, scrollToBottom, commitInFlightStream]);
+  }, [isSubmitting, threadContext, appendUserEntry, appendFeedEntry, commitInFlightStream]);
 
   const handleHighlightRemove = useCallback((index: number) => {
     setHighlights(prev => prev.filter((_, i) => i !== index));
@@ -818,6 +848,32 @@ export function UnifiedOverlay() {
   const handleFeedOpenSourceUrl = useCallback((url: string) => {
     ipcRenderer?.send('shell:open-url', url);
   }, []);
+
+  // Queue icon on feed rows — jump to the task's Queue card (deep-link flash).
+  const handleFeedOpenQueue = useCallback((taskId: string) => {
+    setActiveTab('queue');
+    setUnreadTabs(prev => { const n = new Set(prev); n.delete('queue'); return n; });
+    const status = feedStore.getState().commsTasks.find(t => t.id === taskId)?.status;
+    setQueueFocus({ taskId, status, nonce: Date.now() });
+  }, []);
+
+  // Target-icon on a feed body → pin it as an isolated-context chip. On submit
+  // any [Context:] chip pins a fresh iso_* session — the model sees only the
+  // tagged bodies + prompt, no conversation history. Clicking an already-
+  // isolated body toggles off — removes its chip.
+  const _contextTag = (text: string) => `[Context: ${text.replace(/\s+/g, ' ').trim()}]`;
+  const handleIsolateContext = useCallback((text: string) => {
+    const tagged = _contextTag(text);
+    setHighlights(prev => prev.includes(tagged)
+      ? prev.filter(h => h !== tagged)          // toggle off — remove chip
+      : [...prev, tagged]);
+    promptInputBarRef.current?.focus();
+  }, []);
+  // Row active-state: is this body's [Context:] chip currently in the input bar?
+  const isContextActive = useCallback(
+    (text: string) => highlights.includes(_contextTag(text)),
+    [highlights],
+  );
 
   const handleToggleSlideout = useCallback(() => {
     setIsSlideoutOpen(prev => !prev);
@@ -1104,12 +1160,15 @@ export function UnifiedOverlay() {
           setIsInstalling(false);
           setInstallPrompt(null);
         }
-        // Alert card: task-scoped questions live on the feed's run card (and
-        // the Queue card), global gather questions live here in Results.
-        const qText = data?.question || data?.text || 'I have a question before I continue';
-        setQuestionAlert({ text: String(qText), tab: 'results', ts: Date.now() });
-        // Scroll to the question so the user sees the action-required banner/options
-        setTimeout(scrollToBottom, 50);
+        // Alert card: only for global (untagged) questions — task-scoped
+        // ask_user already renders the full QuestionCard inside the feed's run
+        // card (and the Queue card), so a second amber strip is redundant.
+        if (!isTaskScoped) {
+          const qText = data?.question || data?.text || 'I have a question before I continue';
+          setQuestionAlert({ text: String(qText), tab: 'results', ts: Date.now() });
+          // Scroll to the question so the user sees the action-required banner/options
+          setTimeout(scrollToBottom, 50);
+        }
       } else if (data?.type === 'skill_setup_complete') {
         setIsThinking(false);
         setIsStreaming(false);
@@ -2100,7 +2159,9 @@ export function UnifiedOverlay() {
       if (!grew) return;
       const container = scrollContainerRef.current;
       if (!container || isScrolledUpRef.current || pendingPrependRef.current) return;
-      container.scrollTop = container.scrollHeight;
+      // Defer past React's commit — notify() fires inside setEntries, before the
+      // new entry is in the DOM; scrolling now would land above the appended row.
+      requestAnimationFrame(() => { container.scrollTop = container.scrollHeight; });
     });
   }, []);
 
@@ -2288,6 +2349,9 @@ export function UnifiedOverlay() {
               resolveTask={resolveTask}
               onContinueThread={handleContinueThread}
               onRunSummaryForTask={handleFeedRunSummary}
+              onOpenQueue={handleFeedOpenQueue}
+              onIsolateContext={handleIsolateContext}
+              isContextActive={isContextActive}
             >
               {/* Proactive alert cards — question blocks + thought-engine outreach */}
               {questionAlert && (

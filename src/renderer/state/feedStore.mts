@@ -56,7 +56,6 @@ interface FeedInternal {
   sessionBoundary: string;
   taskExchange: Map<string, string>;
   lastExchangeId: string | null;
-  lastSubmitted: { text: string; xid: string } | null;
   lastPrompt: string;
   feedSeq: number;
   taskPrompts: Map<string, string>;
@@ -102,8 +101,8 @@ export function toDisplayPrompt(raw: string): string {
     const idx = t.lastIndexOf('\n\n');
     if (idx > 0) t = t.slice(idx + 2);
   }
-  while (/^\[(?:Highlighted|File|Folder):[^\n]*\]\n?/.test(t)) {
-    t = t.replace(/^\[(?:Highlighted|File|Folder):[^\n]*\]\n?/, '');
+  while (/^\[(?:Highlighted|File|Folder|Thought|Context):[^\n]*\]\n?/.test(t)) {
+    t = t.replace(/^\[(?:Highlighted|File|Folder|Thought|Context):[^\n]*\]\n?/, '');
   }
   t = t.replace(/^\s*\n+/, '');
   t = t.replace(/\n*\s*\(Context from prior turn:[^)]*\)\s*$/, '');
@@ -169,7 +168,7 @@ export function mapHistoryMessage(m: any): FeedEntry | null {
     if (intent === 'command_automate' || intent === 'memory_retrieve') {
       text = dedupePlannerTail(text);
     }
-    return { id, ts, kind: 'assistant', text } as FeedEntry;
+    return { id, ts, kind: 'assistant', text, taskId: m?.metadata?.taskId || undefined } as FeedEntry;
   }
   return null; // 'system' rows (recovery/ask_user) stay out of the feed
 }
@@ -182,9 +181,35 @@ const normText = (s: string) => s.replace(/\s+/g, ' ').trim();
  * the same user prompt once per execute() and land adjacently (system rows
  * are filtered); legit re-asks always have an assistant reply between them.
  */
-export function mapHistoryMessages(msgs: any[]): FeedEntry[] {
+export function mapHistoryMessages(msgs: any[], opts?: { tasks?: { id: string; prompt?: string; sessionId?: string | null }[] }): FeedEntry[] {
+  // Chronological fold: track the preceding user message's RAW text so the
+  // assistant entry can carry `prompt` — history rows keep their redo action
+  // (live commits get prompt from internal.lastPrompt; reloaded rows had
+  // nothing before this).
+  let lastUserRaw: string | undefined;
+  const tasks = opts?.tasks || [];
   return msgs
-    .map(mapHistoryMessage)
+    .slice()
+    .sort((a, b) => (Date.parse(a.timestamp || a.created_at || '') || 0) -
+                    (Date.parse(b.timestamp || b.created_at || '') || 0))
+    .map(m => {
+      const e = mapHistoryMessage(m);
+      if (m?.sender === 'user') {
+        lastUserRaw = String(m.text || '');
+      } else if (e && e.kind === 'assistant') {
+        if (lastUserRaw && !e.prompt) e.prompt = lastUserRaw;
+        // Retroactive queue link: rows logged before metadata.taskId existed
+        // correlate to journal-restored tasks by session + exact prompt match.
+        // Conservative — a miss leaves no icon rather than a wrong deep-link.
+        if (!e.taskId && m?.sessionId && lastUserRaw) {
+          const hit = tasks.find(t =>
+            t.sessionId === m.sessionId &&
+            normText(t.prompt || '') === normText(lastUserRaw!));
+          if (hit) e.taskId = hit.id;
+        }
+      }
+      return e;
+    })
     .filter((e): e is FeedEntry => e !== null && !!(e as any).text)
     .sort((a, b) => a.ts - b.ts)
     .filter((e, i, arr) => {
@@ -233,7 +258,6 @@ export function createFeedStore(now: () => number = () => Date.now()): FeedStore
     sessionBoundary: new Date().toISOString(),
     taskExchange: new Map(),
     lastExchangeId: null,
-    lastSubmitted: null,
     lastPrompt: '',
     feedSeq: 0,
     taskPrompts: new Map(),
@@ -318,13 +342,24 @@ export function createFeedStore(now: () => number = () => Date.now()): FeedStore
   const appendUserEntry = (text: string): string | null => {
     const clean = toDisplayPrompt(text);
     if (!clean) return null;
-    const lastUser = [...state.entries].reverse().find(e => e.kind === 'user');
-    const xid = internal.lastSubmitted?.text === clean
-      ? internal.lastSubmitted.xid
-      : (lastUser && lastUser.text === clean && lastUser.exchangeId)
-        ? lastUser.exchangeId
-        : `x_${now()}_${internal.feedSeq++}`;
-    internal.lastSubmitted = { text: clean, xid };
+    // Reuse the exchangeId only for an unreplied identical user bubble — the
+    // unified:set-prompt echo re-appends the same text ~1s after the local
+    // submit and must dedupe, but a re-asked message after a reply is a NEW
+    // exchange. run/proactive entries don't advance the turn (run cards can
+    // land before the echo; nudges can interleave) — assistant/system do.
+    const entries = state.entries;
+    let lastUserIdx = -1;
+    for (let i = entries.length - 1; i >= 0; i--) {
+      if (entries[i].kind === 'user') { lastUserIdx = i; break; }
+    }
+    const lastUser = (lastUserIdx >= 0 ? entries[lastUserIdx] : null) as
+      Extract<FeedEntry, { kind: 'user' }> | null;
+    const turnAdvanced = lastUserIdx >= 0 && entries.slice(lastUserIdx + 1)
+      .some(e => e.kind === 'assistant' || e.kind === 'system');
+    const xid = (!turnAdvanced && lastUser && lastUser.exchangeId &&
+      normText(lastUser.text) === normText(clean))
+      ? lastUser.exchangeId
+      : `x_${now()}_${internal.feedSeq++}`;
     setEntries(prev => prev.some(e => e.kind === 'user' && e.exchangeId === xid)
       ? prev
       : [...prev, { id: nextId(), ts: now(), kind: 'user', text: clean, exchangeId: xid } as FeedEntry]);
