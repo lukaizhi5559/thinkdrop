@@ -1327,6 +1327,49 @@ function startOverlayControlServer() {
     // ── Flash endpoints — brief hide + GhostLayer camera-flash for screenshots ──
     // Unlike /overlay/hide (which keeps the panel hidden until /overlay/show),
     // /overlay/flash hides the panel + triggers a camera-flash animation in
+    // POST /browser-url — run the browser URL probe from Electron main so the
+    // AppleEvent's TCC responsible process is ThinkDrop.app (bundled → the
+    // Automation consent dialog can render and be remembered). Detached
+    // services (user-memory's `node` process) get a silent -1743 instead.
+    // Fixed template + browser allowlist — no arbitrary AppleScript surface.
+    if (req.method === 'POST' && req.url === '/browser-url') {
+      let body = '';
+      req.on('data', c => { body += c; });
+      req.on('end', () => {
+        try {
+          const { app } = JSON.parse(body || '{}');
+          const ALLOWED = new Set([
+            'Google Chrome', 'Google Chrome Canary', 'Chromium', 'Brave Browser',
+            'Microsoft Edge', 'Vivaldi', 'Opera', 'Safari', 'Arc', 'Firefox',
+          ]);
+          if (!ALLOWED.has(app)) {
+            res.writeHead(400).end(JSON.stringify({ ok: false, error: 'app not allowed' }));
+            return;
+          }
+          // Safari/Mozilla use a different property; Chromium family uses URL of active tab.
+          const script = app === 'Safari'
+            ? 'tell application "Safari" to get URL of front document'
+            : app === 'Firefox'
+              ? 'tell application "System Events" to get value of attribute "AXDocument" of front window of application process "Firefox"'
+              : `tell application "${app}" to get URL of active tab of front window`;
+          require('child_process').execFile(
+            'osascript', ['-e', script], { timeout: 2500 },
+            (err, stdout) => {
+              if (err) {
+                res.writeHead(200).end(JSON.stringify({ ok: false, error: String(err.message || err).slice(0, 200) }));
+              } else {
+                const url = String(stdout || '').trim();
+                res.writeHead(200).end(JSON.stringify({ ok: !!url, url: url || null }));
+              }
+            }
+          );
+        } catch (e) {
+          res.writeHead(400).end(JSON.stringify({ ok: false, error: e.message }));
+        }
+      });
+      return;
+    }
+
     // GhostLayer, and /overlay/unflash restores it. This lets the user watch
     // the App-Flow automation while still getting clean screenshots.
     if (req.url === '/overlay/flash') {
@@ -1334,10 +1377,39 @@ function startOverlayControlServer() {
       if (ghostLayerWindow && !ghostLayerWindow.isDestroyed()) {
         try { ghostLayerWindow.webContents.send('ghostlayer:flash'); } catch (_) {}
       }
-      // Hide unified window so it doesn't appear in the screenshot
-      if (unifiedWindow && !unifiedWindow.isDestroyed() && unifiedWindow.isVisible()) {
-        unifiedWindow._flashWasVisible = true;
-        unifiedWindow.hide();
+      // Hide unified window so it doesn't appear in the screenshot, then HOLD
+      // it hidden for the duration of the capture — dozens of code paths call
+      // showInactive() during a multi-second capture (progress updates,
+      // notifications) and would otherwise re-show the panel mid-screenshot.
+      if (unifiedWindow && !unifiedWindow.isDestroyed()) {
+        if (unifiedWindow.isVisible()) {
+          unifiedWindow._flashWasVisible = true;
+          unifiedWindow.hide();
+        }
+        if (!unifiedWindow._origShowInactive) {
+          unifiedWindow._origShowInactive = unifiedWindow.showInactive;
+          unifiedWindow._origShow = unifiedWindow.show;
+          const defer = function () { this._pendingShowDuringFlash = true; };
+          unifiedWindow.showInactive = defer;
+          unifiedWindow.show = defer;
+        }
+        // Safety: if /overlay/unflash never arrives (caller killed), auto-release
+        clearTimeout(unifiedWindow._flashHoldTimer);
+        unifiedWindow._flashHoldTimer = setTimeout(() => {
+          try {
+            if (unifiedWindow._origShowInactive) {
+              unifiedWindow.showInactive = unifiedWindow._origShowInactive;
+              unifiedWindow.show = unifiedWindow._origShow;
+              unifiedWindow._origShowInactive = null;
+              unifiedWindow._origShow = null;
+            }
+            if (unifiedWindow._flashWasVisible || unifiedWindow._pendingShowDuringFlash) {
+              unifiedWindow._flashWasVisible = false;
+              unifiedWindow._pendingShowDuringFlash = false;
+              unifiedWindow.showInactive();
+            }
+          } catch (_) {}
+        }, 45000);
       }
       res.writeHead(200).end(JSON.stringify({ ok: true, action: 'flash' }));
       return;
@@ -1348,10 +1420,20 @@ function startOverlayControlServer() {
       if (ghostLayerWindow && !ghostLayerWindow.isDestroyed()) {
         try { ghostLayerWindow.webContents.send('ghostlayer:unflash'); } catch (_) {}
       }
-      // Restore unified window
-      if (unifiedWindow && !unifiedWindow.isDestroyed() && unifiedWindow._flashWasVisible) {
-        unifiedWindow.showInactive();
-        unifiedWindow._flashWasVisible = false;
+      // Restore unified window + release the show-hold
+      if (unifiedWindow && !unifiedWindow.isDestroyed()) {
+        clearTimeout(unifiedWindow._flashHoldTimer);
+        if (unifiedWindow._origShowInactive) {
+          unifiedWindow.showInactive = unifiedWindow._origShowInactive;
+          unifiedWindow.show = unifiedWindow._origShow;
+          unifiedWindow._origShowInactive = null;
+          unifiedWindow._origShow = null;
+        }
+        if (unifiedWindow._flashWasVisible || unifiedWindow._pendingShowDuringFlash) {
+          unifiedWindow._flashWasVisible = false;
+          unifiedWindow._pendingShowDuringFlash = false;
+          unifiedWindow.showInactive();
+        }
       }
       res.writeHead(200).end(JSON.stringify({ ok: true, action: 'unflash' }));
       return;
