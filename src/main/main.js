@@ -4008,6 +4008,51 @@ app.whenReady().then(async () => {
   // (The progressCallback already forwarded the full event to the renderer;
   //  here we just capture context for the re-run.)
 
+  // edit:apply — user clicked "Apply" / "Close <App> & Apply" on a draft chip.
+  // Bypasses the planner entirely — a fixed edit.agent apply step hits
+  // command.automate directly; edit.agent's apply gate closes the holding app
+  // (doc-scoped osascript, saving ask) then writes. Result is pushed back to
+  // the feed as automation:progress {type:'draft_applied'}.
+  ipcMain.on('edit:apply', async (_event, { draftPath, filePath, taskId } = {}) => {
+    console.log(`[EditApply] edit:apply — draft=${draftPath} → ${filePath} (task=${taskId || 'none'})`);
+    if (!draftPath || !filePath) {
+      safeSendUnified('automation:progress', { type: 'draft_applied', ok: false, draftPath, filePath, taskId, error: 'Missing draftPath or filePath' });
+      return;
+    }
+    safeSendUnified('automation:progress', { type: 'draft_apply_start', draftPath, filePath, taskId });
+    try {
+      const http = require('http');
+      const body = JSON.stringify({ payload: { skill: 'edit.agent', args: { mode: 'apply', draftPath, filePath, closeHolders: true } } });
+      const result = await new Promise((resolve) => {
+        const req = http.request({
+          hostname: '127.0.0.1', port: 3007, path: '/command.automate', method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) },
+          timeout: 30000,
+        }, res => {
+          let raw = '';
+          res.on('data', c => { raw += c; });
+          res.on('end', () => { try { resolve(JSON.parse(raw)?.data || {}); } catch { resolve({}); } });
+        });
+        req.on('timeout', () => { req.destroy(); resolve({ error: 'apply timed out' }); });
+        req.on('error', (e) => resolve({ error: e.message }));
+        req.write(body); req.end();
+      });
+      console.log(`[EditApply] result: ok=${result?.ok} ${result?.summary || result?.error || ''}`);
+      safeSendUnified('automation:progress', {
+        type: 'draft_applied', draftPath, filePath, taskId,
+        ok: result?.ok === true,
+        summary: result?.summary || null,
+        error: result?.error || null,
+        openIn: result?.openIn || null,
+        closedIn: result?.closedIn || null,
+        backupPath: result?.backupPath || null,
+      });
+    } catch (err) {
+      console.error(`[EditApply] apply failed:`, err.message);
+      safeSendUnified('automation:progress', { type: 'draft_applied', ok: false, draftPath, filePath, taskId, error: err.message });
+    }
+  });
+
   // plan:approve — user clicked "Run Plan" in PlanPanel
   ipcMain.on('plan:approve', async (_event, { planFile, taskId, scanBeforeRun = true } = {}) => {
     // ── Handoff path: resume via handoffRunner ──────────────────────────────

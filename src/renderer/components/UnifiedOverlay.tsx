@@ -27,7 +27,7 @@ import { LearnModeOverlay, type LearnModeState } from './LearnModeOverlay';
 import { HighlightDebugPanel } from './HighlightDebugPanel';
 import { OverlayHeader } from './OverlayHeader';
 import { ResultsContent, type SkillBuildState, type BridgeStatus, type ActionChip, type InstallPrompt, type SchedulePending } from './ResultsContent';
-import { ResultsFeed, type FeedEntry } from './ResultsFeed';
+import { ResultsFeed, type FeedEntry, type FeedDraft } from './ResultsFeed';
 import type { RunSummary } from './AutomationProgress';
 import { feedStore } from '../state/feedStore.mts';
 import { useFeedStore } from '../state/feedSelectors';
@@ -560,9 +560,38 @@ export function UnifiedOverlay() {
     const tailThought = !hasIsolatedContext && tailEntry && tailEntry.kind === 'proactive' && !(tailEntry as any).pending && (tailEntry as any).text
       ? `[Thought: ${(tailEntry as any).text.replace(/\s+/g, ' ').trim()}]`
       : null;
-    const allHighlights = tailThought && !finalHighlights.includes(tailThought)
+    let allHighlights = tailThought && !finalHighlights.includes(tailThought)
       ? [tailThought, ...finalHighlights]
       : finalHighlights;
+
+    // Empty typed text + a [Context:] chip → the isolated body IS the
+    // instruction. Promote it out of the tag so the planner sees an
+    // imperative, not pure metadata (the iso session still pins above).
+    let promptText = finalPromptText;
+    if (!promptText.trim()) {
+      const ctxIdx = allHighlights.findIndex(h => h.startsWith('[Context:'));
+      if (ctxIdx >= 0) {
+        const m = allHighlights[ctxIdx].match(/^\[Context:\s*([\s\S]*?)\]\s*$/);
+        promptText = (m?.[1] || '').trim();
+        allHighlights = allHighlights.filter((_, i) => i !== ctxIdx);
+      }
+    }
+
+    // Attachment chips — shown under the user bubble so the exchange history
+    // preserves what rode along (file/folder/context/thought/highlight).
+    const _attachments = allHighlights.map(h => {
+      const m = h.match(/^\[(File|Folder|Context|Thought|Highlighted):\s*([\s\S]*?)\]\s*$/);
+      if (m) {
+        const isPath = m[1] === 'File' || m[1] === 'Folder';
+        const body = m[2].trim();
+        return {
+          kind: m[1].toLowerCase() as 'file' | 'folder' | 'context' | 'thought',
+          label: isPath ? (body.split('/').filter(Boolean).pop() || body) : body.slice(0, 120),
+          ...(isPath ? { path: body } : {}),
+        };
+      }
+      return { kind: 'highlight' as const, label: h.replace(/\s+/g, ' ').trim().slice(0, 120) };
+    });
 
     if (allHighlights.length > 0) {
       finalPrompt += allHighlights.map(h =>
@@ -570,7 +599,7 @@ export function UnifiedOverlay() {
       ).join('\n') + '\n\n';
     }
 
-    finalPrompt += finalPromptText;
+    finalPrompt += promptText;
 
     const MAX_MESSAGE_LENGTH = 50000;
     if (finalPrompt.trim().length > MAX_MESSAGE_LENGTH) {
@@ -600,7 +629,7 @@ export function UnifiedOverlay() {
     // (rAF-deferred, post-commit) when this append lands.
     isScrolledUpRef.current = false;
     setIsScrolledUp(false);
-    appendUserEntry(finalPromptText);
+    appendUserEntry(promptText || finalPromptText, _attachments);
 
     // Send to main process - match StandalonePromptCapture exactly
     ipcRenderer?.send('prompt-queue:submit', {
@@ -845,6 +874,17 @@ export function UnifiedOverlay() {
     ipcRenderer?.send('shell:open-path', path);
   }, []);
 
+  // "Close <app> & Apply" on an edit.agent draft — main.js closes the holding
+  // document (osascript saving ask) then applies; progress lands via
+  // draft_apply_start / draft_applied automation:progress events.
+  const handleApplyDraft = useCallback((_entryId: string, draft: FeedDraft) => {
+    ipcRenderer?.send('edit:apply', {
+      draftPath: draft.draftPath,
+      filePath: draft.filePath || undefined,
+      taskId: undefined,
+    });
+  }, []);
+
   const handleFeedOpenSourceUrl = useCallback((url: string) => {
     ipcRenderer?.send('shell:open-url', url);
   }, []);
@@ -1065,6 +1105,17 @@ export function UnifiedOverlay() {
       });
     };
 
+    // Patch a draft's apply state on whichever run entry carries it.
+    const patchFeedDraft = (draftPath: string | undefined, patch: Record<string, any>) => {
+      if (!draftPath) return;
+      const entries = feedStore.getState().entries;
+      const hit = entries.find(e => e.kind === 'run' && (e.drafts || []).some(d => d.draftPath === draftPath));
+      if (!hit || hit.kind !== 'run') return;
+      patchFeedEntry(hit.id, {
+        drafts: (hit.drafts || []).map(d => d.draftPath === draftPath ? { ...d, ...patch } : d),
+      } as Partial<FeedEntry>);
+    };
+
     const handleAutomationProgress = (data: any) => {
       // ── Intent decided (stategraph) — no longer drives sound/••• ──
       // Sound + ••• fire at task:created (comms-graph regex guess) for
@@ -1236,6 +1287,18 @@ export function UnifiedOverlay() {
         feedStore.internal.streamAcc = '';
         feedStore.internal.streamSegment = '';
         feedStore.set({ resultItems: [], searchSources: [] });
+      } else if (data?.type === 'draft_apply_start') {
+        patchFeedDraft(data.draftPath, { applying: true, applyError: null });
+      } else if (data?.type === 'draft_applied') {
+        if (data.ok) {
+          patchFeedDraft(data.draftPath, { applying: false, applied: true, openIn: [] });
+        } else {
+          patchFeedDraft(data.draftPath, {
+            applying: false,
+            applyError: data.error || 'Apply failed',
+            openIn: Array.isArray(data.openIn) ? data.openIn : undefined,
+          });
+        }
       }
     };
 
@@ -2233,6 +2296,7 @@ export function UnifiedOverlay() {
       status: summary.status,
       steps: summary.steps,
       savedFilePaths: summary.savedFilePaths,
+      drafts: summary.drafts,
       planFile: summary.planFile,
       error: summary.error,
       durationMs: summary.durationMs,
@@ -2346,6 +2410,7 @@ export function UnifiedOverlay() {
               onPlanCancel={handleFeedPlanCancel}
               onOpenPath={handleFeedOpenPath}
               onOpenSourceUrl={handleFeedOpenSourceUrl}
+              onApplyDraft={handleApplyDraft}
               resolveTask={resolveTask}
               onContinueThread={handleContinueThread}
               onRunSummaryForTask={handleFeedRunSummary}

@@ -19,10 +19,22 @@ import type { WebResultItem } from './rich-content/WebResultCard';
 
 export type FeedRunStatus = 'queued' | 'running' | 'awaiting-approval' | 'auth-required' | 'waiting-for-input' | 'done' | 'failed' | 'cancelled';
 
+/** An edit.agent draft pending user apply. `openIn` names the processes holding
+ *  the target file — non-empty means apply requires closing that app first. */
+export interface FeedDraft {
+  draftPath: string;
+  filePath: string | null;
+  openIn: string[];
+  diff?: string | null;
+  applied?: boolean;
+  applying?: boolean;
+  applyError?: string | null;
+}
+
 export type FeedEntry =
-  | { id: string; ts: number; kind: 'user'; text: string; exchangeId?: string }
+  | { id: string; ts: number; kind: 'user'; text: string; exchangeId?: string; attachments?: { kind: 'file' | 'folder' | 'context' | 'thought' | 'highlight'; label: string; path?: string }[] }
   | { id: string; ts: number; kind: 'assistant'; text: string; items?: WebResultItem[]; sources?: { url: string; hostname: string; title?: string }[]; taskId?: string; pending?: boolean; prompt?: string; isError?: boolean; errorRaw?: string; exchangeId?: string }
-  | { id: string; ts: number; kind: 'run'; title: string; status: FeedRunStatus; steps?: { title: string; status: string; skill?: string; output?: string; savedFilePath?: string }[]; savedFilePaths?: string[]; error?: string | null; taskId?: string; planFile?: string | null; durationMs?: number | null; prompt?: string; exchangeId?: string }
+  | { id: string; ts: number; kind: 'run'; title: string; status: FeedRunStatus; steps?: { title: string; status: string; skill?: string; output?: string; savedFilePath?: string }[]; savedFilePaths?: string[]; drafts?: FeedDraft[]; error?: string | null; taskId?: string; planFile?: string | null; durationMs?: number | null; prompt?: string; exchangeId?: string }
   | { id: string; ts: number; kind: 'proactive'; text: string; thoughtId?: string; pending?: boolean; exchangeId?: string }
   | { id: string; ts: number; kind: 'system'; text: string; exchangeId?: string };
 
@@ -41,6 +53,9 @@ interface ResultsFeedProps {
   onPlanCancel: (taskId: string, planFile: string | null) => void;
   onOpenPath: (path: string) => void;
   onOpenSourceUrl: (url: string) => void;
+  /** "Close <app> & Apply" / "Apply" on an edit.agent draft — closes the holding
+   *  document (save prompt if unsaved) then applies the draft to the original. */
+  onApplyDraft?: (entryId: string, draft: FeedDraft) => void;
   /** Look up a live comms task by id — run entries with a match render the real
    *  QueueTaskCard (task-scoped AutomationProgress inside). */
   resolveTask?: (taskId: string) => CommsTask | undefined;
@@ -228,6 +243,44 @@ function TargetIcon() {
   );
 }
 
+// ── Attachment chips on the user bubble ──────────────────────────────────────
+// Shows what rode along with a prompt (file/folder/context/thought/highlight)
+// so the exchange history preserves the attachments, not just the typed text.
+const _chipIconProps = { width: 10, height: 10, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 2, strokeLinecap: 'round' as const, strokeLinejoin: 'round' as const };
+const _FileIcon = () => (<svg {..._chipIconProps}><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>);
+const _FolderIcon = () => (<svg {..._chipIconProps}><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>);
+
+const _ATTACH_STYLE: Record<string, { bg: string; border: string; fg: string }> = {
+  file:      { bg: 'rgba(59,130,246,0.15)',  border: 'rgba(59,130,246,0.3)',  fg: '#93c5fd' },
+  folder:    { bg: 'rgba(74,222,128,0.15)',  border: 'rgba(74,222,128,0.3)',  fg: '#4ade80' },
+  context:   { bg: 'rgba(34,211,238,0.15)',  border: 'rgba(34,211,238,0.35)', fg: '#67e8f9' },
+  thought:   { bg: 'rgba(129,140,248,0.15)', border: 'rgba(129,140,248,0.35)', fg: '#a5b4fc' },
+  highlight: { bg: 'rgba(255,255,255,0.1)',  border: 'rgba(255,255,255,0.2)', fg: '#e5e7eb' },
+};
+
+function _AttachmentChip({ a, onOpenPath }: { a: { kind: string; label: string; path?: string }; onOpenPath?: (p: string) => void }) {
+  const s = _ATTACH_STYLE[a.kind] || _ATTACH_STYLE.highlight;
+  const clickable = !!a.path && !!onOpenPath;
+  return (
+    <span
+      className="flex items-center gap-1 px-2 py-0.5 rounded-md"
+      title={a.path || a.label}
+      onClick={clickable ? () => onOpenPath!(a.path!) : undefined}
+      style={{
+        backgroundColor: s.bg, border: `1px solid ${s.border}`, color: s.fg,
+        fontSize: '0.65rem', lineHeight: 1.4, cursor: clickable ? 'pointer' : 'default',
+        maxWidth: 220, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+      }}
+    >
+      {a.kind === 'folder' && <_FolderIcon />}
+      {a.kind === 'file' && <_FileIcon />}
+      {a.kind === 'context' && <TargetIcon />}
+      {a.kind === 'thought' && <BrainIcon size={10} />}
+      <span className="truncate">{a.label}</span>
+    </span>
+  );
+}
+
 // ── Long-message collapse ────────────────────────────────────────────────────
 // Height-based clamp (not char-slicing) — markdown stays intact; the fade hints
 // at hidden content and the pill toggles the full message.
@@ -292,6 +345,7 @@ interface FeedEntryRowProps {
   onPlanCancel: (taskId: string, planFile: string | null) => void;
   onOpenPath: (path: string) => void;
   onOpenSourceUrl: (url: string) => void;
+  onApplyDraft?: (entryId: string, draft: FeedDraft) => void;
   onContinueThread?: (task: CommsTask) => void;
   onRunSummaryForTask?: (taskId: string, summary: RunSummary) => void;
   onToggleRun: (id: string) => void;
@@ -303,7 +357,7 @@ interface FeedEntryRowProps {
 const FeedEntryRow = React.memo(function FeedEntryRow({
   entry, liveTask, hasRunCard, runToggled, copied,
   onRedo, onCopy, onPlanApprove, onPlanCancel, onOpenPath, onOpenSourceUrl,
-  onContinueThread, onRunSummaryForTask, onToggleRun, onOpenQueue, onIsolateContext, isContextActive,
+  onApplyDraft, onContinueThread, onRunSummaryForTask, onToggleRun, onOpenQueue, onIsolateContext, isContextActive,
 }: FeedEntryRowProps) {
   const hoverActions = (e: { id: string; text?: string; prompt?: string; taskId?: string }) => {
     // Isolated bodies keep their actions strip visible — the cyan target reads
@@ -364,19 +418,27 @@ const FeedEntryRow = React.memo(function FeedEntryRow({
     case 'user':
       return (
         <div className="feed-entry flex justify-end" style={{ margin: '16px 0 6px', position: 'relative', paddingBottom: 10 }}>
-          <div style={{
-            maxWidth: '85%',
-            padding: '7px 12px',
-            borderRadius: '12px 12px 4px 12px',
-            backgroundColor: 'rgba(59,130,246,0.16)',
-            border: '1px solid rgba(59,130,246,0.3)',
-            color: '#dbeafe',
-            fontSize: '0.8rem',
-            lineHeight: 1.45,
-            whiteSpace: 'pre-wrap',
-            wordBreak: 'break-word',
-          }}>
-            <CollapsibleContent text={entry.text}>{entry.text}</CollapsibleContent>
+          <div style={{ maxWidth: '85%' }}>
+            <div style={{
+              padding: '7px 12px',
+              borderRadius: '12px 12px 4px 12px',
+              backgroundColor: 'rgba(59,130,246,0.16)',
+              border: '1px solid rgba(59,130,246,0.3)',
+              color: '#dbeafe',
+              fontSize: '0.8rem',
+              lineHeight: 1.45,
+              whiteSpace: 'pre-wrap',
+              wordBreak: 'break-word',
+            }}>
+              <CollapsibleContent text={entry.text}>{entry.text}</CollapsibleContent>
+            </div>
+            {!!entry.attachments?.length && (
+              <div className="flex flex-wrap justify-end gap-1" style={{ marginTop: 4 }}>
+                {entry.attachments.map((a, i) => (
+                  <_AttachmentChip key={i} a={a} onOpenPath={onOpenPath} />
+                ))}
+              </div>
+            )}
           </div>
           {hoverActions({ id: entry.id, text: entry.text, prompt: entry.text })}
         </div>
@@ -592,6 +654,43 @@ const FeedEntryRow = React.memo(function FeedEntryRow({
                   ))}
                 </div>
               )}
+              {entry.drafts && entry.drafts.length > 0 && (
+                <div className="flex flex-col gap-1.5">
+                  {entry.drafts.map(d => {
+                    const holder = d.openIn && d.openIn.length > 0 ? d.openIn[0] : null;
+                    return (
+                      <div key={d.draftPath} className="flex items-center flex-wrap gap-1.5">
+                        <button
+                          onClick={() => onOpenPath(d.draftPath)}
+                          style={{ padding: '3px 9px', borderRadius: 10, backgroundColor: 'rgba(167,139,250,0.10)', border: '1px solid rgba(167,139,250,0.30)', color: '#c4b5fd', fontSize: '0.65rem', fontFamily: 'monospace', cursor: 'pointer' }}
+                          title={`Draft (original untouched): ${d.draftPath}`}
+                        >
+                          {(d.filePath || d.draftPath).split('/').pop() || 'draft'} (draft)
+                        </button>
+                        {d.applied ? (
+                          <span style={{ padding: '3px 10px', borderRadius: 6, backgroundColor: 'rgba(16,185,129,0.10)', border: '1px solid rgba(16,185,129,0.30)', color: '#6ee7b7', fontSize: '0.68rem', fontWeight: 600 }}>
+                            Applied
+                          </span>
+                        ) : onApplyDraft ? (
+                          <button
+                            onClick={() => onApplyDraft(entry.id, d)}
+                            disabled={!!d.applying}
+                            style={{ padding: '3px 10px', borderRadius: 6, backgroundColor: 'rgba(59,130,246,0.14)', border: '1px solid rgba(59,130,246,0.40)', color: '#93c5fd', fontSize: '0.68rem', fontWeight: 600, cursor: d.applying ? 'default' : 'pointer', opacity: d.applying ? 0.6 : 1 }}
+                            title={holder
+                              ? `Close ${holder}'s copy of ${d.filePath || 'the file'} (you'll be asked to save unsaved changes), then apply the draft`
+                              : `Apply the draft over ${d.filePath || 'the original'}`}
+                          >
+                            {d.applying ? 'Applying…' : holder ? `Close ${holder} & Apply` : 'Apply'}
+                          </button>
+                        ) : null}
+                        {d.applyError && (
+                          <span style={{ color: '#f87171', fontSize: '0.65rem' }}>{d.applyError}</span>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
               {entry.status === 'awaiting-approval' && entry.taskId && (
                 <div className="flex gap-2">
                   <button
@@ -656,6 +755,7 @@ function ResultsFeedImpl({
   onPlanCancel,
   onOpenPath,
   onOpenSourceUrl,
+  onApplyDraft,
   resolveTask,
   onContinueThread,
   onRunSummaryForTask,
@@ -718,6 +818,7 @@ function ResultsFeedImpl({
       onPlanCancel={onPlanCancel}
       onOpenPath={onOpenPath}
       onOpenSourceUrl={onOpenSourceUrl}
+      onApplyDraft={onApplyDraft}
       onContinueThread={onContinueThread}
       onRunSummaryForTask={onRunSummaryForTask}
       onToggleRun={toggleRun}

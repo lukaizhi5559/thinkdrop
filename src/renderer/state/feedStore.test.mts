@@ -118,6 +118,36 @@ test('toDisplayPrompt strips [Context:] prefixes', () => {
   );
 });
 
+// Stategraph-injected plumbing must never render in the bubble — the
+// attachment chips already convey the file/context. [Resolved file path:]
+// is appended AFTER the parenthetical, so the strip can't be end-anchored.
+test('toDisplayPrompt strips injected context + resolved-path plumbing', () => {
+  // Exact shape from the iso-file-attach run: paren then resolved-path tag.
+  assert.equal(
+    toDisplayPrompt(
+      'fix typos\n\n(Context from prior turn: /Users/x/test-file.rtf)\n[Resolved file path: /Users/x/test-file.rtf]',
+    ),
+    'fix typos',
+  );
+  // Resolved-path tag alone (no paren).
+  assert.equal(
+    toDisplayPrompt('open it\n[Resolved file path: /Users/x/a.pdf]'),
+    'open it',
+  );
+  // Paren mid-text (non-iso follow-up where plumbing precedes trailing text).
+  assert.equal(
+    toDisplayPrompt('check again\n\n(Context from prior turn: Shenzhen report)\n\nthanks'),
+    'check again\n\nthanks',
+  );
+  // Leading tags + trailing plumbing together — chips handled separately.
+  assert.equal(
+    toDisplayPrompt(
+      '[File: /Users/x/test-file.rtf]\n[Context: fix typos in this file]\n\nfix typos\n\n(Context from prior turn: /Users/x/test-file.rtf)\n[Resolved file path: /Users/x/test-file.rtf]',
+    ),
+    'fix typos',
+  );
+});
+
 // A re-asked message after a reply is a NEW exchange — the set-prompt echo
 // dedupe must not eat identical texts once the turn has advanced.
 test('re-asked identical text after a reply mints a new exchange', () => {

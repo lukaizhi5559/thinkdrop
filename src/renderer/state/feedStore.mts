@@ -76,7 +76,7 @@ export interface FeedStore {
   removeEntry: (id: string) => void;
   resetEntries: () => void;
   upsertProactive: (thoughtId: string, pendingId: string) => void;
-  appendUserEntry: (text: string) => string | null;
+  appendUserEntry: (text: string, attachments?: FeedAttachment[]) => string | null;
   ensureRunEntry: (taskId: string, prompt?: string | null) => void;
   exchangeForTask: (taskId?: string | null, prompt?: string | null) => string | undefined;
   // stream
@@ -94,6 +94,29 @@ export interface FeedStore {
 
 // ── Pure helpers (exported for tests + the history mapper) ──────────────────
 
+export type FeedAttachment = { kind: 'file' | 'folder' | 'context' | 'thought' | 'highlight'; label: string; path?: string };
+
+/** Parse a leading [Tag: body] block into attachment chips (for bubbles + history). */
+export function extractAttachments(raw: string): FeedAttachment[] {
+  const out: FeedAttachment[] = [];
+  let rest = String(raw || '');
+  const tagRe = /^\[(Highlighted|File|Folder|Thought|Context):\s*([^\n]*)\]\n?/;
+  let m: RegExpMatchArray | null;
+  while ((m = rest.match(tagRe))) {
+    const kindRaw = m[1].toLowerCase();
+    const body = m[2].trim();
+    const isPath = kindRaw === 'file' || kindRaw === 'folder';
+    const kind = (kindRaw === 'highlighted' ? 'highlight' : kindRaw) as FeedAttachment['kind'];
+    out.push({
+      kind,
+      label: isPath ? (body.split('/').filter(Boolean).pop() || body) : body.slice(0, 120),
+      ...(isPath ? { path: body } : {}),
+    });
+    rest = rest.slice(m[0].length);
+  }
+  return out;
+}
+
 /** Strip context wrappers from the text shown in the user bubble. */
 export function toDisplayPrompt(raw: string): string {
   let t = raw;
@@ -105,7 +128,12 @@ export function toDisplayPrompt(raw: string): string {
     t = t.replace(/^\[(?:Highlighted|File|Folder|Thought|Context):[^\n]*\]\n?/, '');
   }
   t = t.replace(/^\s*\n+/, '');
-  t = t.replace(/\n*\s*\(Context from prior turn:[^)]*\)\s*$/, '');
+  // Engine plumbing injected by the stategraph (planner metadata, not user
+  // text). [Resolved file path:] is appended AFTER the parenthetical, so the
+  // paren strip must not be end-anchored — the chips already convey this.
+  t = t.replace(/\n*\s*\(Context from prior turn:[^)]*\)/g, '');
+  t = t.replace(/\n*\s*\[Resolved file path:[^\n]*\]/g, '');
+  t = t.replace(/\n{3,}/g, '\n\n');
   // Proactive dispatches append a save-dir instruction — engine internals,
   // not user text (leaks the brain outdir path into the bubble).
   t = t.replace(/\n*\s*Save any files you produce to:[^\n]*\s*$/, '');
@@ -153,7 +181,9 @@ export function mapHistoryMessage(m: any): FeedEntry | null {
   const id = `db_${m.id}`;
   const intent = m?.metadata?.intent;
   if (m.sender === 'user') {
-    return { id, ts, kind: 'user', text: toDisplayPrompt(String(m.text || '')) } as FeedEntry;
+    const raw = String(m.text || '');
+    const attachments = extractAttachments(raw);
+    return { id, ts, kind: 'user', text: toDisplayPrompt(raw), ...(attachments.length ? { attachments } : {}) } as FeedEntry;
   }
   // Thought-engine nudges persist as assistant rows with metadata.source —
   // reload them as proactive entries (brain styling), not chat bubbles.
@@ -339,7 +369,7 @@ export function createFeedStore(now: () => number = () => Date.now()): FeedStore
     ));
   };
 
-  const appendUserEntry = (text: string): string | null => {
+  const appendUserEntry = (text: string, attachments?: FeedAttachment[]): string | null => {
     const clean = toDisplayPrompt(text);
     if (!clean) return null;
     // Reuse the exchangeId only for an unreplied identical user bubble — the
@@ -362,7 +392,7 @@ export function createFeedStore(now: () => number = () => Date.now()): FeedStore
       : `x_${now()}_${internal.feedSeq++}`;
     setEntries(prev => prev.some(e => e.kind === 'user' && e.exchangeId === xid)
       ? prev
-      : [...prev, { id: nextId(), ts: now(), kind: 'user', text: clean, exchangeId: xid } as FeedEntry]);
+      : [...prev, { id: nextId(), ts: now(), kind: 'user', text: clean, exchangeId: xid, ...(attachments?.length ? { attachments } : {}) } as FeedEntry]);
     internal.lastExchangeId = xid;
     internal.lastPrompt = clean;
     return xid;

@@ -36,6 +36,15 @@ interface Step {
   commandName?: string | null;
   runGroup?: string; // parallel group ID (e.g. "g1")
   args?: any; // arguments passed to the skill (contains agentId for browser.agent)
+  draftPath?: string; // edit.agent draft — original untouched until applied
+  openIn?: string[]; // processes holding the target file open (e.g. "TextEdit")
+}
+
+export interface DraftRef {
+  draftPath: string;
+  filePath: string | null;
+  openIn: string[];
+  diff: string | null;
 }
 
 // ── AgentFavicon — shown next to agentId on every agent step ─────────────────
@@ -264,6 +273,7 @@ export interface RunSummary {
   status: 'done' | 'failed' | 'cancelled';
   steps: { title: string; status: string; skill?: string; output?: string; savedFilePath?: string }[];
   savedFilePaths: string[];
+  drafts?: DraftRef[];
   planFile: string | null;
   error: string | null;
   durationMs: number | null;
@@ -909,6 +919,7 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
   const [expandedSteps, setExpandedSteps] = useState<Set<number>>(new Set());
   const [synthesisAnswer, setSynthesisAnswer] = useState<string>('');
   const [savedFilePaths, setSavedFilePaths] = useState<string[]>([]);
+  const [drafts, setDrafts] = useState<DraftRef[]>([]);
   const [askUserPrompt, setAskUserPrompt] = useState<AskUserPrompt | null>(null);
   const [askUserFreeText, setAskUserFreeText] = useState('');
   const [askUserCorrectionMode, setAskUserCorrectionMode] = useState(false);
@@ -1162,12 +1173,14 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
   const onRunSummaryRef = useRef(onRunSummary);
   const stepsSnapshotRef = useRef<Step[]>([]);
   const savedFilePathsSnapshotRef = useRef<string[]>([]);
+  const draftsSnapshotRef = useRef<DraftRef[]>([]);
   const planReviewSnapshotRef = useRef(planReview);
   const runSummaryEmittedRef = useRef(false);
   useEffect(() => {
     onRunSummaryRef.current = onRunSummary;
     stepsSnapshotRef.current = steps;
     savedFilePathsSnapshotRef.current = savedFilePaths;
+    draftsSnapshotRef.current = drafts;
     planReviewSnapshotRef.current = planReview;
   });
 
@@ -1191,6 +1204,7 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
         savedFilePath: x.savedFilePath || undefined,
       })),
       savedFilePaths: savedFilePathsSnapshotRef.current,
+      drafts: draftsSnapshotRef.current.length > 0 ? draftsSnapshotRef.current : undefined,
       planFile: pr?.planFile || _planFileRef.current || null,
       error,
       durationMs: executionStartRef.current ? Date.now() - executionStartRef.current : null,
@@ -1284,6 +1298,7 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
       setSynthesisAnswer('');
       setFailureAnswer(null);
       setSavedFilePaths([]);
+      setDrafts([]);
       setAskUserPrompt(null);
       askUserPromptRef.current = null;
       setAutoRetryCountdown(null);
@@ -1901,7 +1916,9 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
                     description: data.description || s.description,
                     stdout: data.stdout,
                     exitCode: data.exitCode,
-                    savedFilePath: data.savedFilePath || undefined, 
+                    savedFilePath: data.savedFilePath || undefined,
+                    draftPath: data.draftPath || undefined,
+                    openIn: Array.isArray(data.openIn) ? data.openIn : undefined,
                     guideInstruction: data.instruction || s.guideInstruction, 
                     runGroup: data.runGroup || s.runGroup 
                   }
@@ -1925,6 +1942,17 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
             setSavedFilePaths(prev => {
               if (prev.includes(data.savedFilePath)) return prev;
               return [...prev, data.savedFilePath];
+            });
+          }
+          if (data.draftPath) {
+            setDrafts(prev => {
+              if (prev.some(d => d.draftPath === data.draftPath)) return prev;
+              return [...prev, {
+                draftPath: data.draftPath,
+                filePath: data.filePath || null,
+                openIn: Array.isArray(data.openIn) ? data.openIn : [],
+                diff: data.diff || null,
+              }];
             });
           }
           break;
@@ -2824,6 +2852,16 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
           // from dead replan cycles don't get mismatched results. Any step outside
           // the final plan's window that is still red (failed) is downgraded to
           // 'skipped' (grey) so the UI reflects that the task ultimately succeeded.
+          // Authoritative drafts list from the run — backfills any step_done
+          // races and carries diff/openIn metadata.
+          if (Array.isArray(data.drafts) && data.drafts.length > 0) {
+            setDrafts(data.drafts.map((d: any) => ({
+              draftPath: d.draftPath,
+              filePath: d.filePath || null,
+              openIn: Array.isArray(d.openIn) ? d.openIn : [],
+              diff: d.diff || null,
+            })));
+          }
           if (Array.isArray(data.skillResults)) {
             const filePaths: string[] = Array.isArray(data.savedFilePaths) ? data.savedFilePaths : [];
             const finalOffset = stepOffsetRef.current;
@@ -2857,6 +2895,8 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
                   error: r.error || s?.error,
                   exitCode: r.exitCode ?? s?.exitCode,
                   savedFilePath: stepFilePath || s?.savedFilePath,
+                  draftPath: r.draftPath || s?.draftPath,
+                  openIn: Array.isArray(r.openIn) ? r.openIn : s?.openIn,
                   skill: r.skill ?? s?.skill ?? '',
                   description: r.description ?? s?.description ?? `Step ${i + 1}`,
                 });
