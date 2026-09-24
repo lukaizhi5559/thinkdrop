@@ -927,6 +927,7 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
   const [synthesisAnswer, setSynthesisAnswer] = useState<string>('');
   const [savedFilePaths, setSavedFilePaths] = useState<string[]>([]);
   const [drafts, setDrafts] = useState<DraftRef[]>([]);
+  const [expandedDiffs, setExpandedDiffs] = useState<Set<string>>(new Set());
   const [askUserPrompt, setAskUserPrompt] = useState<AskUserPrompt | null>(null);
   const [askUserFreeText, setAskUserFreeText] = useState('');
   const [askUserCorrectionMode, setAskUserCorrectionMode] = useState(false);
@@ -5418,6 +5419,9 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
           {drafts.map((d) => {
             const holder = Array.isArray(d.openIn) && d.openIn.length > 0 ? d.openIn[0] : null;
             const draftName = (d.filePath || d.draftPath).split('/').pop() || 'draft';
+            const diffOpen = expandedDiffs.has(d.draftPath);
+            const diffLines = d.diff ? d.diff.split('\n') : [];
+            const diffTruncated = diffLines.length > 200;
             return (
               <div key={d.draftPath} className="flex items-center flex-wrap gap-1.5">
                 <button
@@ -5461,6 +5465,53 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
                   <span className="text-xs" style={{ color: '#fca5a5' }} title={d.applyError}>
                     {d.applyError}
                   </span>
+                )}
+                {d.diff && (
+                  <button
+                    onClick={() => setExpandedDiffs(prev => {
+                      const next = new Set(prev);
+                      diffOpen ? next.delete(d.draftPath) : next.add(d.draftPath);
+                      return next;
+                    })}
+                    className="px-2 py-1 rounded-lg text-xs font-medium transition-colors"
+                    style={{
+                      backgroundColor: 'rgba(148,163,184,0.10)',
+                      border: '1px solid rgba(148,163,184,0.25)',
+                      color: '#94a3b8',
+                      cursor: 'pointer',
+                    }}
+                    title="Preview the changes before applying"
+                  >
+                    {diffOpen ? 'Hide diff' : 'View diff'}
+                  </button>
+                )}
+                {diffOpen && (
+                  <pre
+                    className="w-full text-xs rounded-lg p-2 overflow-auto"
+                    style={{
+                      backgroundColor: 'rgba(0,0,0,0.25)',
+                      border: '1px solid rgba(148,163,184,0.2)',
+                      maxHeight: '240px',
+                      fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
+                      whiteSpace: 'pre-wrap',
+                      wordBreak: 'break-all',
+                    }}
+                  >
+                    {(diffTruncated ? diffLines.slice(0, 200) : diffLines).map((ln, i) => (
+                      <div
+                        key={i}
+                        style={{
+                          color: ln.startsWith('+') ? '#4ade80'
+                            : ln.startsWith('-') ? '#f87171'
+                            : ln.startsWith('@@') ? '#a78bfa'
+                            : '#94a3b8',
+                        }}
+                      >{ln}</div>
+                    ))}
+                    {diffTruncated && (
+                      <div style={{ color: '#64748b' }}>… {diffLines.length - 200} more diff lines — open the draft file to see all</div>
+                    )}
+                  </pre>
                 )}
               </div>
             );

@@ -560,6 +560,12 @@ export function UnifiedOverlay() {
     const tailThought = !hasIsolatedContext && tailEntry && tailEntry.kind === 'proactive' && !(tailEntry as any).pending && (tailEntry as any).text
       ? `[Thought: ${(tailEntry as any).text.replace(/\s+/g, ' ').trim()}]`
       : null;
+    // Structured metadata for the same card — lets comms-graph/stategraph treat
+    // the prompt as a reply to THIS thought (lifecycle + context) instead of
+    // parsing the tag back out of the text.
+    const thoughtContext = tailThought
+      ? { id: (tailEntry as any).thoughtId || null, text: String((tailEntry as any).text || ''), tag: tailThought }
+      : null;
     let allHighlights = tailThought && !finalHighlights.includes(tailThought)
       ? [tailThought, ...finalHighlights]
       : finalHighlights;
@@ -636,6 +642,7 @@ export function UnifiedOverlay() {
       prompt: finalPrompt.trim(),
       selectedText: finalHighlights.join('\n'),
       sessionId: isoSessionId || threadContext?.sessionId || undefined,
+      ...(thoughtContext ? { thoughtContext } : {}),
     });
     setThreadContext(null); // one-shot chip — the session stays current via resolvedSessionId
     dbg('✅ [UNIFIED] Prompt enqueued');

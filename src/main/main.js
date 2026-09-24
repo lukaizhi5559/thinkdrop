@@ -755,8 +755,8 @@ function startOverlayControlServer() {
       req.on('data', chunk => { body += chunk; });
       req.on('end', () => {
         try {
-          const { taskId, prompt, agentId, source, originalPrompt, guessedIntent, sessionId: handoffSessionId, userApproved } = JSON.parse(body || '{}');
-          console.log(`[CommsGraph] Handoff received — task=${taskId} agent=${agentId || 'auto'} source=${source} guessedIntent=${guessedIntent || 'null'} session=${handoffSessionId || 'none'}`);
+          const { taskId, prompt, agentId, source, originalPrompt, guessedIntent, sessionId: handoffSessionId, userApproved, thoughtContext } = JSON.parse(body || '{}');
+          console.log(`[CommsGraph] Handoff received — task=${taskId} agent=${agentId || 'auto'} source=${source} guessedIntent=${guessedIntent || 'null'} session=${handoffSessionId || 'none'}${thoughtContext?.id ? ` thought=${thoughtContext.id}` : ''}`);
 
           // Emit task:created BEFORE starting the stategraph run so the queue card
           // is mounted and ready to receive plan:generated / preflight events.
@@ -782,6 +782,7 @@ function startOverlayControlServer() {
             originalPrompt: originalPrompt || null,
             sessionId: handoffSessionId || currentSessionId,
             userApproved: userApproved === true,
+            thoughtContext: thoughtContext || null,
           }).catch(err => {
             console.error(`[CommsGraph] Handoff ${taskId} error:`, err.message);
           });
@@ -3656,12 +3657,12 @@ app.whenReady().then(async () => {
   // When COMMS_GRAPH_ENABLED=true, sends the prompt to comms-graph /comms.process.
   // On success: streams the response to the renderer and returns true (skip promptQueue).
   // On failure/timeout: returns false so the caller can fall back to promptQueue.
-  function routeThroughCommsGraph(prompt, { selectedText = '', responseLanguage = null, sessionId = null, source = 'text' } = {}) {
+  function routeThroughCommsGraph(prompt, { selectedText = '', responseLanguage = null, sessionId = null, source = 'text', thoughtContext = null } = {}) {
     if (process.env.COMMS_GRAPH_ENABLED !== 'true') return false;
 
     const commsPort = parseInt(process.env.COMMS_GRAPH_PORT || '3015', 10);
     console.log(`🧠 [CommsGraph] Routing prompt through comms-graph (source=${source}):`, prompt.substring(0, 80));
-    const commsBody = JSON.stringify({ text: prompt, source, language: responseLanguage || null, sessionId: sessionId || null });
+    const commsBody = JSON.stringify({ text: prompt, source, language: responseLanguage || null, sessionId: sessionId || null, thoughtContext: thoughtContext || null });
     const commsReq = http.request({
       hostname: '127.0.0.1',
       port: commsPort,
@@ -3739,7 +3740,7 @@ app.whenReady().then(async () => {
   // Expose to the /voice.event endpoint so voice finals route identically.
   _routeViaCommsGraph = routeThroughCommsGraph;
 
-  ipcMain.on('prompt-queue:submit', (_event, { prompt, selectedText = '', responseLanguage = null, isAskUserAnswer = false, taskId = null, sessionId: pinnedSessionId = null } = {}) => {
+  ipcMain.on('prompt-queue:submit', (_event, { prompt, selectedText = '', responseLanguage = null, isAskUserAnswer = false, taskId = null, sessionId: pinnedSessionId = null, thoughtContext = null } = {}) => {
     const trimmedPrompt = prompt?.trim();
     if (!trimmedPrompt) return;
 
@@ -3820,7 +3821,7 @@ app.whenReady().then(async () => {
     }
 
     if (!pendingPlanContext && !isAskUserAnswer) {
-      if (routeThroughCommsGraph(trimmedPrompt, { selectedText, responseLanguage, sessionId: effectiveSessionId })) {
+      if (routeThroughCommsGraph(trimmedPrompt, { selectedText, responseLanguage, sessionId: effectiveSessionId, thoughtContext })) {
         return; // comms-graph dispatched — don't also enqueue
       }
     }
