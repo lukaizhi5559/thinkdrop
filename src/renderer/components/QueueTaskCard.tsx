@@ -1,6 +1,6 @@
 import React from 'react';
 import AutomationProgress from './AutomationProgress';
-import type { RunSummary } from './AutomationProgress';
+import type { RunSummary, DraftRef } from './AutomationProgress';
 import { playDropSound } from '../utils/thinkDropSound';
 import { Favicon } from './DefaultFaviconIcon';
 import RichContentRenderer from './rich-content/RichContentRenderer';
@@ -220,7 +220,7 @@ export function PromptText({ text, maxLen = 80 }: { text: string; maxLen?: numbe
 }
 
 // ── QueueTaskCard — wraps AutomationProgress in an expandable card ────────────
-export function QueueTaskCard({ task, onContinueThread, onHeightChange, flash, onRunSummary, autoCollapseOnSettle }: {
+export function QueueTaskCard({ task, onContinueThread, onHeightChange, flash, onRunSummary, onApplyDraft, autoCollapseOnSettle }: {
   task: CommsTask;
   onContinueThread?: (task: CommsTask) => void;
   onHeightChange?: () => void;
@@ -228,6 +228,9 @@ export function QueueTaskCard({ task, onContinueThread, onHeightChange, flash, o
   /** Forwarded to the embedded AutomationProgress — feed cards use it to keep
    *  a static snapshot for after the live task is purged. */
   onRunSummary?: (summary: RunSummary) => void;
+  /** Forwarded to the embedded AutomationProgress — "Apply"/"Close & Apply" on
+   *  a draft row inside the live card. */
+  onApplyDraft?: (draft: DraftRef) => void;
   /** Results feed only: collapse the card when the run reaches a terminal state. */
   autoCollapseOnSettle?: boolean;
 }) {
@@ -512,6 +515,7 @@ export function QueueTaskCard({ task, onContinueThread, onHeightChange, flash, o
             onHeightChange={notifyHeightChange}
             onActiveChange={() => {}}
             onRunSummary={onRunSummary}
+            onApplyDraft={onApplyDraft}
           />
         </div>
 

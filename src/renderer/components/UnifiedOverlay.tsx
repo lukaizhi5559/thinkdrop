@@ -878,10 +878,14 @@ export function UnifiedOverlay() {
   // document (osascript saving ask) then applies; progress lands via
   // draft_apply_start / draft_applied automation:progress events.
   const handleApplyDraft = useCallback((_entryId: string, draft: FeedDraft) => {
+    // Resolve the run entry's taskId so draft_apply_* progress events reach the
+    // task-scoped AutomationProgress inside QueueTaskCard (it filters out
+    // untagged events) as well as the global instance.
+    const owner = feedStore.getState().entries.find(e => e.kind === 'run' && (e.drafts || []).some(d => d.draftPath === draft.draftPath));
     ipcRenderer?.send('edit:apply', {
       draftPath: draft.draftPath,
       filePath: draft.filePath || undefined,
-      taskId: undefined,
+      taskId: owner && owner.kind === 'run' ? owner.taskId : undefined,
     });
   }, []);
 

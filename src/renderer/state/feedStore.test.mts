@@ -11,6 +11,7 @@ import {
   createFeedStore,
 
   dedupePlannerTail,
+  deriveRunDrafts,
   mapHistoryMessages,
   oldestMessageCursor,
   toDisplayPrompt,
@@ -343,4 +344,40 @@ test('oldestMessageCursor returns the oldest row timestamp', () => {
     histMsg(2, '2026-01-01T00:00:02Z'), histMsg(1, '2026-01-01T00:00:01Z'),
   ]);
   assert.equal(c, '2026-01-01T00:00:01Z');
+});
+
+// ── deriveRunDrafts — draft row survives summary-snapshot races ─────────────
+
+test('deriveRunDrafts prefers entry.drafts when present', () => {
+  const entry: any = {
+    kind: 'run',
+    drafts: [{ draftPath: '/d/1.docx', filePath: '/f/1.rtf', openIn: ['TextEdit'], diff: null }],
+    steps: [{ title: 'edit', status: 'done', draftPath: '/d/other.docx' }],
+  };
+  const d = deriveRunDrafts(entry);
+  assert.equal(d.length, 1);
+  assert.equal(d[0].draftPath, '/d/1.docx');
+  assert.deepEqual(d[0].openIn, ['TextEdit']);
+});
+
+test('deriveRunDrafts falls back to step draftPath metadata', () => {
+  const entry: any = {
+    kind: 'run',
+    steps: [
+      { title: 'read', status: 'done' },
+      { title: 'edit', status: 'done', draftPath: '/d/2.docx', savedFilePath: '/f/2.rtf', openIn: ['TextEdit'], diff: '@@x' },
+      { title: 'confirm', status: 'done' },
+    ],
+  };
+  const d = deriveRunDrafts(entry);
+  assert.equal(d.length, 1);
+  assert.equal(d[0].draftPath, '/d/2.docx');
+  assert.equal(d[0].filePath, '/f/2.rtf');
+  assert.deepEqual(d[0].openIn, ['TextEdit']);
+  assert.equal(d[0].diff, '@@x');
+});
+
+test('deriveRunDrafts returns empty for non-run entries and draft-free runs', () => {
+  assert.equal(deriveRunDrafts({ kind: 'user', text: 'hi' } as any).length, 0);
+  assert.equal(deriveRunDrafts({ kind: 'run', steps: [{ title: 'x', status: 'done' }] } as any).length, 0);
 });

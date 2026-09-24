@@ -10,7 +10,7 @@
  * `import type` for component types — `feedStore.test.mts` runs it under
  * `node --test --experimental-strip-types` with no bundler.
  */
-import type { FeedEntry } from '../components/ResultsFeed';
+import type { FeedEntry, FeedDraft } from '../components/ResultsFeed';
 import type { CommsTask } from '../components/QueueTaskCard';
 import type { WebResultItem } from '../components/rich-content/WebResultCard';
 import type { SearchSource } from '../components/ResultsContent';
@@ -95,6 +95,22 @@ export interface FeedStore {
 // ── Pure helpers (exported for tests + the history mapper) ──────────────────
 
 export type FeedAttachment = { kind: 'file' | 'folder' | 'context' | 'thought' | 'highlight'; label: string; path?: string };
+
+/** Run-entry drafts with a steps-derived fallback — when the run summary's
+ * `drafts` array missed the snapshot (races, missed step_done), recover them
+ * from per-step `draftPath` metadata so the Apply affordance still renders. */
+export function deriveRunDrafts(entry: FeedEntry): FeedDraft[] {
+  if (entry.kind !== 'run') return [];
+  if (entry.drafts && entry.drafts.length > 0) return entry.drafts;
+  return (entry.steps || [])
+    .filter(s => typeof s.draftPath === 'string' && s.draftPath.length > 0)
+    .map(s => ({
+      draftPath: s.draftPath!,
+      filePath: s.savedFilePath || null,
+      openIn: Array.isArray(s.openIn) ? s.openIn : [],
+      diff: s.diff || null,
+    }));
+}
 
 /** Parse a leading [Tag: body] block into attachment chips (for bubbles + history). */
 export function extractAttachments(raw: string): FeedAttachment[] {

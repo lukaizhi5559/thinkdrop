@@ -9,6 +9,7 @@ import type { RunSummary } from './AutomationProgress';
 import { QueueTaskCard, BrainIcon } from './QueueTaskCard';
 import type { CommsTask } from './QueueTaskCard';
 import type { WebResultItem } from './rich-content/WebResultCard';
+import { deriveRunDrafts } from '../state/feedStore.mts';
 
 // ── Feed entry model ─────────────────────────────────────────────────────────
 // One item per row in the conversation feed. `ts` drives day dividers.
@@ -34,7 +35,7 @@ export interface FeedDraft {
 export type FeedEntry =
   | { id: string; ts: number; kind: 'user'; text: string; exchangeId?: string; attachments?: { kind: 'file' | 'folder' | 'context' | 'thought' | 'highlight'; label: string; path?: string }[] }
   | { id: string; ts: number; kind: 'assistant'; text: string; items?: WebResultItem[]; sources?: { url: string; hostname: string; title?: string }[]; taskId?: string; pending?: boolean; prompt?: string; isError?: boolean; errorRaw?: string; exchangeId?: string }
-  | { id: string; ts: number; kind: 'run'; title: string; status: FeedRunStatus; steps?: { title: string; status: string; skill?: string; output?: string; savedFilePath?: string }[]; savedFilePaths?: string[]; drafts?: FeedDraft[]; error?: string | null; taskId?: string; planFile?: string | null; durationMs?: number | null; prompt?: string; exchangeId?: string }
+  | { id: string; ts: number; kind: 'run'; title: string; status: FeedRunStatus; steps?: { title: string; status: string; skill?: string; output?: string; savedFilePath?: string; draftPath?: string; openIn?: string[]; diff?: string | null }[]; savedFilePaths?: string[]; drafts?: FeedDraft[]; error?: string | null; taskId?: string; planFile?: string | null; durationMs?: number | null; prompt?: string; exchangeId?: string }
   | { id: string; ts: number; kind: 'proactive'; text: string; thoughtId?: string; pending?: boolean; exchangeId?: string }
   | { id: string; ts: number; kind: 'system'; text: string; exchangeId?: string };
 
@@ -547,6 +548,7 @@ const FeedEntryRow = React.memo(function FeedEntryRow({
               onContinueThread={onContinueThread}
               onHeightChange={NOOP_HEIGHT}
               onRunSummary={entry.taskId ? (s) => onRunSummaryForTask?.(entry.taskId!, s) : undefined}
+              onApplyDraft={onApplyDraft ? (d) => onApplyDraft(entry.id, d as FeedDraft) : undefined}
               autoCollapseOnSettle
             />
           </div>
@@ -556,6 +558,7 @@ const FeedEntryRow = React.memo(function FeedEntryRow({
       const isActive = entry.status === 'running' || entry.status === 'queued' || entry.status === 'awaiting-approval' || entry.status === 'waiting-for-input' || entry.status === 'auth-required';
       const expanded = runToggled ? !isActive : isActive;
       const steps = entry.steps || [];
+      const runDrafts: FeedDraft[] = deriveRunDrafts(entry);
       const doneCount = steps.filter(s => s.status === 'done' || s.status === 'skipped').length;
       // Step title colors mirror the live AutomationProgress step rows.
       const stepColor = (status: string) =>
@@ -654,9 +657,9 @@ const FeedEntryRow = React.memo(function FeedEntryRow({
                   ))}
                 </div>
               )}
-              {entry.drafts && entry.drafts.length > 0 && (
+              {runDrafts.length > 0 && (
                 <div className="flex flex-col gap-1.5">
-                  {entry.drafts.map(d => {
+                  {runDrafts.map(d => {
                     const holder = d.openIn && d.openIn.length > 0 ? d.openIn[0] : null;
                     return (
                       <div key={d.draftPath} className="flex items-center flex-wrap gap-1.5">

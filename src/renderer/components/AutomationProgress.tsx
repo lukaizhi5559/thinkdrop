@@ -38,6 +38,7 @@ interface Step {
   args?: any; // arguments passed to the skill (contains agentId for browser.agent)
   draftPath?: string; // edit.agent draft — original untouched until applied
   openIn?: string[]; // processes holding the target file open (e.g. "TextEdit")
+  diff?: string; // unified diff of the draft vs the original
 }
 
 export interface DraftRef {
@@ -45,6 +46,9 @@ export interface DraftRef {
   filePath: string | null;
   openIn: string[];
   diff: string | null;
+  applying?: boolean;
+  applied?: boolean;
+  applyError?: string | null;
 }
 
 // ── AgentFavicon — shown next to agentId on every agent step ─────────────────
@@ -266,12 +270,15 @@ interface AutomationProgressProps {
   /** Results feed: called once when a run reaches a terminal state (done/failed/
    *  cancelled) with a snapshot of the run for the collapsed history card. */
   onRunSummary?: (summary: RunSummary) => void;
+  /** "Apply" / "Close <App> & Apply" clicked on a draft row — parent sends
+   *  the edit:apply IPC; apply progress lands via draft_apply_* events. */
+  onApplyDraft?: (draft: DraftRef) => void;
 }
 
 export interface RunSummary {
   title: string;
   status: 'done' | 'failed' | 'cancelled';
-  steps: { title: string; status: string; skill?: string; output?: string; savedFilePath?: string }[];
+  steps: { title: string; status: string; skill?: string; output?: string; savedFilePath?: string; draftPath?: string; openIn?: string[]; diff?: string | null }[];
   savedFilePaths: string[];
   drafts?: DraftRef[];
   planFile: string | null;
@@ -908,7 +915,7 @@ function parsePlanStepTitles(content: string): string[] {
 // a second mount would overwrite the first's handler and unmounting one kills both).
 let _apInstanceSeq = 0;
 
-export default function AutomationProgress({ onHeightChange, onActiveChange, onOpenRules, onAskUserShown, setIsSubmitting, onAuthPending, suppressIfScheduled, activeTab, taskId, planFile, onRunSummary }: AutomationProgressProps) {
+export default function AutomationProgress({ onHeightChange, onActiveChange, onOpenRules, onAskUserShown, setIsSubmitting, onAuthPending, suppressIfScheduled, activeTab, taskId, planFile, onRunSummary, onApplyDraft }: AutomationProgressProps) {
   const [instanceSeq] = useState(() => ++_apInstanceSeq);
   const [phase, setPhase] = useState<AutomationPhase>('idle');
   const planReviewRef = useRef<HTMLDivElement>(null);
@@ -1202,6 +1209,9 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
         // Output preview for the feed card — capped so the settled entry stays light.
         output: (x.error || x.stdout || '').trim().slice(0, 4000) || undefined,
         savedFilePath: x.savedFilePath || undefined,
+        draftPath: x.draftPath || undefined,
+        openIn: Array.isArray(x.openIn) ? x.openIn : undefined,
+        diff: x.diff || undefined,
       })),
       savedFilePaths: savedFilePathsSnapshotRef.current,
       drafts: draftsSnapshotRef.current.length > 0 ? draftsSnapshotRef.current : undefined,
@@ -1957,6 +1967,20 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
           }
           break;
         }
+
+        case 'draft_apply_start':
+          setDrafts(prev => prev.map(d =>
+            d.draftPath === data.draftPath ? { ...d, applying: true, applyError: null } : d));
+          break;
+
+        case 'draft_applied':
+          setDrafts(prev => prev.map(d => {
+            if (d.draftPath !== data.draftPath) return d;
+            return data.ok === true
+              ? { ...d, applying: false, applied: true, openIn: [] }
+              : { ...d, applying: false, applyError: data.error || 'apply failed' };
+          }));
+          break;
 
         case 'step_skipped':
           agentStepStartTimes.current.delete(data.stepIndex + stepOffsetRef.current);
@@ -5381,6 +5405,64 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
                   <line x1="10" y1="14" x2="21" y2="3" />
                 </svg>
               </button>
+            );
+          })}
+        </div>
+      )}
+
+      {/* ── edit.agent drafts — pending apply. Draft chip opens the draft file;
+           the button applies it to the original (closing the holding app's
+           document first when openIn names one — save prompt if unsaved). ── */}
+      {drafts.length > 0 && (
+        <div className="space-y-1.5 mt-1">
+          {drafts.map((d) => {
+            const holder = Array.isArray(d.openIn) && d.openIn.length > 0 ? d.openIn[0] : null;
+            const draftName = (d.filePath || d.draftPath).split('/').pop() || 'draft';
+            return (
+              <div key={d.draftPath} className="flex items-center flex-wrap gap-1.5">
+                <button
+                  onClick={() => ipcRenderer?.send('shell:open-path', d.draftPath)}
+                  className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg transition-colors"
+                  style={{
+                    backgroundColor: 'rgba(168,85,247,0.10)',
+                    border: '1px solid rgba(168,85,247,0.3)',
+                    cursor: 'pointer',
+                  }}
+                  title={`Draft (original untouched): ${d.draftPath}`}
+                >
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#c084fc" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                    <polyline points="14 2 14 8 20 8" />
+                  </svg>
+                  <span className="text-xs font-medium" style={{ color: '#c084fc' }}>{draftName} (draft)</span>
+                </button>
+                {d.applied ? (
+                  <span className="text-xs font-medium" style={{ color: '#4ade80' }}>Applied</span>
+                ) : onApplyDraft ? (
+                  <button
+                    onClick={() => onApplyDraft(d)}
+                    disabled={d.applying}
+                    className="px-2.5 py-1.5 rounded-lg text-xs font-medium transition-colors"
+                    style={{
+                      backgroundColor: 'rgba(34,197,94,0.12)',
+                      border: '1px solid rgba(34,197,94,0.35)',
+                      color: '#4ade80',
+                      cursor: d.applying ? 'default' : 'pointer',
+                      opacity: d.applying ? 0.6 : 1,
+                    }}
+                    title={holder
+                      ? `Close ${holder}'s copy of ${d.filePath || 'the file'} (you'll be asked to save unsaved changes), then apply the draft`
+                      : `Apply the draft over ${d.filePath || 'the original'}`}
+                  >
+                    {d.applying ? 'Applying…' : holder ? `Close ${holder} & Apply` : 'Apply'}
+                  </button>
+                ) : null}
+                {d.applyError && (
+                  <span className="text-xs" style={{ color: '#fca5a5' }} title={d.applyError}>
+                    {d.applyError}
+                  </span>
+                )}
+              </div>
             );
           })}
         </div>
