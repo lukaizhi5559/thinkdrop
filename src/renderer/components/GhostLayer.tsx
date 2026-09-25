@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { ThinkDropLogo } from './SlideoutDrawer';
+import { ScreenStage } from './screen/ScreenStage';
 
 const ipcRenderer = (window as any).electron?.ipcRenderer;
 // Listener token — untokened listeners can't be removed across contextBridge.
@@ -83,6 +84,10 @@ function GhostLayer() {
   // /overlay/unflash after. Gives the user visual feedback that a screenshot
   // is being taken while the UnifiedOverlay is briefly hidden.
   const [flash, setFlash] = useState(false);
+
+  // Screen-output displays (ScreenStage) — the "screen as an output" channel.
+  // Reported upward so we can tell main when the window is truly empty.
+  const [screenOccupied, setScreenOccupied] = useState(false);
 
   // Track previous state for conditional logging
   const prevState = useRef({ highlights: 0, isVisible: false, isScanning: false });
@@ -263,9 +268,26 @@ function GhostLayer() {
     }
   }, [isVisible, isScanning, highlights.length]);
 
+  // Tell main when the window goes fully idle — highlights gone, not scanning,
+  // no drop/boundary, and no screen-output displays. Main then hides the
+  // window + clears its display tracking (restores click-through).
+  const ghostOccupied = screenOccupied || isVisible || isScanning || !!drop || !!boundary;
+  const prevOccupied = useRef(ghostOccupied);
+  useEffect(() => {
+    if (prevOccupied.current && !ghostOccupied) {
+      ipcRenderer?.send('ghostlayer:display-idle');
+    }
+    prevOccupied.current = ghostOccupied;
+  }, [ghostOccupied]);
+
+  // Screen-output stage — the "screen as an output" channel. Mounted as an
+  // always-on sibling (not gated by isScanning/isVisible) so displays work
+  // with zero highlights and alerts can preempt the scan UI.
+  const stageNode = <ScreenStage onOccupancyChange={setScreenOccupied} />;
+
   // Show scanning overlay with dark background
   if (isScanning) {
-    return <ScanningOverlay timer={scanTimer} />;
+    return <>{stageNode}<ScanningOverlay timer={scanTimer} /></>;
   }
 
   // The progress drop renders independently of bounding-box highlights — it is
@@ -277,10 +299,12 @@ function GhostLayer() {
   const boundaryNode = boundary ? <PersistentBoundary element={boundary} visible={dropVisible} /> : null;
 
   if (!isVisible || highlights.length === 0) {
-    return (dropNode || boundaryNode) ? <>{boundaryNode}{dropNode}</> : null;
+    return <>{stageNode}{boundaryNode}{dropNode}</>;
   }
 
   return (
+    <>
+    {stageNode}
     <div
       style={{
         position: 'fixed',
@@ -325,6 +349,7 @@ function GhostLayer() {
         />
       ))}
     </div>
+    </>
   );
 }
 

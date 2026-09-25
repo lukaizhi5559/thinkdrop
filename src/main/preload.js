@@ -127,6 +127,7 @@ contextBridge.exposeInMainWorld('electron', {
         'operation:status',
         'app-agent:highlight',
         'ghostlayer:capture-ready',
+        'ghostlayer:display-idle',
         'preflight:open-agents-tab',
         'preflight:recheck',
         'preflight:auth_continue',
@@ -245,6 +246,8 @@ contextBridge.exposeInMainWorld('electron', {
         'thoughts:list',
         'thought:decided',
         'conversation:list',
+        'ghostlayer:display',
+        'ghostlayer:display-clear',
       ];
       if (validChannels.includes(channel)) {
         const wrapped = (_event, ...args) => func(...args);
@@ -387,6 +390,8 @@ contextBridge.exposeInMainWorld('electron', {
         'app-agent:highlight',
         'ghostlayer:flash',
         'ghostlayer:unflash',
+        'ghostlayer:display',
+        'ghostlayer:display-clear',
         'results-window:display-error',
         'results-window:set-prompt',
         'results-window:show',

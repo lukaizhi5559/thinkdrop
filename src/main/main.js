@@ -45,6 +45,7 @@ protocol.registerSchemesAsPrivileged([
 ]);
 
 const { startCryptoBridge, stopCryptoBridge } = require('./cryptoBridge');
+const { normalizeScreenOutput } = require('../../shared/screen-output.cjs');
 
 // Safe IPC send — guards against "Render frame was disposed" crash that occurs when
 // a window reloads between the isDestroyed() check and the actual send call.
@@ -100,6 +101,70 @@ let dropSessionActive = false;
 // Monotonic token — each new drop session bumps it so a late get_active_bounds
 // response from a prior session can't draw a stale boundary into a new one.
 let _dropBoundaryToken = 0;
+
+// ---------------------------------------------------------------------------
+// GhostLayer "screen output" channel — ScreenOutput payloads pushed via
+// POST /screen/display on the overlay-control server (shared/screen-output.cjs).
+// screenDisplays tracks live display ids so unrelated highlight clears can't
+// tear the window down mid-display, and so we know when to lift click-through
+// for blocking alerts. The renderer reports vacancy via 'ghostlayer:display-idle'.
+// ---------------------------------------------------------------------------
+const screenDisplays = new Map(); // id -> { blocking: boolean }
+
+function _applyScreenClickThrough() {
+  if (!ghostLayerWindow || ghostLayerWindow.isDestroyed()) return;
+  const blocking = [...screenDisplays.values()].some(d => d && d.blocking);
+  try { ghostLayerWindow.setIgnoreMouseEvents(!blocking); } catch (_) {}
+}
+
+// ── Esc-to-clear ─────────────────────────────────────────────────────────────
+// The ghost window is focusable:false + click-through, so it can never receive
+// key events — Esc must be a global shortcut. We register it ONLY while a
+// screen display is live (tradeoff: Esc is captured globally during that
+// window; displays are short-lived, and for blocking alerts this is the
+// intended escape hatch).
+let _escRegistered = false;
+
+function _onEscClear() {
+  if (screenDisplays.size === 0) { _updateEscShortcut(); return; }
+  console.log('[Screen] Esc pressed — clearing all displays');
+  clearScreenDisplays(null);
+}
+
+function _updateEscShortcut() {
+  const want = screenDisplays.size > 0;
+  if (want && !_escRegistered) {
+    try {
+      _escRegistered = globalShortcut.register('Escape', _onEscClear);
+      if (!_escRegistered) console.warn('[Screen] Escape registration failed (already bound?) — Esc clear unavailable');
+    } catch (e) {
+      console.warn('[Screen] Escape registration error:', e.message);
+    }
+  } else if (!want && _escRegistered) {
+    try { globalShortcut.unregister('Escape'); } catch (_) {}
+    _escRegistered = false;
+  }
+}
+
+/**
+ * Shared clear path for /screen/clear, the Esc shortcut, and future callers.
+ * id=null clears all. The renderer confirms vacancy via 'ghostlayer:display-idle'.
+ */
+function clearScreenDisplays(id = null) {
+  if (id) screenDisplays.delete(id);
+  else screenDisplays.clear();
+  _applyScreenClickThrough();
+  _updateEscShortcut();
+  if (ghostLayerWindow && !ghostLayerWindow.isDestroyed()) {
+    try { ghostLayerWindow.webContents.send('ghostlayer:display-clear', { id: id || null }); } catch (_) {}
+  }
+}
+
+// hideGhostLayer for non-display features — a live screen display keeps the
+// window up even when app.agent clears its highlights.
+function maybeHideGhostLayer() {
+  if (screenDisplays.size === 0) hideGhostLayer();
+}
 
 function _sendGhost(data) {
   if (ghostLayerWindow && !ghostLayerWindow.isDestroyed()) {
@@ -496,6 +561,22 @@ function startOverlayControlServer() {
       const active = stategraphRunning || idleSeconds < 30;
       res.writeHead(200);
       res.end(JSON.stringify({ ok: true, active, idleSeconds, stategraphRunning }));
+      return;
+    }
+
+    // ── GET /screen/state — live GhostLayer screen-output displays (debug) ────
+    if (req.method === 'GET' && req.url === '/screen/state') {
+      const _disp = (() => { try { return screen.getPrimaryDisplay(); } catch (_) { return null; } })();
+      res.writeHead(200);
+      res.end(JSON.stringify({
+        ok: true,
+        count: screenDisplays.size,
+        ids: [...screenDisplays.keys()],
+        blocking: [...screenDisplays.values()].some(d => d && d.blocking),
+        windowVisible: !!(ghostLayerWindow && !ghostLayerWindow.isDestroyed() && ghostLayerWindow.isVisible()),
+        windowBounds: ghostLayerWindow && !ghostLayerWindow.isDestroyed() ? ghostLayerWindow.getBounds() : null,
+        screen: _disp ? { width: _disp.bounds.width, height: _disp.bounds.height, workArea: _disp.workArea } : null,
+      }));
       return;
     }
 
@@ -1440,6 +1521,82 @@ function startOverlayControlServer() {
       return;
     }
 
+    // ── POST /screen/display — GhostLayer "screen as an output" channel ───────
+    // Any producer (stategraph nodes, command-service skills, the thought
+    // engine, monitors) pushes a ScreenOutput payload. We normalize via the
+    // shared contract (shared/screen-output.cjs), convert local image paths to
+    // data URLs (the ghost window is http://localhost in dev — file:// sub-
+    // resources are blocked), show the window, and forward over IPC.
+    if (req.url === '/screen/display') {
+      let body = '';
+      req.on('data', chunk => { body += chunk; });
+      req.on('end', async () => {
+        try {
+          const parsed = JSON.parse(body || '{}');
+          const norm = normalizeScreenOutput(parsed);
+          if (!norm.ok) {
+            res.writeHead(400).end(JSON.stringify({ ok: false, error: norm.error }));
+            return;
+          }
+          const output = norm.output;
+
+          // Inject real screen dims — producers and the renderer can reason
+          // about fit (font size, scroll distance) against the actual display.
+          try {
+            const d = screen.getPrimaryDisplay();
+            output.screen = { width: d.bounds.width, height: d.bounds.height };
+          } catch (_) {}
+
+          // Local file path → dataUrl (image kind). ~15MB cap matches the
+          // normalizer's dataUrl clamp.
+          if (output.kind === 'image' && output.path && !output.dataUrl) {
+            try {
+              const buf = await fs.promises.readFile(output.path);
+              const MIME = { '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.gif': 'image/gif', '.webp': 'image/webp', '.svg': 'image/svg+xml' };
+              const mime = MIME[path.extname(output.path).toLowerCase()] || 'application/octet-stream';
+              if (buf.length <= 15 * 1024 * 1024) {
+                output.dataUrl = `data:${mime};base64,${buf.toString('base64')}`;
+              }
+              delete output.path;
+            } catch (e) {
+              res.writeHead(400).end(JSON.stringify({ ok: false, error: `cannot read image path: ${e.message}` }));
+              return;
+            }
+          }
+
+          screenDisplays.set(output.id, { blocking: output.blocking === true });
+          showGhostLayer();
+          _applyScreenClickThrough();
+          _updateEscShortcut();
+          if (ghostLayerWindow && !ghostLayerWindow.isDestroyed()) {
+            ghostLayerWindow.webContents.send('ghostlayer:display', output);
+          }
+          console.log(`[Screen] display id=${output.id} kind=${output.kind} mood=${output.mood} blocking=${output.blocking}`);
+          res.writeHead(200).end(JSON.stringify({ ok: true, id: output.id }));
+        } catch (err) {
+          res.writeHead(400).end(JSON.stringify({ ok: false, error: err.message }));
+        }
+      });
+      return;
+    }
+
+    // ── POST /screen/clear — dismiss one display (id) or all ─────────────────
+    if (req.url === '/screen/clear') {
+      let body = '';
+      req.on('data', chunk => { body += chunk; });
+      req.on('end', () => {
+        try {
+          const { id } = JSON.parse(body || '{}');
+          clearScreenDisplays(id || null);
+          // The renderer confirms vacancy via 'ghostlayer:display-idle' → hide.
+          res.writeHead(200).end(JSON.stringify({ ok: true, cleared: id || 'all' }));
+        } catch (err) {
+          res.writeHead(400).end(JSON.stringify({ ok: false, error: err.message }));
+        }
+      });
+      return;
+    }
+
     const hide = req.url === '/overlay/hide';
     const show = req.url === '/overlay/show';
     const highlight = req.url === '/overlay/highlight';
@@ -1525,8 +1682,9 @@ function startOverlayControlServer() {
             }
             // Keep the GhostLayer alive during a drop session — hiding it here
             // would tear down the progress drop mid-step (e.g. the boundary
-            // clear after the submit shortcut). Only hide it when idle.
-            if (!dropSessionActive) hideGhostLayer();
+            // clear after the submit shortcut). Only hide it when idle —
+            // and never while a screen-output display is live.
+            if (!dropSessionActive) maybeHideGhostLayer();
             res.writeHead(200).end(JSON.stringify({ ok: true, action: 'cleared' }));
           } else {
             res.writeHead(400).end(JSON.stringify({ ok: false, error: 'Invalid highlight data' }));
@@ -2889,11 +3047,13 @@ ipcMain.on('app-agent:highlight', (event, data) => {
     // Restore UnifiedOverlay + hide the GhostLayer when idle. During a drop
     // session both are suppressed: the panel stays hidden and the drop window
     // stays up (the session's terminal event is the sole owner of restore).
+    // maybeHideGhostLayer keeps the window up while a screen-output display
+    // is live.
     if (!dropSessionActive) {
       if (unifiedWindow && !unifiedWindow.isDestroyed() && !unifiedWindow.isVisible()) {
         unifiedWindow.showInactive();
       }
-      hideGhostLayer();
+      maybeHideGhostLayer();
     }
   }
   
@@ -2911,6 +3071,16 @@ ipcMain.on('ghostlayer:capture-ready', () => {
     pendingCaptureReady = null;
     try { fn(); } catch (_) {}
   }
+});
+
+// Screen-output vacancy — the renderer sends this when its last display has
+// fully exited (after out-animations). We clear our id set, restore
+// click-through, and hide the window — unless a drop session owns the screen.
+ipcMain.on('ghostlayer:display-idle', () => {
+  screenDisplays.clear();
+  _applyScreenClickThrough();
+  _updateEscShortcut();
+  if (!dropSessionActive) hideGhostLayer();
 });
 
 // Clipboard monitoring functionality
