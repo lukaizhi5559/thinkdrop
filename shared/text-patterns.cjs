@@ -74,6 +74,11 @@ const LEGACY_RECALL_RE = /\b(conversation|chat|talk|discussed|talking)\s+(about|
 /** Bare affirmation/consent — a CLOSED word class; regex is the right tool. */
 const BARE_AFFIRM_RE = /^(?:yes|yeah|yep|yup|sure|ok(?:ay)?|go\s+ahead|do\s+it|yes\s+you\s+can|please\s+do|sounds?\s+good|absolutely|definitely|of\s+course|please)$/;
 
+/** Bare refusal/decline — the closed-class counterpart of BARE_AFFIRM_RE.
+ *  Consumers: stategraph resolution contract (declined_ack), offer-decline
+ *  detection. Keep anchored — never matches inside a longer message. */
+const BARE_DECLINE_RE = /^(?:no|nope|nah|no\s+thanks|not\s+now|later|maybe\s+later|no\s+thank\s+you|i'?m\s+good|pass)$/;
+
 /** Assistant-side offer phrasing — pairs with BARE_AFFIRM_RE: affirmation +
  *  preceding offer = the user wants the offered action done (→ handoff). */
 const OFFER_RE = /\b(?:would you like me to|want me to|shall i|should i|do you want me to|i can|i could|let me know if you'?d like|if you'?d like)\b/i;
@@ -173,6 +178,7 @@ module.exports = {
   CONV_RECALL_QUERY_RE,
   LEGACY_RECALL_RE,
   BARE_AFFIRM_RE,
+  BARE_DECLINE_RE,
   OFFER_RE,
   BARE_FOLLOWUPS,
   FILE_WRITE_VERB_RE,

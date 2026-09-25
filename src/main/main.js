@@ -5372,6 +5372,10 @@ app.whenReady().then(async () => {
       });
     };
 
+    // handoffRunner.init() ran before this callback existed — register it now so
+    // concurrent comms-graph tasks can emit clarification question batches too.
+    require('./handoffRunner').setGatherAnswerCallback(gatherAnswerCallback);
+
     // Normalizes a credential key to the canonical `credential:<agent>:<field>` form.
     // Callers may already include the `credential:` prefix; this avoids double-prefixing.
     const _normalizeCredentialKey = (credentialKey) => {

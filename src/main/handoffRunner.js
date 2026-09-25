@@ -51,13 +51,23 @@ let _mcpClient = null;
 let _mcpAdapter = null;
 let _llmBackend = null;
 let _setPendingPreflightPrompt = null;
+// Live gatherAnswerCallback — registered late via setGatherAnswerCallback()
+// because main.js defines it after init() runs. The clarify gate and the
+// grill/batch-question UX in gatherPlanContext both need it; without it,
+// concurrent handoff tasks cannot ask the user clarifying questions.
+let _gatherAnswerCallback = null;
 
-function init({ mcpClient, mcpAdapter, llmBackend, ipcBroadcast, setPendingPreflightPrompt }) {
+function init({ mcpClient, mcpAdapter, llmBackend, ipcBroadcast, setPendingPreflightPrompt, gatherAnswerCallback }) {
   _mcpClient = mcpClient;
   _mcpAdapter = mcpAdapter;
   _llmBackend = llmBackend;
   _ipcBroadcast = ipcBroadcast;
   _setPendingPreflightPrompt = setPendingPreflightPrompt;
+  if (gatherAnswerCallback) _gatherAnswerCallback = gatherAnswerCallback;
+}
+
+function setGatherAnswerCallback(cb) {
+  _gatherAnswerCallback = cb;
 }
 
 // ── HTTP helpers (notify comms-graph) ──────────────────────────────────────────
@@ -198,6 +208,7 @@ async function execute({ taskId, prompt, agentId, source, originalPrompt, sessio
           mcpAdapter: _mcpAdapter,
           llmBackend: _llmBackend,
           progressCallback,
+          gatherAnswerCallback: _gatherAnswerCallback,
           _handoffTaskId: taskId,
           _handoffSource: source,
         }
@@ -218,6 +229,10 @@ async function execute({ taskId, prompt, agentId, source, originalPrompt, sessio
           _handoffSource: source,
           // CRITICAL: set progressCallback so rich events reach the renderer
           progressCallback,
+          // Clarification surface — the clarify gate and grill/batch questions
+          // emit gather:question_batch cards and await answers, same as the
+          // serial path in main.js.
+          gatherAnswerCallback: _gatherAnswerCallback,
           // If resuming with an approved plan, set _planFile so planExecutor runs it
           ...(planFile ? { _planFile: planFile } : {}),
           // Auth bypass: user chose "proceed without" — treat listed agents as
@@ -856,4 +871,4 @@ function getLiveRun(taskId) {
   return _activeRuns.get(taskId) || null;
 }
 
-module.exports = { init, execute, resume, answerQuestion, hasPendingQuestion, getPendingPlanApprovals, cancel, getActiveCount, getActiveTaskIds, getProgressCallback, getLiveRun };
+module.exports = { init, execute, resume, answerQuestion, hasPendingQuestion, getPendingPlanApprovals, cancel, getActiveCount, getActiveTaskIds, getProgressCallback, getLiveRun, setGatherAnswerCallback };
