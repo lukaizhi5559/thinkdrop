@@ -1,0 +1,20 @@
+[
+  { "id": "s1-greet-morning",  "prompt": "good morning",                                        "expect": { "commsIntent": "general_quick", "status": "done", "maxMs": 30000 } },
+  { "id": "s1-greet-thanks",   "prompt": "thanks!",                                             "expect": { "commsIntent": "general_quick", "status": "done", "maxMs": 30000 } },
+  { "id": "s1-quick-joke",     "prompt": "tell me a joke",                                      "expect": { "commsIntent": "general_quick", "status": "done", "mustNotContain": ["error"], "maxMs": 30000 } },
+  { "id": "s1-quick-opinion",  "prompt": "is Vim better than Emacs?",                           "expect": { "commsIntent": "general_quick", "status": "done", "maxMs": 30000 } },
+  { "id": "s1-quick-fact",     "prompt": "how many days are in a leap year",                    "expect": { "commsIntent": "general_quick", "status": "done", "mustContain": ["366"], "maxMs": 30000 } },
+  { "id": "s1-quick-math",     "prompt": "what is 17 times 24",                                 "expect": { "commsIntent": "general_quick", "status": "done", "mustContain": ["408"], "maxMs": 30000 } },
+  { "id": "s1-spanish",        "prompt": "hola como estas",                                     "expect": { "commsIntent": "general_quick", "status": "done", "maxMs": 30000 } },
+
+  { "id": "s1-mem-store-name", "prompt": "my name is Kai",         "sessionId": "e2e_s1_mem",   "expect": { "commsIntent": "memory_quick", "status": "done", "maxMs": 30000 } },
+  { "id": "s1-mem-recall",     "prompt": "what's my name",         "sessionId": "e2e_s1_mem",   "expect": { "commsIntent": "memory_quick", "status": "done", "mustContain": ["Kai"], "maxMs": 30000 } },
+  { "id": "s1-mem-store-appt", "prompt": "remember I have a dentist appointment next Tuesday",  "expect": { "commsIntent": "memory_store", "status": "done", "maxMs": 30000 } },
+  { "id": "s1-mem-note",       "prompt": "note: buy milk tomorrow",                             "expect": { "commsIntent": "memory_store", "status": "done", "maxMs": 30000 } },
+
+  { "id": "s1-status-running", "prompt": "what's running right now",                            "expect": { "commsIntent": "status_check", "status": "done", "maxMs": 20000 } },
+  { "id": "s1-status-last",    "prompt": "did my last task finish",                             "expect": { "commsIntent": "status_check", "status": "done", "maxMs": 20000 } },
+
+  { "id": "s1-ctl-cancel",     "prompt": "cancel that",                                         "expect": { "commsIntent": "control_signal", "status": "done", "maxMs": 20000 } },
+  { "id": "s1-ctl-stop",       "prompt": "stop the current task",                               "expect": { "commsIntent": "control_signal", "status": "done", "maxMs": 20000 } }
+]

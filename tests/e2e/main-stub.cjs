@@ -273,6 +273,7 @@ const server = http.createServer(async (req, res) => {
         sessionId: sessionId || null,
         userApproved: userApproved === true,
         thoughtContext: thoughtContext || null,
+        guessedIntent: guessedIntent ?? null,
       }).catch(err => console.error(`[CommsGraph] Handoff ${taskId} error:`, err.message));
       return _json(res, 200, { ok: true, taskId });
     } catch (err) {

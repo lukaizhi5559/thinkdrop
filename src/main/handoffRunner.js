@@ -175,7 +175,7 @@ function _makeProgressCallback(taskId, agentId) {
  * @param {string[]|null} [args.preflightAuthBypass] - Agent IDs to treat as authed for this run only
  * @param {Object|null}  [args._resumeState] - Paused finalState to resume from (ask_user answer)
  */
-async function execute({ taskId, prompt, agentId, source, originalPrompt, sessionId, planFile, preflightAuthBypass, userApproved, thoughtContext, _resumeState }) {
+async function execute({ taskId, prompt, agentId, source, originalPrompt, sessionId, planFile, preflightAuthBypass, userApproved, thoughtContext, guessedIntent, _resumeState }) {
   if (!_mcpAdapter || !_llmBackend) {
     console.error('[HandoffRunner] Not initialized — call init() first');
     _notifyComplete(taskId, agentId, 'failed', 'HandoffRunner not initialized', null, sessionId);
@@ -245,6 +245,10 @@ async function execute({ taskId, prompt, agentId, source, originalPrompt, sessio
           // card from the message, injects it as a labeled turn, and reports
           // the lifecycle outcome back to the thought engine.
           ...(thoughtContext ? { _thoughtAttachment: thoughtContext } : {}),
+          // comms-graph's deterministic intentGuesser verdict — decomposePromptV2
+          // uses it as a prior and as the parse-failure fallback instead of
+          // defaulting to command_automate.
+          ...(guessedIntent ? { _carriedHint: guessedIntent } : {}),
         };
 
     // Always normalize to a mutable array — main.js pushes mid-run

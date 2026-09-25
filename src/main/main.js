@@ -864,6 +864,7 @@ function startOverlayControlServer() {
             sessionId: handoffSessionId || currentSessionId,
             userApproved: userApproved === true,
             thoughtContext: thoughtContext || null,
+            guessedIntent: guessedIntent ?? null,
           }).catch(err => {
             console.error(`[CommsGraph] Handoff ${taskId} error:`, err.message);
           });
