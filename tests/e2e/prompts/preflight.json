@@ -1,0 +1,54 @@
+[
+  {
+    "id": "pf-greet",
+    "prompt": "hey",
+    "expect": { "commsIntent": "general_quick", "status": "done", "maxMs": 30000 }
+  },
+  {
+    "id": "pf-help",
+    "prompt": "what can you do",
+    "expect": { "commsIntent": "general_quick", "status": "done", "mustNotContain": ["error"], "maxMs": 30000 }
+  },
+  {
+    "id": "pf-time",
+    "prompt": "what time is it",
+    "sessionId": "e2e_preflight",
+    "expect": { "commsIntent": "handoff", "status": "done", "graphIntent": "general_knowledge", "mustContain": ["re:\\d{1,2}:\\d{2}|AM|PM|o'clock|morning|afternoon|evening|night"], "maxMs": 60000 }
+  },
+  {
+    "id": "pf-remember",
+    "prompt": "remember that my favorite color is teal",
+    "expect": { "commsIntent": "memory_quick", "status": "done", "maxMs": 30000 }
+  },
+  {
+    "id": "pf-status",
+    "prompt": "how is my task going",
+    "expect": { "commsIntent": "status_check", "status": "done", "maxMs": 15000 }
+  },
+  {
+    "id": "pf-general",
+    "prompt": "what is the capital of France?",
+    "sessionId": "e2e_preflight",
+    "expect": { "commsIntent": "general_quick", "status": "done", "mustContain": ["Paris"], "mustNotContain": ["error", "sorry"], "maxMs": 90000 }
+  },
+  {
+    "id": "pf-websearch",
+    "prompt": "search the web for today's NASDAQ closing price",
+    "sessionId": "e2e_preflight",
+    "timeoutMs": 180000,
+    "expect": { "commsIntent": "handoff", "status": "done", "graphIntent": "web_search" }
+  },
+  {
+    "id": "pf-screen",
+    "prompt": "show confetti on my screen",
+    "sessionId": "e2e_preflight",
+    "expect": { "commsIntent": "handoff", "status": "done", "graphIntent": "screen_display", "screenKind": "effect", "maxMs": 90000 }
+  },
+  {
+    "id": "pf-command",
+    "prompt": "create a file called e2e-preflight.txt on my desktop with the text hello world",
+    "sessionId": "e2e_preflight",
+    "timeoutMs": 240000,
+    "expect": { "commsIntent": "handoff", "status": "done", "graphIntent": "command_automate" }
+  }
+]

@@ -1,0 +1,223 @@
+{
+  "file": "tests/e2e/prompts/preflight.json",
+  "run": 1,
+  "at": "2026-09-25T12:14:15.443Z",
+  "results": [
+    {
+      "id": "pf-greet",
+      "prompt": "hey",
+      "at": "2026-09-25T12:12:52.589Z",
+      "commsIntent": "general_quick",
+      "commsLatencyMs": 2577,
+      "taskId": null,
+      "status": "done",
+      "resultText": "Hello. How can I assist you today?",
+      "graphIntent": null,
+      "screens": [],
+      "events": 0,
+      "approvals": 0,
+      "questions": 0,
+      "authResumes": 0,
+      "totalMs": 2581,
+      "error": null,
+      "failures": [],
+      "pass": true
+    },
+    {
+      "id": "pf-help",
+      "prompt": "what can you do",
+      "at": "2026-09-25T12:12:55.178Z",
+      "commsIntent": "general_quick",
+      "commsLatencyMs": 1705,
+      "taskId": null,
+      "status": "done",
+      "resultText": "I can browse the web, manage files, automate desktop tasks, control smart devices, and assist with scheduling and reminders.",
+      "graphIntent": null,
+      "screens": [],
+      "events": 0,
+      "approvals": 0,
+      "questions": 0,
+      "authResumes": 0,
+      "totalMs": 1709,
+      "error": null,
+      "failures": [],
+      "pass": true
+    },
+    {
+      "id": "pf-time",
+      "prompt": "what time is it",
+      "at": "2026-09-25T12:12:56.894Z",
+      "commsIntent": "handoff",
+      "commsLatencyMs": 972,
+      "taskId": "task_eba5792f",
+      "status": "done",
+      "resultText": "As of **9/25/2026, 8:13 AM (New York time)**, it is **08:47:23 UTC** (or GMT/Zulu time).\n\nThe discrepancy between your memory (8/29/2026, 2 PM) and the current date is unrelated to time—it’s just a reminder that dates and times can shift. If you meant to reference a past meeting, confirm the exact date and time again.",
+      "graphIntent": {
+        "intent": "general_knowledge",
+        "parser": "llm-decompose",
+        "subPrompts": 1,
+        "subIntents": [
+          "general_knowledge"
+        ]
+      },
+      "screens": [],
+      "events": 11,
+      "approvals": 0,
+      "questions": 0,
+      "authResumes": 0,
+      "totalMs": 35557,
+      "error": null,
+      "failures": [],
+      "pass": true
+    },
+    {
+      "id": "pf-remember",
+      "prompt": "remember that my favorite color is teal",
+      "at": "2026-09-25T12:13:32.451Z",
+      "commsIntent": "memory_quick",
+      "commsLatencyMs": 666,
+      "taskId": null,
+      "status": "done",
+      "resultText": "Got it — I'll remember your favorite color is teal. ✅",
+      "graphIntent": null,
+      "screens": [],
+      "events": 0,
+      "approvals": 0,
+      "questions": 0,
+      "authResumes": 0,
+      "totalMs": 668,
+      "error": null,
+      "failures": [],
+      "pass": true
+    },
+    {
+      "id": "pf-status",
+      "prompt": "how is my task going",
+      "at": "2026-09-25T12:13:33.125Z",
+      "commsIntent": "status_check",
+      "commsLatencyMs": 2952,
+      "taskId": null,
+      "status": "done",
+      "resultText": "Nothing is currently running. The slate is clean.",
+      "graphIntent": null,
+      "screens": [],
+      "events": 0,
+      "approvals": 0,
+      "questions": 0,
+      "authResumes": 0,
+      "totalMs": 2953,
+      "error": null,
+      "failures": [],
+      "pass": true
+    },
+    {
+      "id": "pf-general",
+      "prompt": "what is the capital of France?",
+      "at": "2026-09-25T12:13:36.085Z",
+      "commsIntent": "general_quick",
+      "commsLatencyMs": 2315,
+      "taskId": null,
+      "status": "done",
+      "resultText": "The capital of France is Paris.",
+      "graphIntent": null,
+      "screens": [],
+      "events": 0,
+      "approvals": 0,
+      "questions": 0,
+      "authResumes": 0,
+      "totalMs": 2317,
+      "error": null,
+      "failures": [],
+      "pass": true
+    },
+    {
+      "id": "pf-websearch",
+      "prompt": "search the web for today's NASDAQ closing price",
+      "at": "2026-09-25T12:13:38.410Z",
+      "commsIntent": "handoff",
+      "commsLatencyMs": 1640,
+      "taskId": "task_15dbe118",
+      "status": "done",
+      "resultText": "According to [Yahoo Finance](https://finance.yahoo.com/quote/%5EIXIC/history/), the NASDAQ Composite (^IXIC) closed at **26,936.04**, down 308.24 (-1.13%) at the close on September 23. You can find more updates and charts on [Yahoo Finance](https://finance.yahoo.com/quote/%5EIXIC/) and [Nasdaq](https://www.nasdaq.com/market-activity/stocks).",
+      "graphIntent": {
+        "intent": "web_search",
+        "parser": "llm-decompose",
+        "subPrompts": 1,
+        "subIntents": [
+          "web_search"
+        ]
+      },
+      "screens": [],
+      "events": 21,
+      "approvals": 0,
+      "questions": 0,
+      "authResumes": 0,
+      "totalMs": 7669,
+      "error": null,
+      "failures": [],
+      "pass": true
+    },
+    {
+      "id": "pf-screen",
+      "prompt": "show confetti on my screen",
+      "at": "2026-09-25T12:13:46.080Z",
+      "commsIntent": "handoff",
+      "commsLatencyMs": 980,
+      "taskId": "task_679dd62b",
+      "status": "done",
+      "resultText": "## Screen\n\nOn screen — confetti.",
+      "graphIntent": {
+        "intent": "screen_display",
+        "parser": "llm-decompose",
+        "subPrompts": 1,
+        "subIntents": [
+          "screen_display"
+        ]
+      },
+      "screens": [
+        {
+          "at": 1790338430302,
+          "id": "so_stub_1",
+          "kind": "effect",
+          "mood": "happy",
+          "effect": "confetti"
+        }
+      ],
+      "events": 31,
+      "approvals": 0,
+      "questions": 0,
+      "authResumes": 0,
+      "totalMs": 5508,
+      "error": null,
+      "failures": [],
+      "pass": true
+    },
+    {
+      "id": "pf-command",
+      "prompt": "create a file called e2e-preflight.txt on my desktop with the text hello world",
+      "at": "2026-09-25T12:13:51.588Z",
+      "commsIntent": "handoff",
+      "commsLatencyMs": 4308,
+      "taskId": "task_37548652",
+      "status": "done",
+      "resultText": "### Summary of Action Taken\n\nA new text file was created on your Desktop in response to your request.\n\n* **File Location:** `/Users/lukaizhi/Desktop/e2e-preflight.txt`\n* **File Content:** `hello world`\n* **Status:** Successfully created and saved.",
+      "graphIntent": {
+        "intent": "command_automate",
+        "parser": "llm-decompose",
+        "subPrompts": 1,
+        "subIntents": [
+          "command_automate"
+        ]
+      },
+      "screens": [],
+      "events": 75,
+      "approvals": 2,
+      "questions": 0,
+      "authResumes": 0,
+      "totalMs": 23855,
+      "error": null,
+      "failures": [],
+      "pass": true
+    }
+  ]
+}
