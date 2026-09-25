@@ -202,6 +202,8 @@ function normalizeScreenOutput(raw) {
     case 'effect': {
       out.effect = _oneOf(raw.effect, EFFECTS);
       if (!out.effect) return { ok: false, error: `effect kind requires effect: ${EFFECTS.join(', ')}` };
+      // 0–1 particle density/speed multiplier; default 0.5.
+      out.intensity = _num(raw.intensity, 0.05, 1) ?? 0.5;
       break;
     }
     case 'emoji': {

@@ -128,6 +128,7 @@ contextBridge.exposeInMainWorld('electron', {
         'app-agent:highlight',
         'ghostlayer:capture-ready',
         'ghostlayer:display-idle',
+        'ghostlayer:display-clear-request',
         'preflight:open-agents-tab',
         'preflight:recheck',
         'preflight:auth_continue',

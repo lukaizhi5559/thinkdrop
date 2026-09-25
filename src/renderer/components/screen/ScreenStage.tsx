@@ -1,10 +1,13 @@
 import 'animate.css';
 import React, { useEffect, useRef, useState } from 'react';
 import type { ScreenOutput, ScreenClearMessage } from './types';
-import { MOOD_ACCENT } from './types';
 import { TextScreen } from './TextScreen';
 import { ImageScreen } from './ImageScreen';
 import { EmojiScreen } from './EmojiGlyph';
+import { EffectScreen } from './EffectScreen';
+import { ChartScreen } from './ChartScreen';
+import { AlertCurtain } from './AlertCurtain';
+import { DeckScreen } from './DeckScreen';
 
 const ipcRenderer = (window as any).electron?.ipcRenderer;
 const STAGE_TOKEN = 'screen-stage';
@@ -168,7 +171,13 @@ function ScreenItem({ output, outSeq, onRemove }: {
     >
       <Scrim output={output} />
       <div style={{ position: 'relative', display: 'flex', width: '100%', ...positionFlex(output.position) }}>
-        <KindView output={output} animateClass="" />
+        <KindView
+          output={output}
+          animateClass=""
+          onDismiss={() => {
+            try { ipcRenderer?.send('ghostlayer:display-clear-request', { id: output.id }); } catch (_) {}
+          }}
+        />
       </div>
     </div>
   );
@@ -219,59 +228,17 @@ function Scrim({ output }: { output: ScreenOutput }) {
 
 // ── Kind dispatch ───────────────────────────────────────────────────────────
 
-function KindView({ output, animateClass }: { output: ScreenOutput; animateClass: string }) {
+function KindView({ output, animateClass, onDismiss }: { output: ScreenOutput; animateClass: string; onDismiss?: () => void }) {
   switch (output.kind) {
     case 'text':  return <TextScreen  output={output} animateClass={animateClass} />;
     case 'image': return <ImageScreen output={output} animateClass={animateClass} />;
     case 'emoji': return <EmojiScreen output={output} animateClass={animateClass} />;
-    case 'alert': return <AlertStub   output={output} />;
+    case 'effect': return <EffectScreen output={output} />;
+    case 'chart':  return <ChartScreen  output={output} />;
+    case 'alert': return <AlertCurtain output={output} onDismiss={onDismiss} />;
+    case 'deck':   return <DeckScreen   output={output} onDismiss={onDismiss} />;
     default:      return <KindStub    output={output} />;
   }
-}
-
-/**
- * AlertStub — minimal but functional alert curtain until Stage 5 lands the
- * full AlertCurtain (severity chrome, blocking dismiss). Renders the scrim +
- * message immediately so the protection path works from day one.
- */
-function AlertStub({ output }: { output: ScreenOutput }) {
-  const accent = MOOD_ACCENT[output.mood] || '#f87171';
-  const dark = output.scrim !== 'white';
-  return (
-    <div
-      style={{
-        position: 'absolute',
-        inset: 0,
-        display: 'flex',
-        flexDirection: 'column',
-        alignItems: 'center',
-        justifyContent: 'center',
-        gap: 20,
-        padding: 40,
-        textAlign: 'center',
-      }}
-    >
-      <div style={{ fontSize: 96 }}>{output.emoji || '⚠️'}</div>
-      {output.title && (
-        <div style={{
-          color: accent, fontSize: 40, fontWeight: 800,
-          fontFamily: 'system-ui, -apple-system, sans-serif',
-          letterSpacing: '0.06em', textTransform: 'uppercase',
-        }}>
-          {output.title}
-        </div>
-      )}
-      {output.text && (
-        <div style={{
-          color: dark ? '#f3f4f6' : '#111827', fontSize: 30, fontWeight: 600,
-          fontFamily: 'system-ui, -apple-system, sans-serif',
-          maxWidth: '70vw', whiteSpace: 'pre-wrap',
-        }}>
-          {output.text}
-        </div>
-      )}
-    </div>
-  );
 }
 
 /** Placeholder for kinds whose renderers land in later stages. */

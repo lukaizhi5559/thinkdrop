@@ -3083,6 +3083,12 @@ ipcMain.on('ghostlayer:display-idle', () => {
   if (!dropSessionActive) hideGhostLayer();
 });
 
+// Renderer-initiated dismiss (e.g. click on a blocking alert curtain).
+ipcMain.on('ghostlayer:display-clear-request', (_e, data) => {
+  const id = data && typeof data.id === 'string' ? data.id : null;
+  clearScreenDisplays(id);
+});
+
 // Clipboard monitoring functionality
 function startClipboardMonitoring(checkInitial = false) {
   // Polling disabled — tagging is now explicit via Shift+Cmd+C shortcut

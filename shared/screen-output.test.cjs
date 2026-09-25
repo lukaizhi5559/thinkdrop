@@ -59,9 +59,14 @@ it('text fit field: scroll passes, unknown → auto, default auto', () => {
   assert(normalizeScreenOutput({ kind: 'text', text: 'hi' }).output.fit === 'auto');
 });
 
-it('effect defaults: fullscreen / no scrim / 10s', () => {
+it('effect defaults: fullscreen / no scrim / 10s / intensity 0.5', () => {
   const { output: o } = normalizeScreenOutput({ kind: 'effect', effect: 'rain' });
-  assert(o.position === 'fullscreen' && o.scrim === 'none' && o.durationMs === 10000);
+  assert(o.position === 'fullscreen' && o.scrim === 'none' && o.durationMs === 10000 && o.intensity === 0.5);
+});
+
+it('effect intensity: clamps to 0.05–1', () => {
+  assert(normalizeScreenOutput({ kind: 'effect', effect: 'snow', intensity: 5 }).output.intensity === 1);
+  assert(normalizeScreenOutput({ kind: 'effect', effect: 'snow', intensity: 0 }).output.intensity === 0.05);
 });
 
 it('alert defaults: black scrim / sticky / highest priority', () => {

@@ -73,6 +73,7 @@ export interface ScreenOutput {
   fit?: 'contain' | 'cover' | 'auto' | 'scroll';
   chart?: ScreenChart;
   effect?: 'rain' | 'snow' | 'confetti' | 'fireworks' | 'emoji-rain';
+  intensity?: number; // effect: 0.05–1 particle density/speed multiplier
   severity?: 'info' | 'warn' | 'block';
   deck?: ScreenDeck;
   scene?: ScreenScene;
