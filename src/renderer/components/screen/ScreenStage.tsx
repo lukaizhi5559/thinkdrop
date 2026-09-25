@@ -157,9 +157,18 @@ function ScreenItem({ output, outSeq, onRemove }: {
   const cls = animateClasses(output, phase);
   const onAnimEnd = () => { if (phase === 'in') setPhase('idle'); };
 
+  const onBackdropClick = (e: React.MouseEvent) => {
+    // Blocking displays (interactive charts, alert curtains) dismiss on a
+    // click outside the content card. Route through main's clear path so
+    // screenDisplays + the Esc shortcut stay consistent.
+    if (!output.blocking || e.target !== e.currentTarget) return;
+    try { ipcRenderer?.send('ghostlayer:display-clear-request', { id: output.id }); } catch (_) {}
+  };
+
   return (
     <div
       onAnimationEnd={onAnimEnd}
+      onClick={onBackdropClick}
       className={cls}
       style={{
         position: 'absolute',
