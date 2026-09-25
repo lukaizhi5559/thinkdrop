@@ -121,7 +121,7 @@ function isFileWriteGoal(goal) {
  * Netflix"). Used by intentGuesser; distinct from hasRelativeTimePhrase in
  * stategraph-module/parseDateRange.js which sanity-checks date-range output.
  */
-const EPISODIC_RE = /\b(yesterday|last\s+(night|week|time|monday|tuesday|wednesday|thursday|friday|saturday|sunday)|this\s+(morning|afternoon)|earlier(\s+today)?|a\s+(few|couple)\s+(minutes|hours|days|weeks)\s+ago|the\s+other\s+day|what\s+was\s+i|was\s+i\s+(watching|listening|reading|playing|browsing|looking)|what\s+did\s+i|what\s+was\s+on\s+my\s+screen)\b/i;
+const EPISODIC_RE = /\b(yesterday|recently|last\s+(night|week|time|monday|tuesday|wednesday|thursday|friday|saturday|sunday)|this\s+(morning|afternoon)|earlier(\s+today)?|a\s+(few|couple)\s+(minutes|hours|days|weeks)\s+ago|the\s+other\s+day|what\s+was\s+i|was\s+i\s+(watching|listening|reading|playing|browsing|looking)|what\s+did\s+i|what\s+was\s+on\s+my\s+screen)\b/i;
 
 // ── Media / image requests ───────────────────────────────────────────────────
 
@@ -172,6 +172,20 @@ const PROFILE_QUERY_PATTERN = /^(what'?s|what is|who is|who'?s|where is)\s+(my|i
 /** "first/earliest/ever" queries — search all history, no time window. */
 const ALL_TIME_QUERY_PATTERN = /\b(first|earliest|ever|all time|oldest|very first|all history)\b/i;
 
+/** Screen-observation questions — "what's on my screen", "describe what I'm
+ *  looking at", "read the text visible on screen". These need a live capture,
+ *  so both comms (handoff guard) and the stategraph (screen_intelligence) key
+ *  off this single vocabulary. Past-tense variants ("what was on my screen")
+ *  are intentionally included: they hand off too (to memory_retrieve). */
+const SCREEN_OBSERVATION_RE = new RegExp([
+  // direct screen-surface questions
+  '\\b(?:what\'?s\\s+on\\s+(?:my\\s+)?screen|what\\s+am\\s+i\\s+looking\\s+at|what\\s+i\'?m\\s+looking\\s+at|describe\\s+(?:what\'?s\\s+on|what\\s+i\'?m\\s+looking\\s+at)|read\\s+(?:what\'?s\\s+)?on\\s+screen|what\\s+(?:does|do)\\s+(?:my|the)\\s+screen\\s+show|what\\s+app\\s+am\\s+i\\s+(?:in|looking\\s+at|viewing|using|on)|what\'?s\\s+the\\s+active\\s+app|what\\s+window\\s+is\\s+open|analyze\\s+(?:the\\s+|my\\s+)?screen|scan\\s+(?:my\\s+)?screen|what\\s+app\\s+is\\s+(?:open|focused|running)|what\\s+program\\s+is\\s+running|what\\s+is\\s+currently\\s+displayed|check\\s+(?:this|the)\\s+\\w+\\s+on\\s+(?:my\\s+|the\\s+)?screen)\\b',
+  // read/see/show + content word + visible/on-screen marker
+  '\\b(?:read|see|show|tell\\s+me)\\b.{0,30}\\b(?:text|words|content|message|error|dialog)\\b.{0,30}\\b(?:visible|shown|displayed|on\\s+(?:my\\s+|the\\s+)?screen)\\b',
+  // visible-on-screen tail
+  '\\b(?:visible|displayed|showing|open)\\s+on\\s+(?:my\\s+|the\\s+)?screen\\b',
+].join('|'), 'i');
+
 module.exports = {
   CONVERSATION_RECALL_RE,
   CONVERSATION_RECALL_META_RE,
@@ -194,4 +208,5 @@ module.exports = {
   stripUnresolvedTokens,
   PROFILE_QUERY_PATTERN,
   ALL_TIME_QUERY_PATTERN,
+  SCREEN_OBSERVATION_RE,
 };

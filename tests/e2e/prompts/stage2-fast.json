@@ -1,0 +1,25 @@
+[
+  { "id": "s2-web-spacex",   "prompt": "what's the latest news on SpaceX",                          "expect": { "graphIntent": "web_search", "status": "done", "mustNotContain": ["error"], "maxMs": 60000 } },
+  { "id": "s2-web-bitcoin",  "prompt": "what's the current price of bitcoin",                      "expect": { "graphIntent": "web_search", "status": "done", "mustContain": ["re:(\\$|usd|dollar)"], "maxMs": 60000 } },
+  { "id": "s2-web-headlines","prompt": "what are the top headlines today",                         "expect": { "graphIntent": "web_search", "status": "done", "maxMs": 60000 } },
+  { "id": "s2-web-ramen",    "prompt": "find me three highly rated ramen restaurants in San Francisco", "expect": { "graphIntent": "web_search", "status": "done", "mustContain": ["re:ramen"], "maxMs": 60000 } },
+  { "id": "s2-web-weather",  "prompt": "what's the weather in Tokyo right now",                    "expect": { "graphIntent": "web_search", "status": "done", "mustNotContain": ["error"], "maxMs": 60000 } },
+  { "id": "s2-web-superbowl","prompt": "who won the most recent Super Bowl",                       "expect": { "status": "done", "mustNotContain": ["error"], "maxMs": 60000 } },
+
+  { "id": "s2-mem-lastweek", "prompt": "what did we talk about last week",                         "expect": { "graphIntent": "memory_retrieve", "status": "done", "maxMs": 40000 } },
+  { "id": "s2-mem-yesterday","prompt": "what was I doing yesterday afternoon",                     "expect": { "graphIntent": "memory_retrieve", "status": "done", "maxMs": 40000 } },
+  { "id": "s2-mem-dentist",  "prompt": "when did I last mention my dentist appointment",           "expect": { "graphIntent": "memory_retrieve", "status": "done", "maxMs": 40000 } },
+  { "id": "s2-mem-apps",     "prompt": "what apps did I use this morning",                         "expect": { "graphIntent": "memory_retrieve", "status": "done", "maxMs": 40000 } },
+  { "id": "s2-mem-summary",  "prompt": "summarize what I worked on recently",                      "expect": { "graphIntent": "memory_retrieve", "status": "done", "maxMs": 40000 } },
+  { "id": "s2-mem-color",    "prompt": "have I told you my favorite color before",                 "expect": { "status": "done", "maxMs": 40000 } },
+
+  { "id": "s2-screen-what",  "prompt": "what's on my screen right now",                            "expect": { "commsIntent": "handoff", "graphIntent": "screen_intelligence", "status": "done", "maxMs": 60000 } },
+  { "id": "s2-screen-app",   "prompt": "what app am I looking at",                                 "expect": { "commsIntent": "handoff", "graphIntent": "screen_intelligence", "status": "done", "maxMs": 60000 } },
+  { "id": "s2-screen-read",  "prompt": "read the text visible on my screen",                       "expect": { "commsIntent": "handoff", "graphIntent": "screen_intelligence", "status": "done", "maxMs": 60000 } },
+  { "id": "s2-screen-desc",  "prompt": "describe what I'm looking at",                             "expect": { "commsIntent": "handoff", "status": "done", "maxMs": 60000 } },
+  { "id": "s2-screen-error", "prompt": "is there an error dialog visible on my screen",            "expect": { "commsIntent": "handoff", "graphIntent": "screen_intelligence", "status": "done", "maxMs": 60000 } },
+
+  { "id": "s2-know-crisis",  "prompt": "give me a detailed breakdown of the causes of the 2008 financial crisis including derivatives and rating agencies", "expect": { "status": "done", "mustContain": ["re:(mortgage|subprime|derivative|lehman)"], "maxMs": 60000 } },
+  { "id": "s2-know-tcp",     "prompt": "explain the difference between TCP and UDP for someone preparing for a networking interview", "expect": { "status": "done", "mustContain": ["re:udp", "re:tcp"], "maxMs": 60000 } },
+  { "id": "s2-know-haiku",   "prompt": "write a haiku about debugging",                            "expect": { "status": "done", "maxMs": 60000 } }
+]
