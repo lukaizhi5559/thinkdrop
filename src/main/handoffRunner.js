@@ -578,7 +578,13 @@ async function answerQuestion(taskId, answer) {
   const _agentId = pq.agentId || ctx.agentId || null;
   const _stepIdx = pq.stepIndex ?? paused.skillCursor ?? 0;
   const _uiStepIdx = pq.uiStepIndex ?? _stepIdx;
-  const _resumeSkill = pq.skill || paused.skillPlan?.[_stepIdx]?.skill || 'browser.agent';
+  // Recover the skill that actually ran before defaulting — a missing skill ref
+  // must not silently become a browser.agent run on resume.
+  const _resumeSkill = pq.skill
+    || paused.skillPlan?.[_stepIdx]?.skill
+    || paused.skillResults?.find(r => r && r.skill && (r.step === _stepIdx + 1 || r.stepIndex === _stepIdx))?.skill
+    || paused.skillResults?.slice().reverse().find(r => r && r.skill)?.skill
+    || 'browser.agent';
   const _originalTask = (pq.originalTask || paused.skillPlan?.[_stepIdx]?.args?.task || ctx.prompt || '')
     .replace(/\s*\[Resume context:[\s\S]*?\]\s*$/g, '').trim();
   const _description = paused.skillPlan?.[_stepIdx]?.description || _originalTask;

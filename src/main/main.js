@@ -6193,6 +6193,11 @@ app.whenReady().then(async () => {
               const _uiStepIdx = paused.pendingQuestion?.uiStepIndex ?? _stepIdx;
               const _resumeSkill = paused.pendingQuestion?.skill
                 || paused.skillPlan?.[_stepIdx]?.skill
+                // Recover the skill that actually ran — a pause can outlive the
+                // plan/step refs, and defaulting to browser.agent deep-links
+                // "try again" into a bogus browser flow.
+                || paused.skillResults?.find(r => r && r.skill && (r.step === _stepIdx + 1 || r.stepIndex === _stepIdx))?.skill
+                || paused.skillResults?.slice().reverse().find(r => r && r.skill)?.skill
                 || 'browser.agent';
               const _originalTask = (paused.pendingQuestion?.originalTask
                 || paused.skillPlan?.[_stepIdx]?.args?.task
