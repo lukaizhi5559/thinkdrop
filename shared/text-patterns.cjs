@@ -172,6 +172,21 @@ const PROFILE_QUERY_PATTERN = /^(what'?s|what is|who is|who'?s|where is)\s+(my|i
 /** "first/earliest/ever" queries — search all history, no time window. */
 const ALL_TIME_QUERY_PATTERN = /\b(first|earliest|ever|all time|oldest|very first|all history)\b/i;
 
+/** Bare-deictic continuations — the referent is carried entirely by
+ *  "that/this/it/…" with no content noun, so it can only be resolved from
+ *  the conversation transcript. A quick tier cannot see the transcript
+ *  (observed: "when was that" → general_quick hallucinated a date), and in
+ *  the graph these are conversational referents — never the ambient screen
+ *  file/url (observed: "tell me more about that" → classifyTask set
+ *  activeDocRef:'file' + followUpTarget:'the plan file in Devin' and the
+ *  answer discussed Devin planning instead of the prior recall). */
+const DEICTIC_CONTINUATION_RE = new RegExp([
+  // question word + aux + bare deictic subject: "when was that", "who is it"
+  '\\b(?:when|what|who|where|which|why|how)\\s+(?:was|were|is|are|did|do|does|will|would|can|could|should)\\s+(?:that|this|it|those|these|them|they|he|she)\\b',
+  // "tell me (more) about that", "what about that", "more on this"
+  '\\b(?:tell me(?: more)? about|more about|what about|how about|expand on|elaborate on|go on about)\\s+(?:that|this|it|those|them)\\b',
+].join('|'), 'i');
+
 /** Screen-observation questions — "what's on my screen", "describe what I'm
  *  looking at", "read the text visible on screen". These need a live capture,
  *  so both comms (handoff guard) and the stategraph (screen_intelligence) key
@@ -184,7 +199,25 @@ const SCREEN_OBSERVATION_RE = new RegExp([
   '\\b(?:read|see|show|tell\\s+me)\\b.{0,30}\\b(?:text|words|content|message|error|dialog)\\b.{0,30}\\b(?:visible|shown|displayed|on\\s+(?:my\\s+|the\\s+)?screen)\\b',
   // visible-on-screen tail
   '\\b(?:visible|displayed|showing|open)\\s+on\\s+(?:my\\s+|the\\s+)?screen\\b',
+  // window/app chrome — passive reads of visible window metadata, gated on
+  // an observation verb so imperatives ("rename the window title") stay out:
+  // "read the title of that window", "what's the name of this app",
+  // "what is the window title".
+  '\\b(?:read|see|show|tell\\s+me|what|which|get|check|know)\\b[^.]{0,25}\\b(?:title|name)\\s+of\\s+(?:that|this|the|my|the\\s+current|the\\s+active)\\s+(?:window|app|application|tab|program)\\b',
+  '\\b(?:read|see|show|tell\\s+me|what|which|get|check|know)\\b[^.]{0,25}\\b(?:window|app|application|tab)(?:\'?s)?\\s+(?:title|name)\\b',
+  '\\bwhat\\s+(?:window|app|application|program|tab)\\s+is\\s+(?:that|this|there|active|open|focused|running)\\b',
+  // locative — any wh-question about a thing "on (my|the) screen" observes it:
+  // "what is that on my screen", "what is running on my screen"
+  '\\bwhat\\s+(?:is|are)\\s+[^.]{0,25}\\bon\\s+(?:my\\s+|the\\s+)?screen\\b',
 ].join('|'), 'i');
+
+/** Artifact nouns that can name a live ambient referent — an open file, the
+ *  focused window, the active app, a visible tab. resolveReferencesV2 gates
+ *  the getActiveAppContext fetch on this vocabulary (plus screen-observation
+ *  and action+demonstrative shapes): a message with none of these cannot
+ *  refer to the live app/file, so the ambient context is unused noise — and
+ *  a misresolution temptation for bare deictics. */
+const AMBIENT_ARTIFACT_RE = /\b(?:file|folder|document|doc|page|tab|window|app|application|screen|desktop|editor|browser|site|article|pdf|image|photo|picture|email|spreadsheet|presentation)\b/i;
 
 module.exports = {
   CONVERSATION_RECALL_RE,
@@ -209,4 +242,6 @@ module.exports = {
   PROFILE_QUERY_PATTERN,
   ALL_TIME_QUERY_PATTERN,
   SCREEN_OBSERVATION_RE,
+  DEICTIC_CONTINUATION_RE,
+  AMBIENT_ARTIFACT_RE,
 };
