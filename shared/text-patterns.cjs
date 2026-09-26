@@ -219,6 +219,102 @@ const SCREEN_OBSERVATION_RE = new RegExp([
  *  a misresolution temptation for bare deictics. */
 const AMBIENT_ARTIFACT_RE = /\b(?:file|folder|document|doc|page|tab|window|app|application|screen|desktop|editor|browser|site|article|pdf|image|photo|picture|email|spreadsheet|presentation)\b/i;
 
+/* Lexical inference for GhostLayer display requests. classifyTask's
+ * screenOutputKind/screenOutputContent fields are individually flaky — when
+ * they miss, the decompose guard's fetch-step heuristic misfires (observed:
+ * "make confetti appear on my screen" → [web_search, screen_display], the
+ * search ran first and its answer hallucinated "displayed on screen"). The
+ * kind vocabulary mirrors screenOutput.js's payload builders so the same
+ * utterance classifies identically at both layers. inferScreenOutput returns
+ * { kind, content } — either may be null when nothing is lexically
+ * determinable. Explicit literal content (a quoted string) wins over kind
+ * inference: "show the word confetti on screen" is a text display. */
+const SCREEN_EFFECT_RE  = /\b(emoji[\s-]?rain|fireworks?|confetti|snow|make\s+it\s+rain)\b/i;
+const SCREEN_EMOJI_RE   = /\p{Extended_Pictographic}/u;
+const SCREEN_IMG_URL_RE = /https?:\/\/\S+?\.(?:png|jpe?g|gif|webp|svg)(?:\?\S*)?/i;
+const SCREEN_IMG_PATH_RE = /(?:~?\/[\w\-./ ]+?\.(?:png|jpe?g|gif|webp|svg))/i;
+const SCREEN_ALERT_RE   = /\b(?:alert|warning|caution)\b/i;
+const SCREEN_DECK_RE    = /\b(?:slides?|slide\s?deck|deck)\b/i;
+const SCREEN_CHART_RE   = /\b(?:pie|donut|bar|line|area|scatter)?\s*(?:chart|graph)\b/i;
+const SCREEN_QUOTED_RE  = /["“]([^"”\n]{1,300})["”]|'([^'\n]{1,300})'/;
+const SCREEN_DISPLAY_TAIL_RE = /\b(.+?)\s+on(?:to)?\s+(?:the\s+|my\s+)?screen\b/i;
+const SCREEN_DISPLAY_VERB_RE = /\b(?:show|put|display|paint|write|post|flash|project)\b/i;
+const SCREEN_CONTENT_LEAD_RE = /^(?:(?:the\s+|a\s+|an\s+)?(?:word|words|phrase|text|message|sentence)\s+|(?:that\s+)?(?:says?|reads?|saying)\s+)/i;
+
+/** Lexical screen-output (GhostLayer) display signal — the same class comms'
+ * screen_output_guard detects. classifyTask's isScreenOutput flag flakes
+ * (observed: "look up the current bitcoin price and show it on my screen" →
+ * flag missing → llmDecompose → command_automate). A display verb targeting
+ * "on (my|the) screen", a clear/dismiss of the screen, or a self-contained
+ * effect word marks the utterance deterministically; SCREEN_OBSERVATION_RE
+ * callers subtract passive questions before trusting this. */
+const SCREEN_OUTPUT_RE = new RegExp([
+  '\\b(?:show|put|display|paint|write|post|flash|project)\\b[^.]{0,60}\\bon(?:to)?\\s+(?:the\\s+|my\\s+)?screen\\b',
+  '\\bon\\s+screen\\s+(?:display|mode)\\b',
+  '\\b(?:clear|hide|dismiss|wipe)\\s+(?:the\\s+|my\\s+)?screen\\b',
+  '\\btake\\s+\\w+\\s+off\\s+(?:the\\s+|my\\s+)?screen\\b',
+  '\\bmake\\s+it\\s+(?:rain|snow)\\b',
+  '\\b(?:fireworks?|confetti|emoji[\\s-]?rain)\\b[^.]{0,40}\\bscreen\\b',
+  '\\bscreen\\b[^.]{0,40}\\b(?:fireworks?|confetti|emoji[\\s-]?rain)\\b',
+].join('|'), 'i');
+
+/** Fetch-then-display shape: a lookup verb AND a display verb targeting the
+ * screen — "look up the bitcoin price and show it on my screen". The display
+ * half's referential 'it' suppresses the normal fetch heuristic, so the
+ * lookup clause must re-enable it deterministically. */
+const LOOKUP_THEN_DISPLAY_RE = /\b(?:look\s*up|lookup|search(?:\s+for)?|find|fetch|get|check|pull\s+up)\b[^.]{0,90}\b(?:show|put|display|paint|post)\b[^.]{0,45}\bon(?:to)?\s+(?:the\s+|my\s+)?screen\b/i;
+
+function inferScreenOutput(message) {
+  const msg = String(message || '');
+  const out = { kind: null, content: null };
+  if (!msg) return out;
+
+  const q = msg.match(SCREEN_QUOTED_RE);
+  if (q) {
+    out.kind = 'text';
+    out.content = (q[1] || q[2] || '').trim() || null;
+    return out;
+  }
+
+  if (SCREEN_EFFECT_RE.test(msg)) out.kind = 'effect';
+  else if (SCREEN_EMOJI_RE.test(msg)) out.kind = 'emoji';
+  else if (SCREEN_IMG_URL_RE.test(msg) || SCREEN_IMG_PATH_RE.test(msg)
+           || (/\b(?:image|picture|photo|img)\b/i.test(msg) && /https?:\/\/|~\//.test(msg))) out.kind = 'image';
+  else if (SCREEN_ALERT_RE.test(msg)) out.kind = 'alert';
+  else if (SCREEN_DECK_RE.test(msg)) out.kind = 'deck';
+  else if (SCREEN_CHART_RE.test(msg)) out.kind = 'chart';
+
+  // Alert copy: "...that says X" → X is the alert text. The screenOutput
+  // node fills payload.text from screenOutputContent; when the classifier
+  // leaves it empty the node would paint stale conversation text instead.
+  if (out.kind === 'alert') {
+    const s = msg.match(/(?:says?|saying|that\s+says?)\s+(.{1,200})$/i);
+    if (s) out.content = s[1].trim();
+  }
+
+  // Unquoted text content exists ONLY when an explicit literal-payload lead
+  // marks it — "the word DONE", "text saying hello". Bare "show me the
+  // weather"/"show me john 3:16" name a fetchable referent, not literal
+  // content, and must stay null so the guard keeps its fetch step.
+  if ((!out.kind || out.kind === 'text') && SCREEN_DISPLAY_VERB_RE.test(msg)) {
+    const t = msg.match(SCREEN_DISPLAY_TAIL_RE);
+    if (t) {
+      const body = t[1]
+        .replace(new RegExp('^\\s*' + SCREEN_DISPLAY_VERB_RE.source, 'i'), '')
+        .replace(/^\s*(?:me|us)\s+/i, '')
+        .trim();
+      if (SCREEN_CONTENT_LEAD_RE.test(body)) {
+        let content = body;
+        while (SCREEN_CONTENT_LEAD_RE.test(content)) {
+          content = content.replace(SCREEN_CONTENT_LEAD_RE, '').trim();
+        }
+        if (content && content.length <= 200) out.content = content;
+      }
+    }
+  }
+  return out;
+}
+
 module.exports = {
   CONVERSATION_RECALL_RE,
   CONVERSATION_RECALL_META_RE,
@@ -244,4 +340,7 @@ module.exports = {
   SCREEN_OBSERVATION_RE,
   DEICTIC_CONTINUATION_RE,
   AMBIENT_ARTIFACT_RE,
+  SCREEN_OUTPUT_RE,
+  LOOKUP_THEN_DISPLAY_RE,
+  inferScreenOutput,
 };

@@ -143,8 +143,18 @@ function _checkExpect(entry, outcome) {
     failures.push(`latency: ${outcome.totalMs}ms > budget ${ex.maxMs}ms`);
   }
   // Universal hygiene checks — always on
-  for (const bad of ['[Error generating answer', 'Assignment to constant variable', 'undefined is not']) {
-    if (text.includes(bad)) failures.push(`error marker "${bad}" present in result`);
+  // Match the full error-answer shape ("[Error generating answer: … Intent: x]")
+  // rather than a bare substring — screen_intelligence answers legitimately
+  // quote these strings when the plan doc showing them is on-screen.
+  if (/\[Error generating answer: [^\]]*Intent:/i.test(text)) {
+    failures.push('error answer marker "[Error generating answer: … Intent:]" present in result');
+  }
+  // Raw JS-crash text only ever surfaces as the whole answer — a long
+  // OCR/summary answer containing the words is quoted content, not a crash.
+  for (const bad of ['Assignment to constant variable', 'undefined is not']) {
+    if (text.includes(bad) && text.length < 300) {
+      failures.push(`error marker "${bad}" present in result`);
+    }
   }
   if (outcome.status === 'done' && !text.trim()) failures.push('done but empty result');
   return failures;

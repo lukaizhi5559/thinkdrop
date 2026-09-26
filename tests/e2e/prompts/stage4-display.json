@@ -1,0 +1,45 @@
+[
+  { "id": "s4-text-basic", "prompt": "show \"meeting at 3pm\" on my screen",
+    "expect": { "commsIntent": "handoff", "graphIntent": "screen_display", "status": "done", "screenKind": "text", "screenMustContain": ["meeting at 3pm"], "maxMs": 45000 } },
+
+  { "id": "s4-text-put", "prompt": "put the word DONE on the screen",
+    "expect": { "commsIntent": "handoff", "graphIntent": "screen_display", "status": "done", "screenKind": "text", "screenMustContain": ["DONE"], "maxMs": 45000 } },
+
+  { "id": "s4-effect-confetti", "prompt": "make confetti appear on my screen",
+    "expect": { "commsIntent": "handoff", "graphIntent": "screen_display", "status": "done", "screenKind": "effect", "screenMustContain": ["confetti"], "maxMs": 45000 } },
+
+  { "id": "s4-effect-fireworks", "prompt": "show fireworks on the screen",
+    "expect": { "commsIntent": "handoff", "graphIntent": "screen_display", "status": "done", "screenKind": "effect", "screenMustContain": ["firework"], "maxMs": 45000 } },
+
+  { "id": "s4-alert-block", "prompt": "show a blocking alert on my screen that says do not enter",
+    "expect": { "commsIntent": "handoff", "graphIntent": "screen_display", "status": "done", "screenKind": "alert", "maxMs": 45000 } },
+
+  { "id": "s4-emoji", "prompt": "put a 🎉 emoji on my screen",
+    "expect": { "commsIntent": "handoff", "graphIntent": "screen_display", "status": "done", "screenKind": "emoji", "maxMs": 45000 } },
+
+  { "id": "s4-chart-pie", "prompt": "show a pie chart on my screen: apples 5, bananas 3",
+    "expect": { "commsIntent": "handoff", "graphIntent": "screen_display", "status": "done", "screenKind": "chart", "maxMs": 45000 } },
+
+  { "id": "s4-image", "prompt": "show this image on my screen: https://example.com/cat.png",
+    "expect": { "commsIntent": "handoff", "graphIntent": "screen_display", "status": "done", "screenKind": "image", "screenMustContain": ["cat.png"], "maxMs": 45000 } },
+
+  { "id": "s4-clear", "prompt": "clear the screen",
+    "expect": { "commsIntent": "handoff", "graphIntent": "screen_display", "status": "done", "maxMs": 45000 } },
+
+  { "id": "s4-clear-off", "prompt": "take that off the screen",
+    "expect": { "commsIntent": "handoff", "graphIntent": "screen_display", "status": "done", "maxMs": 45000 } },
+
+  { "id": "s4-fetch-display", "prompt": "look up the current bitcoin price and show it on my screen",
+    "expect": { "commsIntent": "handoff", "graphIntent": "screen_display", "status": "done", "screenKind": "text", "maxMs": 90000 } },
+
+  { "id": "s4-ref-seed", "session": "e2e_s4_ref", "prompt": "what is the capital of Norway",
+    "expect": { "status": "done", "mustContain": ["Oslo"], "maxMs": 45000 } },
+  { "id": "s4-ref-show", "session": "e2e_s4_ref", "prompt": "show that on my screen",
+    "expect": { "commsIntent": "handoff", "graphIntent": "screen_display", "status": "done", "screenKind": "text", "maxMs": 45000 } },
+
+  { "id": "s4-read-regression", "prompt": "read the text visible on my screen",
+    "expect": { "commsIntent": "handoff", "graphIntent": "screen_intelligence", "status": "done", "maxMs": 60000 } },
+
+  { "id": "s4-what-regression", "prompt": "what's on my screen",
+    "expect": { "commsIntent": "handoff", "graphIntent": "screen_intelligence", "status": "done", "maxMs": 60000 } }
+]
