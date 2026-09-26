@@ -25,6 +25,14 @@ class ThinkDropMCPClient {
     this.logger = options.logger || console;
     this.timeoutMs = options.timeoutMs || 10000;
 
+    // Per-service circuit breaker — after N consecutive transport-level
+    // failures (timeout/ECONNREFUSED/DNS), fail fast for the cooldown window
+    // instead of letting every call burn its full timeout. Observed: a dead
+    // endpoint cost ~20s/task across sequential enrichment calls.
+    this._circuit = new Map(); // serviceName -> { failures, openUntil }
+    this._circuitThreshold = options.circuitThreshold || 3;
+    this._circuitCooldownMs = options.circuitCooldownMs || 30_000;
+
     // Default service URL map — override via env vars or options.serviceUrls
     this.serviceUrls = {
       'conversation':        process.env.MCP_CONVERSATION_URL        || 'http://localhost:3004',
@@ -98,9 +106,20 @@ class ThinkDropMCPClient {
 
     this.logger.debug(`[MCPClient] ${serviceName}.${action} → ${url}`);
 
+    // Circuit breaker: fail fast while the service's breaker is open.
+    const _cb = this._circuit.get(serviceName);
+    if (_cb && _cb.openUntil && Date.now() < _cb.openUntil) {
+      const waitS = Math.ceil((_cb.openUntil - Date.now()) / 1000);
+      const err = new Error(`[MCPClient] Circuit open for ${serviceName} — failing fast (${waitS}s cooldown)`);
+      err.code = 'CIRCUIT_OPEN';
+      throw err;
+    }
+
     try {
       const responseText = await this._httpPost(url, headers, body, timeoutMs, abortSignal);
       const response = JSON.parse(responseText);
+      // Service responded at all → reachable; clear any accumulated failures.
+      this._circuit.delete(serviceName);
 
       // Handle both MCP response envelope formats:
       //   conversation-service: { success: bool, data, error }
@@ -122,6 +141,19 @@ class ThinkDropMCPClient {
 
     } catch (error) {
       this.logger.error(`[MCPClient] ${serviceName}.${action} failed:`, error.message);
+      // Trip the breaker only on transport-level failures — an MCP error
+      // envelope means the service answered (it's alive), and caller-initiated
+      // aborts don't implicate the service either.
+      if (error.message !== 'aborted' &&
+          /timeout|ECONNREFUSED|ENOTFOUND|EHOSTUNREACH|ENETUNREACH|ECONNRESET|socket hang up/i.test(error.message)) {
+        const rec = this._circuit.get(serviceName) || { failures: 0, openUntil: 0 };
+        rec.failures += 1;
+        if (rec.failures >= this._circuitThreshold) {
+          rec.openUntil = Date.now() + this._circuitCooldownMs;
+          this.logger.warn(`[MCPClient] Circuit OPEN for ${serviceName} after ${rec.failures} transport failures — ${this._circuitCooldownMs / 1000}s cooldown`);
+        }
+        this._circuit.set(serviceName, rec);
+      }
       throw error;
     }
   }

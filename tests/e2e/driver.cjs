@@ -244,6 +244,7 @@ async function runPrompt(entry, opts) {
     }
     if (task.status === 'auth-required') {
       if (authMode === 'none') break;
+      if (outcome.authResumes >= 2) break; // resume failed to bypass — don't loop to deadline
       if (Date.now() - handledAt.auth < 5000) continue;
       handledAt.auth = Date.now();
       outcome.authResumes++;

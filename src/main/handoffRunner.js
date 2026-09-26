@@ -175,7 +175,7 @@ function _makeProgressCallback(taskId, agentId) {
  * @param {string[]|null} [args.preflightAuthBypass] - Agent IDs to treat as authed for this run only
  * @param {Object|null}  [args._resumeState] - Paused finalState to resume from (ask_user answer)
  */
-async function execute({ taskId, prompt, agentId, source, originalPrompt, sessionId, planFile, preflightAuthBypass, userApproved, thoughtContext, guessedIntent, _resumeState }) {
+async function execute({ taskId, prompt, agentId, source, originalPrompt, sessionId, planFile, preflightAuthBypass, userApproved, thoughtContext, guessedIntent, _resumeState, _deterministicPlan, _deterministicTemplate, _deterministicLowRisk }) {
   if (!_mcpAdapter || !_llmBackend) {
     console.error('[HandoffRunner] Not initialized — call init() first');
     _notifyComplete(taskId, agentId, 'failed', 'HandoffRunner not initialized', null, sessionId);
@@ -235,6 +235,9 @@ async function execute({ taskId, prompt, agentId, source, originalPrompt, sessio
           gatherAnswerCallback: _gatherAnswerCallback,
           // If resuming with an approved plan, set _planFile so planExecutor runs it
           ...(planFile ? { _planFile: planFile } : {}),
+          // Deterministic fast-path metadata survives the approval round-trip —
+          // executeCommand uses it for the direct step-output answer + 10s cap.
+          ...(_deterministicPlan ? { _deterministicPlan, _deterministicTemplate, _deterministicLowRisk } : {}),
           // Auth bypass: user chose "proceed without" — treat listed agents as
           // authed for this run only (not persisted to auth cache or authed_at)
           ...(preflightAuthBypass?.length ? { preflightAuthBypass } : {}),
@@ -269,7 +272,19 @@ async function execute({ taskId, prompt, agentId, source, originalPrompt, sessio
     // Execute the stategraph
     const finalState = await stateGraph.execute(initialState, null, abortController.signal);
 
-    const answer = finalState.answer || '';
+    // Pure-interaction plans (open/focus/click steps) often leave
+    // finalState.answer empty — the step outputs ("Notes already open and
+    // focused") live in skillResults[].stdout. Fall back to the same
+    // "Step outputs:" summary logConversation writes so the completion
+    // payload isn't a blank answer.
+    let answer = finalState.answer || '';
+    if (!answer && Array.isArray(finalState.skillResults)) {
+      const outs = finalState.skillResults
+        .filter(r => r && r.ok !== false && typeof r.stdout === 'string' && r.stdout.trim())
+        .map(r => `[${r.description || r.skill || 'step'}]:\n${r.stdout.trim().slice(0, 500)}`);
+      if (outs.length) answer = `Done.\n\nStep outputs:\n${outs.join('\n\n')}`;
+      else if (finalState.skillResults.some(r => r && r.ok !== false)) answer = 'Done.';
+    }
     const intent = finalState?.intent?.type || 'command_automate';
 
     // Extract web search sources from finalState.contextDocs so the queue card
@@ -352,6 +367,9 @@ async function execute({ taskId, prompt, agentId, source, originalPrompt, sessio
         source,
         originalPrompt,
         sessionId: finalState.resolvedSessionId || sessionId || null,
+        _deterministicPlan: finalState._deterministicPlan || null,
+        _deterministicTemplate: finalState._deterministicTemplate || null,
+        _deterministicLowRisk: finalState._deterministicLowRisk ?? null,
       });
       console.log(`[HandoffRunner] Task ${taskId} awaiting plan approval — planFile=${planFileFromState}`);
       // Emit pipeline:done so AutomationProgress clears any planning spinner
@@ -400,14 +418,24 @@ async function execute({ taskId, prompt, agentId, source, originalPrompt, sessio
       // handler in main.js can resume this task after sign-in.
       if (typeof _setPendingPreflightPrompt === 'function') {
         _setPendingPreflightPrompt(taskId, {
+          // Carry taskId — the resume must reuse it so the follow-up
+          // completion overwrites this auth-required status on the same
+          // task the caller is tracking. Without it the resumed run mints a
+          // new taskId and the original stays 'auth-required' forever.
+          taskId,
           prompt,
           agentId: agentId || null,
           source: source || 'text',
           originalPrompt: originalPrompt || null,
           sessionId: finalState.resolvedSessionId || sessionId || null,
           // Mid-run auth decisions the user already made — carried into the
-          // resume so bypassed agents aren't re-prompted for sign-in.
-          queuedBypasses: Array.isArray(finalState.preflightAuthBypass) ? [...finalState.preflightAuthBypass] : [],
+          // resume so bypassed agents aren't re-prompted for sign-in. Plus
+          // the agents that just failed auth — "proceed" must bypass THEM,
+          // not merely replay the (possibly empty) prior bypass list.
+          queuedBypasses: [...new Set([
+            ...(Array.isArray(finalState.preflightAuthBypass) ? finalState.preflightAuthBypass : []),
+            ...(Array.isArray(finalState.preflightAuthAgents) ? finalState.preflightAuthAgents : []),
+          ])],
           queuedContinues: Array.isArray(finalState._authContinueQueued) ? [...finalState._authContinueQueued] : [],
         });
       }
@@ -537,6 +565,9 @@ async function resume(taskId, planFile) {
     originalPrompt: ctx.originalPrompt,
     sessionId: ctx.sessionId,
     planFile,
+    _deterministicPlan: ctx._deterministicPlan,
+    _deterministicTemplate: ctx._deterministicTemplate,
+    _deterministicLowRisk: ctx._deterministicLowRisk,
   });
 }
 

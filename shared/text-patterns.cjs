@@ -264,6 +264,26 @@ const SCREEN_OUTPUT_RE = new RegExp([
  * lookup clause must re-enable it deterministically. */
 const LOOKUP_THEN_DISPLAY_RE = /\b(?:look\s*up|lookup|search(?:\s+for)?|find|fetch|get|check|pull\s+up)\b[^.]{0,90}\b(?:show|put|display|paint|post)\b[^.]{0,45}\bon(?:to)?\s+(?:the\s+|my\s+)?screen\b/i;
 
+/** Device-state questions — "what's my battery", "how much disk space",
+ * "is my wifi on", "check my uptime". Fresh telemetry only exists via OS
+ * tools (local_system → command_automate); a text tier can only hallucinate
+ * it. Mirrors comms' live-data exclusion: freshness lives behind a tool. */
+// A literal filesystem path in the message is ground truth the classifier
+// cannot hallucinate away — "read the file /tmp/x.txt" flaked to
+// taskType:'query' once and the passive intent hallucinated
+// "I can't read files". Any POSIX path token means the task touches the
+// filesystem. Requires a word-boundary char before '/' so URLs don't match.
+const FILE_PATH_RE = /(?:^|[\s"'`(])\/(?:[\w.~-]+\/)+[\w.~-]+|(?:^|[\s"'`])~\/[\w.~/-]+|(?:^|[\s"'`])\.{1,2}\/[\w.~/-]+/;
+
+// Screen CAPTURE, not display — "take a screenshot of my screen" flaked
+// isScreenOutput:true once and the screen-output guard emitted a
+// [web_search, screen_display] plan that hallucinated a captured image.
+// Capture verbs + screenshot/screen-recording noun = a local OS action
+// (screen.capture skill), never a display payload.
+const SCREEN_CAPTURE_RE = /\b(?:take|capture|snap|grab|shoot|record)\s+(?:a\s+|an\s+|the\s+|my\s+)?(?:quick\s+|new\s+|full\s+)?(?:screenshot|screen\s*(?:shot|recording|capture|grab)|picture\s+of\s+(?:my\s+|the\s+)screen|photo\s+of\s+(?:my\s+|the\s+)screen)\b/i;
+
+const DEVICE_STATE_RE = /\b(?:battery|disk\s+(?:space|usage)|storage|free\s+space|uptime|wifi|wi-?fi|bluetooth|volume|brightness|cpu|gpu|memory\s+(?:usage|pressure|ram)|ram\s+usage|charging|charger|temperature|fan(?:s)?\s+speed|network\s+(?:status|interfaces?)|ip\s+address|hostname|os\s+version|macos\s+version|kernel)\b|\bhow\s+much\s+(?:ram|memory|storage|disk|battery)\b|\b(?:ram|memory|disk|storage|battery)\s+(?:do\s+i\s+have|left|available|free|remaining|full)\b|\bhow\s+long\s+has\s+(?:my|the|this)\s+(?:computer|mac|pc|laptop|machine|system|phone)\s+been\s+(?:running|on|up)\b|\b(?:processes?|apps?|programs?)\s+(?:using|consuming|hogging|eating)\s+(?:the\s+)?(?:most\s+)?(?:memory|cpu|ram|resources?)\b|\btop\s+\d*\s*(?:processes?|apps?|programs?)\s+(?:by|using|consuming|sorted)\b|\b(?:running|open|active)\s+(?:apps?|applications|programs?|processes?)\b|\b(?:apps?|applications|programs?|processes?)\s+(?:\w+\s+){0,3}(?:running|open)\b/i;
+
 function inferScreenOutput(message) {
   const msg = String(message || '');
   const out = { kind: null, content: null };
@@ -342,5 +362,8 @@ module.exports = {
   AMBIENT_ARTIFACT_RE,
   SCREEN_OUTPUT_RE,
   LOOKUP_THEN_DISPLAY_RE,
+  DEVICE_STATE_RE,
+  FILE_PATH_RE,
+  SCREEN_CAPTURE_RE,
   inferScreenOutput,
 };

@@ -1,0 +1,328 @@
+[
+  {
+    "id": "s5-file-create",
+    "prompt": "create a file at /tmp/e2e/hello.txt containing the text hello thinkdrop",
+    "expect": {
+      "graphIntent": "command_automate",
+      "status": "done",
+      "maxMs": 120000
+    }
+  },
+  {
+    "id": "s5-file-read",
+    "prompt": "read the file /tmp/e2e/hello.txt and tell me what it says",
+    "expect": {
+      "graphIntent": "command_automate",
+      "status": "done",
+      "mustContain": [
+        "hello thinkdrop"
+      ],
+      "maxMs": 120000
+    }
+  },
+  {
+    "id": "s5-file-append",
+    "prompt": "append the line 'second entry' to /tmp/e2e/log.txt",
+    "expect": {
+      "graphIntent": "command_automate",
+      "status": "done",
+      "maxMs": 120000
+    }
+  },
+  {
+    "id": "s5-file-rename",
+    "prompt": "rename /tmp/e2e/hello.txt to /tmp/e2e/hello-renamed.txt",
+    "expect": {
+      "graphIntent": "command_automate",
+      "status": "done",
+      "maxMs": 120000
+    },
+    "answers": [
+      {
+        "match": "re:which|find|match|provide",
+        "answer": "/tmp/e2e/hello.txt"
+      }
+    ]
+  },
+  {
+    "id": "s5-file-move",
+    "prompt": "move /tmp/e2e/log.txt into /tmp/e2e/archive",
+    "expect": {
+      "graphIntent": "command_automate",
+      "status": "done",
+      "maxMs": 120000
+    },
+    "answers": [
+      {
+        "match": "re:which|find|match",
+        "answer": "/tmp/e2e/log.txt"
+      }
+    ]
+  },
+  {
+    "id": "s5-file-list",
+    "prompt": "list the files in /tmp/e2e",
+    "expect": {
+      "graphIntent": "command_automate",
+      "status": "done",
+      "maxMs": 120000
+    }
+  },
+  {
+    "id": "s5-sys-battery",
+    "prompt": "what's my battery percentage",
+    "expect": {
+      "graphIntent": "command_automate",
+      "status": "done",
+      "maxMs": 120000
+    }
+  },
+  {
+    "id": "s5-sys-disk",
+    "prompt": "how much free disk space do I have",
+    "expect": {
+      "graphIntent": "command_automate",
+      "status": "done",
+      "maxMs": 120000
+    }
+  },
+  {
+    "id": "s5-sys-procs",
+    "prompt": "list the top 5 processes using the most memory",
+    "expect": {
+      "graphIntent": "command_automate",
+      "status": "done",
+      "maxMs": 120000
+    },
+    "answers": [
+      {
+        "match": "re:.*",
+        "answer": "just run the command"
+      }
+    ]
+  },
+  {
+    "id": "s5-sys-uptime",
+    "prompt": "how long has my computer been running",
+    "expect": {
+      "graphIntent": "command_automate",
+      "status": "done",
+      "maxMs": 120000
+    }
+  },
+  {
+    "id": "s5-screenshot",
+    "prompt": "take a screenshot of my screen",
+    "expect": {
+      "graphIntent": "command_automate",
+      "status": "done",
+      "maxMs": 120000
+    }
+  },
+  {
+    "id": "s5-remind",
+    "prompt": "remind me in 30 minutes to stretch",
+    "answers": [
+      "on screen"
+    ],
+    "expect": {
+      "graphIntent": "command_automate",
+      "status": "done",
+      "maxMs": 120000
+    }
+  },
+  {
+    "id": "s5-remind-cancel",
+    "prompt": "cancel my stretch reminder",
+    "answers": [
+      {
+        "match": "re:.*",
+        "answer": "the stretch reminder"
+      }
+    ],
+    "expect": {
+      "graphIntent": "command_automate",
+      "status": "done",
+      "maxMs": 120000
+    }
+  },
+  {
+    "id": "s5-open-notes",
+    "prompt": "open the Notes app",
+    "expect": {
+      "graphIntent": "command_automate",
+      "status": "done",
+      "maxMs": 120000
+    }
+  },
+  {
+    "id": "s5-open-url",
+    "prompt": "open youtube.com in my browser",
+    "expect": {
+      "graphIntent": "command_automate",
+      "status": "done",
+      "maxMs": 150000
+    }
+  },
+  {
+    "id": "s5-shell",
+    "prompt": "run 'echo stage five works' in the terminal",
+    "expect": {
+      "graphIntent": "command_automate",
+      "status": "done",
+      "mustContain": [
+        "stage five works"
+      ],
+      "maxMs": 120000
+    }
+  },
+  {
+    "id": "s5-running-apps",
+    "prompt": "what apps are currently running on my mac",
+    "expect": {
+      "graphIntent": "command_automate",
+      "status": "done",
+      "maxMs": 120000
+    },
+    "answers": [
+      {
+        "match": "re:.*",
+        "answer": "just list them"
+      }
+    ]
+  },
+  {
+    "id": "s5-file-multi",
+    "prompt": "create a file /tmp/e2e/multi.txt with the words alpha beta then rename it to /tmp/e2e/multi-renamed.txt",
+    "expect": {
+      "graphIntent": "command_automate",
+      "status": "done",
+      "maxMs": 150000
+    }
+  },
+  {
+    "id": "s5-mixed-save",
+    "prompt": "search the web for the current time in Tokyo and save it to /tmp/e2e/tokyo.txt",
+    "expect": {
+      "graphIntent": "command_automate",
+      "status": "done",
+      "maxMs": 180000
+    }
+  },
+  {
+    "id": "s5-ref-seed",
+    "session": "e2e_s5_ref",
+    "prompt": "create a file /tmp/e2e/notes.txt with the words remember milk",
+    "expect": {
+      "graphIntent": "command_automate",
+      "status": "done",
+      "maxMs": 120000
+    }
+  },
+  {
+    "id": "s5-ref-edit",
+    "session": "e2e_s5_ref",
+    "prompt": "add 'also eggs' to that file",
+    "expect": {
+      "graphIntent": "command_automate",
+      "status": "done",
+      "maxMs": 120000
+    },
+    "answers": [
+      {
+        "match": "re:which|find|match|file",
+        "answer": "/tmp/e2e/notes.txt"
+      }
+    ]
+  },
+  {
+    "id": "s5-tweet",
+    "prompt": "post a tweet saying hello world",
+    "approve": false,
+    "expect": {
+      "graphIntent": "command_automate",
+      "status": "awaiting-approval",
+      "maxMs": 180000
+    }
+  },
+  {
+    "id": "s5-email",
+    "prompt": "send an email to myself with the subject test run",
+    "approve": false,
+    "expect": {
+      "graphIntent": "command_automate",
+      "status": "awaiting-approval",
+      "maxMs": 180000
+    }
+  },
+  {
+    "id": "s5-sms",
+    "prompt": "text mom that I'll be late",
+    "approve": false,
+    "expect": {
+      "graphIntent": "command_automate",
+      "status": "awaiting-approval",
+      "maxMs": 180000
+    }
+  },
+  {
+    "id": "s5-todoist",
+    "prompt": "add buy milk to my todoist",
+    "approve": false,
+    "expect": {
+      "graphIntent": "command_automate",
+      "status": "awaiting-approval",
+      "maxMs": 180000
+    }
+  },
+  {
+    "id": "s5-github-issue",
+    "prompt": "create a github issue titled 'test issue' in the thinkdrop repo",
+    "approve": false,
+    "expect": {
+      "graphIntent": "command_automate",
+      "status": "awaiting-approval",
+      "maxMs": 180000
+    }
+  },
+  {
+    "id": "s5-spotify",
+    "prompt": "play my discover weekly playlist on spotify",
+    "approve": false,
+    "expect": {
+      "graphIntent": "command_automate",
+      "status": "awaiting-approval",
+      "maxMs": 180000
+    }
+  },
+  {
+    "id": "s5-slack-msg",
+    "prompt": "send a slack message to the engineering channel saying standup is in 5 minutes",
+    "approve": false,
+    "expect": {
+      "graphIntent": "command_automate",
+      "status": "awaiting-approval",
+      "maxMs": 180000
+    }
+  },
+  {
+    "id": "s5-amazon",
+    "prompt": "search amazon for wireless headphones and show me the top results",
+    "approve": false,
+    "expect": {
+      "graphIntent": "command_automate",
+      "status": "awaiting-approval",
+      "maxMs": 180000
+    }
+  },
+  {
+    "id": "s5-volume",
+    "prompt": "set my volume to 50 percent",
+    "approve": false,
+    "expect": {
+      "graphIntent": "command_automate",
+      "status": "awaiting-approval",
+      "maxMs": 180000
+    }
+  }
+]

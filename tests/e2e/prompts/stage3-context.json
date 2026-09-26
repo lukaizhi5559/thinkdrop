@@ -1,0 +1,24 @@
+[
+  { "id": "s3-web-seed",     "prompt": "search for the latest news on SpaceX launches",                    "sessionId": "e2e_s3_web",    "expect": { "graphIntent": "web_search", "status": "done", "mustContain": ["re:spacex"], "maxMs": 60000 } },
+  { "id": "s3-web-cost",     "prompt": "how much does one launch cost",                                    "sessionId": "e2e_s3_web",    "expect": { "status": "done", "mustNotContain": ["error"], "maxMs": 60000 } },
+  { "id": "s3-web-ceo",      "prompt": "who is its CEO",                                                   "sessionId": "e2e_s3_web",    "expect": { "status": "done", "mustContain": ["re:musk"], "maxMs": 60000 } },
+  { "id": "s3-web-again",    "prompt": "do that search again",                                             "sessionId": "e2e_s3_web",    "expect": { "graphIntent": "web_search", "status": "done", "mustContain": ["re:spacex"], "maxMs": 60000 } },
+  { "id": "s3-web-same",     "prompt": "search for the same thing but for Blue Origin",                    "sessionId": "e2e_s3_web",    "expect": { "graphIntent": "web_search", "status": "done", "mustContain": ["re:blue origin"], "maxMs": 60000 } },
+
+  { "id": "s3-screen-seed",  "prompt": "what's on my screen",                                              "sessionId": "e2e_s3_screen", "expect": { "graphIntent": "screen_intelligence", "status": "done", "maxMs": 60000 } },
+  { "id": "s3-screen-title", "prompt": "read the title of that window",                                    "sessionId": "e2e_s3_screen", "expect": { "graphIntent": "screen_intelligence", "status": "done", "maxMs": 60000 } },
+  { "id": "s3-screen-app",   "prompt": "what app is that",                                                 "sessionId": "e2e_s3_screen", "expect": { "status": "done", "maxMs": 60000 } },
+
+  { "id": "s3-mem-seed",     "prompt": "what did we talk about last week",                                 "sessionId": "e2e_s3_mem",    "expect": { "graphIntent": "memory_retrieve", "status": "done", "maxMs": 40000 } },
+  { "id": "s3-mem-more",     "prompt": "tell me more about that",                                          "sessionId": "e2e_s3_mem",    "expect": { "graphIntent": "memory_retrieve", "status": "done", "maxMs": 40000 } },
+  { "id": "s3-mem-when",     "prompt": "when was that",                                                    "sessionId": "e2e_s3_mem",    "expect": { "graphIntent": "memory_retrieve", "status": "done", "maxMs": 40000 } },
+
+  { "id": "s3-know-seed",    "prompt": "explain how DNS resolution works",                                 "sessionId": "e2e_s3_know",   "expect": { "status": "done", "mustContain": ["re:dns|domain"], "maxMs": 60000 } },
+  { "id": "s3-know-port",    "prompt": "what port does it use",                                            "sessionId": "e2e_s3_know",   "expect": { "status": "done", "mustContain": ["re:53"], "maxMs": 60000 } },
+  { "id": "s3-know-just",    "prompt": "what did I just ask you",                                          "sessionId": "e2e_s3_know",   "expect": { "status": "done", "maxMs": 40000 } },
+
+  { "id": "s3-bare-yes",     "prompt": "yes",                                                              "expect": { "status": "done", "maxMs": 40000 } },
+  { "id": "s3-meta-repeat",  "prompt": "repeat the last thing you said",                                   "expect": { "status": "done", "maxMs": 40000 } },
+  { "id": "s3-deictic-err",  "prompt": "what was that error I hit earlier",                                "expect": { "status": "done", "maxMs": 40000 } },
+  { "id": "s3-file-morning", "prompt": "summarize the file I was working on this morning",                 "expect": { "status": "done", "maxMs": 60000 } }
+]
