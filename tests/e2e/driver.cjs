@@ -244,8 +244,11 @@ async function runPrompt(entry, opts) {
     }
     if (task.status === 'auth-required') {
       if (authMode === 'none') break;
-      if (outcome.authResumes >= 2) break; // resume failed to bypass — don't loop to deadline
-      if (Date.now() - handledAt.auth < 5000) continue;
+      if (outcome.authResumes >= 4) break; // resume failed to bypass — don't loop to deadline
+      // A successful resume re-runs the whole graph (~30-60s) before the
+      // journal status flips — long cooldown so we don't exhaust the resume
+      // budget while a good resume is still in flight.
+      if (Date.now() - handledAt.auth < 45000) continue;
       handledAt.auth = Date.now();
       outcome.authResumes++;
       if (opts.verbose) console.log(`      → auth resume (proceed) for ${outcome.taskId}`);
@@ -301,6 +304,11 @@ async function main() {
     const results = [];
     const sessionSuffix = runs > 1 ? `_r${run + 1}` : '';
     console.log(`\n${'═'.repeat(72)}\n  ${stageName} — run ${run + 1}/${runs} (${prompts.length} prompts)\n${'═'.repeat(72)}`);
+
+    // Drop stale comms tasks — a persisted 'queued' entry replays via the
+    // agent-lock release path when a same-agent task completes, double-running
+    // prompts and polluting the intent log between runs.
+    await _post(COMMS, '/tasks/reset', {}, 5000).catch(() => {});
 
     for (const entry of prompts) {
       if (only && !only.includes(entry.id)) continue;

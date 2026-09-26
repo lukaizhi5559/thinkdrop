@@ -249,7 +249,7 @@ const server = http.createServer(async (req, res) => {
     pendingPreflightPrompts.delete(b.taskId);
     // "proceed" → bypass all unauthed agents for this run only
     const bypass = [...(ctx.queuedBypasses || []), ...(ctx.queuedContinues || [])];
-    handoffRunner.execute({ ...ctx, preflightAuthBypass: bypass, userApproved: true })
+    handoffRunner.execute({ ...ctx, preflightAuthBypass: bypass })
       .catch(e => console.error('[Harness] auth-resume failed:', e.message));
     return _json(res, 200, { ok: true, bypassed: bypass });
   }
