@@ -185,7 +185,7 @@ async function runPrompt(entry, opts) {
     ...(entry.sessionId ? { sessionId: entry.sessionId } : {}),
     ...(entry.thoughtContext ? { thoughtContext: entry.thoughtContext } : {}),
     ...(entry.speakerProfile ? { speakerProfile: entry.speakerProfile } : {}),
-  }, Math.min(entry.timeoutMs || 240000, 60000));
+  }, Math.min(entry.timeoutMs || 240000, 90000));
 
   if (proc.status !== 200 || !proc.json?.ok) {
     outcome.status = 'comms-error';
