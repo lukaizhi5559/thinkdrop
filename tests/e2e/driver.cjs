@@ -42,9 +42,20 @@ const path = require('path');
 
 const COMMS = 'http://127.0.0.1:3015';
 const STUB = 'http://127.0.0.1:3010';
-// The stub runs with cwd=tests/e2e, so the stategraph writes the intent log
-// under tests/e2e/logs/ — not the repo root. INTENT_LOG_PATH env can override.
-const INTENT_LOG = process.env.INTENT_LOG_PATH || path.join(__dirname, 'logs', 'intent-classifier.log');
+// The stategraph writes the intent log under process.cwd()/logs/ — which dir
+// that is depends on how the stub was launched (repo root vs tests/e2e).
+// Probe both candidates each read; newest file wins. INTENT_LOG_PATH overrides.
+const _INTENT_LOG_CANDIDATES = process.env.INTENT_LOG_PATH
+  ? [process.env.INTENT_LOG_PATH]
+  : [path.join(__dirname, 'logs', 'intent-classifier.log'),
+     path.join(__dirname, '..', '..', 'logs', 'intent-classifier.log')];
+function _intentLogPath() {
+  let best = _INTENT_LOG_CANDIDATES[0], bestM = -1;
+  for (const p of _INTENT_LOG_CANDIDATES) {
+    try { const m = fs.statSync(p).mtimeMs; if (m > bestM) { best = p; bestM = m; } } catch (_) {}
+  }
+  return best;
+}
 const RESULTS_DIR = path.join(__dirname, 'results');
 fs.mkdirSync(RESULTS_DIR, { recursive: true });
 
@@ -88,13 +99,18 @@ async function _getTask(taskId) {
 // casing even for en→en input ("search" → "Search").
 function _graphIntentFor(promptText, t0) {
   try {
-    const lines = fs.readFileSync(INTENT_LOG, 'utf8').trim().split('\n');
+    const lines = fs.readFileSync(_intentLogPath(), 'utf8').trim().split('\n');
     const probe = String(promptText || '').slice(0, 120).toLowerCase();
     for (let i = lines.length - 1; i >= 0; i--) {
       let row;
       try { row = JSON.parse(lines[i]); } catch (_) { continue; }
       if (!row.ts || new Date(row.ts).getTime() < t0 - 60000) break; // only recent
-      if (typeof row.message === 'string' && row.message.slice(0, 120).toLowerCase() === probe) {
+      // The logged message may carry an appended "[Additional context: …]"
+      // block (follow-up hints) — compare on the user-text prefix only.
+      const rowMsg = typeof row.message === 'string'
+        ? row.message.split('\n[Additional context')[0].slice(0, 120).toLowerCase()
+        : '';
+      if (rowMsg && rowMsg === probe) {
         return { intent: row.intent, parser: row.parser, subPrompts: row.subPrompts?.length, subIntents: (row.subPrompts || []).map(s => s.estimatedIntent) };
       }
     }
@@ -114,14 +130,18 @@ function _checkExpect(entry, outcome) {
   if (ex.commsIntent && outcome.commsIntent !== ex.commsIntent) {
     failures.push(`commsIntent: expected "${ex.commsIntent}", got "${outcome.commsIntent}"`);
   }
-  if (ex.status && outcome.status !== ex.status) {
-    failures.push(`status: expected "${ex.status}", got "${outcome.status}"`);
+  if (ex.status) {
+    const allowed = Array.isArray(ex.status) ? ex.status : [ex.status];
+    if (!allowed.includes(outcome.status)) {
+      failures.push(`status: expected "${allowed.join('|')}", got "${outcome.status}"`);
+    }
   }
   if (ex.graphIntent) {
     const got = outcome.graphIntent?.intent;
     const subs = outcome.graphIntent?.subIntents || [];
-    if (got !== ex.graphIntent && !subs.includes(ex.graphIntent)) {
-      failures.push(`graphIntent: expected "${ex.graphIntent}", got "${got}" (subs: ${subs.join(',') || 'none'})`);
+    const allowed = Array.isArray(ex.graphIntent) ? ex.graphIntent : [ex.graphIntent];
+    if (!allowed.includes(got) && !subs.some(s => allowed.includes(s))) {
+      failures.push(`graphIntent: expected "${allowed.join('|')}", got "${got}" (subs: ${subs.join(',') || 'none'})`);
     }
   }
   const text = outcome.resultText || '';
@@ -239,7 +259,10 @@ async function runPrompt(entry, opts) {
       if (Date.now() - handledAt.question < 4000 || outcome.questions >= 8) continue;
       handledAt.question = Date.now();
       outcome.questions++;
-      const ans = scriptedAnswers.length ? scriptedAnswers.shift() : 'yes';
+      // Scripted entries are {match,answer} objects (consumed by matcher rules
+      // at handoff time); for a pending question we just need the answer text.
+      const _rawAns = scriptedAnswers.length ? scriptedAnswers.shift() : 'yes';
+      const ans = (_rawAns && typeof _rawAns === 'object') ? (_rawAns.answer ?? 'yes') : _rawAns;
       if (opts.verbose) console.log(`      → answering pending question for ${outcome.taskId}: "${ans}"`);
       await _post(STUB, '/harness/question', { taskId: outcome.taskId, answer: ans });
       continue;

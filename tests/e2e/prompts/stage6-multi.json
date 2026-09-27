@@ -1,0 +1,211 @@
+[
+  {
+    "id": "s6-file-create-read",
+    "prompt": "create a file /tmp/e2e/s6-a.txt with the text stage six works then read it back to me",
+    "expect": {
+      "graphIntent": "command_automate",
+      "status": "done",
+      "mustContain": [
+        "re:stage six works|read.*back|contents?"
+      ],
+      "maxMs": 180000
+    }
+  },
+  {
+    "id": "s6-file-chain",
+    "prompt": "create a file /tmp/e2e/s6-chain.txt with the word hello then rename it to /tmp/e2e/s6-chain-done.txt",
+    "expect": {
+      "graphIntent": "command_automate",
+      "status": "done",
+      "maxMs": 180000
+    }
+  },
+  {
+    "id": "s6-screenshot-app",
+    "prompt": "take a screenshot and open the Notes app",
+    "expect": {
+      "graphIntent": "command_automate",
+      "status": "done",
+      "maxMs": 180000
+    }
+  },
+  {
+    "id": "s6-web-remind",
+    "prompt": "search the web for the current time in Tokyo and remind me in 2 hours to check it again",
+    "expect": {
+      "graphIntent": "command_automate",
+      "status": "done",
+      "maxMs": 240000
+    }
+  },
+  {
+    "id": "s6-two-services",
+    "prompt": "post a tweet saying good morning and add buy eggs to my todoist",
+    "approve": false,
+    "expect": {
+      "graphIntent": "command_automate",
+      "status": "awaiting-approval",
+      "maxMs": 240000
+    }
+  },
+  {
+    "id": "s6-remind-file",
+    "prompt": "remind me at 6pm to call the dentist and write 'dentist 6pm' to /tmp/e2e/s6-plan.txt",
+    "expect": {
+      "graphIntent": "command_automate",
+      "status": "done",
+      "maxMs": 180000
+    }
+  },
+  {
+    "id": "s6-volume-url",
+    "prompt": "set my volume to 30 percent and open apple.com in my browser",
+    "expect": {
+      "graphIntent": "command_automate",
+      "status": "done",
+      "maxMs": 180000
+    }
+  },
+  {
+    "id": "s6-apps-uptime",
+    "prompt": "list my running apps and tell me how long my mac has been on",
+    "expect": {
+      "graphIntent": "command_automate",
+      "status": "done",
+      "mustContain": [
+        "re:up |running since|been (on|up) for|since .*[0-9]{4}|[0-9]+ (day|hour|minute)s?"
+      ],
+      "maxMs": 180000
+    }
+  },
+  {
+    "id": "s6-shell-double",
+    "prompt": "run 'echo alpha' and 'echo omega' in the terminal",
+    "expect": {
+      "graphIntent": "command_automate",
+      "status": "done",
+      "mustContain": [
+        "alpha",
+        "omega"
+      ],
+      "maxMs": 150000
+    }
+  },
+  {
+    "id": "s6-mixed-ws-save",
+    "prompt": "find out who won the last world series and save the answer to /tmp/e2e/s6-ws.txt",
+    "expect": {
+      "graphIntent": "command_automate",
+      "status": "done",
+      "maxMs": 240000
+    }
+  },
+  {
+    "id": "s6-ref-seed",
+    "session": "e2e_s6_ref",
+    "prompt": "create a file /tmp/e2e/s6-notes.txt with the words orbit signal",
+    "expect": {
+      "graphIntent": "command_automate",
+      "status": "done",
+      "maxMs": 150000
+    }
+  },
+  {
+    "id": "s6-ref-recall",
+    "session": "e2e_s6_ref",
+    "prompt": "what did I just put in that file",
+    "expect": {
+      "status": "done",
+      "mustContain": [
+        "orbit signal"
+      ],
+      "maxMs": 180000
+    },
+    "answers": [
+      {
+        "match": "re:which|find|match|file|provide",
+        "answer": "/tmp/e2e/s6-notes.txt"
+      }
+    ]
+  },
+  {
+    "id": "s6-past-reminder",
+    "prompt": "remind me yesterday at 5pm to water the plants",
+    "expect": {
+      "graphIntent": "command_automate",
+      "status": "done",
+      "maxMs": 120000
+    }
+  },
+  {
+    "id": "s6-gibberish",
+    "prompt": "asdf jkl qwerty zxcv",
+    "expect": {
+      "status": "done",
+      "maxMs": 120000
+    }
+  },
+  {
+    "id": "s6-deictic",
+    "session": "e2e_s6_ref",
+    "prompt": "when was that",
+    "expect": {
+      "graphIntent": [
+        "memory_retrieve",
+        "command_automate"
+      ],
+      "status": "done",
+      "maxMs": 120000
+    }
+  },
+  {
+    "id": "s6-bare-remind",
+    "prompt": "remind me",
+    "expect": {
+      "graphIntent": "command_automate",
+      "status": [
+        "done",
+        "failed",
+        "waiting-for-input"
+      ],
+      "maxMs": 240000
+    },
+    "answers": [
+      {
+        "match": "re:.*",
+        "answer": "in 10 minutes to stretch"
+      }
+    ]
+  },
+  {
+    "id": "s6-email-generic",
+    "prompt": "email myself a note saying don't forget the meeting tomorrow",
+    "approve": false,
+    "expect": {
+      "graphIntent": "command_automate",
+      "status": "awaiting-approval",
+      "maxMs": 180000
+    }
+  },
+  {
+    "id": "s6-open-calc",
+    "prompt": "open the Calculator app",
+    "expect": {
+      "graphIntent": "command_automate",
+      "status": "done",
+      "maxMs": 150000
+    }
+  },
+  {
+    "id": "s6-device-mixed",
+    "prompt": "what's my battery percentage and how much disk space do I have left",
+    "expect": {
+      "graphIntent": "command_automate",
+      "status": "done",
+      "mustContain": [
+        "%"
+      ],
+      "maxMs": 180000
+    }
+  }
+]
