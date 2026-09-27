@@ -42,7 +42,9 @@ const path = require('path');
 
 const COMMS = 'http://127.0.0.1:3015';
 const STUB = 'http://127.0.0.1:3010';
-const INTENT_LOG = path.join(__dirname, '..', '..', 'logs', 'intent-classifier.log');
+// The stub runs with cwd=tests/e2e, so the stategraph writes the intent log
+// under tests/e2e/logs/ — not the repo root. INTENT_LOG_PATH env can override.
+const INTENT_LOG = process.env.INTENT_LOG_PATH || path.join(__dirname, 'logs', 'intent-classifier.log');
 const RESULTS_DIR = path.join(__dirname, 'results');
 fs.mkdirSync(RESULTS_DIR, { recursive: true });
 
@@ -261,9 +263,19 @@ async function runPrompt(entry, opts) {
     // fall-through: still running at deadline
   }
   if (Date.now() >= deadline && !TERMINAL.has(outcome.status)) {
-    outcome.status = outcome.status === 'dispatched' ? 'timeout' : outcome.status + '+timeout';
-    outcome.error = `timed out after ${entry.timeoutMs || 240000}ms (last status: ${outcome.status})`;
-    await _post(STUB, '/comms.signal', { signalType: 'cancel', taskId: outcome.taskId });
+    // Grace check — under heavy load our own poll timers can be starved past
+    // the deadline while the task already reached a terminal state. Timeout
+    // means "the task didn't finish in time", not "we didn't notice in time".
+    const last = await _getTask(outcome.taskId);
+    if (last && TERMINAL.has(last.status)) {
+      outcome.status = last.status;
+      outcome.resultText = last.result || '';
+    } else {
+      if (last) outcome.status = last.status;
+      outcome.status = outcome.status === 'dispatched' ? 'timeout' : outcome.status + '+timeout';
+      outcome.error = `timed out after ${entry.timeoutMs || 240000}ms (last status: ${outcome.status})`;
+      await _post(STUB, '/comms.signal', { signalType: 'cancel', taskId: outcome.taskId });
+    }
   }
 
   const scr = await _get(STUB, '/harness/screens');
