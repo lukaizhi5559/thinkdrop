@@ -1,0 +1,850 @@
+{
+  "file": "tests/e2e/prompts/stage5-automate.json",
+  "run": 2,
+  "at": "2026-09-26T05:19:54.899Z",
+  "results": [
+    {
+      "id": "s5-file-create",
+      "prompt": "create a file at /tmp/e2e/hello.txt containing the text hello thinkdrop",
+      "at": "2026-09-26T02:48:30.201Z",
+      "commsIntent": "handoff",
+      "commsLatencyMs": 2954,
+      "taskId": "task_6a85dd2c",
+      "status": "done",
+      "resultText": "## Summary\n\n**Request:** Create a file at `/tmp/e2e/hello.txt` containing the text `hello thinkdrop`.\n\n**What was done:** The file was created with the exact requested text. The content matches the specification precisely — no extra whitespace, no additional lines or characters beyond the single line of text requested.\n\n**Verification:** The task output confirms both the file's content and its saved location:\n\n- Content echoed back: `hello thinkdrop`\n- Save confirmation: `SAVED: /tmp/e2e/hello.txt`\n\nSo the operation succeeded cleanly. The file now exists at **/tmp/e2e/hello.txt** with the correct single-line content, and the path was reported back as confirmation.\n\n**Minor note:** Since `/tmp/e2e/` is a temporary directory, this file may be cleared by the system on reboot or periodic cleanup, depending on your OS's temp-directory policy. If it needs to persist, consider placing a copy in a non-temporary location.",
+      "graphIntent": {
+        "intent": "command_automate",
+        "parser": "llm-decompose",
+        "subPrompts": 1,
+        "subIntents": [
+          "command_automate"
+        ]
+      },
+      "screens": [],
+      "events": 1512,
+      "approvals": 1,
+      "questions": 0,
+      "authResumes": 0,
+      "totalMs": 24049,
+      "error": null,
+      "failures": [],
+      "pass": true
+    },
+    {
+      "id": "s5-file-read",
+      "prompt": "read the file /tmp/e2e/hello.txt and tell me what it says",
+      "at": "2026-09-26T02:48:54.251Z",
+      "commsIntent": "handoff",
+      "commsLatencyMs": 3181,
+      "taskId": "task_e96ee21e",
+      "status": "done",
+      "resultText": "**File path:** `/tmp/e2e/hello.txt`\n\n**Contents (verbatim):**\n\n```\nhello thinkdrop\n```\n\nThe file `/tmp/e2e/hello.txt` contains the single line of text `hello thinkdrop`. Note: the source metadata labels it as a 2-line file, but the only visible text content is `hello thinkdrop` (the second line appears to be blank/empty).",
+      "graphIntent": {
+        "intent": "command_automate",
+        "parser": "llm-decompose",
+        "subPrompts": 1,
+        "subIntents": [
+          "command_automate"
+        ]
+      },
+      "screens": [],
+      "events": 1558,
+      "approvals": 1,
+      "questions": 0,
+      "authResumes": 0,
+      "totalMs": 18250,
+      "error": null,
+      "failures": [],
+      "pass": true
+    },
+    {
+      "id": "s5-file-append",
+      "prompt": "append the line 'second entry' to /tmp/e2e/log.txt",
+      "at": "2026-09-26T02:49:12.502Z",
+      "commsIntent": "handoff",
+      "commsLatencyMs": 2220,
+      "taskId": "task_47956ab2",
+      "status": "failed",
+      "resultText": "Selected agents are not ready: fs.agent (selected agent did not complete preflight)",
+      "graphIntent": {
+        "intent": "command_automate",
+        "parser": "llm-decompose",
+        "subPrompts": 1,
+        "subIntents": [
+          "command_automate"
+        ]
+      },
+      "screens": [],
+      "events": 1575,
+      "approvals": 0,
+      "questions": 0,
+      "authResumes": 0,
+      "totalMs": 5254,
+      "error": null,
+      "failures": [
+        "status: expected \"done\", got \"failed\""
+      ],
+      "pass": false
+    },
+    {
+      "id": "s5-file-rename",
+      "prompt": "rename /tmp/e2e/hello.txt to /tmp/e2e/hello-renamed.txt",
+      "at": "2026-09-26T02:49:17.757Z",
+      "commsIntent": "handoff",
+      "commsLatencyMs": 2189,
+      "taskId": "task_fe4fe277",
+      "status": "done",
+      "resultText": "Yes — the rename succeeded: /tmp/e2e/hello.txt is now /tmp/e2e/hello-renamed.txt, and its contents were preserved, still reading \"hello thinkdrop\". Resulting file path: /tmp/e2e/hello-renamed.txt.",
+      "graphIntent": {
+        "intent": "command_automate",
+        "parser": "llm-decompose",
+        "subPrompts": 1,
+        "subIntents": [
+          "command_automate"
+        ]
+      },
+      "screens": [],
+      "events": 1627,
+      "approvals": 1,
+      "questions": 0,
+      "authResumes": 0,
+      "totalMs": 15760,
+      "error": null,
+      "failures": [],
+      "pass": true
+    },
+    {
+      "id": "s5-file-move",
+      "prompt": "move /tmp/e2e/log.txt into /tmp/e2e/archive",
+      "at": "2026-09-26T02:49:33.517Z",
+      "commsIntent": "handoff",
+      "commsLatencyMs": 2670,
+      "taskId": "task_ada8a19d",
+      "status": "waiting-for-input+timeout",
+      "resultText": "I'll move /tmp/e2e/log.txt into /tmp/e2e/archive in the background and let you know once it's done, so what else can I help you with?",
+      "graphIntent": {
+        "intent": "command_automate",
+        "parser": "llm-decompose",
+        "subPrompts": 1,
+        "subIntents": [
+          "command_automate"
+        ]
+      },
+      "screens": [],
+      "events": 1767,
+      "approvals": 1,
+      "questions": 8,
+      "authResumes": 0,
+      "totalMs": 151052,
+      "error": "timed out after 150000ms (last status: waiting-for-input+timeout)",
+      "failures": [
+        "status: expected \"done\", got \"waiting-for-input+timeout\"",
+        "latency: 151052ms > budget 120000ms"
+      ],
+      "pass": false
+    },
+    {
+      "id": "s5-file-list",
+      "prompt": "list the files in /tmp/e2e",
+      "at": "2026-09-26T02:52:04.570Z",
+      "commsIntent": "handoff",
+      "commsLatencyMs": 2033,
+      "taskId": "task_9a97b6fb",
+      "status": "done",
+      "resultText": "## Directory Listing: /tmp/e2e\n\nThe folder contains **one subdirectory** and **four regular files**, all owned by user `lukaizhi` (group `wheel`). Entry counts and sizes are taken from the `ls` output.\n\n### Subdirectory (explicitly noted)\n\n| Name | Type | Details |\n|---|---|---|\n| `archive` | Directory (`drwxr-xr-x`) | Contains further nested content — it reports a link count of 3, which typically means it holds at least one subdirectory of its own. Size 96 bytes, modified Sep 25 21:52. |\n\n### Regular files\n\n| Name | Size | Last modified |\n|---|---|---|\n| `hello-renamed.txt` | 16 bytes | Sep 25 22:48 |\n| `multi-renamed.txt` | 11 bytes | Sep 25 22:42 |\n| `notes.txt` | 14 bytes | Sep 25 22:43 |\n| `tokyo.txt` | 344 bytes | Sep 25 21:58 |\n\n### Observations\n\n- **Total footprint:** 32 blocks as reported by the total line; the individual files are all small (11–344 bytes).\n- **Naming hints:** Two filenames include the word \"renamed\" (`hello-renamed.txt`, `multi-renamed.txt`), suggesting a rename operation was exercised in this directory. `tokyo.txt` is by far the largest file at 344 bytes.\n- **Timestamps:** All entries share a Sep 25 date, clustering between 21:52 and 22:48 — `tokyo.txt` and `archive` are the oldest, while `hello-renamed.txt` is the most recently touched.\n- **Standard entries:** The listing also shows the usual `.` (the directory itself) and `..` (its parent, `/tmp`), which are not separate contents of `/tmp/e2e`.\n\nAside from `archive`, every entry in `/tmp/e2e` is a plain text file.",
+      "graphIntent": {
+        "intent": "command_automate",
+        "parser": "llm-decompose",
+        "subPrompts": 1,
+        "subIntents": [
+          "command_automate"
+        ]
+      },
+      "screens": [],
+      "events": 1810,
+      "approvals": 1,
+      "questions": 0,
+      "authResumes": 0,
+      "totalMs": 20144,
+      "error": null,
+      "failures": [],
+      "pass": true
+    },
+    {
+      "id": "s5-sys-battery",
+      "prompt": "what's my battery percentage",
+      "at": "2026-09-26T02:52:24.715Z",
+      "commsIntent": "handoff",
+      "commsLatencyMs": 2649,
+      "taskId": "task_125a72c1",
+      "status": "waiting-for-input+timeout",
+      "resultText": "I'll check your battery percentage in the background and notify you once it's done; what else can I help you with?",
+      "graphIntent": {
+        "intent": "command_automate",
+        "parser": "llm-decompose",
+        "subPrompts": 1,
+        "subIntents": [
+          "command_automate"
+        ]
+      },
+      "screens": [],
+      "events": 1952,
+      "approvals": 1,
+      "questions": 8,
+      "authResumes": 0,
+      "totalMs": 150708,
+      "error": "timed out after 150000ms (last status: waiting-for-input+timeout)",
+      "failures": [
+        "status: expected \"done\", got \"waiting-for-input+timeout\"",
+        "latency: 150708ms > budget 120000ms"
+      ],
+      "pass": false
+    },
+    {
+      "id": "s5-sys-disk",
+      "prompt": "how much free disk space do I have",
+      "at": "2026-09-26T02:54:55.423Z",
+      "commsIntent": "handoff",
+      "commsLatencyMs": 1432,
+      "taskId": "task_53bce3d6",
+      "status": "done",
+      "resultText": "You have 38 GB of free disk space available.",
+      "graphIntent": {
+        "intent": "command_automate",
+        "parser": "llm-decompose",
+        "subPrompts": 1,
+        "subIntents": [
+          "command_automate"
+        ]
+      },
+      "screens": [],
+      "events": 1995,
+      "approvals": 1,
+      "questions": 0,
+      "authResumes": 0,
+      "totalMs": 13508,
+      "error": null,
+      "failures": [],
+      "pass": true
+    },
+    {
+      "id": "s5-sys-procs",
+      "prompt": "list the top 5 processes using the most memory",
+      "at": "2026-09-26T02:55:08.931Z",
+      "commsIntent": "handoff",
+      "commsLatencyMs": 1691,
+      "taskId": "task_22cb1ac5",
+      "status": "waiting-for-input+timeout",
+      "resultText": "I'll pull up the top 5 processes using the most memory in the background and let you know when it's done, what else can I help you with?",
+      "graphIntent": {
+        "intent": "command_automate",
+        "parser": "llm-decompose",
+        "subPrompts": 1,
+        "subIntents": [
+          "command_automate"
+        ]
+      },
+      "screens": [],
+      "events": 2134,
+      "approvals": 1,
+      "questions": 8,
+      "authResumes": 0,
+      "totalMs": 150665,
+      "error": "timed out after 150000ms (last status: waiting-for-input+timeout)",
+      "failures": [
+        "status: expected \"done\", got \"waiting-for-input+timeout\"",
+        "latency: 150665ms > budget 120000ms"
+      ],
+      "pass": false
+    },
+    {
+      "id": "s5-sys-uptime",
+      "prompt": "how long has my computer been running",
+      "at": "2026-09-26T02:57:39.596Z",
+      "commsIntent": "handoff",
+      "commsLatencyMs": 1770,
+      "taskId": "task_6a5beab4",
+      "status": "done",
+      "resultText": "The provided output contains 0 uptime details about how long your computer has been running.",
+      "graphIntent": {
+        "intent": "command_automate",
+        "parser": "llm-decompose",
+        "subPrompts": 1,
+        "subIntents": [
+          "command_automate"
+        ]
+      },
+      "screens": [],
+      "events": 2178,
+      "approvals": 4,
+      "questions": 0,
+      "authResumes": 0,
+      "totalMs": 22890,
+      "error": null,
+      "failures": [],
+      "pass": true
+    },
+    {
+      "id": "s5-screenshot",
+      "prompt": "take a screenshot of my screen",
+      "at": "2026-09-26T02:58:02.486Z",
+      "commsIntent": "handoff",
+      "commsLatencyMs": 2579,
+      "taskId": "task_a2b9dfe1",
+      "status": "done",
+      "resultText": "Done.\n\nStep outputs:\n[shell.run]:\n\"/Users/lukaizhi/Desktop/Screenshot 2026-09-25 at 22.58.35.png\"",
+      "graphIntent": {
+        "intent": "command_automate",
+        "parser": "llm-decompose",
+        "subPrompts": 1,
+        "subIntents": [
+          "command_automate"
+        ]
+      },
+      "screens": [],
+      "events": 2215,
+      "approvals": 3,
+      "questions": 0,
+      "authResumes": 0,
+      "totalMs": 34293,
+      "error": null,
+      "failures": [],
+      "pass": true
+    },
+    {
+      "id": "s5-remind",
+      "prompt": "remind me in 30 minutes to stretch",
+      "at": "2026-09-26T02:58:36.779Z",
+      "commsIntent": "handoff",
+      "commsLatencyMs": 2695,
+      "taskId": "task_57119829",
+      "status": "done",
+      "resultText": "⏰ Reminder set: \"Stretch reminder\" at 11:28 PM",
+      "graphIntent": {
+        "intent": "command_automate",
+        "parser": "llm-decompose",
+        "subPrompts": 1,
+        "subIntents": [
+          "command_automate"
+        ]
+      },
+      "screens": [],
+      "events": 2253,
+      "approvals": 1,
+      "questions": 0,
+      "authResumes": 0,
+      "totalMs": 16271,
+      "error": null,
+      "failures": [],
+      "pass": true
+    },
+    {
+      "id": "s5-remind-cancel",
+      "prompt": "cancel my stretch reminder",
+      "at": "2026-09-26T02:58:53.050Z",
+      "commsIntent": "handoff",
+      "commsLatencyMs": 3361,
+      "taskId": "task_8151984e",
+      "status": "auth-required",
+      "resultText": "I'll cancel your stretch reminder in the background and let you know when it's done, what else can I help you with?",
+      "graphIntent": {
+        "intent": "command_automate",
+        "parser": "llm-decompose",
+        "subPrompts": 1,
+        "subIntents": [
+          "command_automate"
+        ]
+      },
+      "screens": [],
+      "events": 2289,
+      "approvals": 0,
+      "questions": 0,
+      "authResumes": 2,
+      "totalMs": 23002,
+      "error": null,
+      "failures": [
+        "status: expected \"done\", got \"auth-required\""
+      ],
+      "pass": false
+    },
+    {
+      "id": "s5-open-notes",
+      "prompt": "open the Notes app",
+      "at": "2026-09-26T02:59:16.052Z",
+      "commsIntent": "handoff",
+      "commsLatencyMs": 3201,
+      "taskId": "task_5a916023",
+      "status": "failed",
+      "resultText": "\"Notes\" is not installed on this machine. Please install it and try again.",
+      "graphIntent": {
+        "intent": "command_automate",
+        "parser": "llm-decompose",
+        "subPrompts": 1,
+        "subIntents": [
+          "command_automate"
+        ]
+      },
+      "screens": [],
+      "events": 2319,
+      "approvals": 0,
+      "questions": 0,
+      "authResumes": 0,
+      "totalMs": 16855,
+      "error": null,
+      "failures": [
+        "status: expected \"done\", got \"failed\""
+      ],
+      "pass": false
+    },
+    {
+      "id": "s5-open-url",
+      "prompt": "open youtube.com in my browser",
+      "at": "2026-09-26T02:59:32.907Z",
+      "commsIntent": "handoff",
+      "commsLatencyMs": 2966,
+      "taskId": "task_415762e9",
+      "status": "waiting-for-input+timeout",
+      "resultText": "I'll open YouTube in your browser in the background and let you know once it's done, so what else can I help you with?",
+      "graphIntent": {
+        "intent": "command_automate",
+        "parser": "llm-decompose",
+        "subPrompts": 1,
+        "subIntents": [
+          "command_automate"
+        ]
+      },
+      "screens": [],
+      "events": 2480,
+      "approvals": 6,
+      "questions": 8,
+      "authResumes": 0,
+      "totalMs": 150829,
+      "error": "timed out after 150000ms (last status: waiting-for-input+timeout)",
+      "failures": [
+        "status: expected \"done\", got \"waiting-for-input+timeout\"",
+        "latency: 150829ms > budget 150000ms"
+      ],
+      "pass": false
+    },
+    {
+      "id": "s5-shell",
+      "prompt": "run 'echo stage five works' in the terminal",
+      "at": "2026-09-26T03:02:03.737Z",
+      "commsIntent": "handoff",
+      "commsLatencyMs": 1143,
+      "taskId": "task_e2b1ace1",
+      "status": "done",
+      "resultText": "## Terminal Output\n\nThe shell command executed successfully and produced this output:\n\n```\nstage five works\n```\n\n**Details:**\n- **Command type:** an `echo` command\n- **Result:** the literal text `stage five works` was printed to standard output\n- **Status:** successful — no errors or warnings were returned\n\nThat's the entirety of the captured output; there's nothing else in the capture to interpret.",
+      "graphIntent": {
+        "intent": "command_automate",
+        "parser": "llm-decompose",
+        "subPrompts": 1,
+        "subIntents": [
+          "command_automate"
+        ]
+      },
+      "screens": [],
+      "events": 2523,
+      "approvals": 1,
+      "questions": 0,
+      "authResumes": 0,
+      "totalMs": 17733,
+      "error": null,
+      "failures": [],
+      "pass": true
+    },
+    {
+      "id": "s5-running-apps",
+      "prompt": "what apps are currently running on my mac",
+      "at": "2026-09-26T03:02:21.471Z",
+      "commsIntent": "handoff",
+      "commsLatencyMs": 1666,
+      "taskId": "task_7ff3c78b",
+      "status": "waiting-for-input+timeout",
+      "resultText": "I'll pull up the list of running apps in the background and let you know when it's ready — what else can I help you with?",
+      "graphIntent": {
+        "intent": "command_automate",
+        "parser": "llm-decompose",
+        "subPrompts": 1,
+        "subIntents": [
+          "command_automate"
+        ]
+      },
+      "screens": [],
+      "events": 2662,
+      "approvals": 1,
+      "questions": 8,
+      "authResumes": 0,
+      "totalMs": 150179,
+      "error": "timed out after 150000ms (last status: waiting-for-input+timeout)",
+      "failures": [
+        "status: expected \"done\", got \"waiting-for-input+timeout\"",
+        "latency: 150179ms > budget 120000ms"
+      ],
+      "pass": false
+    },
+    {
+      "id": "s5-file-multi",
+      "prompt": "create a file /tmp/e2e/multi.txt with the words alpha beta then rename it to /tmp/e2e/multi-renamed.txt",
+      "at": "2026-09-26T03:04:51.650Z",
+      "commsIntent": "handoff",
+      "commsLatencyMs": 2510,
+      "taskId": "task_de2f129a",
+      "status": "done",
+      "resultText": "Created `/tmp/e2e/multi.txt` containing the text `alpha beta`, then renamed it to `/tmp/e2e/multi-renamed.txt`. Verified the rename succeeded: the file exists at the new path (11 bytes, owned by lukaizhi, timestamped Sep 25 23:05) and its contents are still `alpha beta`, confirming the data was preserved through the rename.",
+      "graphIntent": {
+        "intent": "command_automate",
+        "parser": "llm-decompose",
+        "subPrompts": 1,
+        "subIntents": [
+          "command_automate"
+        ]
+      },
+      "screens": [],
+      "events": 2713,
+      "approvals": 1,
+      "questions": 0,
+      "authResumes": 0,
+      "totalMs": 14695,
+      "error": null,
+      "failures": [],
+      "pass": true
+    },
+    {
+      "id": "s5-mixed-save",
+      "prompt": "search the web for the current time in Tokyo and save it to /tmp/e2e/tokyo.txt",
+      "at": "2026-09-26T03:05:06.345Z",
+      "commsIntent": "handoff",
+      "commsLatencyMs": 1295,
+      "taskId": "task_60b0e846",
+      "status": "done",
+      "resultText": "✓ Search the web for the current time in Tokyo\n✓ Fetch the Tokyo time page to extract the current local time\n✓ Save the current Tokyo time result to /tmp/e2e/tokyo.txt",
+      "graphIntent": {
+        "intent": "command_automate",
+        "parser": "llm-decompose",
+        "subPrompts": 1,
+        "subIntents": [
+          "command_automate"
+        ]
+      },
+      "screens": [],
+      "events": 2776,
+      "approvals": 4,
+      "questions": 0,
+      "authResumes": 0,
+      "totalMs": 35939,
+      "error": null,
+      "failures": [],
+      "pass": true
+    },
+    {
+      "id": "s5-ref-seed",
+      "prompt": "create a file /tmp/e2e/notes.txt with the words remember milk",
+      "at": "2026-09-26T03:05:42.284Z",
+      "commsIntent": "handoff",
+      "commsLatencyMs": 2931,
+      "taskId": "task_837a4d2a",
+      "status": "done",
+      "resultText": "## What Was Done\n\nThe requested task was to create a file at `/tmp/e2e/notes.txt` containing the text \"remember milk.\" This was completed successfully.\n\n**Outcome:**\n- The file `/tmp/e2e/notes.txt` was created.\n- Its contents are the single line \"remember milk.\"\n- The operation ran without errors, and the shell confirmed the save with a success message.\n\n**Context note:** The prior turn's output combined two things — the contents of the file itself (the phrase \"remember milk\") and a separate confirmation line reporting that the file was saved to `/tmp/e2e/notes.txt`. These are not both part of the file's contents; the confirmation line is just the execution status.\n\nIn short: the goal was achieved — a notes file now exists at `/tmp/e2e/notes.txt` holding the reminder text \"remember milk.\"",
+      "graphIntent": {
+        "intent": "command_automate",
+        "parser": "llm-decompose",
+        "subPrompts": 1,
+        "subIntents": [
+          "command_automate"
+        ]
+      },
+      "screens": [],
+      "events": 2820,
+      "approvals": 1,
+      "questions": 0,
+      "authResumes": 0,
+      "totalMs": 18042,
+      "error": null,
+      "failures": [],
+      "pass": true
+    },
+    {
+      "id": "s5-ref-edit",
+      "prompt": "add 'also eggs' to that file",
+      "at": "2026-09-26T03:06:00.326Z",
+      "commsIntent": "handoff",
+      "commsLatencyMs": 1533,
+      "taskId": "task_ad1b95e5",
+      "status": "running+timeout",
+      "resultText": "Let me think about that.",
+      "graphIntent": {
+        "intent": "command_automate",
+        "parser": "llm-decompose",
+        "subPrompts": 1,
+        "subIntents": [
+          "command_automate"
+        ]
+      },
+      "screens": [],
+      "events": 2831,
+      "approvals": 0,
+      "questions": 0,
+      "authResumes": 0,
+      "totalMs": 952026,
+      "error": "timed out after 150000ms (last status: running+timeout)",
+      "failures": [
+        "status: expected \"done\", got \"running+timeout\"",
+        "latency: 952026ms > budget 120000ms"
+      ],
+      "pass": false
+    },
+    {
+      "id": "s5-tweet",
+      "prompt": "post a tweet saying hello world",
+      "at": "2026-09-26T03:21:52.352Z",
+      "commsIntent": "handoff",
+      "commsLatencyMs": 3381,
+      "taskId": "task_c6a954de",
+      "status": "running+timeout",
+      "resultText": "I'll post that hello world tweet in the background and let you know once it's live, what else can I help you with?",
+      "graphIntent": {
+        "intent": "command_automate",
+        "parser": "llm-decompose",
+        "subPrompts": 1,
+        "subIntents": [
+          "command_automate"
+        ]
+      },
+      "screens": [],
+      "events": 2848,
+      "approvals": 0,
+      "questions": 0,
+      "authResumes": 0,
+      "totalMs": 1058939,
+      "error": "timed out after 150000ms (last status: running+timeout)",
+      "failures": [
+        "status: expected \"awaiting-approval\", got \"running+timeout\"",
+        "latency: 1058939ms > budget 180000ms"
+      ],
+      "pass": false
+    },
+    {
+      "id": "s5-email",
+      "prompt": "send an email to myself with the subject test run",
+      "at": "2026-09-26T03:39:31.293Z",
+      "commsIntent": "handoff",
+      "commsLatencyMs": 939353,
+      "taskId": "task_073a679c",
+      "status": "timeout",
+      "resultText": "I'll get that test run email sent to you in the background and ping you when it's done — what else can I help with?",
+      "graphIntent": {
+        "intent": "memory_retrieve",
+        "parser": "llm-decompose",
+        "subPrompts": 1,
+        "subIntents": [
+          "memory_retrieve"
+        ]
+      },
+      "screens": [],
+      "events": 2864,
+      "approvals": 0,
+      "questions": 0,
+      "authResumes": 0,
+      "totalMs": 939414,
+      "error": "timed out after 150000ms (last status: timeout)",
+      "failures": [
+        "status: expected \"awaiting-approval\", got \"timeout\"",
+        "graphIntent: expected \"command_automate\", got \"memory_retrieve\" (subs: memory_retrieve)",
+        "latency: 939414ms > budget 180000ms"
+      ],
+      "pass": false
+    },
+    {
+      "id": "s5-sms",
+      "prompt": "text mom that I'll be late",
+      "at": "2026-09-26T03:55:10.707Z",
+      "commsIntent": "handoff",
+      "commsLatencyMs": 2637,
+      "taskId": "task_38763fa0",
+      "status": "running+timeout",
+      "resultText": "I'll text your mom that you'll be late and let you know once it's sent, what else can I help with?",
+      "graphIntent": null,
+      "screens": [],
+      "events": 2872,
+      "approvals": 0,
+      "questions": 0,
+      "authResumes": 0,
+      "totalMs": 298184,
+      "error": "timed out after 150000ms (last status: running+timeout)",
+      "failures": [
+        "status: expected \"awaiting-approval\", got \"running+timeout\"",
+        "graphIntent: expected \"command_automate\", got \"undefined\" (subs: none)",
+        "latency: 298184ms > budget 180000ms"
+      ],
+      "pass": false
+    },
+    {
+      "id": "s5-todoist",
+      "prompt": "add buy milk to my todoist",
+      "at": "2026-09-26T04:00:08.892Z",
+      "commsIntent": "handoff",
+      "commsLatencyMs": 1426,
+      "taskId": "task_42552586",
+      "status": "running+timeout",
+      "resultText": "On it.",
+      "graphIntent": {
+        "intent": "command_automate",
+        "parser": "llm-decompose",
+        "subPrompts": 1,
+        "subIntents": [
+          "command_automate"
+        ]
+      },
+      "screens": [],
+      "events": 2899,
+      "approvals": 0,
+      "questions": 0,
+      "authResumes": 0,
+      "totalMs": 967356,
+      "error": "timed out after 150000ms (last status: running+timeout)",
+      "failures": [
+        "status: expected \"awaiting-approval\", got \"running+timeout\"",
+        "latency: 967356ms > budget 180000ms"
+      ],
+      "pass": false
+    },
+    {
+      "id": "s5-github-issue",
+      "prompt": "create a github issue titled 'test issue' in the thinkdrop repo",
+      "at": "2026-09-26T04:16:16.248Z",
+      "commsIntent": "handoff",
+      "commsLatencyMs": 3019,
+      "taskId": "task_a7be99d6",
+      "status": "failed",
+      "resultText": "\"Thinkdrop\" is not installed on this machine. Please install it and try again.",
+      "graphIntent": {
+        "intent": "command_automate",
+        "parser": "llm-decompose",
+        "subPrompts": 1,
+        "subIntents": [
+          "command_automate"
+        ]
+      },
+      "screens": [],
+      "events": 2920,
+      "approvals": 0,
+      "questions": 0,
+      "authResumes": 0,
+      "totalMs": 93868,
+      "error": null,
+      "failures": [
+        "status: expected \"awaiting-approval\", got \"failed\""
+      ],
+      "pass": false
+    },
+    {
+      "id": "s5-spotify",
+      "prompt": "play my discover weekly playlist on spotify",
+      "at": "2026-09-26T04:17:50.116Z",
+      "commsIntent": "handoff",
+      "commsLatencyMs": 3188,
+      "taskId": "task_47c2be3c",
+      "status": "running+timeout",
+      "resultText": "I'll get your Discover Weekly playlist playing on Spotify in the background and let you know once it's on, so what else can I help you with?",
+      "graphIntent": {
+        "intent": "command_automate",
+        "parser": "llm-decompose",
+        "subPrompts": 1,
+        "subIntents": [
+          "command_automate"
+        ]
+      },
+      "screens": [],
+      "events": 2934,
+      "approvals": 0,
+      "questions": 0,
+      "authResumes": 0,
+      "totalMs": 1080436,
+      "error": "timed out after 150000ms (last status: running+timeout)",
+      "failures": [
+        "status: expected \"awaiting-approval\", got \"running+timeout\"",
+        "latency: 1080436ms > budget 180000ms"
+      ],
+      "pass": false
+    },
+    {
+      "id": "s5-slack-msg",
+      "prompt": "send a slack message to the engineering channel saying standup is in 5 minutes",
+      "at": "2026-09-26T04:35:50.552Z",
+      "commsIntent": "handoff",
+      "commsLatencyMs": 3118,
+      "taskId": "task_c742c37a",
+      "status": "running+timeout",
+      "resultText": "I'll send that Slack message to the engineering channel about standup in 5 minutes in the background and let you know once it's sent, so what else can I help with?",
+      "graphIntent": null,
+      "screens": [],
+      "events": 2946,
+      "approvals": 0,
+      "questions": 0,
+      "authResumes": 0,
+      "totalMs": 1066661,
+      "error": "timed out after 150000ms (last status: running+timeout)",
+      "failures": [
+        "status: expected \"awaiting-approval\", got \"running+timeout\"",
+        "graphIntent: expected \"command_automate\", got \"undefined\" (subs: none)",
+        "latency: 1066661ms > budget 180000ms"
+      ],
+      "pass": false
+    },
+    {
+      "id": "s5-amazon",
+      "prompt": "search amazon for wireless headphones and show me the top results",
+      "at": "2026-09-26T04:53:37.214Z",
+      "commsIntent": "handoff",
+      "commsLatencyMs": 1799,
+      "taskId": "task_cc9bedd8",
+      "status": "running+timeout",
+      "resultText": "Searching the web for you now.",
+      "graphIntent": null,
+      "screens": [],
+      "events": 2955,
+      "approvals": 0,
+      "questions": 0,
+      "authResumes": 0,
+      "totalMs": 785997,
+      "error": "timed out after 150000ms (last status: running+timeout)",
+      "failures": [
+        "status: expected \"awaiting-approval\", got \"running+timeout\"",
+        "graphIntent: expected \"command_automate\", got \"undefined\" (subs: none)",
+        "latency: 785997ms > budget 180000ms"
+      ],
+      "pass": false
+    },
+    {
+      "id": "s5-volume",
+      "prompt": "set my volume to 50 percent",
+      "at": "2026-09-26T05:06:43.213Z",
+      "commsIntent": "handoff",
+      "commsLatencyMs": 1136,
+      "taskId": "task_9e8226d2",
+      "status": "running+timeout",
+      "resultText": "I'll set your volume to 50 % in the background and let you know when it's done. What else can I help you with?",
+      "graphIntent": {
+        "intent": "command_automate",
+        "parser": "llm-decompose",
+        "subPrompts": 1,
+        "subIntents": [
+          "command_automate"
+        ]
+      },
+      "screens": [],
+      "events": 2971,
+      "approvals": 0,
+      "questions": 0,
+      "authResumes": 0,
+      "totalMs": 791684,
+      "error": "timed out after 150000ms (last status: running+timeout)",
+      "failures": [
+        "status: expected \"awaiting-approval\", got \"running+timeout\"",
+        "latency: 791684ms > budget 180000ms"
+      ],
+      "pass": false
+    }
+  ]
+}

@@ -1,0 +1,510 @@
+{
+  "file": "tests/e2e/prompts/stage4-display.json",
+  "run": 3,
+  "at": "2026-09-26T00:46:48.451Z",
+  "results": [
+    {
+      "id": "s4-text-basic",
+      "prompt": "show \"meeting at 3pm\" on my screen",
+      "at": "2026-09-26T00:45:30.556Z",
+      "commsIntent": "handoff",
+      "commsLatencyMs": 52,
+      "taskId": "task_9dd14e33",
+      "status": "done",
+      "resultText": "## Screen\n\nOn screen.",
+      "graphIntent": {
+        "intent": "screen_display",
+        "parser": "llm-decompose",
+        "subPrompts": 1,
+        "subIntents": [
+          "screen_display"
+        ]
+      },
+      "screens": [
+        {
+          "at": 1790383532415,
+          "id": "so_stub_u",
+          "kind": "text",
+          "text": "meeting at 3pm",
+          "title": "meeting at 3pm"
+        }
+      ],
+      "events": 446,
+      "approvals": 0,
+      "questions": 0,
+      "authResumes": 0,
+      "totalMs": 3080,
+      "error": null,
+      "failures": [],
+      "pass": true
+    },
+    {
+      "id": "s4-text-put",
+      "prompt": "put the word DONE on the screen",
+      "at": "2026-09-26T00:45:33.636Z",
+      "commsIntent": "handoff",
+      "commsLatencyMs": 42,
+      "taskId": "task_0655a95e",
+      "status": "done",
+      "resultText": "## Screen\n\nOn screen.",
+      "graphIntent": {
+        "intent": "screen_display",
+        "parser": "llm-decompose",
+        "subPrompts": 1,
+        "subIntents": [
+          "screen_display"
+        ]
+      },
+      "screens": [
+        {
+          "at": 1790383535578,
+          "id": "so_stub_v",
+          "kind": "text",
+          "text": "DONE"
+        }
+      ],
+      "events": 456,
+      "approvals": 0,
+      "questions": 0,
+      "authResumes": 0,
+      "totalMs": 3070,
+      "error": null,
+      "failures": [],
+      "pass": true
+    },
+    {
+      "id": "s4-effect-confetti",
+      "prompt": "make confetti appear on my screen",
+      "at": "2026-09-26T00:45:36.706Z",
+      "commsIntent": "handoff",
+      "commsLatencyMs": 50,
+      "taskId": "task_a7191160",
+      "status": "done",
+      "resultText": "## Screen\n\nOn screen — confetti.",
+      "graphIntent": {
+        "intent": "screen_display",
+        "parser": "llm-decompose",
+        "subPrompts": 1,
+        "subIntents": [
+          "screen_display"
+        ]
+      },
+      "screens": [
+        {
+          "at": 1790383539049,
+          "id": "so_stub_w",
+          "kind": "effect",
+          "mood": "playful",
+          "effect": "confetti"
+        }
+      ],
+      "events": 466,
+      "approvals": 0,
+      "questions": 0,
+      "authResumes": 0,
+      "totalMs": 3077,
+      "error": null,
+      "failures": [],
+      "pass": true
+    },
+    {
+      "id": "s4-effect-fireworks",
+      "prompt": "show fireworks on the screen",
+      "at": "2026-09-26T00:45:39.783Z",
+      "commsIntent": "handoff",
+      "commsLatencyMs": 44,
+      "taskId": "task_49363f94",
+      "status": "done",
+      "resultText": "## Screen\n\nOn screen — fireworks.",
+      "graphIntent": {
+        "intent": "screen_display",
+        "parser": "llm-decompose",
+        "subPrompts": 1,
+        "subIntents": [
+          "screen_display"
+        ]
+      },
+      "screens": [
+        {
+          "at": 1790383541817,
+          "id": "so_stub_x",
+          "kind": "effect",
+          "effect": "fireworks",
+          "mood": "playful"
+        }
+      ],
+      "events": 476,
+      "approvals": 0,
+      "questions": 0,
+      "authResumes": 0,
+      "totalMs": 3070,
+      "error": null,
+      "failures": [],
+      "pass": true
+    },
+    {
+      "id": "s4-alert-block",
+      "prompt": "show a blocking alert on my screen that says do not enter",
+      "at": "2026-09-26T00:45:42.853Z",
+      "commsIntent": "handoff",
+      "commsLatencyMs": 56,
+      "taskId": "task_73cf6af9",
+      "status": "done",
+      "resultText": "## Screen\n\nOn screen.",
+      "graphIntent": {
+        "intent": "screen_display",
+        "parser": "llm-decompose",
+        "subPrompts": 1,
+        "subIntents": [
+          "screen_display"
+        ]
+      },
+      "screens": [
+        {
+          "at": 1790383545316,
+          "id": "so_stub_y",
+          "kind": "alert",
+          "severity": "block",
+          "title": null,
+          "blocking": true,
+          "dismiss": "manual",
+          "text": "do not enter"
+        }
+      ],
+      "events": 486,
+      "approvals": 0,
+      "questions": 0,
+      "authResumes": 0,
+      "totalMs": 3090,
+      "error": null,
+      "failures": [],
+      "pass": true
+    },
+    {
+      "id": "s4-emoji",
+      "prompt": "put a 🎉 emoji on my screen",
+      "at": "2026-09-26T00:45:45.943Z",
+      "commsIntent": "handoff",
+      "commsLatencyMs": 75,
+      "taskId": "task_9b83e790",
+      "status": "done",
+      "resultText": "## Screen\n\nOn screen.",
+      "graphIntent": {
+        "intent": "screen_display",
+        "parser": "llm-decompose",
+        "subPrompts": 1,
+        "subIntents": [
+          "screen_display"
+        ]
+      },
+      "screens": [
+        {
+          "at": 1790383547939,
+          "id": "so_stub_z",
+          "kind": "emoji",
+          "emoji": "🎉",
+          "text": "🎉"
+        }
+      ],
+      "events": 496,
+      "approvals": 0,
+      "questions": 0,
+      "authResumes": 0,
+      "totalMs": 3100,
+      "error": null,
+      "failures": [],
+      "pass": true
+    },
+    {
+      "id": "s4-chart-pie",
+      "prompt": "show a pie chart on my screen: apples 5, bananas 3",
+      "at": "2026-09-26T00:45:49.043Z",
+      "commsIntent": "handoff",
+      "commsLatencyMs": 41,
+      "taskId": "task_5419e3b7",
+      "status": "done",
+      "resultText": "## Screen\n\nOn screen.",
+      "graphIntent": {
+        "intent": "screen_display",
+        "parser": "llm-decompose",
+        "subPrompts": 1,
+        "subIntents": [
+          "screen_display"
+        ]
+      },
+      "screens": [
+        {
+          "at": 1790383551048,
+          "id": "so_stub_10",
+          "kind": "chart",
+          "chart": {
+            "type": "pie",
+            "data": [
+              {
+                "label": "apples",
+                "value": 5
+              },
+              {
+                "label": "bananas",
+                "value": 3
+              }
+            ],
+            "xKey": "label",
+            "yKey": "value"
+          },
+          "blocking": true
+        }
+      ],
+      "events": 506,
+      "approvals": 0,
+      "questions": 0,
+      "authResumes": 0,
+      "totalMs": 3063,
+      "error": null,
+      "failures": [],
+      "pass": true
+    },
+    {
+      "id": "s4-image",
+      "prompt": "show this image on my screen: https://example.com/cat.png",
+      "at": "2026-09-26T00:45:52.106Z",
+      "commsIntent": "handoff",
+      "commsLatencyMs": 35,
+      "taskId": "task_22a85598",
+      "status": "done",
+      "resultText": "## Screen\n\nOn screen.",
+      "graphIntent": {
+        "intent": "screen_display",
+        "parser": "llm-decompose",
+        "subPrompts": 1,
+        "subIntents": [
+          "screen_display"
+        ]
+      },
+      "screens": [
+        {
+          "at": 1790383554566,
+          "id": "so_stub_11",
+          "kind": "image",
+          "url": "https://example.com/cat.png"
+        }
+      ],
+      "events": 516,
+      "approvals": 0,
+      "questions": 0,
+      "authResumes": 0,
+      "totalMs": 3061,
+      "error": null,
+      "failures": [],
+      "pass": true
+    },
+    {
+      "id": "s4-clear",
+      "prompt": "clear the screen",
+      "at": "2026-09-26T00:45:55.168Z",
+      "commsIntent": "handoff",
+      "commsLatencyMs": 45,
+      "taskId": "task_053c808f",
+      "status": "done",
+      "resultText": "## Screen\n\nCleared the screen.",
+      "graphIntent": {
+        "intent": "screen_display",
+        "parser": "llm-decompose",
+        "subPrompts": 1,
+        "subIntents": [
+          "screen_display"
+        ]
+      },
+      "screens": [
+        {
+          "at": 1790383556821,
+          "cleared": true
+        }
+      ],
+      "events": 526,
+      "approvals": 0,
+      "questions": 0,
+      "authResumes": 0,
+      "totalMs": 3076,
+      "error": null,
+      "failures": [],
+      "pass": true
+    },
+    {
+      "id": "s4-clear-off",
+      "prompt": "take that off the screen",
+      "at": "2026-09-26T00:45:58.244Z",
+      "commsIntent": "handoff",
+      "commsLatencyMs": 1264,
+      "taskId": "task_bad3a358",
+      "status": "done",
+      "resultText": "## Screen\n\nCleared the screen.",
+      "graphIntent": {
+        "intent": "screen_display",
+        "parser": "llm-decompose",
+        "subPrompts": 1,
+        "subIntents": [
+          "screen_display"
+        ]
+      },
+      "screens": [
+        {
+          "at": 1790383561396,
+          "cleared": true
+        }
+      ],
+      "events": 536,
+      "approvals": 0,
+      "questions": 0,
+      "authResumes": 0,
+      "totalMs": 4288,
+      "error": null,
+      "failures": [],
+      "pass": true
+    },
+    {
+      "id": "s4-fetch-display",
+      "prompt": "look up the current bitcoin price and show it on my screen",
+      "at": "2026-09-26T00:46:02.532Z",
+      "commsIntent": "handoff",
+      "commsLatencyMs": 39,
+      "taskId": "task_135e9833",
+      "status": "done",
+      "resultText": "The current price of Bitcoin is $84,653.36, and I have successfully displayed it on your screen.",
+      "graphIntent": {
+        "intent": "web_search",
+        "parser": "multi-intent-pipeline",
+        "subPrompts": 2,
+        "subIntents": [
+          "web_search",
+          "screen_display"
+        ]
+      },
+      "screens": [
+        {
+          "at": 1790383567671,
+          "id": "so_stub_12",
+          "kind": "text",
+          "text": "<strong>Current Price: $74,565.54</strong> Today: 0.32% -$238.92 · Bitcoin is currently worth $74,565.54 as of the time you loaded this page | The price of Bitcoin (BTC) is <strong>$84,653.36 today as of Sep 24, 2026, 10:29 pm EDT</strong>, with a 24-hour trading volume of $15.99B."
+        }
+      ],
+      "events": 548,
+      "approvals": 0,
+      "questions": 0,
+      "authResumes": 0,
+      "totalMs": 6068,
+      "error": null,
+      "failures": [],
+      "pass": true
+    },
+    {
+      "id": "s4-ref-seed",
+      "prompt": "what is the capital of Norway",
+      "at": "2026-09-26T00:46:08.600Z",
+      "commsIntent": "general_quick",
+      "commsLatencyMs": 2020,
+      "taskId": null,
+      "status": "done",
+      "resultText": "Oslo — and a fine city it is, sitting right on the fjord.",
+      "graphIntent": null,
+      "screens": [],
+      "events": 0,
+      "approvals": 0,
+      "questions": 0,
+      "authResumes": 0,
+      "totalMs": 2026,
+      "error": null,
+      "failures": [],
+      "pass": true
+    },
+    {
+      "id": "s4-ref-show",
+      "prompt": "show that on my screen",
+      "at": "2026-09-26T00:46:10.636Z",
+      "commsIntent": "handoff",
+      "commsLatencyMs": 49,
+      "taskId": "task_ddb49587",
+      "status": "done",
+      "resultText": "## Screen\n\nOn screen.",
+      "graphIntent": {
+        "intent": "screen_display",
+        "parser": "llm-decompose",
+        "subPrompts": 1,
+        "subIntents": [
+          "screen_display"
+        ]
+      },
+      "screens": [
+        {
+          "at": 1790383572507,
+          "id": "so_stub_13",
+          "kind": "text",
+          "text": "Oslo — and a fine city it is, sitting right on the fjord.",
+          "title": "the Bitcoin price information"
+        }
+      ],
+      "events": 558,
+      "approvals": 0,
+      "questions": 0,
+      "authResumes": 0,
+      "totalMs": 3079,
+      "error": null,
+      "failures": [],
+      "pass": true
+    },
+    {
+      "id": "s4-read-regression",
+      "prompt": "read the text visible on my screen",
+      "at": "2026-09-26T00:46:13.715Z",
+      "commsIntent": "handoff",
+      "commsLatencyMs": 59,
+      "taskId": "task_ff1054e5",
+      "status": "done",
+      "resultText": "Here's what's on your screen — it's a plan file in the Devin editor (`plan-1ac9d77893d2fc79.md`):\n\n**Top bar:** Agent Editor / thinkdrop — web agen... / Plans / plan-1ac9d77893d2fc79.md / Runs 2-3 / POSTed real effect payloads / run 1's node answered \"On screen confetti\" but nothing recorded. / + Bypass Permissions / SWE-2 Max\n\n**Body text (OCR is roughly 79% confident, so some fragments are garbled):**\n\n- \"Checking what happens after the switch (POST → Read screenOutput.js 216-275) — classifyTask robustness fixes. Commit: stategraph-module/commsgraph as owning.\"\n- \"Stage 4 screen_display (~12–6) — Command sed & text/emoji/effect/image/alert/chart/deck/scene/clear; referential fresh-content fetch→display; ... the bare 'show on screen' regression. Assert recorded /screen/display payload: correct kind, content = real output (never raw prompt/error text), sane blocking/durationMs. Commit: & stategraph-module (+ shared).\"\n- \"01_8ywmhca8sjfj [StateGraphBuilder] Creating FULL graph (all nodes enabled, llmBackend: ThinkDrop WebSocket LLM)\"\n- \"Stage 5 command_automate (~30 — biggest surface) — local_file (create/read/edit/move, expectsFileOutput), local_system (battery/disk/processes/screenshot), scheduling (reminder + delivery-method clarify) ... app_automation/system_settings/executelntrospect, messaging (full-action; email-to-self class targets), multi-service single-goal (must stay one step). Assert: route, plan quality (no fabricated agents/URLs), auth handling, and per-node latency — the slowness dissection lives here (instrument timings, then structural cuts). Commit: owning repo per fix.\"\n- A terminal-ish block: `cd /Users/lukaizhi/Desktop/projects/thinkdrop && grep \"harness/screens|screens|screenKind|screenMustContain\" tests/e2e/driver.cjs | head -15`\n- \"Stage 6 multi-intent & robustness (~18) — multi-goal '... and also ...', fetch→display compounds, dependsOn chains, garbled voice 265: const ... = await _get(STUB, '/harness/screens'); transcript, non-English (es/fr), empty/emoji-only/5KB prompt, prompt-injection, rapid duplicate 266: outcome.screens = (scr.json?.screens || []).slice(screensBefore); (5-min dup filter), cancel mid-run. Assert correct split-or-not decisions, no crash, sane degradation. Commit per fix.\"\n- \"Stage 7 latency & polish — Aggregate results p50/p95 per intent + per-node timing report; fix top offenders structurally; re-run full corpus x3.\"\n- \"Stage 8 real-Electron pass — 11 files +391-177 / yarn sync:stategraph & yarn dev; ~20 representative prompts via real renderer; verify GhostLayer rendering, queue cards, results feed, Escape/clear, clean logs.\"\n- \"Corpus (~130 — sized by surface area not 100/intent) — Per-intent 6-10 phrasings/edge cases weighted by domain breadth: comms ~14, fast ~22, context ~18, screen ~12, automation ~30, robustness ~18.\"\n- A tip line: \"Type @ conversation to bring in context from another chat.\"\n\n**Bottom status bar:** thinkdrop / main* / Quokka/Devin / Settings / Launchpad\n\nOne note — the plan appears to be about the exact thing you just did: the \"show that on my screen\" flow, where a display gets recorded but the driver never sees it.",
+      "graphIntent": {
+        "intent": "screen_intelligence",
+        "parser": "llm-decompose",
+        "subPrompts": 1,
+        "subIntents": [
+          "screen_intelligence"
+        ]
+      },
+      "screens": [],
+      "events": 568,
+      "approvals": 0,
+      "questions": 0,
+      "authResumes": 0,
+      "totalMs": 16625,
+      "error": null,
+      "failures": [],
+      "pass": true
+    },
+    {
+      "id": "s4-what-regression",
+      "prompt": "what's on my screen",
+      "at": "2026-09-26T00:46:30.340Z",
+      "commsIntent": "handoff",
+      "commsLatencyMs": 48,
+      "taskId": "task_0b4c0029",
+      "status": "done",
+      "resultText": "You've got Devin open, editing a markdown plan file: **plan-1ac9d77893d2fc79.md** from `~/.devin/plans/`. It's a \"thinkdrop\" plan document.\n\n**What's visible in the file:**\n\nA staged execution plan for what looks like a test harness / driver refactor project. The sections I can make out:\n\n- **Stage 4 — screen_display** (~12 files): Notes that the display was recorded server-side but the driver's slice came back empty. Talking about `screen_display` handlers, checking `/harness/screens`, and asserting recorded payloads (kind, content, blocking/durationMs)\n- **Stage 5 — command_automate** (~30 files, labeled \"biggest surface\"): Covers local_file ops, local_system/screen/display, scheduling, app_automation, messaging, multi-service goals\n- **Stage 6 — multi-intent & robustness** (~18 files): fetch→display compounds, dependsOn chains, garbled voice transcripts, non-English, prompt-injection, rapid duplicates, cancel mid-run\n- **Stage 7 — latency & polish**: p50/p95 per intent, per-node timing, full corpus ×3\n- **Stage 8 — real-Electron pass**: ~20 representative cases via real renderer\n\nThere's also some planning notes at the bottom about per-intent phrasings \"sized by surface area\" (comms ~14, fast ~22, context ~18, screen ~12, automation ~30, robustness ~18).\n\n**UI elements:**\n- A \"Quick review\" bar with **Reject all / Accept all** buttons\n- Diff stats: **11 files +391 −177**\n- A **Bypass Permissions** indicator and **SWE-2 Max** label\n- Bottom bar showing branch **main***, a Launchpad, Pro Quokka, and Devin - Settings\n- A tip: \"Type @ conversation to bring in context from another chat\"\n\nThe OCR is a bit garbled in places (79% confidence), so some details are fuzzy — looks like there's a terminal/command section mixed in with grep commands and commit references too.",
+      "graphIntent": {
+        "intent": "screen_intelligence",
+        "parser": "llm-decompose",
+        "subPrompts": 1,
+        "subIntents": [
+          "screen_intelligence"
+        ]
+      },
+      "screens": [],
+      "events": 578,
+      "approvals": 0,
+      "questions": 0,
+      "authResumes": 0,
+      "totalMs": 18111,
+      "error": null,
+      "failures": [],
+      "pass": true
+    }
+  ]
+}

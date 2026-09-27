@@ -1,0 +1,542 @@
+{
+  "file": "tests/e2e/prompts/stage2-fast.json",
+  "run": 1,
+  "at": "2026-09-25T23:55:55.106Z",
+  "results": [
+    {
+      "id": "s2-web-spacex",
+      "prompt": "what's the latest news on SpaceX",
+      "at": "2026-09-25T23:53:20.061Z",
+      "commsIntent": "handoff",
+      "commsLatencyMs": 423,
+      "taskId": "task_3239d099",
+      "status": "done",
+      "resultText": "**Latest SpaceX updates (as of Sept 25 2026)**  \n\n- **Potential stock split** – Analysts say a split could be on the horizon.  \n  ![SpaceX Stock Split](https://imgs.search.brave.com/q17lqONjenM9CmzF7VfsdtTFtm_0iAhQfiZCQZwW2Jk/rs:fit:200:200:1:0/g:ce/aHR0cHM6Ly9nLmZv/b2xjZG4uY29tL2lt/YWdlLz91cmw9aHR0/cHMlM0ElMkYlMkZn/LmZvb2xjZG4uY29t/JTJGZWRpdG9yaWFs/JTJGaW1hZ2VzJTJG/ODg4MTQwJTJGZ2V0/dHlpbWFnZXMtMTQz/MTc2MjE0LTEyMDB4/ODAwLTViMmRmNzku/anBnJmFtcDt3PTEy/MDAmYW1wO29wPXJl/c2l6ZQ)  \n  [SpaceX Stock‑Split Watch](https://www.fool.com/investing/2026/09/24/stock-split-watch-is-hot-stock-next/)\n\n- **$1,000 investment outlook** – A $1 k stake could grow substantially over five years.  \n  ![Investment Outlook](https://imgs.search.brave.com/JIxa9vJOKI-tfiMu4QANoFyXo7JGCXcJMD3ExzWdzpk/rs:fit:200:200:1:0/g:ce/aHR0cHM6Ly9nLmZv/b2xjZG4uY29tL2lt/YWdlLz91cmw9aHR0/cHMlM0ElMkYlMkZn/LmZvb2xjZG4uY29t/JTJGZWRpdG9yaWFs/JTJGaW1hZ2VzJTJG/ODg4NTY3JTJGc3Bj/eC5wbmcmYW1wO3c9/MTIwMCZhbXA7b3A9/cmVzaXpl)  \n  [What a $1,000 Investment Could Be Worth](https://www.fool.com/investing/2026/09/24/heres-what-a-1000-investment-in-spacex-stock-could/)\n\n- **Starship megarocket rehearsal** – The vehicle aced its launch rehearsal; liftoff slated for Sept 28.  \n  ![Starship Rehearsal](https://imgs.search.brave.com/XN1ij8cJ59jJ0rupWByxQGaVZfBTxvEKiEe0_nIAEcY/rs:fit:200:200:1:0/g:ce/aHR0cHM6Ly9jZG4u/bW9zLmNtcy5mdXR1/cmVjZG4ubmV0L3Nh/enpKbW9rMnc1U1Rw/Qnl6OWt5V24tMjU2/MC04MC5qcGc)  \n  [Starship Megarocket Rehearsal Video](https://www.space.com/space-exploration/launches-spacecraft/spacexs-starship-megarocket-aces-launch-rehearsal-ahead-of-1st-orbital-test-flight-video)\n\n- **Share‑price target** – Some forecasts see the price returning to about **$190** by year‑end.  \n  [SpaceX Poised for $190 Share Price](https://finance.yahoo.com/markets/stocks/articles/spacex-poised-reclaim-190-share-165200154.html)\n\n- **Stock dip concerns** – Over 319 million shares unlocked on Sept 24, prompting a slide and debate on buying the dip.  \n  ![Stock Sliding](https://imgs.search.brave.com/XUaP6iydgzWtNhveiP2HatHY5ky6wFx9itKPM3iOZrQ/rs:fit:200:200:1:0/g:ce/aHR0cHM6Ly9nLmZv/b2xjZG4uY29tL2lt/YWdlLz91cmw9aHR0/cHMlM0ElMkYlMkZn/LmZvb2xjZG4uY29t/JTJGZWRpdG9yaWFs/JTJGaW1hZ2VzJTJG/ODg4MTc4JTJGZ2V0/dHlpbWFnZXMtMjE2/NDI1NzI0OC0xMjAx/eDgwMC01YjJkZjc5/LTIuanBnJmFtcDt3/PTEyMDAmYW1wO29w/PXJlc2l6ZQ)  \n  [Should You Buy the Dip?](https://www.fool.com/investing/2026/09/24/spacex-stock-is-sliding-should-you-buy-the-dip/)\n\n- **Bull vs. bear scenarios** – The company is pursuing several revolutionary growth initiatives, with analysts outlining optimistic and cautious outlooks.  \n  ![Bull vs Bear](https://imgs.search.brave.com/zRjRJAJR6zULJUWqcKiwlxpXXdHt9fwXq9pJd4Dj52M/rs:fit:200:200:1:0/g:ce/aHR0cHM6Ly9nLmZv/b2xjZG4uY29tL2lt/YWdlLz91cmw9aHR0/cHMlM0ElMkYlMkZn/LmZvb2xjZG4uY29t/JTJGZWRpdG9yaWFs/JTJGaW1hZ2VzJTJG/ODg4MTE4JTJGZ2V0/dHlpbWFnZXMtMjE1/NjUxOTczNS0xMjAx/eDYzMy02NWQ0YmU2/LmpwZyZhbXA7dz0x/MjAwJmFtcDtvcD1yZXNpemU)  \n  [Bull vs. Bear Scenarios](https://www.fool.com/investing/2026/09/24/spacex-stock-bull-vs-bear-scenarios/)\n\n- **Crew‑13 launch go‑ahead** – NASA, SpaceX, and partners have given the “go” for the upcoming Crew‑13 mission to the ISS.  \n  ![Crew‑13 Launch](https://imgs.search.brave.com/8Hh_t8N_3pduJu_cqlsaH1BWBNlN5shayRDdExuPVPk/rs:fit:200:200:1:0/g:ce/aHR0cHM6Ly93d3cu/bmFzYS5nb3Yvd3Av/Y29udGVudC91cGxv/YWRzLzIwMjYvMDkv/a3NjLTIwMjYwOTI1/LXBoLWtsczAxLTAw/MDMuanBn)  \n  [NASA, SpaceX Proceed Toward Crew‑13 Launch](https://nasa.gov/blogs/spacestation/2026/09/25/nasa-spacex-proceed-toward-crew-13-launch)\n\n- **S&P 500 inclusion delay** – The company won’t qualify for the S&P 500 until after June 2027, partly due to its lack of public‑company profits.  \n  ![S&P 500 Delay](https://imgs.search.brave.com/26iF23kSf6EPXN46xHPp9LVkS7ixc-xGx-mQQZGx68o/rs:fit:200:200:1:0/g:ce/aHR0cHM6Ly9nLmZv/b2xjZG4uY29tL2lt/YWdlLz91cmw9aHR0/cHMlM0ElMkYlMkZj/ZG4uY29udGVudC5m/b29sY2RuLmNvbSUy/RmltYWdlcyUyRjF1/bW45cWVoJTJGcHJv/ZHVjdGlvbiUyRjk1/NzRmZTJkNjkwY2Vi/NDBjOGQ4MTI2YWQ5/NDA3YTg2MTVmMmE1/MDMtNjAwMHg0MDAw/LmpwZyUzRnclM0Q4/MDAlMjZxJTNENzUl/MjZmaXQlM0RtYXgl/MjZhdXRvJTNEZm9y/bWF0JmFtcDt3PTEy/MDAmYW1wO29wPXJl/c2l6ZQ)  \n  [Can't Join S&P 500 Before June 2027](https://www.fool.com/investing/2026/09/23/spacex-can-t-join-the-s-and-p-500-before-june-2027-and-its-losses-could-keep-it-out-longer/)\n\n- **Share‑unlock sell‑off** – Unlocking 328 million shares caused a noticeable stock decline, raising questions about further selling pressure.  \n  ![Share Unlock Sell‑off](https://imgs.search.brave.com/ebt6TiJSiz50xFfK-gW7d25e1uu1Tk1Tq67fWfjBw5g/rs:fit:200:200:1:0/g:ce/aHR0cHM6Ly9pbnZl/enotd3AtbWVkaWEu/bG9uMS5kaWdpdGFs/b2NlYW5zcGFjZXMu/Y29tLzIwMjYvMDYv/U3BhY2VYLXJvY2tl/dHMucG5n)  \n  [Stock Falls as 328 M Shares Unlock](https://invezz.com/news/2026/09/24/spacex-stock-falls-as-328-million-shares-unlock-is-more-selling-coming/)\n\n- **General space news** – For broader astronomy updates, see ScienceDaily’s “Space & Time” section.  \n  [Space & Time News](https://sciencedaily.com/news/space_time)",
+      "graphIntent": {
+        "intent": "web_search",
+        "parser": "llm-decompose",
+        "subPrompts": 1,
+        "subIntents": [
+          "web_search"
+        ]
+      },
+      "screens": [],
+      "events": 470,
+      "approvals": 0,
+      "questions": 0,
+      "authResumes": 0,
+      "totalMs": 4967,
+      "error": null,
+      "failures": [],
+      "pass": true
+    },
+    {
+      "id": "s2-web-bitcoin",
+      "prompt": "what's the current price of bitcoin",
+      "at": "2026-09-25T23:53:25.029Z",
+      "commsIntent": "handoff",
+      "commsLatencyMs": 215,
+      "taskId": "task_d4f2bbd9",
+      "status": "done",
+      "resultText": "**Current Bitcoin price (as of the latest reported data):**\n\n- **$86,039.36** per BTC – reported at 6 a.m. Eastern Time on **September 22, 2026**【https://fortune.com/article/price-of-bitcoin-09-22-2026/】\n\n**Other recent prices for reference:**\n\n- $85,818.92 per BTC on September 21, 2026【https://fortune.com/article/price-of-bitcoin-09-21-2026/】\n- $83,727.80 per BTC (real‑time update) from Changelly’s price feed【https://changelly.com/blog/bitcoin-price-prediction/】",
+      "graphIntent": {
+        "intent": "web_search",
+        "parser": "llm-decompose",
+        "subPrompts": 1,
+        "subIntents": [
+          "web_search"
+        ]
+      },
+      "screens": [],
+      "events": 481,
+      "approvals": 0,
+      "questions": 0,
+      "authResumes": 0,
+      "totalMs": 3241,
+      "error": null,
+      "failures": [],
+      "pass": true
+    },
+    {
+      "id": "s2-web-headlines",
+      "prompt": "what are the top headlines today",
+      "at": "2026-09-25T23:53:28.271Z",
+      "commsIntent": "handoff",
+      "commsLatencyMs": 227,
+      "taskId": "task_f05277c2",
+      "status": "done",
+      "resultText": "Here are the top headlines for today, September 25, 2026:\n\n*   **Supreme Court Rejects Trump-Backed Missouri Congressional Map:** The Supreme Court has ruled against a congressional map backed by President Trump, dealing a significant blow to his administration's redistricting efforts in Missouri.\n*   **Trump-Xi Summit:** President Trump is meeting with Chinese President Xi today. The summit is expected to cover trade and oil, with a state dinner scheduled for later featuring tech titans and sea bass.\n*   **UN General Assembly Protests:** As Israeli Prime Minister Netanyahu addressed the General Assembly, dozens of U.N. delegates walked out in protest, and over 100 protesters were arrested outside the venue demanding his arrest. Netanyahu used the speech to lambast Iran and defend the Gaza war.\n*   **Stock Market Update:** Stocks fell again today as Treasury yields remained near 19-year highs. A Federal Reserve official advocated for another rate hike, overshadowing the diplomatic talks between Trump and Xi.\n*   **Global Conflict:** Separatists attacked government forces in Ethiopia, marking the worst fighting since a 2022 ceasefire, while opposition groups continued to protest across various regions.\n\n**Sources:**\n*   [Live updates: Supreme Court rejects Trump-backed Missouri congressional map](https://apnews.com/live/trump-xi-china-summit-media-ban-news-updates-09-25-2026)\n*   [Trump-Xi state dinner to include tech titans, sea bass and glitzy diplomacy](https://apnews.com/live/trump-xi-china-summit-media-ban-news-updates-09-24-2026)\n*   [Key speeches and moments from UNGA Day 3: Netanyahu lambasts Iran, defends Gaza war](https://cnn.com/2026/09/24/world/live-news/un-general-assembly-netanyahu)\n*   [Blistering Yield Rally Overshadows Trump-Xi Talks](https://www.schwab.com/learn/story/stock-market-update-open)\n*   [Headlines for September 25, 2026](https://democracynow.org/2026/9/25/headlines)",
+      "graphIntent": {
+        "intent": "web_search",
+        "parser": "llm-decompose",
+        "subPrompts": 1,
+        "subIntents": [
+          "web_search"
+        ]
+      },
+      "screens": [],
+      "events": 491,
+      "approvals": 0,
+      "questions": 0,
+      "authResumes": 0,
+      "totalMs": 10784,
+      "error": null,
+      "failures": [],
+      "pass": true
+    },
+    {
+      "id": "s2-web-ramen",
+      "prompt": "find me three highly rated ramen restaurants in San Francisco",
+      "at": "2026-09-25T23:53:39.055Z",
+      "commsIntent": "handoff",
+      "commsLatencyMs": 1207,
+      "taskId": "task_7bd9547c",
+      "status": "done",
+      "resultText": "Based on the search results, here are three highly rated ramen restaurants in San Francisco:\n\n*   **Marufuku Ramen** ([Yelp](https://www.yelp.com/search?find_desc=Ramen&find_loc=San+Francisco%2C+CA))\n*   **Kizuki Ramen & Izakaya** ([Yelp](https://www.yelp.com/search?find_desc=Ramen&find_loc=San+Francisco%2C+CA))\n*   **Mensho Tokyo** ([Yelp](https://www.yelp.com/search?find_desc=Ramen&find_loc=San+Francisco%2C+CA))\n\nThese names appear consistently across multiple top-rated lists, including Yelp, The Infatuation, and SF Chronicle.",
+      "graphIntent": {
+        "intent": "web_search",
+        "parser": "llm-decompose",
+        "subPrompts": 1,
+        "subIntents": [
+          "web_search"
+        ]
+      },
+      "screens": [],
+      "events": 501,
+      "approvals": 0,
+      "questions": 0,
+      "authResumes": 0,
+      "totalMs": 17793,
+      "error": null,
+      "failures": [],
+      "pass": true
+    },
+    {
+      "id": "s2-web-weather",
+      "prompt": "what's the weather in Tokyo right now",
+      "at": "2026-09-25T23:53:56.849Z",
+      "commsIntent": "handoff",
+      "commsLatencyMs": 349,
+      "taskId": "task_6df7d288",
+      "status": "done",
+      "resultText": "**Current weather in Tokyo (as of 9 Sept 2026, 9:19 AM JST)**  \n\n- **Temperature:** ≈ 80 °F (≈ 27 °C) – reported by **[Weather Underground](https://www.wunderground.com/weather/jp/tokyo)** (updated 1 minute ago).  \n- **Low / High:** 66 °F / 81 °F (as shown in the same source).  \n- **Additional details:** Wind, humidity, and air‑quality data are not listed in the available snippets, but you can view the full forecast on **[AccuWeather](https://www.accuweather.com/en/jp/tokyo/226396/weather-forecast/226396)** or the extended forecast on **[Weather Underground’s 10‑day page](https://www.wunderground.com/forecast/jp/tokyo)**.",
+      "graphIntent": {
+        "intent": "web_search",
+        "parser": "llm-decompose",
+        "subPrompts": 1,
+        "subIntents": [
+          "web_search"
+        ]
+      },
+      "screens": [],
+      "events": 511,
+      "approvals": 0,
+      "questions": 0,
+      "authResumes": 0,
+      "totalMs": 3382,
+      "error": null,
+      "failures": [],
+      "pass": true
+    },
+    {
+      "id": "s2-web-superbowl",
+      "prompt": "who won the most recent Super Bowl",
+      "at": "2026-09-25T23:54:00.231Z",
+      "commsIntent": "handoff",
+      "commsLatencyMs": 299,
+      "taskId": "task_1a42fbc2",
+      "status": "done",
+      "resultText": "The most recent Super Bowl was **Super Bowl LX (2026)**, and it was won by the **Seattle Seahawks**, who defeated the New England Patriots 29‑13【3](https://www.topendsports.com/events/super-bowl/winners-list.htm)​.",
+      "graphIntent": {
+        "intent": "general_knowledge",
+        "parser": "llm-decompose",
+        "subPrompts": 1,
+        "subIntents": [
+          "general_knowledge"
+        ]
+      },
+      "screens": [],
+      "events": 522,
+      "approvals": 0,
+      "questions": 0,
+      "authResumes": 0,
+      "totalMs": 4834,
+      "error": null,
+      "failures": [],
+      "pass": true
+    },
+    {
+      "id": "s2-mem-lastweek",
+      "prompt": "what did we talk about last week",
+      "at": "2026-09-25T23:54:05.066Z",
+      "commsIntent": "handoff",
+      "commsLatencyMs": 53,
+      "taskId": "task_afc5dc89",
+      "status": "done",
+      "resultText": "**Last week (roughly September 18 – September 24, 2026)**  \n\nAll of the activity that week occurred on **Saturday, September 19, 2026**. Your prompts that day and the subjects they covered were:\n\n| Time (Sept 19) | Your prompt | Main subject |\n|----------------|-------------|--------------|\n| 5:55 PM | “What did I do yesterday?” | Asking for a recap of your prior‑day activity. |\n| 7:11 PM | “show me picture of president trump” | Request for images of former President Donald Trump. |\n| 7:12 PM | “what are you doing” | Checking what I’m doing. |\n| 7:12 PM | “can you hear me” | Verifying audio/voice capability. |\n| 7:12 PM | “what can you do for me today” (twice) | Asking about my capabilities. |\n| 9:42 PM | “what this a pic of” | Asking me to identify an image you’d uploaded. |\n| 9:44 PM | “what do you see on the screen” | Requesting a description of the current screen contents. |\n| 9:46 PM | “[File: …/copy‑1789868732148.md] what this” | Asking what the referenced markdown file contains. |\n| 11:45 PM | “What can you do” | Again asking about my abilities. |\n| 11:47 PM | “Whats the file on the desktop triggers‑prompt about” | Inquiring about the contents of *triggers‑prompt.rtf* on your Desktop. |\n| 11:58 PM | “show me pics of mario” | Request for images of Mario (the Nintendo character). |\n\nSo, last week’s conversation was entirely focused on:\n\n* Clarifying what I can do / checking my status.  \n* Requests for images (President Trump, Mario).  \n* Asking me to identify or describe specific files or screen content.  \n* A single “what did I do yesterday?” query.  \n\nNo other topics or dates appear in the logs for that week.",
+      "graphIntent": {
+        "intent": "memory_retrieve",
+        "parser": "llm-decompose",
+        "subPrompts": 1,
+        "subIntents": [
+          "memory_retrieve"
+        ]
+      },
+      "screens": [],
+      "events": 532,
+      "approvals": 0,
+      "questions": 0,
+      "authResumes": 0,
+      "totalMs": 3087,
+      "error": null,
+      "failures": [],
+      "pass": true
+    },
+    {
+      "id": "s2-mem-yesterday",
+      "prompt": "what was I doing yesterday afternoon",
+      "at": "2026-09-25T23:54:08.154Z",
+      "commsIntent": "handoff",
+      "commsLatencyMs": 275,
+      "taskId": "task_fdbf50c6",
+      "status": "done",
+      "resultText": "I don't have any recorded screen activity for yesterday afternoon (September 24, 2026).\n\nThe earliest captures I have for that day start late in the evening:\n\n**Late evening, September 24, 2026:**\n- **10:59 PM:** You viewed `v0 by Vercel` (a web app builder) and `accounts.google.com`.\n- **11:25 PM:** You opened a Google Chrome New Tab.\n- **11:26 PM:** You viewed `portfolio-de2e8.firebaseapp.com`, `notifications-4ea07.firebaseapp.com`, and `Armis N Play`. You also opened `resume-latest.pdf` in the Preview app.",
+      "graphIntent": {
+        "intent": "memory_retrieve",
+        "parser": "llm-decompose",
+        "subPrompts": 1,
+        "subIntents": [
+          "memory_retrieve"
+        ]
+      },
+      "screens": [],
+      "events": 543,
+      "approvals": 0,
+      "questions": 0,
+      "authResumes": 0,
+      "totalMs": 6322,
+      "error": null,
+      "failures": [],
+      "pass": true
+    },
+    {
+      "id": "s2-mem-dentist",
+      "prompt": "when did I last mention my dentist appointment",
+      "at": "2026-09-25T23:54:14.476Z",
+      "commsIntent": "handoff",
+      "commsLatencyMs": 980,
+      "taskId": "task_a401a36f",
+      "status": "done",
+      "resultText": "You last mentioned your dentist appointment on **September 25, 2026 at 9:12:32 AM**, when you noted: *\"remember I have a dentist appointment next Tuesday.\"*",
+      "graphIntent": {
+        "intent": "memory_retrieve",
+        "parser": "llm-decompose",
+        "subPrompts": 1,
+        "subIntents": [
+          "memory_retrieve"
+        ]
+      },
+      "screens": [],
+      "events": 554,
+      "approvals": 0,
+      "questions": 0,
+      "authResumes": 0,
+      "totalMs": 5521,
+      "error": null,
+      "failures": [],
+      "pass": true
+    },
+    {
+      "id": "s2-mem-apps",
+      "prompt": "what apps did I use this morning",
+      "at": "2026-09-25T23:54:19.997Z",
+      "commsIntent": "handoff",
+      "commsLatencyMs": 592,
+      "taskId": "task_62fff2ab",
+      "status": "done",
+      "resultText": "Here’s what your screen‑activity logs show for the morning of **September 25 2026**:\n\n| Time (local) | App | Window / Content |\n|--------------|-----|------------------|\n| 6:35 AM | **Google Chrome** | *Thinkdrop AI interface – v0 by Vercel* |\n\nNo other apps were recorded for the morning period. (This information comes from the completed task “what apps did I use this morning” logged on September 25 2026 at 3:53 PM.)",
+      "graphIntent": {
+        "intent": "memory_retrieve",
+        "parser": "llm-decompose",
+        "subPrompts": 1,
+        "subIntents": [
+          "memory_retrieve"
+        ]
+      },
+      "screens": [],
+      "events": 565,
+      "approvals": 0,
+      "questions": 0,
+      "authResumes": 0,
+      "totalMs": 3621,
+      "error": null,
+      "failures": [],
+      "pass": true
+    },
+    {
+      "id": "s2-mem-summary",
+      "prompt": "summarize what I worked on recently",
+      "at": "2026-09-25T23:54:23.618Z",
+      "commsIntent": "handoff",
+      "commsLatencyMs": 439,
+      "taskId": "task_aac79d4e",
+      "status": "done",
+      "resultText": "**What you’ve been working on today (September 25, 2026)**  \n\n- **Devin – ThinkDrop document** – Your active window is the file `thinkdrop — plan‑1ac9d77893d2fc79.md` (the “Active screen” snapshot). This has been the primary focus of your work session.  \n\n- **Morning activity**  \n  - At **8:18 AM** you captured the screen; the visible elements were recorded (Memory 2).  \n  - At **1:55 PM** you asked, “what apps did I use this morning?” (Memory 7).  \n\n- **Afternoon Chrome work (UHC Member Hub)**  \n  - **3:51 PM** – Opened a Google.com tab (Memory 16).  \n  - **3:51 PM** – Opened a new‑tab page (Memory 17).  \n  - **3:01 PM** – Viewed Gmail search results for your email address (Memory 18).  \n  - **4:12 PM** – Visited the UHC Member Hub home page (Memory 15).  \n  - **4:14 PM** – Accessed the “Member Secure Home” page (Memory 13).  \n  - **4:14 PM** – Opened the HealthSafe ID sign‑in page (Memory 14).  \n  - **4:16 PM** – Looked at “Member ID Cards” (Memory 9), “Member Policy” (Memory 10), “viewDocumentCenter” (Memory 11), and “Contact Us” (Memory 12) within the Member Hub.  \n\n- **Other queries**  \n  - At **3:15 PM** you asked, “When did you start working?” (Memory 1).  \n\n**Summary**  \nToday you have been editing a ThinkDrop markdown plan in the Devin app while also spending a substantial block of time in Google Chrome navigating various UHC Member Hub pages (ID cards, policy, document center, contact, secure home, and sign‑in). Your morning included a screen capture and a question about which apps you used. No specific projects or interests have been recorded in the observations.",
+      "graphIntent": {
+        "intent": "memory_retrieve",
+        "parser": "llm-decompose",
+        "subPrompts": 1,
+        "subIntents": [
+          "memory_retrieve"
+        ]
+      },
+      "screens": [],
+      "events": 576,
+      "approvals": 0,
+      "questions": 0,
+      "authResumes": 0,
+      "totalMs": 4993,
+      "error": null,
+      "failures": [],
+      "pass": true
+    },
+    {
+      "id": "s2-mem-color",
+      "prompt": "have I told you my favorite color before",
+      "at": "2026-09-25T23:54:28.611Z",
+      "commsIntent": "handoff",
+      "commsLatencyMs": 286,
+      "taskId": "task_b108155d",
+      "status": "done",
+      "resultText": "Yes—you’ve told me your favorite color before. On **September 25, 2026 at 2:43 PM** you wrote:\n\n> “your favorite color is teal”【Memory 1 — September 25, 2026 at 2:43 PM】.",
+      "graphIntent": null,
+      "screens": [],
+      "events": 588,
+      "approvals": 0,
+      "questions": 0,
+      "authResumes": 0,
+      "totalMs": 7834,
+      "error": null,
+      "failures": [],
+      "pass": true
+    },
+    {
+      "id": "s2-screen-what",
+      "prompt": "what's on my screen right now",
+      "at": "2026-09-25T23:54:36.445Z",
+      "commsIntent": "handoff",
+      "commsLatencyMs": 50,
+      "taskId": "task_8665b104",
+      "status": "done",
+      "resultText": "You are looking at the **Devin** editor window titled **\"thinkdrop — plan-1ac9d77893d2fc79.md\"**.\n\nThe file contains a detailed testing plan for the **ThinkDrop** project, specifically outlining a multi-stage regression check. It details the current status of Stage 1 (comms-graph) and Stage 2 (stategraph), noting that Stage 1 has passed (15/15 intents) and Stage 2 is currently running. The text includes specific test commands, assertions for intent handling, and commit messages for various modules.",
+      "graphIntent": {
+        "intent": "screen_intelligence",
+        "parser": "llm-decompose",
+        "subPrompts": 1,
+        "subIntents": [
+          "screen_intelligence"
+        ]
+      },
+      "screens": [],
+      "events": 598,
+      "approvals": 0,
+      "questions": 0,
+      "authResumes": 0,
+      "totalMs": 18135,
+      "error": null,
+      "failures": [],
+      "pass": true
+    },
+    {
+      "id": "s2-screen-app",
+      "prompt": "what app am I looking at",
+      "at": "2026-09-25T23:54:54.580Z",
+      "commsIntent": "handoff",
+      "commsLatencyMs": 47,
+      "taskId": "task_c5fe4c2f",
+      "status": "done",
+      "resultText": "You're currently in **Devin** — a **editor** app. Window: \"thinkdrop — plan-1ac9d77893d2fc79.md\".",
+      "graphIntent": {
+        "intent": "screen_intelligence",
+        "parser": "llm-decompose",
+        "subPrompts": 1,
+        "subIntents": [
+          "screen_intelligence"
+        ]
+      },
+      "screens": [],
+      "events": 608,
+      "approvals": 0,
+      "questions": 0,
+      "authResumes": 0,
+      "totalMs": 10604,
+      "error": null,
+      "failures": [],
+      "pass": true
+    },
+    {
+      "id": "s2-screen-read",
+      "prompt": "read the text visible on my screen",
+      "at": "2026-09-25T23:55:05.184Z",
+      "commsIntent": "handoff",
+      "commsLatencyMs": 119,
+      "taskId": "task_bcbb5aec",
+      "status": "done",
+      "resultText": "The screen displays a Markdown file titled \"thinkdrop — plan-1ac9d77893d2fc79.md\" within the Devin editor.\n\nThe visible text outlines a testing plan for a project called \"thinkdrop,\" specifically focusing on regression checks and intent verification across five stages:\n\n*   **Stage 1 (Comms-side):** Focuses on quick intents (general_quick, memory_quick, status_check, control_signal, memory_store). It includes a command to run tests and asserts that intent names and full text are sane and under 2 seconds.\n*   **Stage 2 (Stategraph):** Focuses on fast intents including greeting, general_knowledge, web_search, and memory_retrieve. It specifies reading shell data (news, weather, etc.) and asserts that the task classification fields in logs are correct.\n*   **Stage 3 (Context & Follow-up):** Covers handling user replies like \"yes,\" \"tell me more,\" or \"no thanks.\" It includes a command to run tests and asserts that follow-up targets and routing are correct.\n*   **Stage 4 (Screen Display):** Focuses on reading shell text, emojis, and effects. It asserts that the recorded display payload is correct and contains real output rather than raw prompts.\n*   **Stage 5 (Command Automate):** Covers the largest surface area, including local file operations, system settings, and browser automation. It asserts route quality and single-step goals.\n\nThe bottom of the screen shows a git diff summary: \"7 files +144 -33\" and a \"Quick review\" section with \"Reject all\" and \"Accept all\" buttons.",
+      "graphIntent": {
+        "intent": "screen_intelligence",
+        "parser": "llm-decompose",
+        "subPrompts": 1,
+        "subIntents": [
+          "screen_intelligence"
+        ]
+      },
+      "screens": [],
+      "events": 618,
+      "approvals": 0,
+      "questions": 0,
+      "authResumes": 0,
+      "totalMs": 18224,
+      "error": null,
+      "failures": [],
+      "pass": true
+    },
+    {
+      "id": "s2-screen-desc",
+      "prompt": "describe what I'm looking at",
+      "at": "2026-09-25T23:55:23.409Z",
+      "commsIntent": "handoff",
+      "commsLatencyMs": 63,
+      "taskId": "task_83c2ca67",
+      "status": "done",
+      "resultText": "You are looking at the **Devin** code editor, specifically editing a file named `thinkdrop — plan-1ac9d77893d2fc79.md`.\n\nThe document outlines a multi-stage testing and verification plan for a project called \"thinkdrop.\" It details specific test stages for different intent types (comms, stategraph, context, screen display, and command automation), including commands to run regression tests and commit fixes. The editor shows a git diff with 7 files changed (+144 -33) and a \"Quick review\" panel at the bottom.",
+      "graphIntent": {
+        "intent": "screen_intelligence",
+        "parser": "llm-decompose",
+        "subPrompts": 1,
+        "subIntents": [
+          "screen_intelligence"
+        ]
+      },
+      "screens": [],
+      "events": 628,
+      "approvals": 0,
+      "questions": 0,
+      "authResumes": 0,
+      "totalMs": 13624,
+      "error": null,
+      "failures": [],
+      "pass": true
+    },
+    {
+      "id": "s2-screen-error",
+      "prompt": "is there an error dialog visible on my screen",
+      "at": "2026-09-25T23:55:37.033Z",
+      "commsIntent": "handoff",
+      "commsLatencyMs": 43,
+      "taskId": "task_4535442a",
+      "status": "done",
+      "resultText": "The current screen shows the **Devin editor** window titled “thinkdrop — plan‑1ac9d77893d2fc79.md”. The visible content is a long block of plain text (OCR confidence ≈ 77 %) that includes headings such as “Agent Editor”, various stage descriptions, command lines, test summaries, and commit notes. It is essentially a markdown file with logs and development notes—there are no modal windows, pop‑ups, or highlighted error‑dialog boxes present. In short, **no error dialog is visible on the screen**.",
+      "graphIntent": {
+        "intent": "screen_intelligence",
+        "parser": "llm-decompose",
+        "subPrompts": 1,
+        "subIntents": [
+          "screen_intelligence"
+        ]
+      },
+      "screens": [],
+      "events": 638,
+      "approvals": 0,
+      "questions": 0,
+      "authResumes": 0,
+      "totalMs": 12102,
+      "error": null,
+      "failures": [],
+      "pass": true
+    },
+    {
+      "id": "s2-know-crisis",
+      "prompt": "give me a detailed breakdown of the causes of the 2008 financial crisis including derivatives and rating agencies",
+      "at": "2026-09-25T23:55:49.135Z",
+      "commsIntent": "handoff",
+      "commsLatencyMs": 367,
+      "taskId": "task_1812b5ff",
+      "status": "done",
+      "resultText": "**What the provided sources say about financial crises**\n\n- **Rapid interest‑rate hikes can trigger market breakdowns** – A recent article notes that “history shows financial calamities occur when rates rise rapidly… something always breaks”【1】. This suggests that sharp increases in Treasury yields, like the recent spikes in the 10‑year note (5.12 % – highest since 2007)【6】, can create stress in the financial system.\n\n**What the sources do *not* cover**\n\n- The articles focus on current Treasury‑yield movements and their impact on stocks and bonds.  \n- They do **not** discuss the specific causes of the 2008 financial crisis, such as the role of **derivatives** (e.g., mortgage‑backed securities, credit‑default swaps) or the actions of **rating agencies**.\n\n**Bottom line**\n\nBased on the information you provided, the only relevant insight is that rapid rises in interest rates have historically been linked to financial turmoil. For a detailed breakdown of the 2008 crisis—including derivatives and rating agencies—you would need sources that specifically analyze those factors.",
+      "graphIntent": {
+        "intent": "web_search",
+        "parser": "llm-decompose",
+        "subPrompts": 1,
+        "subIntents": [
+          "web_search"
+        ]
+      },
+      "screens": [],
+      "events": 649,
+      "approvals": 0,
+      "questions": 0,
+      "authResumes": 0,
+      "totalMs": 3401,
+      "error": null,
+      "failures": [],
+      "pass": true
+    },
+    {
+      "id": "s2-know-tcp",
+      "prompt": "explain the difference between TCP and UDP for someone preparing for a networking interview",
+      "at": "2026-09-25T23:55:52.536Z",
+      "commsIntent": "general_quick",
+      "commsLatencyMs": 676,
+      "taskId": null,
+      "status": "done",
+      "resultText": "TCP provides reliable, ordered delivery with connection‑handshaking and flow control, while UDP offers connectionless, best‑effort delivery without guarantees of order or reliability, making it faster but less dependable.",
+      "graphIntent": null,
+      "screens": [],
+      "events": 0,
+      "approvals": 0,
+      "questions": 0,
+      "authResumes": 0,
+      "totalMs": 686,
+      "error": null,
+      "failures": [],
+      "pass": true
+    },
+    {
+      "id": "s2-know-haiku",
+      "prompt": "write a haiku about debugging",
+      "at": "2026-09-25T23:55:53.230Z",
+      "commsIntent": "handoff",
+      "commsLatencyMs": 349,
+      "taskId": "task_6536e171",
+      "status": "done",
+      "resultText": "## Screen\n\nOn screen.",
+      "graphIntent": {
+        "intent": "screen_display",
+        "parser": "llm-decompose",
+        "subPrompts": 1,
+        "subIntents": [
+          "screen_display"
+        ]
+      },
+      "screens": [
+        {
+          "at": 1790380554833,
+          "id": "so_stub_1",
+          "kind": "text",
+          "mood": "calm",
+          "text": "Haiku about debugging:\nSilent bugs lurking,\nCode whispers secrets in night,\nLight reveals the truth.",
+          "title": "write a haiku about debugging"
+        }
+      ],
+      "events": 659,
+      "approvals": 0,
+      "questions": 0,
+      "authResumes": 0,
+      "totalMs": 1875,
+      "error": null,
+      "failures": [],
+      "pass": true
+    }
+  ]
+}

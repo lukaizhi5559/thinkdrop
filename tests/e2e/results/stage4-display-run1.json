@@ -1,0 +1,505 @@
+{
+  "file": "tests/e2e/prompts/stage4-display.json",
+  "run": 1,
+  "at": "2026-09-26T00:42:36.024Z",
+  "results": [
+    {
+      "id": "s4-text-basic",
+      "prompt": "show \"meeting at 3pm\" on my screen",
+      "at": "2026-09-26T00:41:21.886Z",
+      "commsIntent": "handoff",
+      "commsLatencyMs": 66,
+      "taskId": "task_bd3de5a2",
+      "status": "done",
+      "resultText": "## Screen\n\nOn screen.",
+      "graphIntent": {
+        "intent": "screen_display",
+        "parser": "llm-decompose",
+        "subPrompts": 1,
+        "subIntents": [
+          "screen_display"
+        ]
+      },
+      "screens": [
+        {
+          "at": 1790383287640,
+          "id": "so_stub_1",
+          "kind": "text",
+          "text": "meeting at 3pm",
+          "title": "/Users/lukaizhi/.devin/plans/plan-1ac9d77893d2fc79.md"
+        }
+      ],
+      "events": 10,
+      "approvals": 0,
+      "questions": 0,
+      "authResumes": 0,
+      "totalMs": 6093,
+      "error": null,
+      "failures": [],
+      "pass": true
+    },
+    {
+      "id": "s4-text-put",
+      "prompt": "put the word DONE on the screen",
+      "at": "2026-09-26T00:41:27.979Z",
+      "commsIntent": "handoff",
+      "commsLatencyMs": 43,
+      "taskId": "task_40ba2456",
+      "status": "done",
+      "resultText": "## Screen\n\nOn screen.",
+      "graphIntent": {
+        "intent": "screen_display",
+        "parser": "llm-decompose",
+        "subPrompts": 1,
+        "subIntents": [
+          "screen_display"
+        ]
+      },
+      "screens": [
+        {
+          "at": 1790383289973,
+          "id": "so_stub_2",
+          "kind": "text",
+          "text": "DONE"
+        }
+      ],
+      "events": 20,
+      "approvals": 0,
+      "questions": 0,
+      "authResumes": 0,
+      "totalMs": 3204,
+      "error": null,
+      "failures": [],
+      "pass": true
+    },
+    {
+      "id": "s4-effect-confetti",
+      "prompt": "make confetti appear on my screen",
+      "at": "2026-09-26T00:41:31.184Z",
+      "commsIntent": "handoff",
+      "commsLatencyMs": 243,
+      "taskId": "task_507bdced",
+      "status": "done",
+      "resultText": "You can add a quick confetti overlay with a few lines of JavaScript/CSS.  \n\n1. **Insert a script tag** in the HTML page (or the web view you’re testing) that loads a lightweight confetti library, e.g.:\n\n```html\n<script src=\"https://cdn.jsdelivr.net/npm/canvas-confetti@1.6.0/dist/confetti.browser.min.js\"></script>\n```\n\n2. **Trigger the confetti** when you want it to appear:\n\n```js\n// Example: fire 30 bursts at random positions\nfunction launchConfetti() {\n  const duration = 5 * 1000;\n  const end = Date.now() + duration;\n\n  (function frame() {\n    confetti({\n      particleCount: 30,\n      spread: 70,\n      origin: { x: Math.random(), y: Math.random() - 0.2 }\n    });\n    if (Date.now() < end) requestAnimationFrame(frame);\n  })();\n}\n\n// Call the function whenever you need the effect\nlaunchConfetti();\n```\n\n3. **If you’re working inside the ThinkDrop editor** and want a quick visual test, open the built‑in preview (or a browser tab) that renders the markdown/HTML, paste the script tag and the `launchConfetti()` call, then reload the preview. The confetti will animate on the screen.\n\nNo additional setup required. Adjust `particleCount`, `spread`, or `duration` to suit your preference.",
+      "graphIntent": {
+        "intent": "screen_display",
+        "parser": "llm-decompose",
+        "subPrompts": 1,
+        "subIntents": [
+          "screen_display"
+        ]
+      },
+      "screens": [],
+      "events": 30,
+      "approvals": 0,
+      "questions": 0,
+      "authResumes": 0,
+      "totalMs": 12301,
+      "error": null,
+      "failures": [
+        "screenKind: no /screen/display recorded",
+        "screenMustContain: no /screen/display recorded"
+      ],
+      "pass": false
+    },
+    {
+      "id": "s4-effect-fireworks",
+      "prompt": "show fireworks on the screen",
+      "at": "2026-09-26T00:41:43.485Z",
+      "commsIntent": "handoff",
+      "commsLatencyMs": 48,
+      "taskId": "task_4b8ba87a",
+      "status": "done",
+      "resultText": "## Screen\n\nOn screen — fireworks.",
+      "graphIntent": {
+        "intent": "screen_display",
+        "parser": "llm-decompose",
+        "subPrompts": 1,
+        "subIntents": [
+          "screen_display"
+        ]
+      },
+      "screens": [
+        {
+          "at": 1790383305834,
+          "id": "so_stub_3",
+          "kind": "effect",
+          "effect": "fireworks"
+        }
+      ],
+      "events": 40,
+      "approvals": 0,
+      "questions": 0,
+      "authResumes": 0,
+      "totalMs": 3074,
+      "error": null,
+      "failures": [],
+      "pass": true
+    },
+    {
+      "id": "s4-alert-block",
+      "prompt": "show a blocking alert on my screen that says do not enter",
+      "at": "2026-09-26T00:41:46.559Z",
+      "commsIntent": "handoff",
+      "commsLatencyMs": 48,
+      "taskId": "task_fcd90f7a",
+      "status": "done",
+      "resultText": "## Screen\n\nOn screen.",
+      "graphIntent": {
+        "intent": "screen_display",
+        "parser": "llm-decompose",
+        "subPrompts": 1,
+        "subIntents": [
+          "screen_display"
+        ]
+      },
+      "screens": [
+        {
+          "at": 1790383308962,
+          "id": "so_stub_4",
+          "kind": "alert",
+          "severity": "block",
+          "title": "Do Not Enter",
+          "blocking": true,
+          "dismiss": "manual",
+          "text": "do not enter"
+        }
+      ],
+      "events": 50,
+      "approvals": 0,
+      "questions": 0,
+      "authResumes": 0,
+      "totalMs": 3070,
+      "error": null,
+      "failures": [],
+      "pass": true
+    },
+    {
+      "id": "s4-emoji",
+      "prompt": "put a 🎉 emoji on my screen",
+      "at": "2026-09-26T00:41:49.629Z",
+      "commsIntent": "handoff",
+      "commsLatencyMs": 45,
+      "taskId": "task_a452e12b",
+      "status": "done",
+      "resultText": "## Screen\n\nOn screen.",
+      "graphIntent": {
+        "intent": "screen_display",
+        "parser": "llm-decompose",
+        "subPrompts": 1,
+        "subIntents": [
+          "screen_display"
+        ]
+      },
+      "screens": [
+        {
+          "at": 1790383311294,
+          "id": "so_stub_5",
+          "kind": "emoji",
+          "emoji": "🎉",
+          "text": "🎉"
+        }
+      ],
+      "events": 60,
+      "approvals": 0,
+      "questions": 0,
+      "authResumes": 0,
+      "totalMs": 3067,
+      "error": null,
+      "failures": [],
+      "pass": true
+    },
+    {
+      "id": "s4-chart-pie",
+      "prompt": "show a pie chart on my screen: apples 5, bananas 3",
+      "at": "2026-09-26T00:41:52.696Z",
+      "commsIntent": "handoff",
+      "commsLatencyMs": 44,
+      "taskId": "task_6629f9dc",
+      "status": "done",
+      "resultText": "## Screen\n\nOn screen.",
+      "graphIntent": {
+        "intent": "screen_display",
+        "parser": "llm-decompose",
+        "subPrompts": 1,
+        "subIntents": [
+          "screen_display"
+        ]
+      },
+      "screens": [
+        {
+          "at": 1790383314568,
+          "id": "so_stub_6",
+          "kind": "chart",
+          "chart": {
+            "type": "pie",
+            "data": [
+              {
+                "label": "apples",
+                "value": 5
+              },
+              {
+                "label": "bananas",
+                "value": 3
+              }
+            ],
+            "xKey": "label",
+            "yKey": "value"
+          },
+          "blocking": true
+        }
+      ],
+      "events": 70,
+      "approvals": 0,
+      "questions": 0,
+      "authResumes": 0,
+      "totalMs": 3064,
+      "error": null,
+      "failures": [],
+      "pass": true
+    },
+    {
+      "id": "s4-image",
+      "prompt": "show this image on my screen: https://example.com/cat.png",
+      "at": "2026-09-26T00:41:55.761Z",
+      "commsIntent": "handoff",
+      "commsLatencyMs": 41,
+      "taskId": "task_1dc44c9d",
+      "status": "done",
+      "resultText": "## Screen\n\nOn screen.",
+      "graphIntent": {
+        "intent": "screen_display",
+        "parser": "llm-decompose",
+        "subPrompts": 1,
+        "subIntents": [
+          "screen_display"
+        ]
+      },
+      "screens": [
+        {
+          "at": 1790383317948,
+          "id": "so_stub_7",
+          "kind": "image",
+          "url": "https://example.com/cat.png",
+          "caption": "https://example.com/cat.png"
+        }
+      ],
+      "events": 80,
+      "approvals": 0,
+      "questions": 0,
+      "authResumes": 0,
+      "totalMs": 3053,
+      "error": null,
+      "failures": [],
+      "pass": true
+    },
+    {
+      "id": "s4-clear",
+      "prompt": "clear the screen",
+      "at": "2026-09-26T00:41:58.814Z",
+      "commsIntent": "handoff",
+      "commsLatencyMs": 37,
+      "taskId": "task_45ea8dd0",
+      "status": "done",
+      "resultText": "## Screen\n\nCleared the screen.",
+      "graphIntent": {
+        "intent": "screen_display",
+        "parser": "llm-decompose",
+        "subPrompts": 1,
+        "subIntents": [
+          "screen_display"
+        ]
+      },
+      "screens": [
+        {
+          "at": 1790383320309,
+          "cleared": true
+        }
+      ],
+      "events": 90,
+      "approvals": 0,
+      "questions": 0,
+      "authResumes": 0,
+      "totalMs": 1552,
+      "error": null,
+      "failures": [],
+      "pass": true
+    },
+    {
+      "id": "s4-clear-off",
+      "prompt": "take that off the screen",
+      "at": "2026-09-26T00:42:00.366Z",
+      "commsIntent": "handoff",
+      "commsLatencyMs": 350,
+      "taskId": "task_cdf8e1be",
+      "status": "done",
+      "resultText": "## Screen\n\nCleared the screen.",
+      "graphIntent": {
+        "intent": "screen_display",
+        "parser": "llm-decompose",
+        "subPrompts": 1,
+        "subIntents": [
+          "screen_display"
+        ]
+      },
+      "screens": [
+        {
+          "at": 1790383322706,
+          "cleared": true
+        }
+      ],
+      "events": 100,
+      "approvals": 0,
+      "questions": 0,
+      "authResumes": 0,
+      "totalMs": 3374,
+      "error": null,
+      "failures": [],
+      "pass": true
+    },
+    {
+      "id": "s4-fetch-display",
+      "prompt": "look up the current bitcoin price and show it on my screen",
+      "at": "2026-09-26T00:42:03.740Z",
+      "commsIntent": "handoff",
+      "commsLatencyMs": 42,
+      "taskId": "task_91a549aa",
+      "status": "done",
+      "resultText": "Here’s the latest Bitcoin price I found:\n\n- **$84,653.36** (as of Sep 24 2026, 10:29 pm EDT)\n\nThe price is now displayed on your screen. Let me know if you need any additional details!",
+      "graphIntent": {
+        "intent": "web_search",
+        "parser": "multi-intent-pipeline",
+        "subPrompts": 2,
+        "subIntents": [
+          "web_search",
+          "screen_display"
+        ]
+      },
+      "screens": [
+        {
+          "at": 1790383327882,
+          "id": "so_stub_8",
+          "kind": "text",
+          "text": "<strong>Current Price: $74,565.54</strong> Today: 0.32% -$238.92 · Bitcoin is currently worth $74,565.54 as of the time you loaded this page | The price of Bitcoin (BTC) is <strong>$84,653.36 today as of Sep 24, 2026, 10:29 pm EDT</strong>, with a 24-hour trading volume of $15.99B."
+        }
+      ],
+      "events": 112,
+      "approvals": 0,
+      "questions": 0,
+      "authResumes": 0,
+      "totalMs": 4576,
+      "error": null,
+      "failures": [],
+      "pass": true
+    },
+    {
+      "id": "s4-ref-seed",
+      "prompt": "what is the capital of Norway",
+      "at": "2026-09-26T00:42:08.317Z",
+      "commsIntent": "general_quick",
+      "commsLatencyMs": 419,
+      "taskId": null,
+      "status": "done",
+      "resultText": "The capital of Norway is Oslo.",
+      "graphIntent": null,
+      "screens": [],
+      "events": 0,
+      "approvals": 0,
+      "questions": 0,
+      "authResumes": 0,
+      "totalMs": 422,
+      "error": null,
+      "failures": [],
+      "pass": true
+    },
+    {
+      "id": "s4-ref-show",
+      "prompt": "show that on my screen",
+      "at": "2026-09-26T00:42:08.750Z",
+      "commsIntent": "handoff",
+      "commsLatencyMs": 63,
+      "taskId": "task_1a277627",
+      "status": "done",
+      "resultText": "## Screen\n\nOn screen.",
+      "graphIntent": {
+        "intent": "screen_display",
+        "parser": "llm-decompose",
+        "subPrompts": 1,
+        "subIntents": [
+          "screen_display"
+        ]
+      },
+      "screens": [
+        {
+          "at": 1790383330758,
+          "id": "so_stub_9",
+          "kind": "text",
+          "text": "The capital of Norway is Oslo.",
+          "title": "the latest Bitcoin price"
+        }
+      ],
+      "events": 122,
+      "approvals": 0,
+      "questions": 0,
+      "authResumes": 0,
+      "totalMs": 3090,
+      "error": null,
+      "failures": [],
+      "pass": true
+    },
+    {
+      "id": "s4-read-regression",
+      "prompt": "read the text visible on my screen",
+      "at": "2026-09-26T00:42:11.841Z",
+      "commsIntent": "handoff",
+      "commsLatencyMs": 50,
+      "taskId": "task_75e61855",
+      "status": "done",
+      "resultText": "**Visible text on the screen**\n\n```\nAgent Editor --- & --- thinkdrop - --- web agen I'll grep the logs for * GhostLayer Visual --- {3 ThinkDrop 100-Pr + --- Plans > --- parselntentV2.js +4 --- classifyTask robustness fixes. Commit: stategraph-module/commsgraph as owning. --- Wires mile men --- covering die Gull --- Aus. if (!state._subParse) { --- Stage 4 screen_display (~12 --- writeIntentLog({ --- new Date().toISOString(), message: classifyMessage, carriedHint: null, parser: & text/emoji/effect/image/alert/chart/deck/scene/clear; referential --- fresh-content fetch->display; & the bare \"show on --- screen\" regression. Assert recorded /screen/display payload: correct --- kind, content = real output (never raw prompt/error text), sane blocking/durationMs. Commit: & stategraph-module (+ (shared). --- Command --- && node test/run-all.js 2>&1 Stage 5 command_automate (~30 --- biggest surface) | tail =5 && --- src/nodes/parseIntentV2.qs --- Ieee] {fle (Erste chines, cpesicrlcOuim), [sel Sse ../node_modules/@thinkdrop/stategraph/src/nodes/parseIntentV2.js && echo SYNCED (battery/disk/processes/screenshot), scheduling (reminder + delivery-method clarify), Files: 34 passed, 0 failed (34 total) browser/web.agent (open youtube+search, --- headlines, amazon search), _ app_automation/system_settings/executelntrospect, messaging (full-action; email-to-self class SIECED --- targets), multi-service single-goal (must stay one --- step). Assert: route, plan quality (no fabricated agents/URLs), auth handling, and per-node latency the slowness dissection lives --- Read shell here (instrument timings, then structural cuts). Commit: owning repo per fix. --- Command Isof, kill, sleep --- 40s [ Stage 6 multi-intent & robustness (~18 --- . . . . --- /Users/lukaizhi/Desktop/projects/thinkdrop && PID=$(lsof --- :3010) && kill $PID True multi-goal --- and also --- fetch~>display compounds, dependsOn chains, garbled voice 2>/dev/null; sleep 1; nohup node tests/e2e/main-stub.cjs >> logs/main-stub.log 2>&1 & sleep --- transcript, non-English (es/fr), empty/emoji-only/5KB prompt, prompt-injection, rapid duplicate 3; curl --- http://127.0.0.1:3010/health && caffeinate dims node tests/e2e/driver.cjs --- (5-min dup filter), cancel mid-run. Assert correct split-or-not decisions, no crash, sane Este) ERE/prenpie/starai-gisplaye sen --- 3 280 || iil =58 5 degradation. Commit per fix. --- Reading shell for 240s Stage 7 latency & polish Aggregate results p50/p95 per intent + per-node timing report; fix top offenders structurally; re-run full corpus x3. Stage 8 real-Electron pass 11 files +391-177 > E32 Quick review Reject all Acceptall yarn sync:stategraph & yarn dev; ~20 representative --- via real renderer; verify Tip: Type @ conversation to bring in context from another chat GhostLayer rendering, queue cards, results feed, Escape/clear, clean logs. . . + Bypass Permissions SWE-2 Max --- sized by surface area not 100/intent) Per-intent 6-10 phrasings/edge cases weighted by domain breadth: comms ~14, fast ~22, context ~18, screen ~12, automation ~30, robustness ~18. --- consecutive runs per stage for >< [ thinkdrop --- main* --- 0481 --- 2 Launchpad 0 --- Pro Quokka Devin - Settings\n```",
+      "graphIntent": {
+        "intent": "screen_intelligence",
+        "parser": "llm-decompose",
+        "subPrompts": 1,
+        "subIntents": [
+          "screen_intelligence"
+        ]
+      },
+      "screens": [],
+      "events": 132,
+      "approvals": 0,
+      "questions": 0,
+      "authResumes": 0,
+      "totalMs": 12096,
+      "error": null,
+      "failures": [],
+      "pass": true
+    },
+    {
+      "id": "s4-what-regression",
+      "prompt": "what's on my screen",
+      "at": "2026-09-26T00:42:23.937Z",
+      "commsIntent": "handoff",
+      "commsLatencyMs": 43,
+      "taskId": "task_661087e5",
+      "status": "done",
+      "resultText": "**App:** Devin (editor)  \n**Window title:** “thinkdrop — plan‑1ac9d77893d2fc79.md”  \n**File path:** `/Users/lukaizhi/.devin/plans/plan-1ac9d77893d2fc79.md`  \n\n**Visible text (OCR‑extracted, ~78 % confidence):**  \n\nA dense block of development‑related notes and log snippets, including:\n\n- Header lines such as “Agent Editor --- & --- thinkdrop - --- web agen …” and references to “GhostLayer Visual”.\n- Mentions of files and scripts like `parselntentV2.js`, `stategraph-module/commsgraph`, and `parseIntentV2.qs`.\n- Commit messages and tasks (e.g., “classifyTask robustness fixes”, “Commit: stategraph‑module (+ (shared)”, “Stage 4 screen_display”, “Stage 5 command_automate”, “Stage 6 multi‑intent & robustness”, “Stage 7 latency & polish”, “Stage 8 real‑Electron pass”).\n- Shell‑style commands and pipelines (e.g., `node test/run-all.js 2>&1`, `tail =5`, `kill $PID`, `curl http://127.0.0.1:3010/health`, `yarn dev`).\n- Test results summaries (e.g., “Files: 34 passed, 0 failed (34 total)”, “Aggregate results p50/p95 per intent”, “fix top offenders structurally”).\n- References to various intents and domains (comm ~14, fast ~22, context ~18, screen ~12, automation ~30, robustness ~18) and counts of phrasings per intent.\n- Miscellaneous notes about permissions, rendering, and UI hints (e.g., “Tip: Type @ conversation to bring in context”, “Escape/clear, clean logs”, “Bypass Permissions SWE‑2”).\n\nAt the bottom of the view you can see a line indicating the current project/launchpad status: “thinkdrop --- main* --- 0481 --- 2 Launchpad 0 --- Pro Quokka Devin - Settings”.\n\nIn short, the screen shows a markdown file loaded in the Devin editor containing extensive internal development logs, commit notes, and test‑run summaries related to the ThinkDrop project.",
+      "graphIntent": {
+        "intent": "screen_intelligence",
+        "parser": "llm-decompose",
+        "subPrompts": 1,
+        "subIntents": [
+          "screen_intelligence"
+        ]
+      },
+      "screens": [],
+      "events": 142,
+      "approvals": 0,
+      "questions": 0,
+      "authResumes": 0,
+      "totalMs": 12087,
+      "error": null,
+      "failures": [],
+      "pass": true
+    }
+  ]
+}

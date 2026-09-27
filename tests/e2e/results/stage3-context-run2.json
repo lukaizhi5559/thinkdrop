@@ -1,0 +1,451 @@
+{
+  "file": "tests/e2e/prompts/stage3-context.json",
+  "run": 2,
+  "at": "2026-09-25T23:48:38.428Z",
+  "results": [
+    {
+      "id": "s3-web-seed",
+      "prompt": "search for the latest news on SpaceX launches",
+      "at": "2026-09-25T23:46:24.374Z",
+      "commsIntent": "handoff",
+      "commsLatencyMs": 312,
+      "taskId": "task_a9c78852",
+      "status": "done",
+      "resultText": "**Latest SpaceX launch news (as of Sept 25 2026)**  \n\n- **Starship “megarocket” rehearsal succeeds** – The test flight rehearsal went flawlessly, and liftoff is set for **Monday morning, Sept. 28**.  \n  ![Starship rehearsal](https://imgs.search.brave.com/XN1ij8cJ59jJ0rupWByxQGaVZfBTxvEKiEe0_nIAEcY/rs:fit:200:200:1:0/g:ce/aHR0cHM6Ly9jZG4u/bW9zLmNtcy5mdXR1/cmVjZG4ubmV0L3Nh/enpKbW9rMnc1U1Rw/Qnl6OWt5V24tMjU2/MC04MC5qcGc)  \n  [Read more](https://www.space.com/space-exploration/launches-spacecraft/spacexs-starship-megarocket-aces-launch-rehearsal-ahead-of-1st-orbital-test-flight-video)\n\n- **SpaceX prepares its “most important” launch** – Monday will see the **fourteenth Starship test flight**, a critical test of the Super Heavy launch platform.  \n  ![Starship launch prep](https://imgs.search.brave.com/dW2t8tZGIWGSOl5YdD6LUyPA6AuSrphqDRCFJDgpQAw/rs:fit:200:200:1:0/g:ce/aHR0cHM6Ly9mdXR1/cmlzbS5jb20vd3Av/Y29udGVudC91cGxv/YWRzLzIwMjYvMDkv/c3RhcnNoaXAtdGVz/dC1mbGlnaHQtaW1w/b3J0YW50LmpwZz93/PTEyMDA)  \n  [Read more](https://futurism.com/space/spacex-preparing-most-important-starship-launch)\n\n- **Crew‑13 launch preparations** – NASA, SpaceX, and international partners have given a “go” for the upcoming **Crew‑13 mission to the ISS**, moving forward with final launch preparations.  \n  ![Crew‑13 launch](https://imgs.search.brave.com/8Hh_t8N_3pduJu_cqlsaH1BWBNlN5shayRDdExuPVPk/rs:fit:200:200:1:0/g:ce/aHR0cHM6Ly93d3cu/bmFzYS5nb3Yvd3Av/Y29udGVudC91cGxv/YWRzLzIwMjYvMDkv/a3NjLTIwMjYwOTI1/LXBoLWtsczAxLTAw/MDMuanBn)  \n  [Read more](https://nasa.gov/blogs/spacestation/2026/09/25/nasa-spacex-proceed-toward-crew-13-launch)\n\n- **Crew‑14 assignments announced** – Four astronauts from three agencies will launch to the ISS **no earlier than spring 2027** for a long‑duration science expedition.  \n  ![Crew‑14 assignment](https://imgs.search.brave.com/ox-qC-7kJ9bJ3SL645IAMziQZL04HvN4cGl6sRXhM_Y/rs:fit:200:200:1:0/g:ce/aHR0cHM6Ly93d3cu/bmFzYS5nb3Yvd3Av/Y29udGVudC91cGxv/YWRzLzIwMjYvMDkv/MjAyNjA3MjQtY3Jl/dy0xNC1ncm91cHBo/b3RvLWNyb3AuanBn)  \n  [Read more](https://nasa.gov/news-release/nasa-shares-spacex-crew-14-assignments-for-space-station-mission)",
+      "graphIntent": {
+        "intent": "web_search",
+        "parser": "llm-decompose",
+        "subPrompts": 1,
+        "subIntents": [
+          "web_search"
+        ]
+      },
+      "screens": [],
+      "events": 186,
+      "approvals": 0,
+      "questions": 0,
+      "authResumes": 0,
+      "totalMs": 3338,
+      "error": null,
+      "failures": [],
+      "pass": true
+    },
+    {
+      "id": "s3-web-cost",
+      "prompt": "how much does one launch cost",
+      "at": "2026-09-25T23:46:27.712Z",
+      "commsIntent": "general_quick",
+      "commsLatencyMs": 2385,
+      "taskId": null,
+      "status": "done",
+      "resultText": "Let me pull that up — the current cost of a SpaceX launch depends on the rocket and mission, but Starship is targeting around $90 million per launch.",
+      "graphIntent": null,
+      "screens": [],
+      "events": 0,
+      "approvals": 0,
+      "questions": 0,
+      "authResumes": 0,
+      "totalMs": 2390,
+      "error": null,
+      "failures": [],
+      "pass": true
+    },
+    {
+      "id": "s3-web-ceo",
+      "prompt": "who is its CEO",
+      "at": "2026-09-25T23:46:30.112Z",
+      "commsIntent": "general_quick",
+      "commsLatencyMs": 526,
+      "taskId": null,
+      "status": "done",
+      "resultText": "Elon Musk is the chief executive officer of SpaceX.",
+      "graphIntent": null,
+      "screens": [],
+      "events": 0,
+      "approvals": 0,
+      "questions": 0,
+      "authResumes": 0,
+      "totalMs": 530,
+      "error": null,
+      "failures": [],
+      "pass": true
+    },
+    {
+      "id": "s3-web-again",
+      "prompt": "do that search again",
+      "at": "2026-09-25T23:46:30.649Z",
+      "commsIntent": "handoff",
+      "commsLatencyMs": 242,
+      "taskId": "task_fe30f22f",
+      "status": "done",
+      "resultText": "Here is the latest news from the search results:\n\n**SpaceX Starship**\nSpaceX is preparing for its **fourteenth Starship test flight** on Monday, Sept. 28. The Starship megarocket successfully completed a launch rehearsal, and the booster (B21) is stacked with Ship 41 for this first orbital attempt. The FAA license is currently pending for the launch window.\n\n![Starship rehearsal](https://imgs.search.brave.com/XN1ij8cJ59jJ0rupWByxQGaVZfBTxvEKiEe0_nIAEcY/rs:fit:200:200:1:0/g:ce/aHR0cHM6Ly9jZG4u/bW9zLmNtcy5mdXR1/cmVjZG4ubmV0L3Nh/enpKbW9rMnc1U1Rw/Qnl6OWt5V24tMjU2/MC04MC5qcGc)\n\n**NASA & Crew Missions**\n*   **Crew-13:** NASA and SpaceX are proceeding toward the Crew-13 launch to the International Space Station following a \"go\" poll on Friday, Sept. 25.\n*   **Crew-14:** Assignments have been shared for the Crew-14 mission, which is scheduled to launch no earlier than spring 2027.\n\n**Other Space News**\n*   **Starfish Space:** The company has finished building its first full-scale Otter servicing vehicle for a NASA debris inspection mission launching on SpaceX’s Transporter-18 rideshare no earlier than October 2026.\n*   **Falcon 9:** SpaceX has stopped taking new bookings for Falcon 9 flights past 2028, shifting focus to Starship.\n*   **Stocks:** The telecom and satellite market recap includes SpaceX, AST SpaceMobile, and other space-related plays.\n\n**Links:**\n*   [SpaceX's Starship megarocket aces launch rehearsal ahead of 1st orbital test flight (video)](https://www.space.com/space-exploration/launches-spacecraft/spacexs-starship-megarocket-aces-launch-rehearsal-ahead-of-1st-orbital-test-flight-video)\n*   [NASA, SpaceX Proceed Toward Crew-13 Launch](https://nasa.gov/blogs/spacestation/2026/09/25/nasa-spacex-proceed-toward-crew-13-launch)\n*   [Google throws a satellite into the ring as the AI space race heats up](https://finance.yahoo.com/technology/article/google-throws-a-satellite-into-the-ring-as-the-ai-space-race-heats-up-100000242.html)\n*   [SpaceX Preparing for Most Important Launch in Company History on Monday](https://futurism.com/space/spacex-preparing-most-important-starship-launch)\n*   [NASA Shares SpaceX Crew-14 Assignments for Space Station Mission](https://nasa.gov/news-release/nasa-shares-spacex-crew-14-assignments-for-space-station-mission)\n*   [Starfish Space Readies First Debris Inspector, Space Brief 25 Sep 2026](https://keeptrack.space/space-brief/space-brief-2026-09-25)\n*   [SpaceX Is Poised to Reclaim a $190 Share Price by the End of 2026](https://fool.com/investing/2026/09/24/spacex-poised-to-reclaim-190-by-end-of-2026)\n*   [SpaceX has stopped taking Falcon 9 bookings past 2028, betting everything on Starship](https://techspot.com/news/113977-spacex-may-stop-flying-falcon-9-after-2028.html)\n*   [Telecom & Connectivity Market Watch: Week of Sep 25, 2026](https://5gstore.com/blog/2026/09/25/telecom-connectivity-market-watch-week-of-sep-25-2026)\n*   [Starship Stacked for First Orbital Flight, X Report 24 Sep 2026](https://keeptrack.space/x-report/spacex-brief-2026-09-24)",
+      "graphIntent": {
+        "intent": "web_search",
+        "parser": "llm-decompose",
+        "subPrompts": 1,
+        "subIntents": [
+          "web_search"
+        ]
+      },
+      "screens": [],
+      "events": 196,
+      "approvals": 0,
+      "questions": 0,
+      "authResumes": 0,
+      "totalMs": 15299,
+      "error": null,
+      "failures": [],
+      "pass": true
+    },
+    {
+      "id": "s3-web-same",
+      "prompt": "search for the same thing but for Blue Origin",
+      "at": "2026-09-25T23:46:45.948Z",
+      "commsIntent": "handoff",
+      "commsLatencyMs": 826,
+      "taskId": "task_e8346928",
+      "status": "done",
+      "resultText": "Based on the search results, here is the information regarding Blue Origin:\n\n**Company Overview**\nBlue Origin is a privately owned aerospace manufacturer and spaceflight services company founded by Jeff Bezos. The company's name means \"Earth,\" and its vision is to restore and sustain Earth by enabling a future where millions of people will live and work in space. The company is currently valued at 175x revenue, though it remains inaccessible to most investors as it has not yet conducted an IPO.\n\n**Key Projects and Vehicles**\n*   **New Shepard:** A suborbital spacecraft used for space tourism. It is described as a \"fairground ride\" that takes passengers on a brief flight to space.\n*   **New Glenn:** A heavy-lift orbital launch vehicle. The company is currently seeking a single launch complex to handle both paying customers and its own constellation build.\n*   **BE-4 Engine:** Blue Origin manufactures the BE-4 engine, which it sells to United Launch Alliance (ULA).\n\n**Development and Operations**\nBlue Origin is often contrasted with SpaceX. While SpaceX is known for high cadence, transparency, and revealing information publicly, Blue Origin is noted for being secretive and operating more like traditional \"Old Space\" companies. Their design and manufacturing practices are described as following the traditional NASA-compliant ULA model rather than SpaceX's approach. This secrecy has led to some public criticism, with some arguing that Blue Origin is \"boring to follow\" because they do not showcase their progress as openly.\n\n**Recent News**\n*   Blue Origin received U.S. Space Force funding for New Glenn integration studies.\n*   The company launched New Glenn on its first test flight in January 2025.\n\n**Resources**\n*   [Blue Origin](https://en.wikipedia.org/wiki/Blue_Origin)\n*   [About Blue](https://www.blueorigin.com/about-blue)\n*   [Blue Origin: Old Space in New Space Clothing](https://www.illdefined.space/blue-origin-old-space-in-new-space/)\n*   [Blue Origin's Blue Ring Isn't Blue... or a Ring. But It May Be the Future of Space.](https://finance.yahoo.com/markets/stocks/articles/blue-origins-blue-ring-isnt-092500931.html)\n*   [Difference between BlueOrigin and SpaceX rocket landings?](https://space.stackexchange.com/questions/13134/difference-between-blueorigin-and-spacex-rocket-landings)\n*   [Why so much hate against Blue Origin?](https://www.reddit.com/r/SpaceXLounge/comments/19394g3/why_so_much_hate_against_blue_origin/)\n*   [Do the Blue Origin design, manufacturing, and operations practices more closely follow the traditional NASA-compliant ULA model or do they operate (internally and with their customers) like SpaceX?](https://www.quora.com/Do-the-Blue-Origin-design-manufacturing-and-operations-practices-more-closely-follow-the-traditional-NASA-compliant-ULA-model-or-do-they-operate-internally-and-with-their-customers-like-SpaceX)",
+      "graphIntent": {
+        "intent": "web_search",
+        "parser": "llm-decompose",
+        "subPrompts": 1,
+        "subIntents": [
+          "web_search"
+        ]
+      },
+      "screens": [],
+      "events": 206,
+      "approvals": 0,
+      "questions": 0,
+      "authResumes": 0,
+      "totalMs": 15892,
+      "error": null,
+      "failures": [],
+      "pass": true
+    },
+    {
+      "id": "s3-screen-seed",
+      "prompt": "what's on my screen",
+      "at": "2026-09-25T23:47:01.841Z",
+      "commsIntent": "handoff",
+      "commsLatencyMs": 40,
+      "taskId": "task_b733f4ec",
+      "status": "done",
+      "resultText": "You are currently in the **Devin** editor, viewing a file named `thinkdrop — plan-1ac9d77893d2fc79.md`.\n\nThe visible text is a mix of code comments, logs, and test results related to a project called \"thinkdrop.\" It includes references to testing stages (Stage 1 through Stage 5), agent behaviors (like `s3-web-seed` and `s3-web-cost`), and specific test files such as `stage3-context.json` and `driver.cjs`. The bottom right corner shows the file is at **Stage 5** with **7 files +153 -7** changes.",
+      "graphIntent": {
+        "intent": "screen_intelligence",
+        "parser": "llm-decompose",
+        "subPrompts": 1,
+        "subIntents": [
+          "screen_intelligence"
+        ]
+      },
+      "screens": [],
+      "events": 216,
+      "approvals": 0,
+      "questions": 0,
+      "authResumes": 0,
+      "totalMs": 18101,
+      "error": null,
+      "failures": [],
+      "pass": true
+    },
+    {
+      "id": "s3-screen-title",
+      "prompt": "read the title of that window",
+      "at": "2026-09-25T23:47:19.942Z",
+      "commsIntent": "handoff",
+      "commsLatencyMs": 59,
+      "taskId": "task_92cbc0e3",
+      "status": "done",
+      "resultText": "thinkdrop — plan-1ac9d77893d2fc79.md",
+      "graphIntent": {
+        "intent": "screen_intelligence",
+        "parser": "llm-decompose",
+        "subPrompts": 1,
+        "subIntents": [
+          "screen_intelligence"
+        ]
+      },
+      "screens": [],
+      "events": 226,
+      "approvals": 0,
+      "questions": 0,
+      "authResumes": 0,
+      "totalMs": 15113,
+      "error": null,
+      "failures": [],
+      "pass": true
+    },
+    {
+      "id": "s3-screen-app",
+      "prompt": "what app is that",
+      "at": "2026-09-25T23:47:35.055Z",
+      "commsIntent": "handoff",
+      "commsLatencyMs": 51,
+      "taskId": "task_d563c85f",
+      "status": "done",
+      "resultText": "Based on the screen content, the active window is titled **\"thinkdrop — plan-1ac9d77893d2fc79.md\"**.\n\nThe application running this window is **Devin**.",
+      "graphIntent": {
+        "intent": "screen_intelligence",
+        "parser": "llm-decompose",
+        "subPrompts": 1,
+        "subIntents": [
+          "screen_intelligence"
+        ]
+      },
+      "screens": [],
+      "events": 236,
+      "approvals": 0,
+      "questions": 0,
+      "authResumes": 0,
+      "totalMs": 21126,
+      "error": null,
+      "failures": [],
+      "pass": true
+    },
+    {
+      "id": "s3-mem-seed",
+      "prompt": "what did we talk about last week",
+      "at": "2026-09-25T23:47:56.181Z",
+      "commsIntent": "handoff",
+      "commsLatencyMs": 42,
+      "taskId": "task_20fcbd6a",
+      "status": "done",
+      "resultText": "**Last week (roughly September 18 – September 24, 2026) the conversation was limited to a single day – Saturday, September 19, 2026.**  \nBelow are the prompts you sent that day and the main subject of each:\n\n| Date & Time (your prompt) | Main subject |\n|---------------------------|--------------|\n| **Sept 19 2026 5:55 PM** | “What did I do yesterday?” – asked for a recap of the previous day’s activity. |\n| **Sept 19 2026 7:11 PM** | “show me picture of president trump” – requested an image of Donald Trump. |\n| **Sept 19 2026 7:12 PM** | “what are you doing” – asked what the assistant is doing. |\n| **Sept 19 2026 7:12 PM** | “can you hear me” – checked audio capability. |\n| **Sept 19 2026 7:12 PM** | “what can you do for me today” – asked about the assistant’s abilities (sent twice). |\n| **Sept 19 2026 9:42 PM** | “what this a pic of” – asked to identify an image you’d uploaded. |\n| **Sept 19 2026 9:44 PM** | “what do you see on the screen” – asked for a description of the current screen. |\n| **Sept 19 2026 9:46 PM** | “[File: …/copy‑1789868732148.md] what this” – asked for the contents of a markdown file (which turned out to be a brief plot synopsis for *Despicable Me 4*). |\n| **Sept 19 2026 11:45 PM** | “What can you do” – again asked about the assistant’s capabilities. |\n| **Sept 19 2026 11:47 PM** | “Whats the file on the desktop triggers‑prompt about” – asked about the `triggers‑prompt.rtf` file (also a *Despicable Me 4* synopsis). |\n| **Sept 19 2026 11:58 PM** | “show me pics of mario” – requested images of Mario. |\n\nAll other entries on September 25 2026 are repeats of the same question (“what did we talk about last week”), so the substantive topics for the week are captured in the table above.",
+      "graphIntent": {
+        "intent": "memory_retrieve",
+        "parser": "llm-decompose",
+        "subPrompts": 1,
+        "subIntents": [
+          "memory_retrieve"
+        ]
+      },
+      "screens": [],
+      "events": 246,
+      "approvals": 0,
+      "questions": 0,
+      "authResumes": 0,
+      "totalMs": 3071,
+      "error": null,
+      "failures": [],
+      "pass": true
+    },
+    {
+      "id": "s3-mem-more",
+      "prompt": "tell me more about that",
+      "at": "2026-09-25T23:47:59.253Z",
+      "commsIntent": "handoff",
+      "commsLatencyMs": 54,
+      "taskId": "task_08e46ae0",
+      "status": "done",
+      "resultText": "Could you let me know which part you’d like more detail on? For example, do you want more information about the **thinkdrop — plan‑1ac9d77893d2fc79.md** window you’re looking at, the Devin app that’s running it, or something else we discussed earlier?",
+      "graphIntent": {
+        "intent": "memory_retrieve",
+        "parser": "llm-decompose",
+        "subPrompts": 1,
+        "subIntents": [
+          "memory_retrieve"
+        ]
+      },
+      "screens": [],
+      "events": 256,
+      "approvals": 0,
+      "questions": 0,
+      "authResumes": 0,
+      "totalMs": 4589,
+      "error": null,
+      "failures": [],
+      "pass": true
+    },
+    {
+      "id": "s3-mem-when",
+      "prompt": "when was that",
+      "at": "2026-09-25T23:48:03.842Z",
+      "commsIntent": "handoff",
+      "commsLatencyMs": 47,
+      "taskId": "task_51269aaa",
+      "status": "done",
+      "resultText": "The **thinkdrop — plan‑1ac9d77893d2fc79.md** window is the one that’s active right now – it’s open on your screen at the current time ( September 25 2026 · 7:48 PM Eastern ).  \n\nThe most recent recorded activity for a *thinkdrop* file in your memory logs is:\n\n| File | Timestamp (local) |\n|------|-------------------|\n| **thinkdrop — plan‑17b05d7429b172aa.md** | September 25 2026 · 8:57 AM |\n\nThere isn’t a specific timestamp stored for the *plan‑1ac9d77893d2fc79.md* file, but it’s the window you’re looking at right now.",
+      "graphIntent": {
+        "intent": "memory_retrieve",
+        "parser": "llm-decompose",
+        "subPrompts": 1,
+        "subIntents": [
+          "memory_retrieve"
+        ]
+      },
+      "screens": [],
+      "events": 266,
+      "approvals": 0,
+      "questions": 0,
+      "authResumes": 0,
+      "totalMs": 6088,
+      "error": null,
+      "failures": [],
+      "pass": true
+    },
+    {
+      "id": "s3-know-seed",
+      "prompt": "explain how DNS resolution works",
+      "at": "2026-09-25T23:48:09.930Z",
+      "commsIntent": "general_quick",
+      "commsLatencyMs": 2417,
+      "taskId": null,
+      "status": "done",
+      "resultText": "DNS resolution follows a chain of command, starting with your computer asking a local resolver, which queries root servers, then TLD servers, and finally authoritative nameservers to find the IP address.",
+      "graphIntent": null,
+      "screens": [],
+      "events": 0,
+      "approvals": 0,
+      "questions": 0,
+      "authResumes": 0,
+      "totalMs": 2422,
+      "error": null,
+      "failures": [],
+      "pass": true
+    },
+    {
+      "id": "s3-know-port",
+      "prompt": "what port does it use",
+      "at": "2026-09-25T23:48:12.362Z",
+      "commsIntent": "general_quick",
+      "commsLatencyMs": 523,
+      "taskId": null,
+      "status": "done",
+      "resultText": "DNS primarily uses UDP port 53, switching to TCP 53 for larger responses or zone transfers.",
+      "graphIntent": null,
+      "screens": [],
+      "events": 0,
+      "approvals": 0,
+      "questions": 0,
+      "authResumes": 0,
+      "totalMs": 527,
+      "error": null,
+      "failures": [],
+      "pass": true
+    },
+    {
+      "id": "s3-know-just",
+      "prompt": "what did I just ask you",
+      "at": "2026-09-25T23:48:12.896Z",
+      "commsIntent": "handoff",
+      "commsLatencyMs": 48,
+      "taskId": "task_8d892c3c",
+      "status": "done",
+      "resultText": "You just asked: “what port does it use”.",
+      "graphIntent": {
+        "intent": "memory_retrieve",
+        "parser": "llm-decompose",
+        "subPrompts": 1,
+        "subIntents": [
+          "memory_retrieve"
+        ]
+      },
+      "screens": [],
+      "events": 276,
+      "approvals": 0,
+      "questions": 0,
+      "authResumes": 0,
+      "totalMs": 3158,
+      "error": null,
+      "failures": [],
+      "pass": true
+    },
+    {
+      "id": "s3-bare-yes",
+      "prompt": "yes",
+      "at": "2026-09-25T23:48:16.054Z",
+      "commsIntent": "general_quick",
+      "commsLatencyMs": 1339,
+      "taskId": null,
+      "status": "done",
+      "resultText": "Good. I'm ready when you are — what's on your mind?",
+      "graphIntent": null,
+      "screens": [],
+      "events": 0,
+      "approvals": 0,
+      "questions": 0,
+      "authResumes": 0,
+      "totalMs": 1348,
+      "error": null,
+      "failures": [],
+      "pass": true
+    },
+    {
+      "id": "s3-meta-repeat",
+      "prompt": "repeat the last thing you said",
+      "at": "2026-09-25T23:48:17.417Z",
+      "commsIntent": "general_quick",
+      "commsLatencyMs": 1768,
+      "taskId": null,
+      "status": "done",
+      "resultText": "Good. I'm ready when you are — what's on your mind?",
+      "graphIntent": null,
+      "screens": [],
+      "events": 0,
+      "approvals": 0,
+      "questions": 0,
+      "authResumes": 0,
+      "totalMs": 1787,
+      "error": null,
+      "failures": [],
+      "pass": true
+    },
+    {
+      "id": "s3-deictic-err",
+      "prompt": "what was that error I hit earlier",
+      "at": "2026-09-25T23:48:19.213Z",
+      "commsIntent": "handoff",
+      "commsLatencyMs": 188,
+      "taskId": "task_498f934e",
+      "status": "done",
+      "resultText": "Based on the conversation history, you hit an error around **4:48 PM today (September 25, 2026)**.\n\nYou had been asking repeatedly \"is there an error dialog visible on my screen,\" and the answer was **yes**. The error showed up in your **terminal output**, not as a dialog box.",
+      "graphIntent": {
+        "intent": "memory_retrieve",
+        "parser": "llm-decompose",
+        "subPrompts": 1,
+        "subIntents": [
+          "memory_retrieve"
+        ]
+      },
+      "screens": [],
+      "events": 286,
+      "approvals": 0,
+      "questions": 0,
+      "authResumes": 0,
+      "totalMs": 10735,
+      "error": null,
+      "failures": [],
+      "pass": true
+    },
+    {
+      "id": "s3-file-morning",
+      "prompt": "summarize the file I was working on this morning",
+      "at": "2026-09-25T23:48:29.948Z",
+      "commsIntent": "handoff",
+      "commsLatencyMs": 943,
+      "taskId": "task_b32123be",
+      "status": "done",
+      "resultText": "I don't have the file's actual text — only activity records — so I can't summarize the document's contents. Here's what the records show for this morning (Sept 25, 2026):\n\n- **8:18 AM** — a screen capture logged, \"To summarize, the visible elements on your screen are:\" (the capture is truncated, so no file text comes through).\n- **8:08 AM** — a queued task to create `e2e-preflight.txt` on your Desktop containing \"hello world.\"",
+      "graphIntent": {
+        "intent": "memory_retrieve",
+        "parser": "llm-decompose",
+        "subPrompts": 1,
+        "subIntents": [
+          "memory_retrieve"
+        ]
+      },
+      "screens": [],
+      "events": 297,
+      "approvals": 0,
+      "questions": 0,
+      "authResumes": 0,
+      "totalMs": 8480,
+      "error": null,
+      "failures": [],
+      "pass": true
+    }
+  ]
+}
