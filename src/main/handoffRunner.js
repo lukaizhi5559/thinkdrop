@@ -175,7 +175,7 @@ function _makeProgressCallback(taskId, agentId) {
  * @param {string[]|null} [args.preflightAuthBypass] - Agent IDs to treat as authed for this run only
  * @param {Object|null}  [args._resumeState] - Paused finalState to resume from (ask_user answer)
  */
-async function execute({ taskId, prompt, agentId, source, originalPrompt, sessionId, planFile, preflightAuthBypass, userApproved, thoughtContext, guessedIntent, _resumeState, _deterministicPlan, _deterministicTemplate, _deterministicLowRisk }) {
+async function execute({ taskId, prompt, agentId, source, originalPrompt, sessionId, planFile, preflightAuthBypass, userApproved, thoughtContext, guessedIntent, _resumeState, _deterministicPlan, _deterministicTemplate, _deterministicLowRisk, _deterministicExternal, _deterministicServiceAgent }) {
   if (!_mcpAdapter || !_llmBackend) {
     console.error('[HandoffRunner] Not initialized — call init() first');
     _notifyComplete(taskId, agentId, 'failed', 'HandoffRunner not initialized', null, sessionId);
@@ -237,7 +237,7 @@ async function execute({ taskId, prompt, agentId, source, originalPrompt, sessio
           ...(planFile ? { _planFile: planFile } : {}),
           // Deterministic fast-path metadata survives the approval round-trip —
           // executeCommand uses it for the direct step-output answer + 10s cap.
-          ...(_deterministicPlan ? { _deterministicPlan, _deterministicTemplate, _deterministicLowRisk } : {}),
+          ...(_deterministicPlan ? { _deterministicPlan, _deterministicTemplate, _deterministicLowRisk, _deterministicExternal, _deterministicServiceAgent } : {}),
           // Auth bypass: user chose "proceed without" — treat listed agents as
           // authed for this run only (not persisted to auth cache or authed_at)
           ...(preflightAuthBypass?.length ? { preflightAuthBypass } : {}),
@@ -370,6 +370,8 @@ async function execute({ taskId, prompt, agentId, source, originalPrompt, sessio
         _deterministicPlan: finalState._deterministicPlan || null,
         _deterministicTemplate: finalState._deterministicTemplate || null,
         _deterministicLowRisk: finalState._deterministicLowRisk ?? null,
+        _deterministicExternal: finalState._deterministicExternal || null,
+        _deterministicServiceAgent: finalState._deterministicServiceAgent || null,
       });
       console.log(`[HandoffRunner] Task ${taskId} awaiting plan approval — planFile=${planFileFromState}`);
       // Emit pipeline:done so AutomationProgress clears any planning spinner
@@ -556,7 +558,7 @@ async function resume(taskId, planFile) {
   }
   _pendingPlanContexts.delete(taskId);
 
-  console.log(`[HandoffRunner] Resuming task ${taskId} with plan ${planFile}`);
+  console.log(`[HandoffRunner] Resuming task ${taskId} with plan ${planFile} det=${ctx._deterministicTemplate || 'none'} ext=${ctx._deterministicExternal || false}`);
   return execute({
     taskId,
     prompt: ctx.prompt,
@@ -568,6 +570,8 @@ async function resume(taskId, planFile) {
     _deterministicPlan: ctx._deterministicPlan,
     _deterministicTemplate: ctx._deterministicTemplate,
     _deterministicLowRisk: ctx._deterministicLowRisk,
+    _deterministicExternal: ctx._deterministicExternal,
+    _deterministicServiceAgent: ctx._deterministicServiceAgent,
   });
 }
 
