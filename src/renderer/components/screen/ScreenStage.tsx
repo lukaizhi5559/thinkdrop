@@ -76,12 +76,19 @@ export function ScreenStage({ onOccupancyChange }: { onOccupancyChange?: (occupi
       else if (data?.type === 'capture_end') setFaded(false);
     };
 
-    // Arrow-key slide nav — main registers global Left/Right while a
-    // controls-deck is displayed and forwards them here; DeckScreen listens
-    // on the DOM event so the stage stays kind-agnostic.
-    const handleNav = (data: { dir?: 'next' | 'prev' }) => {
-      const dir = data?.dir === 'prev' ? 'prev' : 'next';
-      window.dispatchEvent(new CustomEvent('screen:deck-nav', { detail: { dir } }));
+    // Arrow-key nav — main registers global arrows while displays report
+    // needing them (capability-driven). left/right → deck slide nav;
+    // up/down → text scroll. Components listen on DOM events so the stage
+    // stays kind-agnostic.
+    const handleNav = (data: { dir?: string }) => {
+      const dir = data?.dir;
+      if (dir === 'prev' || dir === 'next' || dir === 'left' || dir === 'right') {
+        window.dispatchEvent(new CustomEvent('screen:deck-nav', {
+          detail: { dir: (dir === 'prev' || dir === 'left') ? 'prev' : 'next' },
+        }));
+      } else if (dir === 'up' || dir === 'down') {
+        window.dispatchEvent(new CustomEvent('screen:text-scroll', { detail: { dir } }));
+      }
     };
 
     ipcRenderer.on('ghostlayer:display', handleDisplay, STAGE_TOKEN);
@@ -118,11 +125,12 @@ export function ScreenStage({ onOccupancyChange }: { onOccupancyChange?: (occupi
         transition: 'opacity 0.4s ease',
       }}
     >
-      {sorted.map(item => (
+      {sorted.map((item, idx) => (
         <ScreenItem
           key={`${item.output.id}:${item.mountKey}`}
           output={item.output}
           outSeq={item.outSeq}
+          stackIndex={idx}
           onRemove={(id) => setItems(prev => prev.filter(i => i.output.id !== id))}
         />
       ))}
@@ -132,9 +140,10 @@ export function ScreenStage({ onOccupancyChange }: { onOccupancyChange?: (occupi
 
 // ── Per-display wrapper: scrim + positioned content + lifecycle ─────────────
 
-function ScreenItem({ output, outSeq, onRemove }: {
+function ScreenItem({ output, outSeq, stackIndex = 0, onRemove }: {
   output: ScreenOutput;
   outSeq: number;
+  stackIndex?: number;
   onRemove: (id: string) => void;
 }) {
   const [phase, setPhase] = useState<Phase>(output.animate?.in ? 'in' : 'idle');
@@ -191,6 +200,48 @@ function ScreenItem({ output, outSeq, onRemove }: {
       }}
     >
       <Scrim output={output} />
+      {/* ESC affordance — every display advertises the exit key. The chip is
+          the only always-interactive element: hover-capture lifts
+          click-through while over it, so it stays clickable on non-blocking
+          items too. Staggered per item so stacked displays each show one. */}
+      <div
+        data-esc-badge={output.id}
+        onMouseEnter={() => { try { ipcRenderer?.send('ghostlayer:hover-interactive', { hovering: true }); } catch (_) {} }}
+        onMouseLeave={() => { try { ipcRenderer?.send('ghostlayer:hover-interactive', { hovering: false }); } catch (_) {} }}
+        onClick={(e) => {
+          e.stopPropagation();
+          try { ipcRenderer?.send('ghostlayer:display-clear-request', { id: output.id }); } catch (_) {}
+        }}
+        style={{
+          position: 'absolute',
+          top: 18 + stackIndex * 42,
+          right: 22,
+          display: 'flex', alignItems: 'center', gap: 7,
+          padding: '5px 11px 5px 8px',
+          borderRadius: 8,
+          background: 'rgba(10,14,22,0.72)',
+          border: '1px solid rgba(148,163,184,0.35)',
+          color: '#cbd5e1',
+          fontSize: 11,
+          fontWeight: 600,
+          letterSpacing: '0.05em',
+          fontFamily: 'system-ui, -apple-system, sans-serif',
+          cursor: 'pointer',
+          pointerEvents: 'auto',
+          zIndex: 2,
+          userSelect: 'none',
+          backdropFilter: 'blur(8px)',
+          WebkitBackdropFilter: 'blur(8px)',
+        }}
+      >
+        <span style={{
+          padding: '2px 6px', borderRadius: 5,
+          background: 'rgba(148,163,184,0.18)',
+          border: '1px solid rgba(148,163,184,0.45)',
+          fontSize: 10, fontWeight: 700, letterSpacing: '0.08em',
+        }}>ESC</span>
+        <span style={{ opacity: 0.85 }}>exit</span>
+      </div>
       <div style={{ position: 'relative', display: 'flex', width: '100%', ...positionFlex(output.position) }}>
         {/* Interactive items (non-blocking): the content box lifts
             click-through only while hovered — main forwards pointer moves so

@@ -1,0 +1,198 @@
+{
+  "file": "tests/e2e/prompts/stage10-screen.json",
+  "at": "2026-09-28T04:41:01.710Z",
+  "results": [
+    {
+      "id": "s10-image-search",
+      "prompt": "show me a pic of sonic the hedgehog on my screen",
+      "status": "done",
+      "totalMs": 9023,
+      "resultText": "I’ve fetched an image of Sonic the Hedgehog and displayed it on your screen. Enjoy!",
+      "failures": [],
+      "pass": true,
+      "taskId": "task_f517bed8",
+      "graphIntent": {
+        "intent": "web_search",
+        "parser": "multi-intent-pipeline",
+        "subIntents": [
+          "web_search",
+          "screen_display"
+        ]
+      }
+    },
+    {
+      "id": "s10-image-search-2",
+      "prompt": "show me a picture of the golden gate bridge on my screen",
+      "status": "done",
+      "totalMs": 4470,
+      "resultText": "I’ve fetched an image of the Golden Gate Bridge and displayed it on your screen. Enjoy the view!",
+      "failures": [],
+      "pass": true,
+      "taskId": "task_5d2105e8",
+      "graphIntent": {
+        "intent": "web_search",
+        "parser": "multi-intent-pipeline",
+        "subIntents": [
+          "web_search",
+          "screen_display"
+        ]
+      }
+    },
+    {
+      "id": "s10-image-deck",
+      "prompt": "make me a slideshow of dog photos on my screen",
+      "status": "done",
+      "totalMs": 7678,
+      "resultText": "I’ve created a slideshow of dog photos and it’s now displayed on your screen. One of the images used comes from this source:\n\nhttps://imgs.search.brave.com/p2n7QskN653o66jeq6vhtJgMTM86X89sCfi1Wg5zWeY/rs:fit:500:0:1:0/g:ce/aHR0cHM6Ly92aWRl/b3MucGF3Zm9yZXZl/ci5hcHAvYmxvZy9p/bWFnZXMvaG93LXRv/LW1ha2UtYS1kb2ct/bWVtb3JpYWwtc2xp/ZGVzaG93LXRoYXQt/ZmVlbHMtcGVyc29u/YWwtMjAyNi0wOC0x/Ni9zdGVwMi5qcGc\n\nLet me know if you’d like to add more photos or adjust the timing!",
+      "failures": [],
+      "pass": true,
+      "taskId": "task_89ea1d75",
+      "graphIntent": {
+        "intent": "web_search",
+        "parser": "multi-intent-pipeline",
+        "subIntents": [
+          "web_search",
+          "screen_display"
+        ]
+      }
+    },
+    {
+      "id": "s10-three-gen",
+      "prompt": "make a face in 3d of a mouth opening and closing on the screen",
+      "status": "done",
+      "totalMs": 4447,
+      "resultText": "## Screen\n\nDisplayed scene on screen.",
+      "failures": [],
+      "pass": true,
+      "taskId": "task_b6bef337",
+      "graphIntent": {
+        "intent": "screen_display",
+        "parser": "llm-decompose",
+        "subIntents": [
+          "screen_display"
+        ]
+      }
+    },
+    {
+      "id": "s10-three-gen-2",
+      "prompt": "show me a 3d heart beating on the screen",
+      "status": "done",
+      "totalMs": 8946,
+      "resultText": "## Screen\n\nDisplayed scene on screen.",
+      "failures": [],
+      "pass": true,
+      "taskId": "task_db5daf75",
+      "graphIntent": {
+        "intent": "screen_display",
+        "parser": "llm-decompose",
+        "subIntents": [
+          "screen_display"
+        ]
+      }
+    },
+    {
+      "id": "s10-three-preset",
+      "prompt": "show a 3d starfield on my screen",
+      "status": "done",
+      "totalMs": 2912,
+      "resultText": "## Screen\n\nDisplayed three \"starfield\" on screen.",
+      "failures": [],
+      "pass": true,
+      "taskId": "task_238e9f95",
+      "graphIntent": {
+        "intent": "screen_display",
+        "parser": "llm-decompose",
+        "subIntents": [
+          "screen_display"
+        ]
+      }
+    },
+    {
+      "id": "s10-image-url",
+      "prompt": "display https://www.w3.org/Icons/w3c_home.png on my screen",
+      "status": "done",
+      "totalMs": 2911,
+      "resultText": "## Screen\n\nDisplayed image on screen.",
+      "failures": [],
+      "pass": true,
+      "taskId": "task_338468d7",
+      "graphIntent": {
+        "intent": "screen_display",
+        "parser": "llm-decompose",
+        "subIntents": [
+          "screen_display"
+        ]
+      }
+    },
+    {
+      "id": "s10-typo-image",
+      "prompt": "show a person running on the my screen",
+      "status": "done",
+      "totalMs": 9945,
+      "resultText": "I have displayed an image of a person running on your screen.",
+      "failures": [],
+      "pass": true,
+      "taskId": "task_7842d10b",
+      "graphIntent": {
+        "intent": "web_search",
+        "parser": "multi-intent-pipeline",
+        "subIntents": [
+          "web_search",
+          "screen_display"
+        ]
+      }
+    },
+    {
+      "id": "s10-scripture",
+      "prompt": "show me exodus 2 on my screen",
+      "status": "done",
+      "totalMs": 5956,
+      "resultText": "I have displayed Exodus 2 on your screen.",
+      "failures": [],
+      "pass": true,
+      "taskId": "task_979ccffa",
+      "graphIntent": {
+        "intent": "command_automate",
+        "parser": "multi-intent-pipeline",
+        "subIntents": [
+          "command_automate",
+          "screen_display"
+        ]
+      }
+    },
+    {
+      "id": "s10-clear",
+      "prompt": "clear my screen",
+      "status": "done",
+      "totalMs": 2915,
+      "resultText": "## Screen\n\nCleared the screen.",
+      "failures": [],
+      "pass": true,
+      "taskId": "task_d6b431a6",
+      "graphIntent": {
+        "intent": "screen_display",
+        "parser": "llm-decompose",
+        "subIntents": [
+          "screen_display"
+        ]
+      }
+    },
+    {
+      "id": "s10-fileop-negative",
+      "prompt": "create a file /tmp/s10-pic.txt containing the text picture of a cat",
+      "status": "done",
+      "totalMs": 5526,
+      "resultText": "Done.\n\nStep outputs:\n[shell.run]: completed",
+      "failures": [],
+      "pass": true,
+      "taskId": "task_9d18307e",
+      "graphIntent": {
+        "intent": "command_automate",
+        "parser": "llm-decompose",
+        "subIntents": [
+          "command_automate"
+        ]
+      }
+    }
+  ]
+}

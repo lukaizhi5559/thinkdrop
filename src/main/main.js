@@ -159,35 +159,48 @@ function _updateEscShortcut() {
   }
 }
 
-// ── Arrow-key deck navigation ────────────────────────────────────────────────
-// Same constraint as Esc — the window can't take key events, so Left/Right
-// are global shortcuts registered only while a deck with controls is
-// displayed. The renderer turns them into slide nav via
-// 'ghostlayer:display-nav'.
-let _navRegistered = false;
+// ── Arrow-key navigation (capability-driven) ────────────────────────────────
+// Same constraint as Esc — the window can't take key events, so arrows are
+// global shortcuts. Which keys get registered is the UNION of what live
+// displays report they can use: decks with controls → left/right (payload
+// sniff at POST time), scrollable text → up/down (renderer reports via
+// 'ghostlayer:display-capabilities' once it measures overflow).
+let _navKeys = new Set();
+
+function _sendNav(dir) {
+  if (ghostLayerWindow && !ghostLayerWindow.isDestroyed()) {
+    try { ghostLayerWindow.webContents.send('ghostlayer:display-nav', { dir }); } catch (_) {}
+  }
+}
+const _NAV_KEY_DIRS = { Left: 'prev', Right: 'next', Up: 'up', Down: 'down' };
 
 function _updateNavShortcut() {
-  const want = [...screenDisplays.values()].some(d => d && d.arrowNav);
-  const send = (dir) => {
-    if (ghostLayerWindow && !ghostLayerWindow.isDestroyed()) {
-      try { ghostLayerWindow.webContents.send('ghostlayer:display-nav', { dir }); } catch (_) {}
+  const want = new Set();
+  for (const d of screenDisplays.values()) {
+    if (d && d.arrowNav) { want.add('Left'); want.add('Right'); }
+    if (d && d.keys) for (const k of d.keys) {
+      if (k === 'left') want.add('Left');
+      else if (k === 'right') want.add('Right');
+      else if (k === 'up') want.add('Up');
+      else if (k === 'down') want.add('Down');
     }
-  };
-  if (want && !_navRegistered) {
-    try {
-      const r = globalShortcut.register('Right', () => send('next'));
-      const l = globalShortcut.register('Left', () => send('prev'));
-      _navRegistered = r && l;
-      if (!_navRegistered) {
-        try { globalShortcut.unregister('Right'); globalShortcut.unregister('Left'); } catch (_) {}
-        console.warn('[Screen] Arrow-key registration failed — keyboard deck nav unavailable');
+  }
+  for (const key of want) {
+    if (!_navKeys.has(key)) {
+      try {
+        const dir = _NAV_KEY_DIRS[key];
+        if (globalShortcut.register(key, () => _sendNav(dir))) _navKeys.add(key);
+        else console.warn(`[Screen] ${key} registration failed — key nav unavailable`);
+      } catch (e) {
+        console.warn(`[Screen] ${key} registration error:`, e.message);
       }
-    } catch (e) {
-      console.warn('[Screen] Arrow-key registration error:', e.message);
     }
-  } else if (!want && _navRegistered) {
-    try { globalShortcut.unregister('Right'); globalShortcut.unregister('Left'); } catch (_) {}
-    _navRegistered = false;
+  }
+  for (const key of [..._navKeys]) {
+    if (!want.has(key)) {
+      try { globalShortcut.unregister(key); } catch (_) {}
+      _navKeys.delete(key);
+    }
   }
 }
 
@@ -3176,6 +3189,18 @@ ipcMain.on('ghostlayer:hover-interactive', (_e, data) => {
   if (next === _hoverInteractive) return;
   _hoverInteractive = next;
   _applyScreenClickThrough();
+});
+
+// Display capabilities — renderers report which arrow keys they can use
+// (text reports up/down once it measures overflow; decks report left/right).
+// Drives the global-shortcut union in _updateNavShortcut.
+ipcMain.on('ghostlayer:display-capabilities', (_e, data) => {
+  const id = data && typeof data.id === 'string' ? data.id : null;
+  if (!id || !screenDisplays.has(id)) return;
+  const entry = screenDisplays.get(id) || {};
+  entry.keys = new Set(Array.isArray(data.keys) ? data.keys.map(String) : []);
+  screenDisplays.set(id, entry);
+  _updateNavShortcut();
 });
 
 // Renderer-initiated dismiss (e.g. click on a blocking alert curtain).

@@ -107,6 +107,26 @@ const probes = {
     const t = getComputedStyle(el).transform;
     return t && t !== 'none' ? Math.abs(new DOMMatrixReadOnly(t).m42) : 0;
   },
+  // ESC affordance — the per-display chip (data-esc-badge carries the id)
+  escBadge: () => !!document.querySelector('[data-esc-badge]'),
+  escBadgeClick: () => {
+    const b = document.querySelector('[data-esc-badge]');
+    if (!b) return false;
+    b.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    return true;
+  },
+  // Arrow-key nav — main turns global keys into ghostlayer:display-nav →
+  // ScreenStage re-dispatches these DOM events. Dispatch directly to
+  // exercise the component handlers end-to-end below the shortcut layer.
+  domNav: (arg) => {
+    const dir = typeof arg === 'string' ? arg : '';
+    if (dir === 'up' || dir === 'down') {
+      window.dispatchEvent(new CustomEvent('screen:text-scroll', { detail: { dir } }));
+    } else {
+      window.dispatchEvent(new CustomEvent('screen:deck-nav', { detail: { dir: dir === 'left' ? 'prev' : 'next' } }));
+    }
+    return true;
+  },
 };
 
 async function probe(page, name, arg) {
@@ -233,6 +253,37 @@ async function main() {
         if (after == null || after <= (before || 0) + 10) {
           out.failures.push(`wheel scroll did not move text offset (${before} → ${after})`);
         }
+      }
+    }
+    // Arrow-key scroll → same manual path via the DOM nav event
+    if (ex.arrowText) {
+      const before = await probe(page, 'textScrollOffset');
+      await probe(page, 'domNav', 'down');
+      await sleep(400);
+      const after = await probe(page, 'textScrollOffset');
+      if (after == null || after <= (before || 0) + 10) {
+        out.failures.push(`Down arrow did not move text offset (${before} → ${after})`);
+      }
+    }
+    // Arrow-key slide nav via the DOM nav event
+    if (ex.arrowDeck) {
+      const before = await probe(page, 'counter');
+      await probe(page, 'domNav', 'right');
+      await sleep(700);
+      const after = await probe(page, 'counter');
+      if (!after || !before || after[0] !== before[0] + 1) {
+        out.failures.push(`Right arrow did not move counter (${JSON.stringify(before)} → ${JSON.stringify(after)})`);
+      }
+    }
+    // ESC badge — every display carries the exit chip; optionally click it
+    if (ex.escBadge && !(await probe(page, 'escBadge'))) {
+      out.failures.push('no ESC badge rendered');
+    }
+    if (ex.escBadgeClick) {
+      if (!(await probe(page, 'escBadgeClick'))) out.failures.push('no ESC badge to click');
+      else {
+        await sleep(1500);
+        if (!(await probe(page, 'stageEmpty'))) out.failures.push('ESC badge click did not clear the display');
       }
     }
 

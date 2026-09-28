@@ -584,6 +584,84 @@
   }
  },
  {
+  "id": "esc-badge",
+  "desc": "ESC badge — every display shows the exit chip; clicking it clears",
+  "payload": {
+   "kind": "text",
+   "text": "ESC me",
+   "mood": "neutral"
+  },
+  "expect": {
+   "text": "ESC me",
+   "escBadge": true
+  }
+ },
+ {
+  "id": "esc-badge-click",
+  "desc": "ESC badge click → display-clear-request clears the stage",
+  "payload": {
+   "kind": "image",
+   "mood": "neutral",
+   "dataUrl": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="
+  },
+  "expect": {
+   "escBadge": true,
+   "escBadgeClick": true
+  }
+ },
+ {
+  "id": "text-arrow",
+  "desc": "arrow keys (Up/Down DOM nav) scroll overflowing text",
+  "payload": {
+   "kind": "text",
+   "title": "Psalm 23",
+   "mood": "neutral",
+   "fontSize": "xl",
+   "fit": "scroll",
+   "interactive": true,
+   "text": "In the beginning was the Word, and the Word was with God, and the Word was God. In the beginning was the Word, and the Word was with God, and the Word was God. In the beginning was the Word, and the Word was with God, and the Word was God. In the beginning was the Word, and the Word was with God, and the Word was God. In the beginning was the Word, and the Word was with God, and the Word was God. In the beginning was the Word, and the Word was with God, and the Word was God. In the beginning was the Word, and the Word was with God, and the Word was God. In the beginning was the Word, and the Word was with God, and the Word was God. In the beginning was the Word, and the Word was with God, and the Word was God. In the beginning was the Word, and the Word was with God, and the Word was God. In the beginning was the Word, and the Word was with God, and the Word was God. In the beginning was the Word, and the Word was with God, and the Word was God. In the beginning was the Word, and the Word was with God, and the Word was God. In the beginning was the Word, and the Word was with God, and the Word was God. In the beginning was the Word, and the Word was with God, and the Word was God. In the beginning was the Word, and the Word was with God, and the Word was God. In the beginning was the Word, and the Word was with God, and the Word was God. In the beginning was the Word, and the Word was with God, and the Word was God. In the beginning was the Word, and the Word was with God, and the Word was God. In the beginning was the Word, and the Word was with God, and the Word was God. In the beginning was the Word, and the Word was with God, and the Word was God. In the beginning was the Word, and the Word was with God, and the Word was God. In the beginning was the Word, and the Word was with God, and the Word was God. In the beginning was the Word, and the Word was with God, and the Word was God. In the beginning was the Word, and the Word was with God, and the Word was God. In the beginning was the Word, and the Word was with God, and the Word was God. In the beginning was the Word, and the Word was with God, and the Word was God. In the beginning was the Word, and the Word was with God, and the Word was God. In the beginning was the Word, and the Word was with God, and the Word was God. In the beginning was the Word, and the Word was with God, and the Word was God. ",
+   "durationMs": 0,
+   "dismiss": "manual"
+  },
+  "expect": {
+   "text": "In the beginning",
+   "scrolling": true,
+   "arrowText": true,
+   "escBadge": true
+  }
+ },
+ {
+  "id": "deck-arrow",
+  "desc": "arrow keys (Left/Right DOM nav) move deck slides",
+  "payload": {
+   "kind": "deck",
+   "title": "Arrow test",
+   "mood": "neutral",
+   "blocking": true,
+   "deck": {
+    "transition": "fade",
+    "slideMs": 60000,
+    "controls": true,
+    "slides": [
+     {
+      "title": "One"
+     },
+     {
+      "title": "Two"
+     },
+     {
+      "title": "Three"
+     }
+    ]
+   }
+  },
+  "expect": {
+   "text": "One",
+   "arrowDeck": true,
+   "escBadge": true
+  }
+ },
+ {
   "id": "invalid-kind",
   "desc": "invalid payload → 400",
   "payload": {

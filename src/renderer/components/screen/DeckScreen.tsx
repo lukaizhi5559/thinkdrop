@@ -1,4 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
+
+const ipcRenderer = (window as any).electron?.ipcRenderer;
 import type { ScreenOutput, ScreenSlide } from './types';
 import { MOOD_ACCENT } from './types';
 import { ChartScreen } from './ChartScreen';
@@ -49,6 +51,19 @@ export function DeckScreen({ output, onDismiss }: { output: ScreenOutput; onDism
     }, deck.slideMs);
     return () => { if (timer.current) clearTimeout(timer.current); };
   }, [idx, deck, count]);
+
+  // Report nav capability — main registers global Left/Right while a
+  // controls-deck is displayed (belt & suspenders alongside the payload
+  // sniff; covers decks whose controls flag arrives post-mount).
+  useEffect(() => {
+    if (!deck?.controls) return;
+    try {
+      ipcRenderer?.send('ghostlayer:display-capabilities', { id: output.id, keys: ['left', 'right'] });
+    } catch (_) {}
+    return () => {
+      try { ipcRenderer?.send('ghostlayer:display-capabilities', { id: output.id, keys: [] }); } catch (_) {}
+    };
+  }, [deck?.controls, output.id]);
 
   // Arrow keys — main registers global Left/Right while a controls-deck is
   // displayed; ScreenStage re-broadcasts them as this DOM event.

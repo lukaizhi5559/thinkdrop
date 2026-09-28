@@ -1,4 +1,4 @@
-import React, { useLayoutEffect, useRef, useState } from 'react';
+import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
 
 const ipcRenderer = (window as any).electron?.ipcRenderer;
 import type { ScreenOutput } from './types';
@@ -97,6 +97,38 @@ export function TextScreen({ output, animateClass }: { output: ScreenOutput; ani
   }, [overflowPx, manualY]);
 
   const scrolling = overflowPx > 0;
+
+  // Report arrow-key capability once overflow is measured — main registers
+  // global Up/Down only while a scrollable display exists. Retract on
+  // unmount / when the content fits.
+  useEffect(() => {
+    try {
+      ipcRenderer?.send('ghostlayer:display-capabilities', {
+        id: output.id,
+        keys: scrolling ? ['up', 'down'] : [],
+      });
+    } catch (_) {}
+    return () => {
+      try { ipcRenderer?.send('ghostlayer:display-capabilities', { id: output.id, keys: [] }); } catch (_) {}
+    };
+  }, [scrolling, output.id]);
+
+  // Arrow-key scroll — ScreenStage re-broadcasts global Up/Down as
+  // 'screen:text-scroll'. Same manualY path as the trackpad handler.
+  useEffect(() => {
+    if (!scrolling) return;
+    const onKey = (e: Event) => {
+      const dir = (e as CustomEvent).detail?.dir === 'up' ? -1 : 1;
+      if (manualIdle.current) clearTimeout(manualIdle.current);
+      setManualY(prev => {
+        const cur = prev ?? 0;
+        return Math.max(0, Math.min(overflowPx, cur + dir * fontSize * 3));
+      });
+      manualIdle.current = setTimeout(() => setManualY(null), 4000);
+    };
+    window.addEventListener('screen:text-scroll', onKey);
+    return () => window.removeEventListener('screen:text-scroll', onKey);
+  }, [scrolling, overflowPx, fontSize]);
 
   // Trackpad scroll: wheel deltas drive a manual offset, clamped to the
   // overflow range. Marquee resumes ~4s after the last wheel event.
