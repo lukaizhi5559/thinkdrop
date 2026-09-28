@@ -1,0 +1,252 @@
+[
+ {
+  "id": "mr-01",
+  "prompt": "what did I say my name was",
+  "expect": { "status": "done", "maxMs": 45000 }
+ },
+ {
+  "id": "mr-02",
+  "prompt": "what is my favorite color",
+  "expect": { "status": "done", "maxMs": 45000 }
+ },
+ {
+  "id": "mr-03",
+  "prompt": "remind me what my email is",
+  "expect": { "status": "done", "maxMs": 45000 }
+ },
+ {
+  "id": "mr-04",
+  "prompt": "what did we talk about earlier",
+  "expect": { "status": "done", "maxMs": 45000 }
+ },
+ {
+  "id": "mr-05",
+  "prompt": "what was I working on before",
+  "expect": { "status": "done", "maxMs": 45000 }
+ },
+ {
+  "id": "mr-06",
+  "prompt": "did I mention my dentist appointment",
+  "expect": { "status": "done", "maxMs": 45000 }
+ },
+ {
+  "id": "mr-07",
+  "prompt": "when did I last talk about my birthday",
+  "expect": { "status": "done", "maxMs": 45000 }
+ },
+ {
+  "id": "mr-08",
+  "prompt": "what have I asked you so far",
+  "expect": { "status": "done", "maxMs": 45000 }
+ },
+ {
+  "id": "mr-09",
+  "prompt": "do you remember what I told you about my dog",
+  "expect": { "status": "done", "maxMs": 45000 }
+ },
+ {
+  "id": "mr-10",
+  "prompt": "what was the last thing I asked you to remember",
+  "expect": { "status": "done", "maxMs": 45000 }
+ },
+ {
+  "id": "mr-11",
+  "prompt": "have I told you where I live",
+  "expect": { "status": "done", "maxMs": 45000 }
+ },
+ {
+  "id": "mr-12",
+  "prompt": "what do you know about me",
+  "expect": { "status": "done", "maxMs": 45000 }
+ },
+ {
+  "id": "mr-13",
+  "prompt": "summarize what Ive told you today",
+  "expect": { "status": "done", "maxMs": 45000 }
+ },
+ {
+  "id": "mr-14",
+  "prompt": "what reminders did I set recently",
+  "expect": { "status": "done", "maxMs": 45000 }
+ },
+ {
+  "id": "mr-15",
+  "prompt": "did we discuss my job",
+  "expect": { "status": "done", "maxMs": 45000 }
+ },
+ {
+  "id": "mr-16",
+  "prompt": "what did I tell you about my favorite food",
+  "expect": { "status": "done", "maxMs": 45000 }
+ },
+ {
+  "id": "mr-17",
+  "prompt": "look back in our conversation for my phone number",
+  "expect": { "status": "done", "maxMs": 45000 }
+ },
+ {
+  "id": "mr-18",
+  "prompt": "check your memory for my car",
+  "expect": { "status": "done", "maxMs": 45000 }
+ },
+ {
+  "id": "mr-19",
+  "prompt": "what was my first question",
+  "expect": { "status": "done", "maxMs": 45000 }
+ },
+ {
+  "id": "mr-20",
+  "prompt": "when did I mention my wife",
+  "expect": { "status": "done", "maxMs": 45000 }
+ },
+ {
+  "id": "mr-21",
+  "prompt": "what have I told you about my hobbies",
+  "expect": { "status": "done", "maxMs": 45000 }
+ },
+ {
+  "id": "mr-22",
+  "prompt": "did I say anything about music",
+  "expect": { "status": "done", "maxMs": 45000 }
+ },
+ {
+  "id": "mr-23",
+  "prompt": "what was I doing earlier this session",
+  "expect": { "status": "done", "maxMs": 45000 }
+ },
+ {
+  "id": "mr-24",
+  "prompt": "recap my activity from today",
+  "expect": { "status": "done", "maxMs": 45000 }
+ },
+ {
+  "id": "mr-25",
+  "prompt": "what tasks have you done for me recently",
+  "expect": { "status": "done", "maxMs": 45000 }
+ },
+ {
+  "id": "mr-26",
+  "prompt": "what did we discuss about colors",
+  "expect": { "status": "done", "maxMs": 45000 }
+ },
+ {
+  "id": "mr-27",
+  "prompt": "when was the last time I asked about sports",
+  "expect": { "status": "done", "maxMs": 45000 }
+ },
+ {
+  "id": "mr-28",
+  "prompt": "what movies have I mentioned",
+  "expect": { "status": "done", "maxMs": 45000 }
+ },
+ {
+  "id": "mr-29",
+  "prompt": "did I ever tell you my age",
+  "expect": { "status": "done", "maxMs": 45000 }
+ },
+ {
+  "id": "mr-30",
+  "prompt": "what notes have I left you",
+  "expect": { "status": "done", "maxMs": 45000 }
+ },
+ {
+  "id": "mr-31",
+  "prompt": "have we talked about coffee",
+  "expect": { "status": "done", "maxMs": 45000 }
+ },
+ {
+  "id": "mr-32",
+  "prompt": "what did I say about where I work",
+  "expect": { "status": "done", "maxMs": 45000 }
+ },
+ {
+  "id": "mr-33",
+  "prompt": "do you recall my allergy",
+  "expect": { "status": "done", "maxMs": 45000 }
+ },
+ {
+  "id": "mr-34",
+  "prompt": "what languages did I say I speak",
+  "expect": { "status": "done", "maxMs": 45000 }
+ },
+ {
+  "id": "mr-35",
+  "prompt": "what did I tell you about my studies",
+  "expect": { "status": "done", "maxMs": 45000 }
+ },
+ {
+  "id": "mr-36",
+  "prompt": "whats the last personal fact I gave you",
+  "expect": { "status": "done", "maxMs": 45000 }
+ },
+ {
+  "id": "mr-37",
+  "prompt": "search your memory for anything about travel",
+  "expect": { "status": "done", "maxMs": 45000 }
+ },
+ {
+  "id": "mr-38",
+  "prompt": "what did we cover about drinks",
+  "expect": { "status": "done", "maxMs": 45000 }
+ },
+ {
+  "id": "mr-39",
+  "prompt": "did I mention any appointments",
+  "expect": { "status": "done", "maxMs": 45000 }
+ },
+ {
+  "id": "mr-40",
+  "prompt": "what do you remember about my pets",
+  "expect": { "status": "done", "maxMs": 45000 }
+ },
+ {
+  "id": "mr-41",
+  "prompt": "what were we talking about 10 minutes ago",
+  "expect": { "status": "done", "maxMs": 45000 }
+ },
+ {
+  "id": "mr-42",
+  "prompt": "tell me everything you know about my preferences",
+  "expect": { "status": "done", "maxMs": 45000 }
+ },
+ {
+  "id": "mr-43",
+  "prompt": "what did I ask about programming",
+  "expect": { "status": "done", "maxMs": 45000 }
+ },
+ {
+  "id": "mr-44",
+  "prompt": "have I asked you any math questions today",
+  "expect": { "status": "done", "maxMs": 45000 }
+ },
+ {
+  "id": "mr-45",
+  "prompt": "what was the first thing we discussed",
+  "expect": { "status": "done", "maxMs": 45000 }
+ },
+ {
+  "id": "mr-46",
+  "prompt": "list the facts Ive given you about myself",
+  "expect": { "status": "done", "maxMs": 45000 }
+ },
+ {
+  "id": "mr-47",
+  "prompt": "when did I tell you my name",
+  "expect": { "status": "done", "maxMs": 45000 }
+ },
+ {
+  "id": "mr-48",
+  "prompt": "what did I say about my family",
+  "expect": { "status": "done", "maxMs": 45000 }
+ },
+ {
+  "id": "mr-49",
+  "prompt": "did we talk about editors",
+  "expect": { "status": "done", "maxMs": 45000 }
+ },
+ {
+  "id": "mr-50",
+  "prompt": "what personal details have I shared with you",
+  "expect": { "status": "done", "maxMs": 45000 }
+ }
+]

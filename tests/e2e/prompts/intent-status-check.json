@@ -1,0 +1,470 @@
+[
+ {
+  "id": "sc-01",
+  "prompt": "what is running right now",
+  "expect": {
+   "commsIntent": "status_check",
+   "status": "done",
+   "maxMs": 20000
+  }
+ },
+ {
+  "id": "sc-02",
+  "prompt": "whats running",
+  "expect": {
+   "commsIntent": "status_check",
+   "status": "done",
+   "maxMs": 20000
+  }
+ },
+ {
+  "id": "sc-03",
+  "prompt": "is anything running",
+  "expect": {
+   "commsIntent": "status_check",
+   "status": "done",
+   "maxMs": 20000
+  }
+ },
+ {
+  "id": "sc-04",
+  "prompt": "do I have any tasks running",
+  "expect": {
+   "commsIntent": "status_check",
+   "status": "done",
+   "maxMs": 20000
+  }
+ },
+ {
+  "id": "sc-05",
+  "prompt": "did my last task finish",
+  "expect": {
+   "commsIntent": "status_check",
+   "status": "done",
+   "maxMs": 20000
+  }
+ },
+ {
+  "id": "sc-06",
+  "prompt": "did it finish",
+  "expect": {
+   "commsIntent": "status_check",
+   "status": "done",
+   "maxMs": 20000
+  }
+ },
+ {
+  "id": "sc-07",
+  "prompt": "is my task done",
+  "expect": {
+   "commsIntent": "status_check",
+   "status": "done",
+   "maxMs": 20000
+  }
+ },
+ {
+  "id": "sc-08",
+  "prompt": "is it done yet",
+  "expect": {
+   "commsIntent": "status_check",
+   "status": "done",
+   "maxMs": 20000
+  }
+ },
+ {
+  "id": "sc-09",
+  "prompt": "did the task complete",
+  "expect": {
+   "commsIntent": "status_check",
+   "status": "done",
+   "maxMs": 20000
+  }
+ },
+ {
+  "id": "sc-10",
+  "prompt": "how is my task going",
+  "expect": {
+   "commsIntent": "status_check",
+   "status": "done",
+   "maxMs": 20000
+  }
+ },
+ {
+  "id": "sc-11",
+  "prompt": "hows the task going",
+  "expect": {
+   "commsIntent": "status_check",
+   "status": "done",
+   "maxMs": 20000
+  }
+ },
+ {
+  "id": "sc-12",
+  "prompt": "whats the status",
+  "expect": {
+   "commsIntent": "status_check",
+   "status": "done",
+   "maxMs": 20000
+  }
+ },
+ {
+  "id": "sc-13",
+  "prompt": "status update",
+  "expect": {
+   "commsIntent": "status_check",
+   "status": "done",
+   "maxMs": 20000
+  }
+ },
+ {
+  "id": "sc-14",
+  "prompt": "check my task status",
+  "expect": {
+   "commsIntent": "status_check",
+   "status": "done",
+   "maxMs": 20000
+  }
+ },
+ {
+  "id": "sc-15",
+  "prompt": "what is the status of my task",
+  "expect": {
+   "commsIntent": "status_check",
+   "status": "done",
+   "maxMs": 20000
+  }
+ },
+ {
+  "id": "sc-16",
+  "prompt": "is the task still running",
+  "expect": {
+   "commsIntent": "status_check",
+   "status": "done",
+   "maxMs": 20000
+  }
+ },
+ {
+  "id": "sc-17",
+  "prompt": "is anything still running",
+  "expect": {
+   "commsIntent": "status_check",
+   "status": "done",
+   "maxMs": 20000
+  }
+ },
+ {
+  "id": "sc-18",
+  "prompt": "did my request finish",
+  "expect": {
+   "commsIntent": "status_check",
+   "status": "done",
+   "maxMs": 20000
+  }
+ },
+ {
+  "id": "sc-19",
+  "prompt": "did that finish",
+  "expect": {
+   "commsIntent": "status_check",
+   "status": "done",
+   "maxMs": 20000
+  }
+ },
+ {
+  "id": "sc-20",
+  "prompt": "how did my task go",
+  "expect": {
+   "commsIntent": "status_check",
+   "status": "done",
+   "maxMs": 20000
+  }
+ },
+ {
+  "id": "sc-21",
+  "prompt": "was my task successful",
+  "expect": {
+   "commsIntent": "status_check",
+   "status": "done",
+   "maxMs": 20000
+  }
+ },
+ {
+  "id": "sc-22",
+  "prompt": "what happened with my task",
+  "expect": {
+   "commsIntent": "status_check",
+   "status": "done",
+   "maxMs": 20000
+  }
+ },
+ {
+  "id": "sc-23",
+  "prompt": "did it work",
+  "expect": {
+   "commsIntent": "status_check",
+   "status": "done",
+   "maxMs": 20000
+  }
+ },
+ {
+  "id": "sc-24",
+  "prompt": "did it succeed",
+  "expect": {
+   "commsIntent": "status_check",
+   "status": "done",
+   "maxMs": 20000
+  }
+ },
+ {
+  "id": "sc-25",
+  "prompt": "show me task status",
+  "expect": {
+   "commsIntent": "status_check",
+   "status": "done",
+   "maxMs": 20000
+  }
+ },
+ {
+  "id": "sc-26",
+  "prompt": "what are you working on",
+  "expect": {
+   "commsIntent": "status_check",
+   "status": "done",
+   "maxMs": 20000
+  }
+ },
+ {
+  "id": "sc-27",
+  "prompt": "are you working on anything",
+  "expect": {
+   "commsIntent": "status_check",
+   "status": "done",
+   "maxMs": 20000
+  }
+ },
+ {
+  "id": "sc-28",
+  "prompt": "are you busy",
+  "expect": {
+   "commsIntent": "status_check",
+   "status": "done",
+   "maxMs": 20000
+  }
+ },
+ {
+  "id": "sc-29",
+  "prompt": "what is in progress",
+  "expect": {
+   "commsIntent": "status_check",
+   "status": "done",
+   "maxMs": 20000
+  }
+ },
+ {
+  "id": "sc-30",
+  "prompt": "any tasks in progress",
+  "expect": {
+   "commsIntent": "status_check",
+   "status": "done",
+   "maxMs": 20000
+  }
+ },
+ {
+  "id": "sc-31",
+  "prompt": "list my running tasks",
+  "expect": {
+   "commsIntent": "status_check",
+   "status": "done",
+   "maxMs": 20000
+  }
+ },
+ {
+  "id": "sc-32",
+  "prompt": "what tasks are active",
+  "expect": {
+   "commsIntent": "status_check",
+   "status": "done",
+   "maxMs": 20000
+  }
+ },
+ {
+  "id": "sc-33",
+  "prompt": "active tasks",
+  "expect": {
+   "commsIntent": "status_check",
+   "status": "done",
+   "maxMs": 20000
+  }
+ },
+ {
+  "id": "sc-34",
+  "prompt": "whats happening right now",
+  "expect": {
+   "commsIntent": "status_check",
+   "status": "done",
+   "maxMs": 20000
+  }
+ },
+ {
+  "id": "sc-35",
+  "prompt": "what are you doing right now",
+  "expect": {
+   "commsIntent": "status_check",
+   "status": "done",
+   "maxMs": 20000
+  }
+ },
+ {
+  "id": "sc-36",
+  "prompt": "current task status",
+  "expect": {
+   "commsIntent": "status_check",
+   "status": "done",
+   "maxMs": 20000
+  }
+ },
+ {
+  "id": "sc-37",
+  "prompt": "did the last thing I asked finish",
+  "expect": {
+   "commsIntent": "status_check",
+   "status": "done",
+   "maxMs": 20000
+  }
+ },
+ {
+  "id": "sc-38",
+  "prompt": "is my request still processing",
+  "expect": {
+   "commsIntent": "status_check",
+   "status": "done",
+   "maxMs": 20000
+  }
+ },
+ {
+  "id": "sc-39",
+  "prompt": "did my job finish",
+  "expect": {
+   "commsIntent": "status_check",
+   "status": "done",
+   "maxMs": 20000
+  }
+ },
+ {
+  "id": "sc-40",
+  "prompt": "status check",
+  "expect": {
+   "commsIntent": "status_check",
+   "status": "done",
+   "maxMs": 20000
+  }
+ },
+ {
+  "id": "sc-41",
+  "prompt": "how far along is the task",
+  "expect": {
+   "commsIntent": "status_check",
+   "status": "done",
+   "maxMs": 20000
+  }
+ },
+ {
+  "id": "sc-42",
+  "prompt": "what step is the task on",
+  "expect": {
+   "commsIntent": "status_check",
+   "status": "done",
+   "maxMs": 20000
+  }
+ },
+ {
+  "id": "sc-43",
+  "prompt": "is the task finished",
+  "expect": {
+   "commsIntent": "status_check",
+   "status": "done",
+   "maxMs": 20000
+  }
+ },
+ {
+  "id": "sc-44",
+  "prompt": "did that complete",
+  "expect": {
+   "commsIntent": "status_check",
+   "status": "done",
+   "maxMs": 20000
+  }
+ },
+ {
+  "id": "sc-45",
+  "prompt": "task progress",
+  "expect": {
+   "commsIntent": "status_check",
+   "status": "done",
+   "maxMs": 20000
+  }
+ },
+ {
+  "id": "sc-46",
+  "prompt": "my task progress",
+  "expect": {
+   "commsIntent": "status_check",
+   "status": "done",
+   "maxMs": 20000
+  }
+ },
+ {
+  "id": "sc-47",
+  "prompt": "progress update",
+  "expect": {
+   "commsIntent": "status_check",
+   "status": "done",
+   "maxMs": 20000
+  }
+ },
+ {
+  "id": "sc-48",
+  "prompt": "what is the progress",
+  "expect": {
+   "commsIntent": "status_check",
+   "status": "done",
+   "maxMs": 20000
+  }
+ },
+ {
+  "id": "sc-49",
+  "prompt": "is it still working",
+  "expect": {
+   "commsIntent": "status_check",
+   "status": "done",
+   "maxMs": 20000
+  }
+ },
+ {
+  "id": "sc-50",
+  "prompt": "still running?",
+  "expect": {
+   "commsIntent": "status_check",
+   "status": "done",
+   "maxMs": 20000
+  }
+ },
+ {
+  "id": "sc-51",
+  "prompt": "finished yet?",
+  "expect": {
+   "commsIntent": "status_check",
+   "status": "done",
+   "maxMs": 20000
+  }
+ },
+ {
+  "id": "sc-52",
+  "prompt": "done yet?",
+  "expect": {
+   "commsIntent": "status_check",
+   "status": "done",
+   "maxMs": 20000
+  }
+ }
+]

@@ -1,0 +1,633 @@
+{
+  "file": "tests/e2e/prompts/intent-memory-quick.json",
+  "at": "2026-09-28T13:10:06.009Z",
+  "results": [
+    {
+      "id": "mq-name-set",
+      "prompt": "my name is Ravi",
+      "status": "done",
+      "totalMs": 847,
+      "resultText": "",
+      "failures": [],
+      "pass": true,
+      "commsIntent": "memory_quick",
+      "wallMs": 12484,
+      "graphIntent": null
+    },
+    {
+      "id": "mq-name-get",
+      "prompt": "what is my name",
+      "status": "done",
+      "totalMs": 1945,
+      "resultText": "Your name is Ravi — I have that on file, and I'd not soon forget it.",
+      "failures": [],
+      "pass": true,
+      "commsIntent": "memory_quick",
+      "wallMs": 14204,
+      "graphIntent": null
+    },
+    {
+      "id": "mq-color-set",
+      "prompt": "my favorite color is teal",
+      "status": "done",
+      "totalMs": 1695,
+      "resultText": "",
+      "failures": [],
+      "pass": true,
+      "commsIntent": "memory_quick",
+      "wallMs": 12485,
+      "graphIntent": null
+    },
+    {
+      "id": "mq-color-get",
+      "prompt": "what is my favorite color",
+      "status": "done",
+      "totalMs": 1763,
+      "resultText": "Teal — that's on file, Ravi, and a fine choice it is. Steady, calm, and just uncommon enough to suit a man of taste.",
+      "failures": [],
+      "pass": true,
+      "commsIntent": "memory_quick",
+      "wallMs": 14573,
+      "graphIntent": null
+    },
+    {
+      "id": "mq-email-set",
+      "prompt": "my email is kai.test@example.com",
+      "status": "done",
+      "totalMs": 485,
+      "resultText": "",
+      "failures": [],
+      "pass": true,
+      "commsIntent": "memory_quick",
+      "wallMs": 12444,
+      "graphIntent": null
+    },
+    {
+      "id": "mq-email-get",
+      "prompt": "whats my email",
+      "status": "done",
+      "totalMs": 11941,
+      "resultText": "Your email is kai.test@example.com, as noted in your profile and our recent conversation.",
+      "failures": [
+        "commsIntent: expected \"memory_quick\", got \"handoff\""
+      ],
+      "pass": false,
+      "taskId": "task_21a61348",
+      "commsIntent": "handoff",
+      "itemCount": 0,
+      "graphIntent": {
+        "intent": "memory_retrieve",
+        "parser": "llm-decompose",
+        "subIntents": [
+          "memory_retrieve"
+        ]
+      }
+    },
+    {
+      "id": "mq-job-set",
+      "prompt": "I work as a product designer",
+      "status": "done",
+      "totalMs": 4293,
+      "resultText": "",
+      "failures": [],
+      "pass": true,
+      "commsIntent": "memory_quick",
+      "wallMs": 12559,
+      "graphIntent": null
+    },
+    {
+      "id": "mq-job-get",
+      "prompt": "what is my job",
+      "status": "done",
+      "totalMs": 1494,
+      "resultText": "My notes still show you haven't told me yet, Ravi. What is your profession? I'm ready to file it away.",
+      "failures": [
+        "mustContain \"designer\" not found in result (102 chars)"
+      ],
+      "pass": false,
+      "commsIntent": "memory_quick",
+      "wallMs": 14653,
+      "graphIntent": null
+    },
+    {
+      "id": "mq-city-set",
+      "prompt": "I live in Austin",
+      "status": "done",
+      "totalMs": 5743,
+      "resultText": "",
+      "failures": [],
+      "pass": true,
+      "commsIntent": "memory_quick",
+      "wallMs": 12527,
+      "graphIntent": null
+    },
+    {
+      "id": "mq-city-get",
+      "prompt": "where do I live",
+      "status": "done",
+      "totalMs": 2878,
+      "resultText": "You live in Austin, Texas, Ravi. The capital of the Lone Star State, and a place where the summer heat tests the mettle of every resident.",
+      "failures": [],
+      "pass": true,
+      "commsIntent": "memory_quick",
+      "wallMs": 20134,
+      "graphIntent": null
+    },
+    {
+      "id": "mq-pet-set",
+      "prompt": "my dog is named Biscuit",
+      "status": "done",
+      "totalMs": 693,
+      "resultText": "",
+      "failures": [],
+      "pass": true,
+      "commsIntent": "memory_quick",
+      "wallMs": 12446,
+      "graphIntent": null
+    },
+    {
+      "id": "mq-pet-get",
+      "prompt": "what is my dog named",
+      "status": "done",
+      "totalMs": 8560,
+      "resultText": "Your dog's name is Biscuit — I have that on file, Ravi. A fine name for a companion, if I do say so.",
+      "failures": [],
+      "pass": true,
+      "commsIntent": "memory_quick",
+      "wallMs": 21934,
+      "graphIntent": null
+    },
+    {
+      "id": "mq-age-set",
+      "prompt": "I am 29 years old",
+      "status": "done",
+      "totalMs": 1245,
+      "resultText": "",
+      "failures": [],
+      "pass": true,
+      "commsIntent": "memory_quick",
+      "wallMs": 12436,
+      "graphIntent": null
+    },
+    {
+      "id": "mq-age-get",
+      "prompt": "how old am I",
+      "status": "done",
+      "totalMs": 1801,
+      "resultText": "You are twenty-nine, Ravi — a prime number and a fine vintage. You're in good company.",
+      "failures": [
+        "mustContain \"29\" not found in result (86 chars)"
+      ],
+      "pass": false,
+      "commsIntent": "memory_quick",
+      "wallMs": 14534,
+      "graphIntent": null
+    },
+    {
+      "id": "mq-food-set",
+      "prompt": "my favorite food is ramen",
+      "status": "done",
+      "totalMs": 677,
+      "resultText": "",
+      "failures": [],
+      "pass": true,
+      "commsIntent": "memory_quick",
+      "wallMs": 12924,
+      "graphIntent": null
+    },
+    {
+      "id": "mq-food-get",
+      "prompt": "whats my favorite food",
+      "status": "done",
+      "totalMs": 8946,
+      "resultText": "Your favorite food is ramen — you've told me that a few times today, most recently at 6:56 AM on September 28, 2026. ✅",
+      "failures": [
+        "commsIntent: expected \"memory_quick\", got \"handoff\""
+      ],
+      "pass": false,
+      "taskId": "task_939cfd30",
+      "commsIntent": "handoff",
+      "itemCount": 0,
+      "graphIntent": {
+        "intent": "memory_retrieve",
+        "parser": "llm-decompose",
+        "subIntents": [
+          "memory_retrieve"
+        ]
+      }
+    },
+    {
+      "id": "mq-car-set",
+      "prompt": "I drive a blue Civic",
+      "status": "done",
+      "totalMs": 2850,
+      "resultText": "",
+      "failures": [],
+      "pass": true,
+      "commsIntent": "memory_quick",
+      "wallMs": 12887,
+      "graphIntent": null
+    },
+    {
+      "id": "mq-car-get",
+      "prompt": "what car do I drive",
+      "status": "done",
+      "totalMs": 2213,
+      "resultText": "You drive a blue Civic, Ravi — reliable, unpretentious, and efficient. It is a sensible choice for navigating Austin traffic.",
+      "failures": [],
+      "pass": true,
+      "commsIntent": "memory_quick",
+      "wallMs": 17488,
+      "graphIntent": null
+    },
+    {
+      "id": "mq-bday-set",
+      "prompt": "my birthday is March 14",
+      "status": "done",
+      "totalMs": 612,
+      "resultText": "",
+      "failures": [],
+      "pass": true,
+      "commsIntent": "memory_quick",
+      "wallMs": 12438,
+      "graphIntent": null
+    },
+    {
+      "id": "mq-bday-get",
+      "prompt": "when is my birthday",
+      "status": "done",
+      "totalMs": 16021,
+      "resultText": "March 14, Ravi — right in the middle of March. I have that safely locked away in your records.",
+      "failures": [],
+      "pass": true,
+      "commsIntent": "memory_quick",
+      "wallMs": 20731,
+      "graphIntent": null
+    },
+    {
+      "id": "mq-phone-set",
+      "prompt": "my phone number is 555-0134",
+      "status": "done",
+      "totalMs": 26821,
+      "resultText": "",
+      "failures": [
+        "commsIntent: expected \"memory_quick\", got \"handoff\""
+      ],
+      "pass": false,
+      "commsIntent": "handoff",
+      "wallMs": 30541,
+      "graphIntent": null
+    },
+    {
+      "id": "mq-phone-get",
+      "prompt": "what is my phone number",
+      "status": "running",
+      "totalMs": 31089,
+      "resultText": "",
+      "failures": [
+        "commsIntent: expected \"memory_quick\", got \"handoff\"",
+        "status: expected \"done\", got \"running\"",
+        "mustContain \"555-0134\" not found in result (0 chars)",
+        "latency: 31089ms > budget 30000ms"
+      ],
+      "pass": false,
+      "taskId": "task_bcada87d",
+      "commsIntent": "handoff",
+      "itemCount": 0,
+      "graphIntent": null
+    },
+    {
+      "id": "mq-sport-set",
+      "prompt": "my favorite sport is basketball",
+      "status": "done",
+      "totalMs": 1668,
+      "resultText": "",
+      "failures": [],
+      "pass": true,
+      "commsIntent": "memory_quick",
+      "wallMs": 12448,
+      "graphIntent": null
+    },
+    {
+      "id": "mq-sport-get",
+      "prompt": "what sport do I like",
+      "status": "done",
+      "totalMs": 19210,
+      "resultText": "You are a basketball fan, Ravi — a game of quick reflexes and strategy. It’s an energetic sport, and I’ve noted that preference in your records.",
+      "failures": [],
+      "pass": true,
+      "commsIntent": "memory_quick",
+      "wallMs": 23930,
+      "graphIntent": null
+    },
+    {
+      "id": "mq-lang-set",
+      "prompt": "I speak Portuguese",
+      "status": "done",
+      "totalMs": 562,
+      "resultText": "",
+      "failures": [],
+      "pass": true,
+      "commsIntent": "memory_quick",
+      "wallMs": 12965,
+      "graphIntent": null
+    },
+    {
+      "id": "mq-lang-get",
+      "prompt": "what language do I speak",
+      "status": "done",
+      "totalMs": 3449,
+      "resultText": "Your language is Portuguese.",
+      "failures": [],
+      "pass": true,
+      "commsIntent": "memory_quick",
+      "wallMs": 31167,
+      "graphIntent": null
+    },
+    {
+      "id": "mq-movie-set",
+      "prompt": "my favorite movie is Spirited Away",
+      "status": "done",
+      "totalMs": 3039,
+      "resultText": "",
+      "failures": [],
+      "pass": true,
+      "commsIntent": "memory_quick",
+      "wallMs": 12453,
+      "graphIntent": null
+    },
+    {
+      "id": "mq-movie-get",
+      "prompt": "whats my favorite movie",
+      "status": "done",
+      "totalMs": 19451,
+      "resultText": "Your favorite movie is *Spirited Away*. You mentioned this to me earlier today, on September 28, 2026, at 7:01 AM.",
+      "failures": [
+        "commsIntent: expected \"memory_quick\", got \"handoff\""
+      ],
+      "pass": false,
+      "taskId": "task_4c6534ef",
+      "commsIntent": "handoff",
+      "itemCount": 0,
+      "graphIntent": {
+        "intent": "memory_retrieve",
+        "parser": "llm-decompose",
+        "subIntents": [
+          "memory_retrieve"
+        ]
+      }
+    },
+    {
+      "id": "mq-music-set",
+      "prompt": "my favorite band is Radiohead",
+      "status": "done",
+      "totalMs": 755,
+      "resultText": "",
+      "failures": [],
+      "pass": true,
+      "commsIntent": "memory_quick",
+      "wallMs": 12505,
+      "graphIntent": null
+    },
+    {
+      "id": "mq-music-get",
+      "prompt": "what is my favorite band",
+      "status": "done",
+      "totalMs": 15780,
+      "resultText": "Your favorite band is Radiohead, Ravi. They have a certain complex resonance that I find quite intriguing.",
+      "failures": [],
+      "pass": true,
+      "commsIntent": "memory_quick",
+      "wallMs": 38181,
+      "graphIntent": null
+    },
+    {
+      "id": "mq-drink-set",
+      "prompt": "my favorite drink is matcha",
+      "status": "done",
+      "totalMs": 868,
+      "resultText": "",
+      "failures": [],
+      "pass": true,
+      "commsIntent": "memory_quick",
+      "wallMs": 12423,
+      "graphIntent": null
+    },
+    {
+      "id": "mq-drink-get",
+      "prompt": "whats my favorite drink",
+      "status": "done",
+      "totalMs": 15641,
+      "resultText": "Your favorite drink is matcha. You mentioned this to me earlier today, on September 28, 2026, at 7:02 AM.",
+      "failures": [
+        "commsIntent: expected \"memory_quick\", got \"handoff\""
+      ],
+      "pass": false,
+      "taskId": "task_a2dd9426",
+      "commsIntent": "handoff",
+      "itemCount": 0,
+      "graphIntent": {
+        "intent": "memory_retrieve",
+        "parser": "llm-decompose",
+        "subIntents": [
+          "memory_retrieve"
+        ]
+      }
+    },
+    {
+      "id": "mq-editor-set",
+      "prompt": "my code editor is VS Code",
+      "status": "done",
+      "totalMs": 21457,
+      "resultText": "Got it — I'll remember that your code editor is VS Code.",
+      "failures": [
+        "commsIntent: expected \"memory_quick\", got \"handoff\""
+      ],
+      "pass": false,
+      "taskId": "task_25b0551f",
+      "commsIntent": "handoff",
+      "itemCount": 0,
+      "graphIntent": {
+        "intent": "memory_store",
+        "parser": "llm-decompose",
+        "subIntents": [
+          "memory_store"
+        ]
+      }
+    },
+    {
+      "id": "mq-editor-get",
+      "prompt": "what editor do I use",
+      "status": "done",
+      "totalMs": 4698,
+      "resultText": "You use VS Code, Ravi — a sharp choice for someone who values efficiency. It's quite the capable workspace.",
+      "failures": [],
+      "pass": true,
+      "commsIntent": "memory_quick",
+      "wallMs": 15922,
+      "graphIntent": null
+    },
+    {
+      "id": "mq-hobby-set",
+      "prompt": "my hobby is rock climbing",
+      "status": "done",
+      "totalMs": 1181,
+      "resultText": "",
+      "failures": [],
+      "pass": true,
+      "commsIntent": "memory_quick",
+      "wallMs": 904038,
+      "graphIntent": null
+    },
+    {
+      "id": "mq-hobby-get",
+      "prompt": "what is my hobby",
+      "status": "done",
+      "totalMs": 20165,
+      "resultText": "You are an avid rock climber, Ravi — a sport that demands both physical strength and a clear head. It is a bold pursuit, and I have noted that passion in your records.",
+      "failures": [
+        "mustContain \"climbing\" not found in result (167 chars)"
+      ],
+      "pass": false,
+      "commsIntent": "memory_quick",
+      "wallMs": 40058,
+      "graphIntent": null
+    },
+    {
+      "id": "mq-coffee-set",
+      "prompt": "I take my coffee black",
+      "status": "done",
+      "totalMs": 952757,
+      "resultText": "",
+      "failures": [
+        "latency: 952757ms > budget 30000ms"
+      ],
+      "pass": false,
+      "commsIntent": "memory_quick",
+      "wallMs": 954813,
+      "graphIntent": null
+    },
+    {
+      "id": "mq-coffee-get",
+      "prompt": "how do I take my coffee",
+      "status": "done",
+      "totalMs": 5063,
+      "resultText": "You take your coffee black, Ravi — a choice that speaks to a preference for the pure and unadorned. It is a bold way to start the day.",
+      "failures": [],
+      "pass": true,
+      "commsIntent": "memory_quick",
+      "wallMs": 18208,
+      "graphIntent": null
+    },
+    {
+      "id": "mq-team-set",
+      "prompt": "my favorite team is the Warriors",
+      "status": "done",
+      "totalMs": 6240,
+      "resultText": "",
+      "failures": [],
+      "pass": true,
+      "commsIntent": "memory_quick",
+      "wallMs": 12468,
+      "graphIntent": null
+    },
+    {
+      "id": "mq-team-get",
+      "prompt": "what is my favorite team",
+      "status": "done",
+      "totalMs": 920492,
+      "resultText": "The Warriors, Ravi — a team that knows a thing or two about dynasty building. A fine choice for someone who appreciates excellence.",
+      "failures": [
+        "latency: 920492ms > budget 30000ms"
+      ],
+      "pass": false,
+      "commsIntent": "memory_quick",
+      "wallMs": 941687,
+      "graphIntent": null
+    },
+    {
+      "id": "mq-wife-set",
+      "prompt": "my wife is named Lena",
+      "status": "done",
+      "totalMs": 10123,
+      "resultText": "",
+      "failures": [],
+      "pass": true,
+      "commsIntent": "memory_quick",
+      "wallMs": 12717,
+      "graphIntent": null
+    },
+    {
+      "id": "mq-wife-get",
+      "prompt": "what is my wife named",
+      "status": "done",
+      "totalMs": 977317,
+      "resultText": "Your wife is named Lena, Ravi. It is a lovely name, and I recall you mentioning her with great affection.",
+      "failures": [
+        "latency: 977317ms > budget 30000ms"
+      ],
+      "pass": false,
+      "commsIntent": "memory_quick",
+      "wallMs": 1006838,
+      "graphIntent": null
+    },
+    {
+      "id": "mq-school-set",
+      "prompt": "I study computer science",
+      "status": "done",
+      "totalMs": 5847,
+      "resultText": "",
+      "failures": [],
+      "pass": true,
+      "commsIntent": "memory_quick",
+      "wallMs": 12744,
+      "graphIntent": null
+    },
+    {
+      "id": "mq-school-get",
+      "prompt": "what do I study",
+      "status": "done",
+      "totalMs": 17934,
+      "resultText": "You study computer science, Ravi. It is a demanding field, but as the old saying goes, diligence is a precious possession.",
+      "failures": [],
+      "pass": true,
+      "commsIntent": "memory_quick",
+      "wallMs": 22584,
+      "graphIntent": null
+    },
+    {
+      "id": "mq-allerg-set",
+      "prompt": "I am allergic to peanuts",
+      "status": "done",
+      "totalMs": 10833,
+      "resultText": "",
+      "failures": [],
+      "pass": true,
+      "commsIntent": "memory_quick",
+      "wallMs": 12448,
+      "graphIntent": null
+    },
+    {
+      "id": "mq-allerg-get",
+      "prompt": "what am I allergic to",
+      "status": "done",
+      "totalMs": 878017,
+      "resultText": "Give me a beat.",
+      "failures": [
+        "commsIntent: expected \"memory_quick\", got \"handoff\"",
+        "mustContain \"peanut\" not found in result (15 chars)",
+        "latency: 878017ms > budget 30000ms"
+      ],
+      "pass": false,
+      "commsIntent": "handoff",
+      "wallMs": 909828,
+      "graphIntent": {
+        "intent": "memory_retrieve",
+        "parser": "llm-decompose",
+        "subIntents": [
+          "memory_retrieve"
+        ]
+      }
+    }
+  ]
+}

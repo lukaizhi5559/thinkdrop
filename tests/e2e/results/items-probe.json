@@ -1,0 +1,25 @@
+{
+  "file": "/tmp/items-probe.json",
+  "at": "2026-09-28T06:45:47.949Z",
+  "results": [
+    {
+      "id": "items-image",
+      "prompt": "show me a pic of sonic the hedgehog on my screen",
+      "status": "done",
+      "totalMs": 28640,
+      "resultText": "I’ve displayed an image of Sonic the Hedgehog on your screen. It shows Sonic in a dynamic pose, perfect for what you requested. Let me know if you’d like a different picture or anything else!",
+      "failures": [],
+      "pass": true,
+      "taskId": "task_e6fbdee0",
+      "itemCount": 7,
+      "graphIntent": {
+        "intent": "web_search",
+        "parser": "multi-intent-pipeline",
+        "subIntents": [
+          "web_search",
+          "screen_display"
+        ]
+      }
+    }
+  ]
+}

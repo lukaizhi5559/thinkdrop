@@ -1,0 +1,252 @@
+[
+ {
+  "id": "gk-01",
+  "prompt": "explain how photosynthesis works in detail",
+  "expect": { "status": "done", "maxMs": 90000 }
+ },
+ {
+  "id": "gk-02",
+  "prompt": "give me a step by step guide to make sourdough bread",
+  "expect": { "status": "done", "maxMs": 90000 }
+ },
+ {
+  "id": "gk-03",
+  "prompt": "write me a short poem about the ocean",
+  "expect": { "status": "done", "maxMs": 90000 }
+ },
+ {
+  "id": "gk-04",
+  "prompt": "explain the difference between TCP and UDP",
+  "expect": { "status": "done", "maxMs": 90000 }
+ },
+ {
+  "id": "gk-05",
+  "prompt": "how does a car engine work",
+  "expect": { "status": "done", "maxMs": 90000 }
+ },
+ {
+  "id": "gk-06",
+  "prompt": "write a haiku about autumn",
+  "expect": { "status": "done", "maxMs": 90000 }
+ },
+ {
+  "id": "gk-07",
+  "prompt": "explain quantum entanglement like I'm five",
+  "expect": { "status": "done", "maxMs": 90000 }
+ },
+ {
+  "id": "gk-08",
+  "prompt": "what are the pros and cons of remote work",
+  "expect": { "status": "done", "maxMs": 90000 }
+ },
+ {
+  "id": "gk-09",
+  "prompt": "tell me about the history of the roman empire",
+  "expect": { "status": "done", "maxMs": 90000 }
+ },
+ {
+  "id": "gk-10",
+  "prompt": "how do vaccines work",
+  "expect": { "status": "done", "maxMs": 90000 }
+ },
+ {
+  "id": "gk-11",
+  "prompt": "explain recursion with an example",
+  "expect": { "status": "done", "maxMs": 90000 }
+ },
+ {
+  "id": "gk-12",
+  "prompt": "what's the difference between a virus and a bacterium",
+  "expect": { "status": "done", "maxMs": 90000 }
+ },
+ {
+  "id": "gk-13",
+  "prompt": "write a two sentence horror story",
+  "expect": { "status": "done", "maxMs": 90000 }
+ },
+ {
+  "id": "gk-14",
+  "prompt": "explain how the internet works",
+  "expect": { "status": "done", "maxMs": 90000 }
+ },
+ {
+  "id": "gk-15",
+  "prompt": "what causes earthquakes",
+  "expect": { "status": "done", "maxMs": 90000 }
+ },
+ {
+  "id": "gk-16",
+  "prompt": "how do I learn a new language fast",
+  "expect": { "status": "done", "maxMs": 90000 }
+ },
+ {
+  "id": "gk-17",
+  "prompt": "explain compound interest",
+  "expect": { "status": "done", "maxMs": 90000 }
+ },
+ {
+  "id": "gk-18",
+  "prompt": "what is machine learning in simple terms",
+  "expect": { "status": "done", "maxMs": 90000 }
+ },
+ {
+  "id": "gk-19",
+  "prompt": "how does GPS work",
+  "expect": { "status": "done", "maxMs": 90000 }
+ },
+ {
+  "id": "gk-20",
+  "prompt": "write a limerick about a cat",
+  "expect": { "status": "done", "maxMs": 90000 }
+ },
+ {
+  "id": "gk-21",
+  "prompt": "explain the theory of relativity briefly",
+  "expect": { "status": "done", "maxMs": 90000 }
+ },
+ {
+  "id": "gk-22",
+  "prompt": "what is the difference between a fruit and a vegetable",
+  "expect": { "status": "done", "maxMs": 90000 }
+ },
+ {
+  "id": "gk-23",
+  "prompt": "how do black holes form",
+  "expect": { "status": "done", "maxMs": 90000 }
+ },
+ {
+  "id": "gk-24",
+  "prompt": "explain why the sky is blue",
+  "expect": { "status": "done", "maxMs": 90000 }
+ },
+ {
+  "id": "gk-25",
+  "prompt": "give me tips for better sleep",
+  "expect": { "status": "done", "maxMs": 90000 }
+ },
+ {
+  "id": "gk-26",
+  "prompt": "what is the difference between HTTP and HTTPS",
+  "expect": { "status": "done", "maxMs": 90000 }
+ },
+ {
+  "id": "gk-27",
+  "prompt": "explain how bees make honey",
+  "expect": { "status": "done", "maxMs": 90000 }
+ },
+ {
+  "id": "gk-28",
+  "prompt": "write a short story about a robot learning to paint",
+  "expect": { "status": "done", "maxMs": 90000 }
+ },
+ {
+  "id": "gk-29",
+  "prompt": "what are the main causes of climate change",
+  "expect": { "status": "done", "maxMs": 90000 }
+ },
+ {
+  "id": "gk-30",
+  "prompt": "explain how noise cancelling headphones work",
+  "expect": { "status": "done", "maxMs": 90000 }
+ },
+ {
+  "id": "gk-31",
+  "prompt": "how does blockchain work",
+  "expect": { "status": "done", "maxMs": 90000 }
+ },
+ {
+  "id": "gk-32",
+  "prompt": "what is the difference between speed and velocity",
+  "expect": { "status": "done", "maxMs": 90000 }
+ },
+ {
+  "id": "gk-33",
+  "prompt": "explain the water cycle",
+  "expect": { "status": "done", "maxMs": 90000 }
+ },
+ {
+  "id": "gk-34",
+  "prompt": "how do airplanes stay in the air",
+  "expect": { "status": "done", "maxMs": 90000 }
+ },
+ {
+  "id": "gk-35",
+  "prompt": "what is inflation in economics",
+  "expect": { "status": "done", "maxMs": 90000 }
+ },
+ {
+  "id": "gk-36",
+  "prompt": "write a funny one-liner about programming",
+  "expect": { "status": "done", "maxMs": 90000 }
+ },
+ {
+  "id": "gk-37",
+  "prompt": "explain the difference between DNA and RNA",
+  "expect": { "status": "done", "maxMs": 90000 }
+ },
+ {
+  "id": "gk-38",
+  "prompt": "how does a battery store energy",
+  "expect": { "status": "done", "maxMs": 90000 }
+ },
+ {
+  "id": "gk-39",
+  "prompt": "what is the placebo effect",
+  "expect": { "status": "done", "maxMs": 90000 }
+ },
+ {
+  "id": "gk-40",
+  "prompt": "explain how tides work",
+  "expect": { "status": "done", "maxMs": 90000 }
+ },
+ {
+  "id": "gk-41",
+  "prompt": "what's the difference between jazz and blues",
+  "expect": { "status": "done", "maxMs": 90000 }
+ },
+ {
+  "id": "gk-42",
+  "prompt": "how do I improve my public speaking",
+  "expect": { "status": "done", "maxMs": 90000 }
+ },
+ {
+  "id": "gk-43",
+  "prompt": "explain object oriented programming in one paragraph",
+  "expect": { "status": "done", "maxMs": 90000 }
+ },
+ {
+  "id": "gk-44",
+  "prompt": "what causes seasonal allergies",
+  "expect": { "status": "done", "maxMs": 90000 }
+ },
+ {
+  "id": "gk-45",
+  "prompt": "describe the plot structure of a classic hero's journey",
+  "expect": { "status": "done", "maxMs": 90000 }
+ },
+ {
+  "id": "gk-46",
+  "prompt": "how does the immune system fight infection",
+  "expect": { "status": "done", "maxMs": 90000 }
+ },
+ {
+  "id": "gk-47",
+  "prompt": "explain why metals conduct electricity",
+  "expect": { "status": "done", "maxMs": 90000 }
+ },
+ {
+  "id": "gk-48",
+  "prompt": "what is the difference between a meteor and a comet",
+  "expect": { "status": "done", "maxMs": 90000 }
+ },
+ {
+  "id": "gk-49",
+  "prompt": "how do I write a good resume",
+  "expect": { "status": "done", "maxMs": 90000 }
+ },
+ {
+  "id": "gk-50",
+  "prompt": "explain the concept of supply and demand",
+  "expect": { "status": "done", "maxMs": 90000 }
+ }
+]

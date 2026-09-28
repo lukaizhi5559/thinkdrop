@@ -1,0 +1,504 @@
+[
+ {
+  "id": "gq-hi",
+  "prompt": "hi",
+  "expect": {
+   "commsIntent": "general_quick",
+   "status": "done",
+   "maxMs": 30000
+  }
+ },
+ {
+  "id": "gq-hello",
+  "prompt": "hello there",
+  "expect": {
+   "commsIntent": "general_quick",
+   "status": "done",
+   "maxMs": 30000
+  }
+ },
+ {
+  "id": "gq-hey",
+  "prompt": "hey",
+  "expect": {
+   "commsIntent": "general_quick",
+   "status": "done",
+   "maxMs": 30000
+  }
+ },
+ {
+  "id": "gq-morning",
+  "prompt": "good morning",
+  "expect": {
+   "commsIntent": "general_quick",
+   "status": "done",
+   "maxMs": 30000
+  }
+ },
+ {
+  "id": "gq-afternoon",
+  "prompt": "good afternoon",
+  "expect": {
+   "commsIntent": "general_quick",
+   "status": "done",
+   "maxMs": 30000
+  }
+ },
+ {
+  "id": "gq-night",
+  "prompt": "good night",
+  "expect": {
+   "commsIntent": "general_quick",
+   "status": "done",
+   "maxMs": 30000
+  }
+ },
+ {
+  "id": "gq-thanks",
+  "prompt": "thanks!",
+  "expect": {
+   "commsIntent": "general_quick",
+   "status": "done",
+   "maxMs": 30000
+  }
+ },
+ {
+  "id": "gq-thankyou",
+  "prompt": "thank you so much",
+  "expect": {
+   "commsIntent": "general_quick",
+   "status": "done",
+   "maxMs": 30000
+  }
+ },
+ {
+  "id": "gq-thx",
+  "prompt": "thx",
+  "expect": {
+   "commsIntent": "general_quick",
+   "status": "done",
+   "maxMs": 30000
+  }
+ },
+ {
+  "id": "gq-bye",
+  "prompt": "bye",
+  "expect": {
+   "commsIntent": "general_quick",
+   "status": "done",
+   "maxMs": 30000
+  }
+ },
+ {
+  "id": "gq-seeya",
+  "prompt": "see you later",
+  "expect": {
+   "commsIntent": "general_quick",
+   "status": "done",
+   "maxMs": 30000
+  }
+ },
+ {
+  "id": "gq-gtfo",
+  "prompt": "ok thats all",
+  "expect": {
+   "commsIntent": "general_quick",
+   "status": "done",
+   "maxMs": 30000
+  }
+ },
+ {
+  "id": "gq-howru",
+  "prompt": "how are you?",
+  "expect": {
+   "commsIntent": "general_quick",
+   "status": "done",
+   "maxMs": 30000
+  }
+ },
+ {
+  "id": "gq-wyd",
+  "prompt": "what are you up to",
+  "expect": {
+   "commsIntent": "general_quick",
+   "status": "done",
+   "maxMs": 30000
+  }
+ },
+ {
+  "id": "gq-who",
+  "prompt": "what are you",
+  "expect": {
+   "commsIntent": "general_quick",
+   "status": "done",
+   "maxMs": 30000
+  }
+ },
+ {
+  "id": "gq-joke1",
+  "prompt": "tell me a joke",
+  "expect": {
+   "commsIntent": "general_quick",
+   "status": "done",
+   "maxMs": 30000
+  }
+ },
+ {
+  "id": "gq-joke2",
+  "prompt": "tell me another joke",
+  "expect": {
+   "commsIntent": "general_quick",
+   "status": "done",
+   "maxMs": 30000
+  }
+ },
+ {
+  "id": "gq-funny",
+  "prompt": "say something funny",
+  "expect": {
+   "commsIntent": "general_quick",
+   "status": "done",
+   "maxMs": 30000
+  }
+ },
+ {
+  "id": "gq-math1",
+  "prompt": "what is 12 times 12",
+  "expect": {
+   "commsIntent": "general_quick",
+   "status": "done",
+   "maxMs": 30000,
+   "mustContainAny": [
+    "re:(144|hundred (and )?forty)"
+   ]
+  }
+ },
+ {
+  "id": "gq-math2",
+  "prompt": "whats 45 plus 67",
+  "expect": {
+   "commsIntent": "general_quick",
+   "status": "done",
+   "maxMs": 30000,
+   "mustContainAny": [
+    "re:(112|hundred (and )?twelve)"
+   ]
+  }
+ },
+ {
+  "id": "gq-math3",
+  "prompt": "what is 100 divided by 4",
+  "expect": {
+   "commsIntent": "general_quick",
+   "status": "done",
+   "maxMs": 30000,
+   "mustContainAny": [
+    "re:(25|twenty[ -]?five)"
+   ]
+  }
+ },
+ {
+  "id": "gq-math4",
+  "prompt": "17 times 24",
+  "expect": {
+   "commsIntent": "general_quick",
+   "status": "done",
+   "maxMs": 30000,
+   "mustContainAny": [
+    "re:(408|hundred (and )?eight)"
+   ]
+  }
+ },
+ {
+  "id": "gq-fact1",
+  "prompt": "how many days are in a leap year",
+  "expect": {
+   "commsIntent": "general_quick",
+   "status": "done",
+   "maxMs": 30000,
+   "mustContainAny": [
+    "re:(366|hundred (and )?sixty.six)"
+   ]
+  }
+ },
+ {
+  "id": "gq-fact2",
+  "prompt": "what is the capital of France",
+  "expect": {
+   "commsIntent": "general_quick",
+   "status": "done",
+   "maxMs": 30000,
+   "mustContain": [
+    "Paris"
+   ]
+  }
+ },
+ {
+  "id": "gq-fact3",
+  "prompt": "how many continents are there",
+  "expect": {
+   "commsIntent": "general_quick",
+   "status": "done",
+   "maxMs": 30000,
+   "mustContainAny": [
+    "7",
+    "seven"
+   ]
+  }
+ },
+ {
+  "id": "gq-fact4",
+  "prompt": "what is the largest planet",
+  "expect": {
+   "commsIntent": "general_quick",
+   "status": "done",
+   "maxMs": 30000,
+   "mustContain": [
+    "Jupiter"
+   ]
+  }
+ },
+ {
+  "id": "gq-fact5",
+  "prompt": "what does DNA stand for",
+  "expect": {
+   "commsIntent": "general_quick",
+   "status": "done",
+   "maxMs": 30000,
+   "mustContain": [
+    "deoxyribonucleic"
+   ]
+  }
+ },
+ {
+  "id": "gq-opinion1",
+  "prompt": "is Vim better than Emacs?",
+  "expect": {
+   "status": [
+    "done",
+    "awaiting-approval"
+   ],
+   "maxMs": 120000,
+   "commsIntentIn": [
+    "general_quick",
+    "handoff"
+   ]
+  },
+  "approve": false
+ },
+ {
+  "id": "gq-opinion2",
+  "prompt": "pineapple on pizza, yes or no?",
+  "expect": {
+   "status": "done",
+   "maxMs": 120000,
+   "commsIntentIn": [
+    "general_quick",
+    "handoff"
+   ]
+  }
+ },
+ {
+  "id": "gq-opinion3",
+  "prompt": "is a hotdog a sandwich?",
+  "expect": {
+   "status": "done",
+   "maxMs": 120000,
+   "commsIntentIn": [
+    "general_quick",
+    "handoff"
+   ]
+  }
+ },
+ {
+  "id": "gq-opinion4",
+  "prompt": "best programming language for beginners?",
+  "expect": {
+   "status": "done",
+   "maxMs": 120000,
+   "commsIntentIn": [
+    "general_quick",
+    "handoff"
+   ]
+  }
+ },
+ {
+  "id": "gq-def1",
+  "prompt": "what does photosynthesis mean",
+  "expect": {
+   "status": "done",
+   "maxMs": 120000,
+   "commsIntentIn": [
+    "general_quick",
+    "handoff"
+   ]
+  }
+ },
+ {
+  "id": "gq-def2",
+  "prompt": "define irony",
+  "expect": {
+   "status": "done",
+   "maxMs": 120000,
+   "commsIntentIn": [
+    "general_quick",
+    "handoff"
+   ]
+  }
+ },
+ {
+  "id": "gq-def3",
+  "prompt": "what is a metaphor",
+  "expect": {
+   "commsIntent": "general_quick",
+   "status": "done",
+   "maxMs": 30000
+  }
+ },
+ {
+  "id": "gq-translate1",
+  "prompt": "how do you say hello in French",
+  "expect": {
+   "commsIntent": "general_quick",
+   "status": "done",
+   "maxMs": 30000,
+   "mustContain": [
+    "bonjour"
+   ]
+  }
+ },
+ {
+  "id": "gq-translate2",
+  "prompt": "what is goodbye in Spanish",
+  "expect": {
+   "commsIntent": "general_quick",
+   "status": "done",
+   "maxMs": 30000,
+   "mustContainAny": [
+    "adios",
+    "adiós"
+   ]
+  }
+ },
+ {
+  "id": "gq-riddle",
+  "prompt": "give me a riddle",
+  "expect": {
+   "commsIntent": "general_quick",
+   "status": "done",
+   "maxMs": 30000
+  }
+ },
+ {
+  "id": "gq-quote",
+  "prompt": "give me a motivational quote",
+  "expect": {
+   "commsIntent": "general_quick",
+   "status": "done",
+   "maxMs": 30000
+  }
+ },
+ {
+  "id": "gq-bored",
+  "prompt": "im bored",
+  "expect": {
+   "commsIntent": "general_quick",
+   "status": "done",
+   "maxMs": 30000
+  }
+ },
+ {
+  "id": "gq-help",
+  "prompt": "what can you help me with",
+  "expect": {
+   "commsIntent": "general_quick",
+   "status": "done",
+   "maxMs": 30000
+  }
+ },
+ {
+  "id": "gq-canyou",
+  "prompt": "what can you do",
+  "expect": {
+   "commsIntent": "general_quick",
+   "status": "done",
+   "maxMs": 30000
+  }
+ },
+ {
+  "id": "gq-color",
+  "prompt": "whats your favorite color",
+  "expect": {
+   "commsIntent": "general_quick",
+   "status": "done",
+   "maxMs": 30000
+  }
+ },
+ {
+  "id": "gq-name-q",
+  "prompt": "do you have a name",
+  "expect": {
+   "commsIntent": "general_quick",
+   "status": "done",
+   "maxMs": 30000
+  }
+ },
+ {
+  "id": "gq-weekday",
+  "prompt": "what does wednesday mean",
+  "expect": {
+   "commsIntent": "general_quick",
+   "status": "done",
+   "maxMs": 30000
+  }
+ },
+ {
+  "id": "gq-hemi",
+  "prompt": "which hemisphere is australia in",
+  "expect": {
+   "commsIntent": "general_quick",
+   "status": "done",
+   "maxMs": 30000,
+   "mustContain": [
+    "southern"
+   ]
+  }
+ },
+ {
+  "id": "gq-boiling",
+  "prompt": "at what temperature does water boil in fahrenheit",
+  "expect": {
+   "commsIntent": "general_quick",
+   "status": "done",
+   "maxMs": 30000,
+   "mustContain": [
+    "212"
+   ]
+  }
+ },
+ {
+  "id": "gq-spell",
+  "prompt": "how do you spell definitely",
+  "expect": {
+   "commsIntent": "general_quick",
+   "status": "done",
+   "maxMs": 30000,
+   "mustContainAny": [
+    "d-e-f-i-n-i-t-e-l-y",
+    "definitely"
+   ]
+  }
+ },
+ {
+  "id": "gq-acronym",
+  "prompt": "what does NASA stand for",
+  "expect": {
+   "commsIntent": "general_quick",
+   "status": "done",
+   "maxMs": 30000,
+   "mustContain": [
+    "aeronautics"
+   ]
+  }
+ }
+]

@@ -1,0 +1,532 @@
+[
+ {
+  "id": "mq-name-set",
+  "prompt": "my name is Ravi",
+  "sessionId": "e2e_mq_sess",
+  "expect": {
+   "commsIntent": "memory_quick",
+   "status": "done",
+   "maxMs": 30000
+  }
+ },
+ {
+  "id": "mq-name-get",
+  "prompt": "what is my name",
+  "sessionId": "e2e_mq_sess",
+  "expect": {
+   "commsIntent": "memory_quick",
+   "status": "done",
+   "maxMs": 30000,
+   "mustContain": [
+    "Ravi"
+   ]
+  }
+ },
+ {
+  "id": "mq-color-set",
+  "prompt": "my favorite color is teal",
+  "sessionId": "e2e_mq_sess",
+  "expect": {
+   "commsIntent": "memory_quick",
+   "status": "done",
+   "maxMs": 30000
+  }
+ },
+ {
+  "id": "mq-color-get",
+  "prompt": "what is my favorite color",
+  "sessionId": "e2e_mq_sess",
+  "expect": {
+   "commsIntent": "memory_quick",
+   "status": "done",
+   "maxMs": 30000,
+   "mustContain": [
+    "teal"
+   ]
+  }
+ },
+ {
+  "id": "mq-email-set",
+  "prompt": "my email is kai.test@example.com",
+  "sessionId": "e2e_mq_sess",
+  "expect": {
+   "commsIntent": "memory_quick",
+   "status": "done",
+   "maxMs": 30000
+  }
+ },
+ {
+  "id": "mq-email-get",
+  "prompt": "whats my email",
+  "sessionId": "e2e_mq_sess",
+  "expect": {
+   "commsIntent": "memory_quick",
+   "status": "done",
+   "maxMs": 30000,
+   "mustContain": [
+    "kai.test@example.com"
+   ]
+  }
+ },
+ {
+  "id": "mq-job-set",
+  "prompt": "I work as a product designer",
+  "sessionId": "e2e_mq_sess",
+  "expect": {
+   "commsIntent": "memory_quick",
+   "status": "done",
+   "maxMs": 30000
+  }
+ },
+ {
+  "id": "mq-job-get",
+  "prompt": "what is my job",
+  "sessionId": "e2e_mq_sess",
+  "expect": {
+   "commsIntent": "memory_quick",
+   "status": "done",
+   "maxMs": 30000,
+   "mustContain": [
+    "designer"
+   ]
+  }
+ },
+ {
+  "id": "mq-city-set",
+  "prompt": "I live in Austin",
+  "sessionId": "e2e_mq_sess",
+  "expect": {
+   "commsIntent": "memory_quick",
+   "status": "done",
+   "maxMs": 30000
+  }
+ },
+ {
+  "id": "mq-city-get",
+  "prompt": "where do I live",
+  "sessionId": "e2e_mq_sess",
+  "expect": {
+   "commsIntent": "memory_quick",
+   "status": "done",
+   "maxMs": 30000,
+   "mustContain": [
+    "Austin"
+   ]
+  }
+ },
+ {
+  "id": "mq-pet-set",
+  "prompt": "my dog is named Biscuit",
+  "sessionId": "e2e_mq_sess",
+  "expect": {
+   "commsIntent": "memory_quick",
+   "status": "done",
+   "maxMs": 30000
+  }
+ },
+ {
+  "id": "mq-pet-get",
+  "prompt": "what is my dog named",
+  "sessionId": "e2e_mq_sess",
+  "expect": {
+   "commsIntent": "memory_quick",
+   "status": "done",
+   "maxMs": 30000,
+   "mustContain": [
+    "Biscuit"
+   ]
+  }
+ },
+ {
+  "id": "mq-age-set",
+  "prompt": "I am 29 years old",
+  "sessionId": "e2e_mq_sess",
+  "expect": {
+   "commsIntent": "memory_quick",
+   "status": "done",
+   "maxMs": 30000
+  }
+ },
+ {
+  "id": "mq-age-get",
+  "prompt": "how old am I",
+  "sessionId": "e2e_mq_sess",
+  "expect": {
+   "commsIntent": "memory_quick",
+   "status": "done",
+   "maxMs": 30000,
+   "mustContain": [
+    "29"
+   ]
+  }
+ },
+ {
+  "id": "mq-food-set",
+  "prompt": "my favorite food is ramen",
+  "sessionId": "e2e_mq_sess",
+  "expect": {
+   "commsIntent": "memory_quick",
+   "status": "done",
+   "maxMs": 30000
+  }
+ },
+ {
+  "id": "mq-food-get",
+  "prompt": "whats my favorite food",
+  "sessionId": "e2e_mq_sess",
+  "expect": {
+   "commsIntent": "memory_quick",
+   "status": "done",
+   "maxMs": 30000,
+   "mustContain": [
+    "ramen"
+   ]
+  }
+ },
+ {
+  "id": "mq-car-set",
+  "prompt": "I drive a blue Civic",
+  "sessionId": "e2e_mq_sess",
+  "expect": {
+   "commsIntent": "memory_quick",
+   "status": "done",
+   "maxMs": 30000
+  }
+ },
+ {
+  "id": "mq-car-get",
+  "prompt": "what car do I drive",
+  "sessionId": "e2e_mq_sess",
+  "expect": {
+   "commsIntent": "memory_quick",
+   "status": "done",
+   "maxMs": 30000,
+   "mustContain": [
+    "Civic"
+   ]
+  }
+ },
+ {
+  "id": "mq-bday-set",
+  "prompt": "my birthday is March 14",
+  "sessionId": "e2e_mq_sess",
+  "expect": {
+   "commsIntent": "memory_quick",
+   "status": "done",
+   "maxMs": 30000
+  }
+ },
+ {
+  "id": "mq-bday-get",
+  "prompt": "when is my birthday",
+  "sessionId": "e2e_mq_sess",
+  "expect": {
+   "commsIntent": "memory_quick",
+   "status": "done",
+   "maxMs": 30000,
+   "mustContain": [
+    "March 14",
+    "march 14"
+   ]
+  }
+ },
+ {
+  "id": "mq-phone-set",
+  "prompt": "my phone number is 555-0134",
+  "sessionId": "e2e_mq_sess",
+  "expect": {
+   "commsIntent": "memory_quick",
+   "status": "done",
+   "maxMs": 30000
+  }
+ },
+ {
+  "id": "mq-phone-get",
+  "prompt": "what is my phone number",
+  "sessionId": "e2e_mq_sess",
+  "expect": {
+   "commsIntent": "memory_quick",
+   "status": "done",
+   "maxMs": 30000,
+   "mustContain": [
+    "555-0134"
+   ]
+  }
+ },
+ {
+  "id": "mq-sport-set",
+  "prompt": "my favorite sport is basketball",
+  "sessionId": "e2e_mq_sess",
+  "expect": {
+   "commsIntent": "memory_quick",
+   "status": "done",
+   "maxMs": 30000
+  }
+ },
+ {
+  "id": "mq-sport-get",
+  "prompt": "what sport do I like",
+  "sessionId": "e2e_mq_sess",
+  "expect": {
+   "commsIntent": "memory_quick",
+   "status": "done",
+   "maxMs": 30000,
+   "mustContain": [
+    "basketball"
+   ]
+  }
+ },
+ {
+  "id": "mq-lang-set",
+  "prompt": "I speak Portuguese",
+  "sessionId": "e2e_mq_sess",
+  "expect": {
+   "commsIntent": "memory_quick",
+   "status": "done",
+   "maxMs": 30000
+  }
+ },
+ {
+  "id": "mq-lang-get",
+  "prompt": "what language do I speak",
+  "sessionId": "e2e_mq_sess",
+  "expect": {
+   "commsIntent": "memory_quick",
+   "status": "done",
+   "maxMs": 30000,
+   "mustContain": [
+    "Portuguese"
+   ]
+  }
+ },
+ {
+  "id": "mq-movie-set",
+  "prompt": "my favorite movie is Spirited Away",
+  "sessionId": "e2e_mq_sess",
+  "expect": {
+   "commsIntent": "memory_quick",
+   "status": "done",
+   "maxMs": 30000
+  }
+ },
+ {
+  "id": "mq-movie-get",
+  "prompt": "whats my favorite movie",
+  "sessionId": "e2e_mq_sess",
+  "expect": {
+   "commsIntent": "memory_quick",
+   "status": "done",
+   "maxMs": 30000,
+   "mustContain": [
+    "Spirited Away"
+   ]
+  }
+ },
+ {
+  "id": "mq-music-set",
+  "prompt": "my favorite band is Radiohead",
+  "sessionId": "e2e_mq_sess",
+  "expect": {
+   "commsIntent": "memory_quick",
+   "status": "done",
+   "maxMs": 30000
+  }
+ },
+ {
+  "id": "mq-music-get",
+  "prompt": "what is my favorite band",
+  "sessionId": "e2e_mq_sess",
+  "expect": {
+   "commsIntent": "memory_quick",
+   "status": "done",
+   "maxMs": 30000,
+   "mustContain": [
+    "Radiohead"
+   ]
+  }
+ },
+ {
+  "id": "mq-drink-set",
+  "prompt": "my favorite drink is matcha",
+  "sessionId": "e2e_mq_sess",
+  "expect": {
+   "commsIntent": "memory_quick",
+   "status": "done",
+   "maxMs": 30000
+  }
+ },
+ {
+  "id": "mq-drink-get",
+  "prompt": "whats my favorite drink",
+  "sessionId": "e2e_mq_sess",
+  "expect": {
+   "commsIntent": "memory_quick",
+   "status": "done",
+   "maxMs": 30000,
+   "mustContain": [
+    "matcha"
+   ]
+  }
+ },
+ {
+  "id": "mq-editor-set",
+  "prompt": "my code editor is VS Code",
+  "sessionId": "e2e_mq_sess",
+  "expect": {
+   "commsIntent": "memory_quick",
+   "status": "done",
+   "maxMs": 30000
+  }
+ },
+ {
+  "id": "mq-editor-get",
+  "prompt": "what editor do I use",
+  "sessionId": "e2e_mq_sess",
+  "expect": {
+   "commsIntent": "memory_quick",
+   "status": "done",
+   "maxMs": 30000,
+   "mustContain": [
+    "VS Code"
+   ]
+  }
+ },
+ {
+  "id": "mq-hobby-set",
+  "prompt": "my hobby is rock climbing",
+  "sessionId": "e2e_mq_sess",
+  "expect": {
+   "commsIntent": "memory_quick",
+   "status": "done",
+   "maxMs": 30000
+  }
+ },
+ {
+  "id": "mq-hobby-get",
+  "prompt": "what is my hobby",
+  "sessionId": "e2e_mq_sess",
+  "expect": {
+   "commsIntent": "memory_quick",
+   "status": "done",
+   "maxMs": 30000,
+   "mustContain": [
+    "climbing"
+   ]
+  }
+ },
+ {
+  "id": "mq-coffee-set",
+  "prompt": "I take my coffee black",
+  "sessionId": "e2e_mq_sess",
+  "expect": {
+   "commsIntent": "memory_quick",
+   "status": "done",
+   "maxMs": 30000
+  }
+ },
+ {
+  "id": "mq-coffee-get",
+  "prompt": "how do I take my coffee",
+  "sessionId": "e2e_mq_sess",
+  "expect": {
+   "commsIntent": "memory_quick",
+   "status": "done",
+   "maxMs": 30000,
+   "mustContain": [
+    "black"
+   ]
+  }
+ },
+ {
+  "id": "mq-team-set",
+  "prompt": "my favorite team is the Warriors",
+  "sessionId": "e2e_mq_sess",
+  "expect": {
+   "commsIntent": "memory_quick",
+   "status": "done",
+   "maxMs": 30000
+  }
+ },
+ {
+  "id": "mq-team-get",
+  "prompt": "what is my favorite team",
+  "sessionId": "e2e_mq_sess",
+  "expect": {
+   "commsIntent": "memory_quick",
+   "status": "done",
+   "maxMs": 30000,
+   "mustContain": [
+    "Warriors"
+   ]
+  }
+ },
+ {
+  "id": "mq-wife-set",
+  "prompt": "my wife is named Lena",
+  "sessionId": "e2e_mq_sess",
+  "expect": {
+   "commsIntent": "memory_quick",
+   "status": "done",
+   "maxMs": 30000
+  }
+ },
+ {
+  "id": "mq-wife-get",
+  "prompt": "what is my wife named",
+  "sessionId": "e2e_mq_sess",
+  "expect": {
+   "commsIntent": "memory_quick",
+   "status": "done",
+   "maxMs": 30000,
+   "mustContain": [
+    "Lena"
+   ]
+  }
+ },
+ {
+  "id": "mq-school-set",
+  "prompt": "I study computer science",
+  "sessionId": "e2e_mq_sess",
+  "expect": {
+   "commsIntent": "memory_quick",
+   "status": "done",
+   "maxMs": 30000
+  }
+ },
+ {
+  "id": "mq-school-get",
+  "prompt": "what do I study",
+  "sessionId": "e2e_mq_sess",
+  "expect": {
+   "commsIntent": "memory_quick",
+   "status": "done",
+   "maxMs": 30000,
+   "mustContain": [
+    "computer science"
+   ]
+  }
+ },
+ {
+  "id": "mq-allerg-set",
+  "prompt": "I am allergic to peanuts",
+  "sessionId": "e2e_mq_sess",
+  "expect": {
+   "commsIntent": "memory_quick",
+   "status": "done",
+   "maxMs": 30000
+  }
+ },
+ {
+  "id": "mq-allerg-get",
+  "prompt": "what am I allergic to",
+  "sessionId": "e2e_mq_sess",
+  "expect": {
+   "commsIntent": "memory_quick",
+   "status": "done",
+   "maxMs": 30000,
+   "mustContain": [
+    "peanut"
+   ]
+  }
+ }
+]

@@ -1,0 +1,693 @@
+{
+  "file": "tests/e2e/prompts/intent-general-quick.json",
+  "at": "2026-09-28T10:50:52.757Z",
+  "results": [
+    {
+      "id": "gq-hi",
+      "prompt": "hi",
+      "status": "done",
+      "totalMs": 4656,
+      "resultText": "",
+      "failures": [],
+      "pass": true,
+      "commsIntent": "general_quick",
+      "wallMs": 12478,
+      "graphIntent": null
+    },
+    {
+      "id": "gq-hello",
+      "prompt": "hello there",
+      "status": "done",
+      "totalMs": 1511,
+      "resultText": "",
+      "failures": [],
+      "pass": true,
+      "commsIntent": "general_quick",
+      "wallMs": 12722,
+      "graphIntent": null
+    },
+    {
+      "id": "gq-hey",
+      "prompt": "hey",
+      "status": "done",
+      "totalMs": 2299,
+      "resultText": "",
+      "failures": [],
+      "pass": true,
+      "commsIntent": "general_quick",
+      "wallMs": 12157,
+      "graphIntent": null
+    },
+    {
+      "id": "gq-morning",
+      "prompt": "good morning",
+      "status": "done",
+      "totalMs": 17371,
+      "resultText": "",
+      "failures": [],
+      "pass": true,
+      "commsIntent": "general_quick",
+      "wallMs": 22002,
+      "graphIntent": null
+    },
+    {
+      "id": "gq-afternoon",
+      "prompt": "good afternoon",
+      "status": "done",
+      "totalMs": 2184,
+      "resultText": "",
+      "failures": [],
+      "pass": true,
+      "commsIntent": "general_quick",
+      "wallMs": 12841,
+      "graphIntent": null
+    },
+    {
+      "id": "gq-night",
+      "prompt": "good night",
+      "status": "done",
+      "totalMs": 2982,
+      "resultText": "",
+      "failures": [],
+      "pass": true,
+      "commsIntent": "general_quick",
+      "wallMs": 12531,
+      "graphIntent": null
+    },
+    {
+      "id": "gq-thanks",
+      "prompt": "thanks!",
+      "status": "done",
+      "totalMs": 2369,
+      "resultText": "",
+      "failures": [],
+      "pass": true,
+      "commsIntent": "general_quick",
+      "wallMs": 12586,
+      "graphIntent": null
+    },
+    {
+      "id": "gq-thankyou",
+      "prompt": "thank you so much",
+      "status": "done",
+      "totalMs": 3336,
+      "resultText": "",
+      "failures": [],
+      "pass": true,
+      "commsIntent": "general_quick",
+      "wallMs": 12456,
+      "graphIntent": null
+    },
+    {
+      "id": "gq-thx",
+      "prompt": "thx",
+      "status": "done",
+      "totalMs": 2122,
+      "resultText": "",
+      "failures": [],
+      "pass": true,
+      "commsIntent": "general_quick",
+      "wallMs": 12498,
+      "graphIntent": null
+    },
+    {
+      "id": "gq-bye",
+      "prompt": "bye",
+      "status": "done",
+      "totalMs": 2275,
+      "resultText": "",
+      "failures": [],
+      "pass": true,
+      "commsIntent": "general_quick",
+      "wallMs": 12478,
+      "graphIntent": null
+    },
+    {
+      "id": "gq-seeya",
+      "prompt": "see you later",
+      "status": "done",
+      "totalMs": 3187,
+      "resultText": "",
+      "failures": [],
+      "pass": true,
+      "commsIntent": "general_quick",
+      "wallMs": 12527,
+      "graphIntent": null
+    },
+    {
+      "id": "gq-gtfo",
+      "prompt": "ok thats all",
+      "status": "done",
+      "totalMs": 2035,
+      "resultText": "",
+      "failures": [],
+      "pass": true,
+      "commsIntent": "general_quick",
+      "wallMs": 12728,
+      "graphIntent": null
+    },
+    {
+      "id": "gq-howru",
+      "prompt": "how are you?",
+      "status": "done",
+      "totalMs": 2020,
+      "resultText": "",
+      "failures": [],
+      "pass": true,
+      "commsIntent": "general_quick",
+      "wallMs": 12488,
+      "graphIntent": null
+    },
+    {
+      "id": "gq-wyd",
+      "prompt": "what are you up to",
+      "status": "done",
+      "totalMs": 2162,
+      "resultText": "",
+      "failures": [],
+      "pass": true,
+      "commsIntent": "general_quick",
+      "wallMs": 12503,
+      "graphIntent": null
+    },
+    {
+      "id": "gq-who",
+      "prompt": "what are you",
+      "status": "done",
+      "totalMs": 2269,
+      "resultText": "",
+      "failures": [],
+      "pass": true,
+      "commsIntent": "general_quick",
+      "wallMs": 12477,
+      "graphIntent": null
+    },
+    {
+      "id": "gq-joke1",
+      "prompt": "tell me a joke",
+      "status": "done",
+      "totalMs": 1899,
+      "resultText": "",
+      "failures": [],
+      "pass": true,
+      "commsIntent": "general_quick",
+      "wallMs": 12469,
+      "graphIntent": null
+    },
+    {
+      "id": "gq-joke2",
+      "prompt": "tell me another joke",
+      "status": "done",
+      "totalMs": 2202,
+      "resultText": "",
+      "failures": [],
+      "pass": true,
+      "commsIntent": "general_quick",
+      "wallMs": 12544,
+      "graphIntent": null
+    },
+    {
+      "id": "gq-funny",
+      "prompt": "say something funny",
+      "status": "done",
+      "totalMs": 11980,
+      "resultText": "A butler, a chef, and a personal assistant walk into a bar. The bartender says, \"What'll it be?\"\n\nThe butler replies, \"I'll have whatever the gentleman beside me would have ordered, had he thought to order it.\"\n\nThe chef shrugs. \"I'll have the soup.\"\n\nThe assistant leans in and whispers, \"I've already ordered for all three of you, scheduled it for 7 PM, and sent a follow-up reminder.\"\n\nThe bartender nods slowly. \"So... one drink and a lot of unsolicited advice.\"\n\nIf that didn't land, I can try again — or point you to [Reader's Digest's short jokes](https://www.rd.com/list/short-jokes/) or the [Laugh Factory](https://www.laughfactory.com/jokes) for a fresher batch.",
+      "failures": [
+        "commsIntent: expected \"general_quick\", got \"handoff\""
+      ],
+      "pass": false,
+      "taskId": "task_fe2bbd4e",
+      "commsIntent": "handoff",
+      "itemCount": 10,
+      "graphIntent": {
+        "intent": "general_knowledge",
+        "parser": "llm-decompose",
+        "subIntents": [
+          "general_knowledge"
+        ]
+      }
+    },
+    {
+      "id": "gq-math1",
+      "prompt": "what is 12 times 12",
+      "status": "done",
+      "totalMs": 1477,
+      "resultText": "One hundred and forty-four, sir — same as it was a moment ago.",
+      "failures": [
+        "mustContainAny: none of [144 | hundred forty | 140] found in result (62 chars)"
+      ],
+      "pass": false,
+      "commsIntent": "general_quick",
+      "wallMs": 14935,
+      "graphIntent": null
+    },
+    {
+      "id": "gq-math2",
+      "prompt": "whats 45 plus 67",
+      "status": "done",
+      "totalMs": 4155,
+      "resultText": "One hundred and twelve, sir.",
+      "failures": [
+        "mustContainAny: none of [112 | hundred twelve] found in result (28 chars)"
+      ],
+      "pass": false,
+      "commsIntent": "general_quick",
+      "wallMs": 16570,
+      "graphIntent": null
+    },
+    {
+      "id": "gq-math3",
+      "prompt": "what is 100 divided by 4",
+      "status": "done",
+      "totalMs": 15879,
+      "resultText": "Twenty-five, sir.",
+      "failures": [],
+      "pass": true,
+      "commsIntent": "general_quick",
+      "wallMs": 20369,
+      "graphIntent": null
+    },
+    {
+      "id": "gq-math4",
+      "prompt": "17 times 24",
+      "status": "done",
+      "totalMs": 15634,
+      "resultText": "One sec while I search for that.",
+      "failures": [
+        "mustContainAny: none of [408 | hundred eight] found in result (32 chars)"
+      ],
+      "pass": false,
+      "commsIntent": "general_quick",
+      "wallMs": 44661,
+      "graphIntent": null
+    },
+    {
+      "id": "gq-fact1",
+      "prompt": "how many days are in a leap year",
+      "status": "done",
+      "totalMs": 1890,
+      "resultText": "Three hundred and sixty-six, sir — one extra day for February.",
+      "failures": [],
+      "pass": true,
+      "commsIntent": "general_quick",
+      "wallMs": 15410,
+      "graphIntent": null
+    },
+    {
+      "id": "gq-fact2",
+      "prompt": "what is the capital of France",
+      "status": "done",
+      "totalMs": 3129,
+      "resultText": "Paris, sir — and a fine city it is.",
+      "failures": [],
+      "pass": true,
+      "commsIntent": "general_quick",
+      "wallMs": 14400,
+      "graphIntent": null
+    },
+    {
+      "id": "gq-fact3",
+      "prompt": "how many continents are there",
+      "status": "done",
+      "totalMs": 3001,
+      "resultText": "Seven, sir — though depending on which schoolroom you sat in, you may have been taught six.",
+      "failures": [],
+      "pass": true,
+      "commsIntent": "general_quick",
+      "wallMs": 14167,
+      "graphIntent": null
+    },
+    {
+      "id": "gq-fact4",
+      "prompt": "what is the largest planet",
+      "status": "done",
+      "totalMs": 2010,
+      "resultText": "Jupiter, sir — a gas giant so large that every other planet in the solar system could fit inside it twice over.",
+      "failures": [],
+      "pass": true,
+      "commsIntent": "general_quick",
+      "wallMs": 13998,
+      "graphIntent": null
+    },
+    {
+      "id": "gq-fact5",
+      "prompt": "what does DNA stand for",
+      "status": "done",
+      "totalMs": 9626,
+      "resultText": "**DNA** stands for **deoxyribonucleic acid** (pronounced *dee-OCK-see-rye-boh-new-CLAY-ick AS-id*).\n\nA few quick details worth knowing:\n\n- It's the molecule that carries the genetic instructions for the development, function, growth, and reproduction of living organisms — essentially the \"instruction manual\" for all the proteins that build and run your body.\n- It's a long, double-stranded molecule shaped like a **double helix**, formed by base pairs attached to a sugar-phosphate backbone.\n- A **nucleic acid** is an acidic substance found in the nucleus (the \"brain\") of a cell.\n\nOne common mix-up: it is *not* short for \"deoxyribose nucleic acid\" — the correct expansion is **deoxyribonucleic acid**, per sources like the [National Human Genome Research Institute](https://www.genome.gov/genetics-glossary/Deoxyribonucleic-Acid-DNA), [MedlinePlus Genetics](https://medlineplus.gov/genetics/understanding/basics/dna/), and [Cleveland Clinic](https://my.clevelandclinic.org/health/body/dna).",
+      "failures": [
+        "commsIntent: expected \"general_quick\", got \"handoff\""
+      ],
+      "pass": false,
+      "taskId": "task_e0cf99d2",
+      "commsIntent": "handoff",
+      "itemCount": 10,
+      "graphIntent": {
+        "intent": "general_knowledge",
+        "parser": "llm-decompose",
+        "subIntents": [
+          "general_knowledge"
+        ]
+      }
+    },
+    {
+      "id": "gq-opinion1",
+      "prompt": "is Vim better than Emacs?",
+      "status": "done",
+      "totalMs": 12992,
+      "resultText": "Short answer: there's no objective \"better\" — it depends on what you want from an editor. The Vim vs. Emacs debate is famously one of the longest-running in software.\n\n**Where Vim wins**\n- **Editing efficiency.** Vim's modal design means manipulating text requires less hand/finger movement, which many consider faster for pure editing ([Stack Overflow](https://stackoverflow.com/questions/1430164/differences-between-emacs-and-vim)).\n- **Lightweight.** Vim uses less memory and fewer system resources, making it ideal for remote servers or simple projects ([BlueVPS](https://bluevps.com/blog/vim-vs-emacs-similarities-and-differences), [OperaVPS](https://operavps.com/blog/emacs-vs-vim/)).\n\n**Where Emacs wins**\n- **Raw power and extensibility.** Emacs is arguably more powerful and unmatched for deep rewiring and automation ([Unix & Linux Stack Exchange](https://unix.stackexchange.com/questions/986/what-are-the-pros-and-cons-of-vim-and-emacs), [MonoVM](https://monovm.com/blog/emacs-vs-vim/)).\n- **Rich environments.** If you want a full development environment beyond a text editor — especially interaction with a REPL — Emacs is generally stronger ([OperaVPS](https://operavps.com/blog/emacs-vs-vim/), [Unix & Linux Stack Exchange](https://unix.stackexchange.com/questions/986/what-are-the-pros-and-cons-of-vim-and-emacs)).\n- **Customization.** Programmers tend to find Emacs far more customizable to particular requirements ([DEV Community](https://dev.to/george_udonte/emacs-and-vim-an-overview-for-beginners-2e65), [Diffen](https://www.diffen.com/difference/Emacs_vs_Vim)).\n\n**The tradeoffs**\n- Emacs has a steeper learning curve — even harder to learn than Vim ([r/vim](https://www.reddit.com/r/vim/comments/q3nnrh/convince_me_to_use_vim_over_emacs_and_nano/)).\n- Both are highly customizable and fully modal in their own ways, so the \"which is more powerful\" line blurs in practice ([Diffen](https://www.diffen.com/difference/Emacs_vs_Vim)).\n- Emacs invites more bikeshedding and navel-gazing over configuration ([Medium](https://medium.com/@julianmartinez/vim-vs-emacs-how-to-think-about-them-and-choose-your-editor-403456467456)).\n- Plenty of people use both: one author switched to Emacs but still reaches for Vim for quick notes and copy/paste ([Opensource.com](https://opensource.com/article/20/8/vim-to-emacs)).\n\n**Bottom line:** If you mainly want fast, lightweight text editing (especially on remote servers), Vim. If you want a deeply customizable, programmable environment that behaves more like an operating system, Emacs. Both are excellent — pick based on your workflow, not on which is \"objectively\" superior.",
+      "failures": [],
+      "pass": true,
+      "taskId": "task_55ac918d",
+      "commsIntent": "handoff",
+      "itemCount": 10,
+      "graphIntent": {
+        "intent": "general_knowledge",
+        "parser": "llm-decompose",
+        "subIntents": [
+          "general_knowledge"
+        ]
+      }
+    },
+    {
+      "id": "gq-opinion2",
+      "prompt": "pineapple on pizza, yes or no?",
+      "status": "done",
+      "totalMs": 9432,
+      "resultText": "It depends who you ask — and that's exactly why it's one of the internet's most durable arguments.\n\n**The \"yes\" camp:**\n- Chefs weighing in for [The Kitchn](https://www.thekitchn.com/does-pineapple-belong-on-pizza-23658128) landed on yes, mostly deferring to personal preference.\n- A [Medium piece](https://theallanaguirre.medium.com/does-pineapple-go-on-pizza-38f4d49099e9) takes the nuanced line: yes, but not on *every* pizza.\n- [Reddit's r/AskReddit](https://www.reddit.com/r/AskReddit/comments/b0bz1/pineapple_on_pizza_yes_or_no/) is full of conditional yeses — \"fuck yes, but only with Canadian bacon/ham.\"\n- [Quora](https://www.quora.com/Why-is-there-such-a-debate-about-if-pineapple-is-a-topping-on-pizza-or-not-Do-you-think-pineapples-should-be-on-pizzas) notes the practical argument: Hawaiian pizza sits on menus worldwide, so someone's ordering it.\n\n**The \"no\" camp:**\n- A [7 Cups thread](https://www.7cups.com/forum/welcome/ThoughtsIdeasIcebreakersandFun_744/PineappleonPizzaYesorNo_178303/?p=19) is blunt: \"Absolutely not. Pineapple was made for fruit salad and jello.\"\n- [The Huron Emery](https://thehuronemery.com/12410/opinion/pineapple-doesnt-belong-on-pizza/) argues the cold, sweet-sour fruit clashes with a warm, savory pie.\n- [Mountain Echo](https://aahsmountainecho.com/23212/uncategorized/no-pineapple-does-not-belong-on-pizza/) makes the same point, allowing that sweet-savory works elsewhere (chocolate pretzels, honey mustard) but not here.\n- [Made in New York Pizza](https://madeinnewyorkpizza.com/blog/does-pineapple-belong-on-pizza/) cites Gordon Ramsay as its authority against it.\n\nMy honest read: it's a topping, not a moral question. If you like sweet-savory, order it; if you don't, don't. The debate itself is more fun than the pizza.",
+      "failures": [],
+      "pass": true,
+      "taskId": "task_3ac542ec",
+      "commsIntent": "handoff",
+      "itemCount": 10,
+      "graphIntent": {
+        "intent": "general_knowledge",
+        "parser": "llm-decompose",
+        "subIntents": [
+          "general_knowledge"
+        ]
+      }
+    },
+    {
+      "id": "gq-opinion3",
+      "prompt": "is a hotdog a sandwich?",
+      "status": "done",
+      "totalMs": 9474,
+      "resultText": "It depends entirely on which definition you accept — which is why this debate never dies.\n\n**The case for \"yes\"**\n- The USDA defines a sandwich as \"a meat or poultry filling between two slices of bread, a bun, or a biscuit.\" By that literal standard, a hot dog clearly qualifies, as the [Food52 editorial team](https://food52.com/story/26365-are-hot-dogs-sandwiches) notes.\n\n**The case for \"no\"**\n- The [National Hot Dog and Sausage Council](https://www.hot-dog.org/culture/hot-dog-sandwich) officially ruled that a hot dog is *not* a sandwich, arguing that \"limiting the hot dog's significance by saying it's 'just a sandwich' is like calling the Dalai Lama 'just a guy.'\" They also point to the \"open\" nature of a hot dog in a bun.\n- The [Indiana University Journal of Undergraduate Research](https://iujur.iu.edu/features/archives/2018-2019/hot-dog.html) and a [PMC philosophy-of-science article](https://pmc.ncbi.nlm.nih.gov/articles/PMC12360221/) both cover that same ruling, with the hot dog said to have \"transcended the sandwich.\"\n\n**The \"it's both and neither\" camp**\n- [r/eatsandwiches](https://www.reddit.com/r/eatsandwiches/comments/t1cri2/hot_dogs_are_sandwiches_right/) sums up the fatigue: \"You already know the answer is both yes and no.\" One commenter argues the bun doesn't make it a sandwich — rather, the hot dog claims the bun as *its* bun.\n\nIf you want more of the debate, there's a whole YouTube channel devoted to it, [A Hot Dog Is A Sandwich](https://www.youtube.com/@ahotdogisasandwich), and it's been re-litigated by everyone from [Twisted](https://www.facebook.com/JungleTwisted/posts/is-a-hot-dog-a-sandwich-/1200352872137093/) and [Kroger](https://www.facebook.com/Kroger/posts/if-a-hot-dog-isnt-a-sandwich-then-what-is-it/1550443400212078/) to [Martha Stewart](https://www.facebook.com/TheDrewBarrymoreShow/posts/is-a-hotdog-a-sandwich-martha-stewart-settles-the-debate-once-and-for-all/576514327992810/).\n\n**Bottom line:** Structurally, yes — it's a filling in bread. Culturally and officially (per the hot dog industry itself), no — it's its own category.",
+      "failures": [],
+      "pass": true,
+      "taskId": "task_3b8938e8",
+      "commsIntent": "handoff",
+      "itemCount": 10,
+      "graphIntent": {
+        "intent": "general_knowledge",
+        "parser": "llm-decompose",
+        "subIntents": [
+          "general_knowledge"
+        ]
+      }
+    },
+    {
+      "id": "gq-opinion4",
+      "prompt": "best programming language for beginners?",
+      "status": "done",
+      "totalMs": 10955,
+      "resultText": "**Python is the most-recommended first language**, but the \"best\" choice depends on your goals.\n\n**Python** — the near-universal starting point. Multiple sources point to it: [Arduino's education guide](https://www.arduino.cc/education/what-coding-language-to-learn-first/) notes it avoids complex syntax, [CareerVillage](https://www.careervillage.org/questions/810876/what-is-the-best-coding-language-to-learn-as-a-beginner) highlights three features that make it ideal for newcomers, and [Coding Temple](https://www.codingtemple.com/blog/easiest-programming-languages-to-learn/) says the syntax is clean enough to read aloud and follow. It's free, open-source, readable, and has a huge community plus strong libraries for data science and machine learning ([University of the People](https://www.uopeople.edu/blog/programming-for-beginners-languages-you-need-to-know/)).\n\n**JavaScript** — the other top beginner pick. [Zero To Mastery](https://zerotomastery.io/blog/best-beginner-programming-language/) rates both Python and JavaScript as high-level, easy-to-pick-up, beginner-friendly languages. Once you know JavaScript, [TypeScript](https://www.fullstackacademy.com/blog/nine-best-programming-languages-to-learn) is simple to learn and now used by over 43% of developers.\n\n**C** — a harder but valuable first language. [SmartBear](https://smartbear.com/blog/best-programming-language-to-learn-first/) argues it teaches how a computer actually works, and since nearly all other languages are implemented in it, learning C makes C++ and C# far easier afterward.\n\n**Java** — a solid choice, especially for structured learning. The [r/programming](https://www.reddit.com/r/programming/comments/xhrb7k/beginner_here_which_programming_language_to_begin/) discussion calls Java \"a perfect tool\" for learning basic programming.\n\n**Ruby** — noted on [Sololearn](https://www.sololearn.com/en/Discuss/1510924/what-is-the-best-programming-language-for-beginners) as \"the simplest language for non-coders.\"\n\nOne point worth weighing: the [MonkeyJungleJuice essay](https://monkeyjunglejuice.github.io/blog/best-programming-language-for-beginner.essay.html) stresses that **learning material availability matters most** — many books and courses target people who already program, not absolute beginners.\n\n**Bottom line:** If you want the safest default, pick Python. If you want to build websites, start with JavaScript. If you want to understand how computers work deeply, learn C. If you already lean toward Java, that's perfectly fine too — the key is picking one and sticking with it.",
+      "failures": [],
+      "pass": true,
+      "taskId": "task_efd8cdcb",
+      "commsIntent": "handoff",
+      "itemCount": 10,
+      "graphIntent": {
+        "intent": "web_search",
+        "parser": "llm-decompose",
+        "subIntents": [
+          "web_search"
+        ]
+      }
+    },
+    {
+      "id": "gq-def1",
+      "prompt": "what does photosynthesis mean",
+      "status": "done",
+      "totalMs": 21100,
+      "resultText": "**Photosynthesis** is the process plants, algae, and some bacteria use to convert light energy into chemical energy. They take in carbon dioxide and water, use sunlight (captured by chlorophyll) to drive the reaction, and produce glucose (sugar) plus oxygen as a byproduct.\n\nThe word itself breaks down neatly: *photo-* means \"light\" and *synthesis* means \"to put together\" — so literally \"putting together with light.\" There's a related discussion on the etymology of the term here: [r/etymology](https://www.reddit.com/r/etymology/comments/qfxw0a/why_is_it_called_photosynthesis_and_not/).\n\nIn short: light + CO₂ + water → sugar + oxygen, and nearly all life on Earth ultimately depends on it for food and breathable air.",
+      "failures": [],
+      "pass": true,
+      "taskId": "task_37bf8c94",
+      "commsIntent": "handoff",
+      "itemCount": 10,
+      "graphIntent": {
+        "intent": "general_knowledge",
+        "parser": "llm-decompose",
+        "subIntents": [
+          "general_knowledge"
+        ]
+      }
+    },
+    {
+      "id": "gq-def2",
+      "prompt": "define irony",
+      "status": "done",
+      "totalMs": 9460,
+      "resultText": "**Irony** is the contrast between what is said or what happens and what is actually meant or expected.\n\nAt its core, irony involves a departure from expectations — whether in literature, rhetoric, or everyday life. As [Oregon State's guide to literary terms](https://liberalarts.oregonstate.edu/wlf/what-irony) puts it, irony occurs whenever a person says or does something that departs from what they (or we) expect them to say or do. [Scribbr](https://www.scribbr.com/rhetoric/irony/) frames it as a literary and rhetorical device in which events or statements contrast sharply with expectations, while [Reedsy](https://reedsy.com/blog/guide/irony/) defines it simply as when something happens — or is said — that is the opposite of what is typically expected.\n\n**Key definitions from major sources:**\n\n- [Merriam-Webster](https://www.merriam-webster.com/dictionary/irony) highlights dramatic irony specifically: the contradiction between the situation developed in a drama and the words or actions of the characters — understood by the audience but not by the characters themselves.\n- [Cambridge Dictionary](https://dictionary.cambridge.org/us/dictionary/english/irony) emphasizes the rhetorical sense: a style of writing with a noticeable, often humorous difference between what is said and the intended meaning.\n- [Wikipedia](https://en.wikipedia.org/wiki/Irony) notes the general definition that emerged over time: \"the expression of one's meaning by using language that normally signifies the opposite, typically for humorous or emphatic effect.\"\n- [Dictionary.com](https://www.dictionary.com/browse/irony) stresses the indirect presentation of a contradiction between an action or expression and the context in which it occurs, distinguishing irony from sarcasm and satire (both of which indicate mockery).\n\n**Three common types** (per [this literary guide video](https://www.youtube.com/watch?v=q6e0oNVx8Uk)):\n\n- **Verbal irony** — saying one thing while meaning the opposite.\n- **Dramatic irony** — the audience knows something the characters don't.\n- **Situational irony** — an outcome that reverses what was expected.\n\nIt's worth noting that [The MIT Press Reader](https://thereader.mitpress.mit.edu/what-irony-is-not/) points out how widely dictionaries differ, and cautions against overextending the term — not every coincidence or unfortunate event is truly ironic.",
+      "failures": [],
+      "pass": true,
+      "taskId": "task_58dc1bf1",
+      "commsIntent": "handoff",
+      "itemCount": 10,
+      "graphIntent": {
+        "intent": "general_knowledge",
+        "parser": "llm-decompose",
+        "subIntents": [
+          "general_knowledge"
+        ]
+      }
+    },
+    {
+      "id": "gq-def3",
+      "prompt": "what is a metaphor",
+      "status": "done",
+      "totalMs": 3510,
+      "resultText": "",
+      "failures": [],
+      "pass": true,
+      "commsIntent": "general_quick",
+      "wallMs": 12463,
+      "graphIntent": null
+    },
+    {
+      "id": "gq-translate1",
+      "prompt": "how do you say hello in French",
+      "status": "done",
+      "totalMs": 10168,
+      "resultText": "\"Bonjour\" — that's the standard. \"Salut\" works too, though it's more casual.",
+      "failures": [],
+      "pass": true,
+      "commsIntent": "general_quick",
+      "wallMs": 15533,
+      "graphIntent": null
+    },
+    {
+      "id": "gq-translate2",
+      "prompt": "what is goodbye in Spanish",
+      "status": "done",
+      "totalMs": 2998,
+      "resultText": "\"Adiós\" — that's the standard farewell. \"Hasta luego\" works well too, if you mean \"see you later.\"",
+      "failures": [],
+      "pass": true,
+      "commsIntent": "general_quick",
+      "wallMs": 13900,
+      "graphIntent": null
+    },
+    {
+      "id": "gq-riddle",
+      "prompt": "give me a riddle",
+      "status": "done",
+      "totalMs": 7457,
+      "resultText": "**Riddle:** What lives if you feed it, but dies if you give it a drink?\n\n---\n\nWant the answer, or another one?",
+      "failures": [
+        "commsIntent: expected \"general_quick\", got \"handoff\""
+      ],
+      "pass": false,
+      "taskId": "task_893d405f",
+      "commsIntent": "handoff",
+      "itemCount": 10,
+      "graphIntent": {
+        "intent": "general_knowledge",
+        "parser": "llm-decompose",
+        "subIntents": [
+          "general_knowledge"
+        ]
+      }
+    },
+    {
+      "id": "gq-quote",
+      "prompt": "give me a motivational quote",
+      "status": "done",
+      "totalMs": 2079,
+      "resultText": "",
+      "failures": [],
+      "pass": true,
+      "commsIntent": "general_quick",
+      "wallMs": 12709,
+      "graphIntent": null
+    },
+    {
+      "id": "gq-bored",
+      "prompt": "im bored",
+      "status": "done",
+      "totalMs": 3325,
+      "resultText": "",
+      "failures": [],
+      "pass": true,
+      "commsIntent": "general_quick",
+      "wallMs": 12470,
+      "graphIntent": null
+    },
+    {
+      "id": "gq-help",
+      "prompt": "what can you help me with",
+      "status": "done",
+      "totalMs": 2413,
+      "resultText": "",
+      "failures": [],
+      "pass": true,
+      "commsIntent": "general_quick",
+      "wallMs": 12472,
+      "graphIntent": null
+    },
+    {
+      "id": "gq-canyou",
+      "prompt": "what can you do",
+      "status": "done",
+      "totalMs": 3381,
+      "resultText": "",
+      "failures": [],
+      "pass": true,
+      "commsIntent": "general_quick",
+      "wallMs": 12476,
+      "graphIntent": null
+    },
+    {
+      "id": "gq-color",
+      "prompt": "whats your favorite color",
+      "status": "done",
+      "totalMs": 3089,
+      "resultText": "",
+      "failures": [],
+      "pass": true,
+      "commsIntent": "general_quick",
+      "wallMs": 12455,
+      "graphIntent": null
+    },
+    {
+      "id": "gq-name-q",
+      "prompt": "do you have a name",
+      "status": "done",
+      "totalMs": 3524,
+      "resultText": "",
+      "failures": [],
+      "pass": true,
+      "commsIntent": "general_quick",
+      "wallMs": 12537,
+      "graphIntent": null
+    },
+    {
+      "id": "gq-weekday",
+      "prompt": "what does wednesday mean",
+      "status": "done",
+      "totalMs": 9440,
+      "resultText": "**Wednesday** is the day of the week between Tuesday and Thursday — the fourth day of the week (or third if the week starts on Sunday), and the third working day of the typical work week.\n\n**Etymology:** The name comes from Old English *Wōdnesdæg*, meaning \"Woden's day.\" It's a Germanic loan-translation of the Latin *dies Mercurii* (\"day of Mercury\"), matching how other languages name the day after Mercury — for example Welsh *Dydd Mercher* and Dutch *woensdag* (from *Wodan's day*).\n\nSources: [Merriam-Webster](https://www.merriam-webster.com/dictionary/Wednesday), [Cambridge Dictionary](https://dictionary.cambridge.org/us/dictionary/english/wednesday), [Online Etymology Dictionary](https://www.etymonline.com/word/Wednesday), [Wikipedia](https://en.wikipedia.org/wiki/Wednesday)",
+      "failures": [
+        "commsIntent: expected \"general_quick\", got \"handoff\""
+      ],
+      "pass": false,
+      "taskId": "task_88548368",
+      "commsIntent": "handoff",
+      "itemCount": 10,
+      "graphIntent": {
+        "intent": "general_knowledge",
+        "parser": "llm-decompose",
+        "subIntents": [
+          "general_knowledge"
+        ]
+      }
+    },
+    {
+      "id": "gq-hemi",
+      "prompt": "which hemisphere is australia in",
+      "status": "done",
+      "totalMs": 8059,
+      "resultText": "Australia is in the **Southern Hemisphere** — it lies south of the equator. It's also in the **Eastern Hemisphere**, since it sits east of the Prime Meridian.\n\nSo more precisely: Australia spans both the Southern and Eastern Hemispheres. The continent lies between the Indian and Pacific Oceans, and its capital, Canberra, is in the southeast.\n\nSources: [Britannica](https://www.britannica.com/place/Australia), [CK-12](https://www.ck12.org/flexi/cbse-math/surface-area-of-spheres/what-is-the-hemisphere-of-australia/)",
+      "failures": [
+        "commsIntent: expected \"general_quick\", got \"handoff\""
+      ],
+      "pass": false,
+      "taskId": "task_0386a8b1",
+      "commsIntent": "handoff",
+      "itemCount": 10,
+      "graphIntent": {
+        "intent": "general_knowledge",
+        "parser": "llm-decompose",
+        "subIntents": [
+          "general_knowledge"
+        ]
+      }
+    },
+    {
+      "id": "gq-boiling",
+      "prompt": "at what temperature does water boil in fahrenheit",
+      "status": "done",
+      "totalMs": 23071,
+      "resultText": "Water boils at 212°F at standard sea-level pressure (1 atm). Lower pressure lowers the boiling point; higher pressure raises it.",
+      "failures": [
+        "commsIntent: expected \"general_quick\", got \"handoff\""
+      ],
+      "pass": false,
+      "taskId": "task_910ba5d0",
+      "commsIntent": "handoff",
+      "itemCount": 0,
+      "graphIntent": {
+        "intent": "command_automate",
+        "parser": "llm-decompose",
+        "subIntents": [
+          "command_automate"
+        ]
+      }
+    },
+    {
+      "id": "gq-spell",
+      "prompt": "how do you spell definitely",
+      "status": "done",
+      "totalMs": 3098,
+      "resultText": "\"D-e-f-i-n-i-t-e-l-y\" — the trick is remembering there's no \"a\" in the middle, despite how it sounds.",
+      "failures": [],
+      "pass": true,
+      "commsIntent": "general_quick",
+      "wallMs": 15659,
+      "graphIntent": null
+    },
+    {
+      "id": "gq-acronym",
+      "prompt": "what does NASA stand for",
+      "status": "done",
+      "totalMs": 7952,
+      "resultText": "NASA stands for **National Aeronautics and Space Administration**.\n\nIt's a U.S. government agency responsible for science and technology related to air and space, established on October 1, 1958.",
+      "failures": [
+        "commsIntent: expected \"general_quick\", got \"handoff\""
+      ],
+      "pass": false,
+      "taskId": "task_91f18153",
+      "commsIntent": "handoff",
+      "itemCount": 10,
+      "graphIntent": {
+        "intent": "general_knowledge",
+        "parser": "llm-decompose",
+        "subIntents": [
+          "general_knowledge"
+        ]
+      }
+    }
+  ]
+}

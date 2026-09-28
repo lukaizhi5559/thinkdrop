@@ -1,0 +1,398 @@
+[
+ {
+  "id": "cs-01",
+  "prompt": "cancel",
+  "expect": {
+   "commsIntent": "control_signal",
+   "status": "done",
+   "maxMs": 20000
+  }
+ },
+ {
+  "id": "cs-02",
+  "prompt": "cancel that",
+  "expect": {
+   "commsIntent": "control_signal",
+   "status": "done",
+   "maxMs": 20000
+  }
+ },
+ {
+  "id": "cs-03",
+  "prompt": "cancel my task",
+  "expect": {
+   "commsIntent": "control_signal",
+   "status": "done",
+   "maxMs": 20000
+  }
+ },
+ {
+  "id": "cs-04",
+  "prompt": "cancel the task",
+  "expect": {
+   "commsIntent": "control_signal",
+   "status": "done",
+   "maxMs": 20000
+  }
+ },
+ {
+  "id": "cs-05",
+  "prompt": "cancel it",
+  "expect": {
+   "commsIntent": "control_signal",
+   "status": "done",
+   "maxMs": 20000
+  }
+ },
+ {
+  "id": "cs-06",
+  "prompt": "stop",
+  "expect": {
+   "commsIntent": "control_signal",
+   "status": "done",
+   "maxMs": 20000
+  }
+ },
+ {
+  "id": "cs-07",
+  "prompt": "stop that",
+  "expect": {
+   "commsIntent": "control_signal",
+   "status": "done",
+   "maxMs": 20000
+  }
+ },
+ {
+  "id": "cs-08",
+  "prompt": "stop the task",
+  "expect": {
+   "commsIntent": "control_signal",
+   "status": "done",
+   "maxMs": 20000
+  }
+ },
+ {
+  "id": "cs-09",
+  "prompt": "stop it",
+  "expect": {
+   "commsIntent": "control_signal",
+   "status": "done",
+   "maxMs": 20000
+  }
+ },
+ {
+  "id": "cs-10",
+  "prompt": "halt",
+  "expect": {
+   "commsIntent": "control_signal",
+   "status": "done",
+   "maxMs": 20000
+  }
+ },
+ {
+  "id": "cs-11",
+  "prompt": "abort",
+  "expect": {
+   "commsIntent": "control_signal",
+   "status": "done",
+   "maxMs": 20000
+  }
+ },
+ {
+  "id": "cs-12",
+  "prompt": "abort the task",
+  "expect": {
+   "commsIntent": "control_signal",
+   "status": "done",
+   "maxMs": 20000
+  }
+ },
+ {
+  "id": "cs-13",
+  "prompt": "kill the task",
+  "expect": {
+   "commsIntent": "control_signal",
+   "status": "done",
+   "maxMs": 20000
+  }
+ },
+ {
+  "id": "cs-14",
+  "prompt": "kill it",
+  "expect": {
+   "commsIntent": "control_signal",
+   "status": "done",
+   "maxMs": 20000
+  }
+ },
+ {
+  "id": "cs-15",
+  "prompt": "never mind",
+  "expect": {
+   "commsIntent": "control_signal",
+   "status": "done",
+   "maxMs": 20000
+  }
+ },
+ {
+  "id": "cs-16",
+  "prompt": "nevermind",
+  "expect": {
+   "commsIntent": "control_signal",
+   "status": "done",
+   "maxMs": 20000
+  }
+ },
+ {
+  "id": "cs-17",
+  "prompt": "forget it",
+  "expect": {
+   "commsIntent": "control_signal",
+   "status": "done",
+   "maxMs": 20000
+  }
+ },
+ {
+  "id": "cs-18",
+  "prompt": "forget that",
+  "expect": {
+   "commsIntent": "control_signal",
+   "status": "done",
+   "maxMs": 20000
+  }
+ },
+ {
+  "id": "cs-19",
+  "prompt": "stop what youre doing",
+  "expect": {
+   "commsIntent": "control_signal",
+   "status": "done",
+   "maxMs": 20000
+  }
+ },
+ {
+  "id": "cs-20",
+  "prompt": "stop doing that",
+  "expect": {
+   "commsIntent": "control_signal",
+   "status": "done",
+   "maxMs": 20000
+  }
+ },
+ {
+  "id": "cs-21",
+  "prompt": "quit the task",
+  "expect": {
+   "commsIntent": "control_signal",
+   "status": "done",
+   "maxMs": 20000
+  }
+ },
+ {
+  "id": "cs-22",
+  "prompt": "end the task",
+  "expect": {
+   "commsIntent": "control_signal",
+   "status": "done",
+   "maxMs": 20000
+  }
+ },
+ {
+  "id": "cs-23",
+  "prompt": "terminate it",
+  "expect": {
+   "commsIntent": "control_signal",
+   "status": "done",
+   "maxMs": 20000
+  }
+ },
+ {
+  "id": "cs-24",
+  "prompt": "pause",
+  "expect": {
+   "commsIntent": "control_signal",
+   "status": "done",
+   "maxMs": 20000
+  }
+ },
+ {
+  "id": "cs-25",
+  "prompt": "pause that",
+  "expect": {
+   "commsIntent": "control_signal",
+   "status": "done",
+   "maxMs": 20000
+  }
+ },
+ {
+  "id": "cs-26",
+  "prompt": "pause the task",
+  "expect": {
+   "commsIntent": "control_signal",
+   "status": "done",
+   "maxMs": 20000
+  }
+ },
+ {
+  "id": "cs-27",
+  "prompt": "pause it",
+  "expect": {
+   "commsIntent": "control_signal",
+   "status": "done",
+   "maxMs": 20000
+  }
+ },
+ {
+  "id": "cs-28",
+  "prompt": "hold on",
+  "expect": {
+   "commsIntent": "control_signal",
+   "status": "done",
+   "maxMs": 20000
+  }
+ },
+ {
+  "id": "cs-29",
+  "prompt": "wait",
+  "expect": {
+   "commsIntent": "control_signal",
+   "status": "done",
+   "maxMs": 20000
+  }
+ },
+ {
+  "id": "cs-30",
+  "prompt": "hold up",
+  "expect": {
+   "commsIntent": "control_signal",
+   "status": "done",
+   "maxMs": 20000
+  }
+ },
+ {
+  "id": "cs-31",
+  "prompt": "suspend the task",
+  "expect": {
+   "commsIntent": "control_signal",
+   "status": "done",
+   "maxMs": 20000
+  }
+ },
+ {
+  "id": "cs-32",
+  "prompt": "resume",
+  "expect": {
+   "commsIntent": "control_signal",
+   "status": "done",
+   "maxMs": 20000
+  }
+ },
+ {
+  "id": "cs-33",
+  "prompt": "resume the task",
+  "expect": {
+   "commsIntent": "control_signal",
+   "status": "done",
+   "maxMs": 20000
+  }
+ },
+ {
+  "id": "cs-34",
+  "prompt": "continue",
+  "expect": {
+   "commsIntent": "control_signal",
+   "status": "done",
+   "maxMs": 20000
+  }
+ },
+ {
+  "id": "cs-35",
+  "prompt": "continue the task",
+  "expect": {
+   "commsIntent": "control_signal",
+   "status": "done",
+   "maxMs": 20000
+  }
+ },
+ {
+  "id": "cs-36",
+  "prompt": "keep going",
+  "expect": {
+   "commsIntent": "control_signal",
+   "status": "done",
+   "maxMs": 20000
+  }
+ },
+ {
+  "id": "cs-37",
+  "prompt": "go ahead and continue",
+  "expect": {
+   "commsIntent": "control_signal",
+   "status": "done",
+   "maxMs": 20000
+  }
+ },
+ {
+  "id": "cs-38",
+  "prompt": "unpause",
+  "expect": {
+   "commsIntent": "control_signal",
+   "status": "done",
+   "maxMs": 20000
+  }
+ },
+ {
+  "id": "cs-39",
+  "prompt": "start it again",
+  "expect": {
+   "commsIntent": "control_signal",
+   "status": "done",
+   "maxMs": 20000
+  }
+ },
+ {
+  "id": "cs-40",
+  "prompt": "pick it back up",
+  "expect": {
+   "commsIntent": "control_signal",
+   "status": "done",
+   "maxMs": 20000
+  }
+ },
+ {
+  "id": "cs-41",
+  "prompt": "resume it",
+  "expect": {
+   "commsIntent": "control_signal",
+   "status": "done",
+   "maxMs": 20000
+  }
+ },
+ {
+  "id": "cs-42",
+  "prompt": "carry on",
+  "expect": {
+   "commsIntent": "control_signal",
+   "status": "done",
+   "maxMs": 20000
+  }
+ },
+ {
+  "id": "cs-43",
+  "prompt": "proceed",
+  "expect": {
+   "commsIntent": "control_signal",
+   "status": "done",
+   "maxMs": 20000
+  }
+ },
+ {
+  "id": "cs-44",
+  "prompt": "finish it now",
+  "expect": {
+   "commsIntent": "control_signal",
+   "status": "done",
+   "maxMs": 20000
+  }
+ }
+]
