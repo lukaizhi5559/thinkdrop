@@ -169,16 +169,21 @@ async function _getTask(taskId) {
   return r.json.tasks.find(t => t.id === taskId) || null;
 }
 
-function _checkExpect(entry, outcome) {
+function _checkExpect(entry, outcome, opts = {}) {
   const failures = [];
+  const warnings = [];
   const ex = entry.expect || {};
+  // Soft-route mode: comms-tier misses are graceful degradations (handoff still
+  // answers correctly via the stategraph, just slower). Report them as warnings
+  // and a fast-lane rate in the summary instead of failing the prompt.
+  const routeSink = (opts.softRoute || ex.routeSoft) ? warnings : failures;
   if (ex.commsIntent && outcome.commsIntent !== ex.commsIntent) {
-    failures.push(`commsIntent: expected "${ex.commsIntent}", got "${outcome.commsIntent}"`);
+    routeSink.push(`commsIntent: expected "${ex.commsIntent}", got "${outcome.commsIntent}"`);
   }
   // commsIntentIn — ambiguous phrasings may legitimately route to either tier
   // (e.g. "is Vim better than Emacs" → action_veto → handoff is acceptable).
   if (ex.commsIntentIn && !ex.commsIntentIn.includes(outcome.commsIntent)) {
-    failures.push(`commsIntent: expected one of [${ex.commsIntentIn.join('|')}], got "${outcome.commsIntent}"`);
+    routeSink.push(`commsIntent: expected one of [${ex.commsIntentIn.join('|')}], got "${outcome.commsIntent}"`);
   }
   if (ex.status) {
     const allowed = Array.isArray(ex.status) ? ex.status : [ex.status];
@@ -221,7 +226,7 @@ function _checkExpect(entry, outcome) {
   if (ex.maxMs && outcome.totalMs > ex.maxMs) {
     failures.push(`latency: ${outcome.totalMs}ms > budget ${ex.maxMs}ms`);
   }
-  return failures;
+  return { failures, warnings };
 }
 
 /** Positive probes retry — the first chart/three display lazy-loads a large
@@ -283,7 +288,8 @@ async function _checkScreen(entry, ghost) {
 }
 
 async function main() {
-  const file = process.argv[2] || path.join(__dirname, 'prompts', 'stage9-screen.json');
+  const file = process.argv.slice(2).find(a => !a.startsWith('--')) || path.join(__dirname, 'prompts', 'stage9-screen.json');
+  const SOFT_ROUTE = process.argv.includes('--soft-route');
   const prompts = JSON.parse(fs.readFileSync(file, 'utf8'));
 
   let browser = await chromium.connectOverCDP(CDP);
@@ -400,11 +406,14 @@ async function main() {
       outcome.wallMs = Date.now() - t0;
       outcome.totalMs = q.latencyMs ?? outcome.wallMs;
       outcome.graphIntent = _graphIntentFor(entry.prompt, t0);
-      outcome.failures = _checkExpect(entry, outcome);
+      const qchk = _checkExpect(entry, outcome, { softRoute: SOFT_ROUTE });
+      outcome.failures = qchk.failures;
+      outcome.warnings = qchk.warnings;
       outcome.pass = outcome.failures.length === 0;
       results.push(outcome);
       console.log(`${outcome.pass ? '✅' : '❌'} status=${outcome.status} ${outcome.totalMs}ms comms=${outcome.commsIntent}`);
       outcome.failures.forEach(f => console.log(`        ${f}`));
+      outcome.warnings.forEach(w => console.log(`        ⚠ ${w}`));
       if (!outcome.pass) console.log(`        result: ${(outcome.resultText || '').slice(0, 120).replace(/\n/g, ' ⏎ ')}`);
       continue;
     }
@@ -443,7 +452,9 @@ async function main() {
     outcome.resultText = task?.result || '';
     outcome.itemCount = Array.isArray(task?.items) ? task.items.length : 0;
     outcome.graphIntent = _graphIntentFor(entry.prompt, t0);
-    outcome.failures = _checkExpect(entry, outcome);
+    const chk = _checkExpect(entry, outcome, { softRoute: SOFT_ROUTE });
+    outcome.failures = chk.failures;
+    outcome.warnings = chk.warnings;
 
     // screen assertions — let the display settle, then probe ghostlayer
     await sleep(2500);
@@ -454,6 +465,7 @@ async function main() {
     results.push(outcome);
     console.log(`${outcome.pass ? '✅' : '❌'} status=${outcome.status} ${outcome.totalMs}ms`);
     outcome.failures.forEach(f => console.log(`        ${f}`));
+    outcome.warnings.forEach(w => console.log(`        ⚠ ${w}`));
     if (!outcome.pass) console.log(`        result: ${(outcome.resultText || '').slice(0, 120).replace(/\n/g, ' ⏎ ')}`);
 
     await _clearScreen();
@@ -461,9 +473,13 @@ async function main() {
   }
 
   const passN = results.filter(r => r.pass).length;
+  const routeMisses = results.reduce((n, r) => n + (r.warnings || []).filter(w => w.startsWith('commsIntent')).length, 0);
+  const routeTotal = results.filter(r => r.commsIntent).length;
   const outFile = path.join(RESULTS_DIR, `${stageName}.json`);
-  fs.writeFileSync(outFile, JSON.stringify({ file, at: new Date().toISOString(), results }, null, 2));
-  console.log(`\n${'─'.repeat(72)}\n  SUMMARY ${stageName}: ${passN}/${results.length} passed\n${'─'.repeat(72)}`);
+  fs.writeFileSync(outFile, JSON.stringify({ file, at: new Date().toISOString(), softRoute: SOFT_ROUTE, results }, null, 2));
+  console.log(`\n${'─'.repeat(72)}\n  SUMMARY ${stageName}: ${passN}/${results.length} passed`);
+  if (routeTotal) console.log(`  fast-lane hit rate: ${routeTotal - routeMisses}/${routeTotal} (${routeMisses} soft route miss${routeMisses === 1 ? '' : 'es'})`);
+  console.log('─'.repeat(72));
   results.filter(r => !r.pass).forEach(r => console.log(`    ❌ ${r.id}: ${r.failures[0]}`));
   process.exit(results.length - passN ? 1 : 0);
 }

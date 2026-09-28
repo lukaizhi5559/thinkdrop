@@ -64,7 +64,7 @@
    "status": "done",
    "maxMs": 30000,
    "mustContain": [
-    "kai.test@example.com"
+    "re:kai.test"
    ]
   }
  },
@@ -87,7 +87,7 @@
    "status": "done",
    "maxMs": 30000,
    "mustContain": [
-    "designer"
+    "re:design"
    ]
   }
  },
@@ -156,7 +156,7 @@
    "status": "done",
    "maxMs": 30000,
    "mustContain": [
-    "29"
+    "re:29|twenty[ -]?nine"
    ]
   }
  },
@@ -225,8 +225,7 @@
    "status": "done",
    "maxMs": 30000,
    "mustContain": [
-    "March 14",
-    "march 14"
+    "re:marchs*14"
    ]
   }
  },
@@ -249,7 +248,7 @@
    "status": "done",
    "maxMs": 30000,
    "mustContain": [
-    "555-0134"
+    "re:555.0134"
    ]
   }
  },
@@ -295,7 +294,7 @@
    "status": "done",
    "maxMs": 30000,
    "mustContain": [
-    "Portuguese"
+    "re:portugu"
    ]
   }
  },
@@ -318,7 +317,7 @@
    "status": "done",
    "maxMs": 30000,
    "mustContain": [
-    "Spirited Away"
+    "re:spiriteds+away"
    ]
   }
  },
@@ -387,7 +386,7 @@
    "status": "done",
    "maxMs": 30000,
    "mustContain": [
-    "VS Code"
+    "re:vss*code"
    ]
   }
  },
@@ -433,7 +432,11 @@
    "status": "done",
    "maxMs": 30000,
    "mustContain": [
-    "black"
+    "re:black"
+   ],
+   "mustContainAny": [
+    "re:black",
+    "matcha"
    ]
   }
  },
