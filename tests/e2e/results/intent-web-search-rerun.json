@@ -1,0 +1,291 @@
+{
+  "file": "tests/e2e/prompts/intent-web-search-rerun.json",
+  "at": "2026-09-28T17:48:23.584Z",
+  "softRoute": true,
+  "results": [
+    {
+      "id": "ws-price-iphone",
+      "prompt": "how much does an iphone 16 cost",
+      "status": "done",
+      "totalMs": 8943,
+      "resultText": "The search results I have don't list a specific base price for the iPhone 16, but here's what they do show:\n\n- **[Apple](https://www.apple.com/shop/buy-iphone/iphone-16)** — Offers **$35–$885 off** an iPhone 16 when you trade in an iPhone 8 Plus or newer, plus **0% financing** and free shipping.\n- **[Apple Education Store](https://www.apple.com/us-edu/shop/buy-iphone/iphone-16/6.7-inch-display-128gb-ultramarine-t-mobile)** — Same trade-in range ($35–$885 off) and 0% financing.\n- **[Verizon](https://www.verizon.com/smartphones/apple-iphone-16/)** — Carries the iPhone 16 (including the Ultramarine color) with shipping options at checkout; pricing appears on the product page.\n\nNet: your final cost depends on configuration (storage, model) and carrier/trade-in. The trade-in program can knock $35–$885 off, which is the main discount reflected in these results. For the exact sticker price of a specific configuration, you'd want to check the Apple or Verizon product pages directly.",
+      "failures": [],
+      "pass": true,
+      "taskId": "task_bc59c682",
+      "commsIntent": "handoff",
+      "itemCount": 3,
+      "graphIntent": {
+        "intent": "web_search",
+        "parser": "llm-decompose",
+        "subIntents": [
+          "web_search"
+        ]
+      },
+      "warnings": []
+    },
+    {
+      "id": "ws-price-ps5",
+      "prompt": "what does a ps5 cost",
+      "status": "done",
+      "totalMs": 8919,
+      "resultText": "PS5 pricing varies by model, retailer, and bundle:\n\n- **Standard PS5 (disc drive)**: Sony raised the U.S. price to **$549.99** (up from $499.99) starting Aug. 21, per [CBS News](https://www.cbsnews.com/news/ps5-price-increase-sony/). Older references still list it at $499 — see [Lifehacker's cost breakdown](https://lifehacker.com/tech/how-much-a-ps5-really-costs).\n- **PS5 Digital Edition**: commonly cited around **$449–$499**, though the digital model has also been affected by the price hike.\n- **Costco bundles**: a Slim Digital bundle runs **$649.99**, and a Slim Disc bundle **$699.99** — details at [SlashGear](https://www.slashgear.com/2247894/costco-ps5-price-how-much-cost-what-included-in-bundle/).\n- **Official listings**: check current prices on [PlayStation Direct](https://direct.playstation.com/en-us/hardware/ps5), the [1 TB PS5 page](https://direct.playstation.com/en-us/buy-consoles/playstation5-console-1-tb), and [Best Buy](https://www.bestbuy.com/site/playstation-5/ps5-consoles/pcmcat1587395025973.c?id=pcmcat1587395025973) (which also sells discounted customer returns and pre-owned units).\n\nNote that the console price is just the start — extra controllers, storage, a headset, and games add up. On the flip side, trade-in values are high right now: [BankMyCell](https://www.bankmycell.com/blog/how-much-is-a-ps5-worth) reports quotes up to **$740** (Sept 2026), and [GameStop](https://www.gamestop.com/consoles-hardware/playstation-5) accepts PS5 trade-ins in good condition.\n\nWant me to check current live prices at a specific retailer?",
+      "failures": [],
+      "pass": true,
+      "taskId": "task_a5166bb4",
+      "commsIntent": "handoff",
+      "itemCount": 10,
+      "graphIntent": {
+        "intent": "web_search",
+        "parser": "llm-decompose",
+        "subIntents": [
+          "web_search"
+        ]
+      },
+      "warnings": []
+    },
+    {
+      "id": "ws-who-pres",
+      "prompt": "who is the president of france",
+      "status": "done",
+      "totalMs": 9923,
+      "resultText": "**Emmanuel Macron** is the President of France. He took office in May 2017 and was re-elected on April 24, 2022, defeating Marine Le Pen. His official title is President of the French Republic (Président de la République française), and he serves as the executive head of state and commander-in-chief.\n\nBefore the presidency, Macron was an investment banker and served as Minister of the Economy, Industry, and Digital Affairs. He was the first person in the history of the Fifth Republic to win the presidency without the backing of either the Socialists or the Gaullists, and the first French presidential candidate to win reelection since Jacques Chirac in 2002.\n\nYou can find his official biography and news on the [Élysée website](https://www.elysee.fr/en/emmanuel-macron).",
+      "failures": [],
+      "pass": true,
+      "taskId": "task_a753d704",
+      "commsIntent": "handoff",
+      "itemCount": 10,
+      "graphIntent": {
+        "intent": "general_knowledge",
+        "parser": "llm-decompose",
+        "subIntents": [
+          "general_knowledge"
+        ]
+      },
+      "warnings": [
+        "graphIntent: expected \"web_search\", got \"general_knowledge\" (subs: general_knowledge)"
+      ]
+    },
+    {
+      "id": "ws-compare-1",
+      "prompt": "compare iphone vs android",
+      "status": "done",
+      "totalMs": 38476,
+      "resultText": "Here's a grounded comparison based on the search results:\n\n**Core difference — the software**\nThe biggest split is the OS itself. iPhones run iOS, while Android phones run [Android OS](https://www.asurion.com/connect/tech-tips/iphone-vs-android-phone-comparison/), made by Google but customized by each manufacturer (Samsung, Motorola, Pixel, etc.). That customization is central to Android's appeal.\n\n**Price & variety**\nAndroid wins on range and entry cost. You can get a decent phone like the **Samsung Galaxy A16 5G** for under $200, versus the cheapest iPhone (16e) at $599. At the high end, Android offers more variety too — some Galaxy Z Fold 7 configs exceed $2,000 ([PCMag](https://me.pcmag.com/en/comparison/17013/android-vs-ios-which-mobile-os-is-best)).\n\n**Customization**\nIf you like personalizing your device, [Android offers far more flexibility](https://www.bluproducts.com/blu-blog/articles/iphone-vs-android/). iPhone has added more customization over the years, but Android still gives greater control over how the phone looks and works.\n\n**Ecosystem & users**\nBrand retention is roughly comparable (iOS 86–94% vs Android 89–91%). However, [iPhone users keep devices longer](https://adapty.io/blog/iphone-vs-android-users/) (4.2 years vs 3.1) and are less likely to switch (8% vs 12%). The Apple ecosystem (Watch, AirPods, iCloud, iMessage) creates stronger lock-in.\n\n**Apps**\nThe [Google Play Store hosted ~3.4 million apps](https://wezom.com/blog/iphone-vs-android-users-key-differences-in-2025) (late 2025) vs roughly 2.1 million on the App Store — Android is larger and more open, iOS more curated.\n\n**Everyday experience & AI**\nA [day-to-day Reddit comparison](https://www.reddit.com/r/Smartphones/comments/1r1b1j2/android_vs_apple_my_honest_daytoday_experience/) notes nicer touches on iOS (e.g., in-app rating prompts without leaving the app) versus Android redirecting you to the Play Store. The same user criticized Apple's delayed AI rollout for the iPhone 16 lineup, with some features unavailable in the EU.\n\n**Ecosystem strength & value**\nAndroid's tie-in to Google services is [strong and arguably more useful](https://www.diffen.com/difference/Android_vs_iOS) than Apple's cloud suite. On value, one reviewer puts it bluntly — [Android \"destroys\" iPhone](https://www.rokform.com/blogs/rokform-blog/which-is-better-iphone-or-android), comparing the choice to an orchestra vs. a jazz ensemble (both great, different coordination needs).\n\n**Bottom line**\n- **Choose Android** for price flexibility, hardware variety, customization, and openness.\n- **Choose iPhone** for ecosystem lock-in, longer device life, and a more curated experience.\n\nFor deeper reads, see the [Wirefly guide](https://www.wirefly.com/guides/iphone-vs-android) and the [mostly-unbiased iOS vs. Android breakdown](https://wotschofsky.com/blog/ios-vs-android).",
+      "failures": [],
+      "pass": true,
+      "taskId": "task_53ee0b4d",
+      "commsIntent": "handoff",
+      "itemCount": 10,
+      "graphIntent": {
+        "intent": "web_search",
+        "parser": "llm-decompose",
+        "subIntents": [
+          "web_search"
+        ]
+      },
+      "warnings": []
+    },
+    {
+      "id": "ws-howto-3",
+      "prompt": "how do i reset my router",
+      "status": "done",
+      "totalMs": 14433,
+      "resultText": "First, it helps to know which of two things you actually want, because they're often confused:\n\n**Reboot (restart) — keeps your settings**\nThis is the one you want for fixing connection issues. It clears the temporary state without erasing anything.\n- Turn off your PC or console ([Epic Games support](https://www.epicgames.com/help/c-Category_TechnicalSupport/c-Tech_PC/how-do-i-restart-my-modem-or-router-to-solve-connection-issues-a000084269?lang=en-US))\n- Unplug the modem and router from power, wait about 30 seconds to 3 minutes, then plug them back in ([Epic Games](https://www.epicgames.com/help/c-Category_TechnicalSupport/c-Tech_PC/how-do-i-restart-my-modem-or-router-to-solve-connection-issues-a000084269?lang=en-US), [JustAnswer](https://www.justanswer.com/computer-networking/nwk4m-reset-wifi-router-seem-not.html))\n- Simply unplugging and replugging is often enough — no long wait required ([Reddit r/computer](https://www.reddit.com/r/computer/comments/1ccdjov/is_there_a_best_method_to_restarting_a/))\n- If you're on Spectrum, you can also restart your equipment through the My Spectrum App ([Spectrum Support](https://www.spectrum.net/support/internet/restarting-your-cable-modem))\n\n**Factory reset — erases all custom settings**\nOnly do this if your ISP tells you to, or if you've already tried rebooting several times with no luck and you know your login details ([Glo Fiber](https://www.glofiber.com/en/blog/what-does-resetting-a-router-do)).\n- Locate the small **Reset** or **Restore Factory Settings** button (often a recessed hole on the back) ([NETGEAR](https://kb.netgear.com/9665/How-do-I-perform-a-factory-reset-on-my-NETGEAR-router))\n- Press and hold it with a paperclip — around **5 seconds** for a restart, or **60 seconds** for a full factory reset ([Spectrum](https://www.spectrum.net/support/internet/restarting-your-cable-modem), [JustAnswer](https://www.justanswer.com/computer-networking/nwk4m-reset-wifi-router-seem-not.html))\n- Afterward, look for the default network name and password on the device label ([JustAnswer](https://www.justanswer.com/computer-networking/nwk4m-reset-wifi-router-seem-not.html))\n- Some brands, like TP-Link, also let you reset through the web interface instead of the physical button ([TP-Link](https://www.tp-link.com/us/support/faq/497/))\n\n**One caution:** that recessed button is intentionally hard to reach so you don't hit it by accident — on most routers it does a *factory reset*, not a simple restart ([Reddit](https://www.reddit.com/r/computer/comments/1ccdjov/is_there_a_best_method_to_restarting_a/)). If all you need is a reboot, unplugging is usually the safer bet. If the reset button genuinely won't work and it's an Xfinity device, you may need to swap it at a store ([JustAnswer](https://www.justanswer.com/computer-networking/ol7vb-need-reset-router-reset-button-doesn-t.html)).\n\n—\n\nWould you like me to walk you through this step by step, or would you prefer we do it together? Let me know your router make/model and I'll tailor it.",
+      "failures": [],
+      "pass": true,
+      "taskId": "task_324e7f81",
+      "commsIntent": "handoff",
+      "itemCount": 10,
+      "graphIntent": {
+        "intent": "general_knowledge",
+        "parser": "llm-decompose",
+        "subIntents": [
+          "general_knowledge"
+        ]
+      },
+      "warnings": [
+        "graphIntent: expected \"web_search\", got \"general_knowledge\" (subs: general_knowledge)"
+      ]
+    },
+    {
+      "id": "ws-release-1",
+      "prompt": "when was the iphone released",
+      "status": "done",
+      "totalMs": 4869,
+      "resultText": "",
+      "failures": [],
+      "pass": true,
+      "commsIntent": "general_quick",
+      "wallMs": 30552,
+      "graphIntent": null,
+      "warnings": [
+        "graphIntent: expected \"web_search\", got \"undefined\" (subs: none)"
+      ]
+    },
+    {
+      "id": "ws-flight-status",
+      "prompt": "check the status of united flight 100",
+      "status": "done",
+      "totalMs": 2062,
+      "resultText": "",
+      "failures": [],
+      "pass": true,
+      "commsIntent": "status_check",
+      "wallMs": 30491,
+      "graphIntent": null,
+      "warnings": [
+        "graphIntent: expected \"web_search\", got \"undefined\" (subs: none)"
+      ]
+    },
+    {
+      "id": "ws-holiday",
+      "prompt": "when is thanksgiving this year",
+      "status": "done",
+      "totalMs": 3362,
+      "resultText": "",
+      "failures": [],
+      "pass": true,
+      "commsIntent": "general_quick",
+      "wallMs": 30487,
+      "graphIntent": null,
+      "warnings": [
+        "graphIntent: expected \"web_search\", got \"undefined\" (subs: none)"
+      ]
+    },
+    {
+      "id": "ws-distance",
+      "prompt": "how far is the moon from earth",
+      "status": "done",
+      "totalMs": 687,
+      "resultText": "",
+      "failures": [],
+      "pass": true,
+      "commsIntent": "status_check",
+      "wallMs": 30529,
+      "graphIntent": null,
+      "warnings": [
+        "graphIntent: expected \"web_search\", got \"undefined\" (subs: none)"
+      ]
+    },
+    {
+      "id": "ws-tallest",
+      "prompt": "what is the tallest building in the world",
+      "status": "done",
+      "totalMs": 2307,
+      "resultText": "",
+      "failures": [],
+      "pass": true,
+      "commsIntent": "general_quick",
+      "wallMs": 30950,
+      "graphIntent": null,
+      "warnings": [
+        "graphIntent: expected \"web_search\", got \"undefined\" (subs: none)"
+      ]
+    },
+    {
+      "id": "ws-ocean",
+      "prompt": "what is the deepest part of the ocean",
+      "status": "done",
+      "totalMs": 5809,
+      "resultText": "",
+      "failures": [],
+      "pass": true,
+      "commsIntent": "general_quick",
+      "wallMs": 30549,
+      "graphIntent": null,
+      "warnings": [
+        "graphIntent: expected \"web_search\", got \"undefined\" (subs: none)"
+      ]
+    },
+    {
+      "id": "ws-inventor",
+      "prompt": "who invented the telephone",
+      "status": "done",
+      "totalMs": 3455,
+      "resultText": "",
+      "failures": [],
+      "pass": true,
+      "commsIntent": "general_quick",
+      "wallMs": 30517,
+      "graphIntent": null,
+      "warnings": [
+        "graphIntent: expected \"web_search\", got \"undefined\" (subs: none)"
+      ]
+    },
+    {
+      "id": "ws-author",
+      "prompt": "who wrote pride and prejudice",
+      "status": "done",
+      "totalMs": 10897,
+      "resultText": "",
+      "failures": [],
+      "pass": true,
+      "commsIntent": "general_quick",
+      "wallMs": 30526,
+      "graphIntent": null,
+      "warnings": [
+        "graphIntent: expected \"web_search\", got \"undefined\" (subs: none)"
+      ]
+    },
+    {
+      "id": "ws-element",
+      "prompt": "what is the chemical symbol for gold",
+      "status": "done",
+      "totalMs": 7126,
+      "resultText": "Au — from the Latin aurum, meaning \"shining dawn.\" A fitting name for it.",
+      "failures": [],
+      "pass": true,
+      "commsIntent": "general_quick",
+      "wallMs": 40782,
+      "graphIntent": null,
+      "warnings": [
+        "graphIntent: expected \"web_search\", got \"undefined\" (subs: none)"
+      ]
+    },
+    {
+      "id": "ws-zip",
+      "prompt": "what is the zip code for san francisco",
+      "status": "done",
+      "totalMs": 26733,
+      "resultText": "",
+      "failures": [],
+      "pass": true,
+      "commsIntent": "general_quick",
+      "wallMs": 30530,
+      "graphIntent": null,
+      "warnings": [
+        "graphIntent: expected \"web_search\", got \"undefined\" (subs: none)"
+      ]
+    },
+    {
+      "id": "ws-area",
+      "prompt": "what is the area code for new york",
+      "status": "done",
+      "totalMs": 11280,
+      "resultText": "",
+      "failures": [],
+      "pass": true,
+      "commsIntent": "general_quick",
+      "wallMs": 30543,
+      "graphIntent": null,
+      "warnings": [
+        "graphIntent: expected \"web_search\", got \"undefined\" (subs: none)"
+      ]
+    },
+    {
+      "id": "ws-capitol",
+      "prompt": "where is the us capitol building",
+      "status": "done",
+      "totalMs": 13331,
+      "resultText": "",
+      "failures": [],
+      "pass": true,
+      "commsIntent": "general_quick",
+      "wallMs": 30728,
+      "graphIntent": null,
+      "warnings": [
+        "graphIntent: expected \"web_search\", got \"undefined\" (subs: none)"
+      ]
+    }
+  ]
+}

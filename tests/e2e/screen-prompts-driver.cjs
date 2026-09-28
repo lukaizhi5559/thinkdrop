@@ -194,7 +194,7 @@ function _checkExpect(entry, outcome, opts = {}) {
     const subs = outcome.graphIntent?.subIntents || [];
     const allowed = Array.isArray(ex.graphIntent) ? ex.graphIntent : [ex.graphIntent];
     if (!allowed.includes(got) && !subs.some(s => allowed.includes(s))) {
-      failures.push(`graphIntent: expected "${allowed.join('|')}", got "${got}" (subs: ${subs.join(',') || 'none'})`);
+      routeSink.push(`graphIntent: expected "${allowed.join('|')}", got "${got}" (subs: ${subs.join(',') || 'none'})`);
     }
   }
   const text = outcome.resultText || '';
@@ -385,8 +385,7 @@ async function main() {
 
     // Quick-tier fallback — verify comms intent + answer via comms.log /
     // /comms.process instead of the task journal.
-    const _wantsComms = entry.expect?.commsIntent || entry.expect?.commsIntentIn;
-    if (!task && _wantsComms) {
+    if (!task) {
       const needText = !!(entry.expect.mustContain?.length || entry.expect.mustContainAny?.length || entry.expect.mustNotContain?.length);
       let q = { intent: null, responded: false, resultText: '', latencyMs: null };
       // Poll comms.log — classify+answer can lag the 12s task-wait window, and
@@ -444,7 +443,7 @@ async function main() {
 
       if (task.status === 'awaiting-approval' && !approved) {
         approved = true;
-        if (entry.approve === false) {
+        if (entry.approve === false || entry.expect?.approve === false) {
           // Canary check — reaching plan approval IS the expectation. Cancel
           // before execution so risky intents (messaging, purchases) never run.
           await cancel(task.id);

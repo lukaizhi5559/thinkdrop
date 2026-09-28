@@ -1,0 +1,159 @@
+[
+  {
+    "id": "ws-price-iphone",
+    "prompt": "how much does an iphone 16 cost",
+    "expect": {
+      "graphIntent": "web_search",
+      "status": "done",
+      "maxMs": 120000
+    }
+  },
+  {
+    "id": "ws-price-ps5",
+    "prompt": "what does a ps5 cost",
+    "expect": {
+      "graphIntent": "web_search",
+      "status": "done",
+      "maxMs": 120000
+    }
+  },
+  {
+    "id": "ws-who-pres",
+    "prompt": "who is the president of france",
+    "expect": {
+      "graphIntent": "web_search",
+      "status": "done",
+      "maxMs": 120000
+    }
+  },
+  {
+    "id": "ws-compare-1",
+    "prompt": "compare iphone vs android",
+    "expect": {
+      "graphIntent": "web_search",
+      "status": "done",
+      "maxMs": 120000
+    }
+  },
+  {
+    "id": "ws-howto-3",
+    "prompt": "how do i reset my router",
+    "expect": {
+      "graphIntent": "web_search",
+      "status": "done",
+      "maxMs": 120000
+    }
+  },
+  {
+    "id": "ws-release-1",
+    "prompt": "when was the iphone released",
+    "expect": {
+      "graphIntent": "web_search",
+      "status": "done",
+      "maxMs": 120000
+    }
+  },
+  {
+    "id": "ws-flight-status",
+    "prompt": "check the status of united flight 100",
+    "expect": {
+      "graphIntent": "web_search",
+      "status": "done",
+      "maxMs": 120000
+    }
+  },
+  {
+    "id": "ws-holiday",
+    "prompt": "when is thanksgiving this year",
+    "expect": {
+      "graphIntent": "web_search",
+      "status": "done",
+      "maxMs": 120000
+    }
+  },
+  {
+    "id": "ws-distance",
+    "prompt": "how far is the moon from earth",
+    "expect": {
+      "graphIntent": "web_search",
+      "status": "done",
+      "maxMs": 120000
+    }
+  },
+  {
+    "id": "ws-tallest",
+    "prompt": "what is the tallest building in the world",
+    "expect": {
+      "graphIntent": "web_search",
+      "status": "done",
+      "maxMs": 120000
+    }
+  },
+  {
+    "id": "ws-ocean",
+    "prompt": "what is the deepest part of the ocean",
+    "expect": {
+      "graphIntent": "web_search",
+      "status": "done",
+      "maxMs": 120000
+    }
+  },
+  {
+    "id": "ws-inventor",
+    "prompt": "who invented the telephone",
+    "expect": {
+      "graphIntent": "web_search",
+      "status": "done",
+      "maxMs": 120000
+    }
+  },
+  {
+    "id": "ws-author",
+    "prompt": "who wrote pride and prejudice",
+    "expect": {
+      "graphIntent": "web_search",
+      "status": "done",
+      "maxMs": 120000
+    }
+  },
+  {
+    "id": "ws-element",
+    "prompt": "what is the chemical symbol for gold",
+    "expect": {
+      "graphIntent": "web_search",
+      "status": "done",
+      "maxMs": 120000,
+      "mustContainAny": [
+        "Au",
+        "gold"
+      ]
+    }
+  },
+  {
+    "id": "ws-zip",
+    "prompt": "what is the zip code for san francisco",
+    "expect": {
+      "graphIntent": "web_search",
+      "status": "done",
+      "maxMs": 120000
+    }
+  },
+  {
+    "id": "ws-area",
+    "prompt": "what is the area code for new york",
+    "expect": {
+      "graphIntent": "web_search",
+      "status": "done",
+      "maxMs": 120000
+    }
+  },
+  {
+    "id": "ws-capitol",
+    "prompt": "where is the us capitol building",
+    "expect": {
+      "graphIntent": "web_search",
+      "status": "done",
+      "maxMs": 120000
+    }
+  }
+]

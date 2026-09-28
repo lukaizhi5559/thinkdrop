@@ -1,702 +1,731 @@
 [
- {
-  "id": "ws-news-tech",
-  "prompt": "search the web for the latest tech news",
-  "expect": {
-   "graphIntent": "web_search",
-   "status": "done",
-   "maxMs": 120000
+  {
+    "id": "ws-news-tech",
+    "prompt": "search the web for the latest tech news",
+    "expect": {
+      "graphIntent": "web_search",
+      "status": "done",
+      "maxMs": 120000
+    }
+  },
+  {
+    "id": "ws-news-world",
+    "prompt": "what happened in the news today",
+    "expect": {
+      "graphIntent": "web_search",
+      "status": "done",
+      "maxMs": 120000
+    }
+  },
+  {
+    "id": "ws-news-ai",
+    "prompt": "find me the latest AI news",
+    "expect": {
+      "graphIntent": "web_search",
+      "status": "done",
+      "maxMs": 120000
+    }
+  },
+  {
+    "id": "ws-weather-sf",
+    "prompt": "whats the weather in san francisco right now",
+    "expect": {
+      "graphIntent": "web_search",
+      "status": "done",
+      "maxMs": 120000
+    }
+  },
+  {
+    "id": "ws-weather-nyc",
+    "prompt": "weather in new york today",
+    "expect": {
+      "graphIntent": "web_search",
+      "status": "done",
+      "maxMs": 120000
+    }
+  },
+  {
+    "id": "ws-weather-local",
+    "prompt": "what is the weather right now",
+    "expect": {
+      "graphIntent": "web_search",
+      "status": "done",
+      "maxMs": 120000
+    }
+  },
+  {
+    "id": "ws-stock-aapl",
+    "prompt": "what is the price of apple stock",
+    "expect": {
+      "graphIntent": "web_search",
+      "status": "done",
+      "maxMs": 120000
+    }
+  },
+  {
+    "id": "ws-stock-tsla",
+    "prompt": "current tesla stock price",
+    "expect": {
+      "graphIntent": "web_search",
+      "status": "done",
+      "maxMs": 120000
+    }
+  },
+  {
+    "id": "ws-price-iphone",
+    "prompt": "how much does an iphone 16 cost",
+    "expect": {
+      "graphIntent": "web_search",
+      "status": "done",
+      "maxMs": 120000
+    }
+  },
+  {
+    "id": "ws-price-ps5",
+    "prompt": "what does a ps5 cost",
+    "expect": {
+      "graphIntent": "web_search",
+      "status": "done",
+      "maxMs": 120000
+    }
+  },
+  {
+    "id": "ws-who-ceo",
+    "prompt": "who is the ceo of google",
+    "expect": {
+      "graphIntent": "web_search",
+      "status": "done",
+      "maxMs": 120000
+    }
+  },
+  {
+    "id": "ws-who-pres",
+    "prompt": "who is the president of france",
+    "expect": {
+      "graphIntent": "web_search",
+      "status": "done",
+      "maxMs": 120000
+    }
+  },
+  {
+    "id": "ws-pop-tokyo",
+    "prompt": "what is the population of tokyo",
+    "expect": {
+      "graphIntent": "web_search",
+      "status": "done",
+      "maxMs": 120000
+    }
+  },
+  {
+    "id": "ws-pop-world",
+    "prompt": "how many people live on earth",
+    "expect": {
+      "graphIntent": [
+        "web_search",
+        "general_knowledge"
+      ],
+      "status": "done",
+      "maxMs": 120000
+    }
+  },
+  {
+    "id": "ws-compare-1",
+    "prompt": "compare iphone vs android",
+    "expect": {
+      "graphIntent": "web_search",
+      "status": "done",
+      "maxMs": 120000
+    }
+  },
+  {
+    "id": "ws-compare-2",
+    "prompt": "macbook air vs pro which is better",
+    "expect": {
+      "graphIntent": "web_search",
+      "status": "done",
+      "maxMs": 120000
+    }
+  },
+  {
+    "id": "ws-compare-3",
+    "prompt": "spotify vs apple music comparison",
+    "expect": {
+      "graphIntent": "web_search",
+      "status": "done",
+      "maxMs": 120000
+    }
+  },
+  {
+    "id": "ws-best-laptop",
+    "prompt": "what is the best laptop for students",
+    "expect": {
+      "graphIntent": "web_search",
+      "status": "done",
+      "maxMs": 120000
+    }
+  },
+  {
+    "id": "ws-best-phone",
+    "prompt": "what are the best phones in 2026",
+    "expect": {
+      "graphIntent": "web_search",
+      "status": "done",
+      "maxMs": 120000
+    }
+  },
+  {
+    "id": "ws-best-pizza",
+    "prompt": "whats the best pizza place in san francisco",
+    "expect": {
+      "graphIntent": "web_search",
+      "status": "done",
+      "maxMs": 120000
+    }
+  },
+  {
+    "id": "ws-recipe-1",
+    "prompt": "how to make pancakes",
+    "expect": {
+      "graphIntent": "web_search",
+      "status": "done",
+      "maxMs": 120000
+    }
+  },
+  {
+    "id": "ws-recipe-2",
+    "prompt": "find me a recipe for chocolate cake",
+    "expect": {
+      "graphIntent": "web_search",
+      "status": "done",
+      "maxMs": 120000
+    }
+  },
+  {
+    "id": "ws-howto-1",
+    "prompt": "how to fix a leaky faucet",
+    "expect": {
+      "graphIntent": [
+        "web_search",
+        "general_knowledge"
+      ],
+      "status": "done",
+      "maxMs": 120000
+    }
+  },
+  {
+    "id": "ws-howto-2",
+    "prompt": "how to tie a tie",
+    "expect": {
+      "graphIntent": "web_search",
+      "status": "done",
+      "maxMs": 120000
+    }
+  },
+  {
+    "id": "ws-howto-3",
+    "prompt": "how do i reset my router",
+    "expect": {
+      "graphIntent": "web_search",
+      "status": "done",
+      "maxMs": 120000
+    }
+  },
+  {
+    "id": "ws-movie-1",
+    "prompt": "when does the next marvel movie come out",
+    "expect": {
+      "graphIntent": "web_search",
+      "status": "done",
+      "maxMs": 120000
+    }
+  },
+  {
+    "id": "ws-movie-2",
+    "prompt": "what movies are playing this weekend",
+    "expect": {
+      "graphIntent": "web_search",
+      "status": "done",
+      "maxMs": 120000
+    }
+  },
+  {
+    "id": "ws-sports-1",
+    "prompt": "who won the last superbowl",
+    "expect": {
+      "graphIntent": [
+        "web_search",
+        "general_knowledge"
+      ],
+      "status": "done",
+      "maxMs": 120000
+    }
+  },
+  {
+    "id": "ws-sports-2",
+    "prompt": "latest nba scores",
+    "expect": {
+      "graphIntent": "web_search",
+      "status": "done",
+      "maxMs": 120000
+    }
+  },
+  {
+    "id": "ws-sports-3",
+    "prompt": "did the warriors win last night",
+    "expect": {
+      "graphIntent": "web_search",
+      "status": "done",
+      "maxMs": 120000
+    }
+  },
+  {
+    "id": "ws-release-1",
+    "prompt": "when was the iphone released",
+    "expect": {
+      "graphIntent": "web_search",
+      "status": "done",
+      "maxMs": 120000
+    }
+  },
+  {
+    "id": "ws-define-1",
+    "prompt": "look up the definition of epistemology",
+    "expect": {
+      "graphIntent": "web_search",
+      "status": "done",
+      "maxMs": 120000
+    }
+  },
+  {
+    "id": "ws-find-1",
+    "prompt": "find information about the mars rover",
+    "expect": {
+      "graphIntent": "web_search",
+      "status": "done",
+      "maxMs": 120000
+    }
+  },
+  {
+    "id": "ws-find-2",
+    "prompt": "search for cheap flights to tokyo",
+    "expect": {
+      "graphIntent": "web_search",
+      "status": "done",
+      "maxMs": 120000
+    }
+  },
+  {
+    "id": "ws-find-3",
+    "prompt": "find me hotels in paris",
+    "expect": {
+      "graphIntent": "web_search",
+      "status": "done",
+      "maxMs": 120000
+    }
+  },
+  {
+    "id": "ws-restaurants",
+    "prompt": "good restaurants near downtown austin",
+    "expect": {
+      "graphIntent": "web_search",
+      "status": "done",
+      "maxMs": 120000
+    }
+  },
+  {
+    "id": "ws-cafes",
+    "prompt": "best coffee shops in seattle",
+    "expect": {
+      "graphIntent": "web_search",
+      "status": "done",
+      "maxMs": 120000
+    }
+  },
+  {
+    "id": "ws-crypto",
+    "prompt": "what is the price of bitcoin right now",
+    "expect": {
+      "graphIntent": "web_search",
+      "status": "done",
+      "maxMs": 120000
+    }
+  },
+  {
+    "id": "ws-forex",
+    "prompt": "how much is a euro in dollars today",
+    "expect": {
+      "graphIntent": "web_search",
+      "status": "done",
+      "maxMs": 120000
+    }
+  },
+  {
+    "id": "ws-gas",
+    "prompt": "current gas prices in california",
+    "expect": {
+      "graphIntent": "web_search",
+      "status": "done",
+      "maxMs": 120000
+    }
+  },
+  {
+    "id": "ws-flight-status",
+    "prompt": "check the status of united flight 100",
+    "expect": {
+      "graphIntent": "web_search",
+      "status": "done",
+      "maxMs": 120000
+    }
+  },
+  {
+    "id": "ws-time-tokyo",
+    "prompt": "what time is it in tokyo right now",
+    "expect": {
+      "graphIntent": "web_search",
+      "status": "done",
+      "maxMs": 120000
+    }
+  },
+  {
+    "id": "ws-holiday",
+    "prompt": "when is thanksgiving this year",
+    "expect": {
+      "graphIntent": "web_search",
+      "status": "done",
+      "maxMs": 120000
+    }
+  },
+  {
+    "id": "ws-history-news",
+    "prompt": "search for the history of the internet",
+    "expect": {
+      "graphIntent": "web_search",
+      "status": "done",
+      "maxMs": 120000
+    }
+  },
+  {
+    "id": "ws-science",
+    "prompt": "latest discoveries in space",
+    "expect": {
+      "graphIntent": "web_search",
+      "status": "done",
+      "maxMs": 120000
+    }
+  },
+  {
+    "id": "ws-health",
+    "prompt": "find info about vitamin d benefits",
+    "expect": {
+      "graphIntent": "web_search",
+      "status": "done",
+      "maxMs": 120000
+    }
+  },
+  {
+    "id": "ws-job",
+    "prompt": "search for remote software engineer jobs",
+    "expect": {
+      "graphIntent": "web_search",
+      "status": "done",
+      "maxMs": 120000
+    }
+  },
+  {
+    "id": "ws-emoji-img",
+    "prompt": "find me pictures of cute cats",
+    "expect": {
+      "graphIntent": "web_search",
+      "status": "done",
+      "maxMs": 120000,
+      "hasItems": true
+    }
+  },
+  {
+    "id": "ws-img-sonic",
+    "prompt": "search for images of sonic the hedgehog",
+    "expect": {
+      "graphIntent": "web_search",
+      "status": "done",
+      "maxMs": 120000,
+      "hasItems": true
+    }
+  },
+  {
+    "id": "ws-img-sunset",
+    "prompt": "find photos of sunsets over the ocean",
+    "expect": {
+      "graphIntent": "web_search",
+      "status": "done",
+      "maxMs": 120000,
+      "hasItems": true
+    }
+  },
+  {
+    "id": "ws-img-dog",
+    "prompt": "show me pictures of golden retrievers",
+    "expect": {
+      "graphIntent": "web_search",
+      "status": "done",
+      "maxMs": 120000,
+      "hasItems": true
+    }
+  },
+  {
+    "id": "ws-img-city",
+    "prompt": "find images of tokyo at night",
+    "expect": {
+      "graphIntent": "web_search",
+      "status": "done",
+      "maxMs": 120000,
+      "hasItems": true
+    }
+  },
+  {
+    "id": "ws-vid-1",
+    "prompt": "find me videos about guitar lessons",
+    "expect": {
+      "graphIntent": "web_search",
+      "status": "done",
+      "maxMs": 120000,
+      "hasItems": true
+    }
+  },
+  {
+    "id": "ws-vid-2",
+    "prompt": "search for tutorial videos on photoshop",
+    "expect": {
+      "graphIntent": "web_search",
+      "status": "done",
+      "maxMs": 120000,
+      "hasItems": true
+    }
+  },
+  {
+    "id": "ws-vid-3",
+    "prompt": "find videos of the moon landing",
+    "expect": {
+      "graphIntent": "web_search",
+      "status": "done",
+      "maxMs": 120000,
+      "hasItems": true
+    }
+  },
+  {
+    "id": "ws-list-books",
+    "prompt": "top rated sci fi books this year",
+    "expect": {
+      "graphIntent": "web_search",
+      "status": "done",
+      "maxMs": 120000
+    }
+  },
+  {
+    "id": "ws-list-apps",
+    "prompt": "best productivity apps 2026",
+    "expect": {
+      "graphIntent": "web_search",
+      "status": "done",
+      "maxMs": 120000
+    }
+  },
+  {
+    "id": "ws-meaning",
+    "prompt": "what does the word serendipity mean",
+    "expect": {
+      "graphIntent": [
+        "web_search",
+        "general_knowledge"
+      ],
+      "status": "done",
+      "maxMs": 120000
+    }
+  },
+  {
+    "id": "ws-translate-es",
+    "prompt": "translate good morning to spanish",
+    "expect": {
+      "status": "done",
+      "maxMs": 120000,
+      "commsIntentIn": [
+        "general_quick",
+        "handoff"
+      ]
+    }
+  },
+  {
+    "id": "ws-explains",
+    "prompt": "explain how blockchain works",
+    "expect": {
+      "graphIntent": [
+        "web_search",
+        "general_knowledge"
+      ],
+      "status": "done",
+      "maxMs": 120000
+    }
+  },
+  {
+    "id": "ws-explain2",
+    "prompt": "how does photosynthesis work in plants",
+    "expect": {
+      "graphIntent": [
+        "web_search",
+        "general_knowledge"
+      ],
+      "status": "done",
+      "maxMs": 120000
+    }
+  },
+  {
+    "id": "ws-speed",
+    "prompt": "how fast does light travel",
+    "expect": {
+      "graphIntent": [
+        "web_search",
+        "general_knowledge"
+      ],
+      "status": "done",
+      "maxMs": 120000
+    }
+  },
+  {
+    "id": "ws-distance",
+    "prompt": "how far is the moon from earth",
+    "expect": {
+      "graphIntent": "web_search",
+      "status": "done",
+      "maxMs": 120000
+    }
+  },
+  {
+    "id": "ws-age",
+    "prompt": "how old is the oldest person alive",
+    "expect": {
+      "graphIntent": "web_search",
+      "status": "done",
+      "maxMs": 120000
+    }
+  },
+  {
+    "id": "ws-tallest",
+    "prompt": "what is the tallest building in the world",
+    "expect": {
+      "graphIntent": "web_search",
+      "status": "done",
+      "maxMs": 120000
+    }
+  },
+  {
+    "id": "ws-ocean",
+    "prompt": "what is the deepest part of the ocean",
+    "expect": {
+      "graphIntent": "web_search",
+      "status": "done",
+      "maxMs": 120000
+    }
+  },
+  {
+    "id": "ws-currency",
+    "prompt": "what currency does japan use",
+    "expect": {
+      "graphIntent": [
+        "web_search",
+        "general_knowledge"
+      ],
+      "status": "done",
+      "maxMs": 120000
+    }
+  },
+  {
+    "id": "ws-lang",
+    "prompt": "what language is spoken in brazil",
+    "expect": {
+      "graphIntent": [
+        "web_search",
+        "general_knowledge"
+      ],
+      "status": "done",
+      "maxMs": 120000
+    }
+  },
+  {
+    "id": "ws-inventor",
+    "prompt": "who invented the telephone",
+    "expect": {
+      "graphIntent": "web_search",
+      "status": "done",
+      "maxMs": 120000
+    }
+  },
+  {
+    "id": "ws-year",
+    "prompt": "what year did the berlin wall fall",
+    "expect": {
+      "graphIntent": [
+        "web_search",
+        "general_knowledge"
+      ],
+      "status": "done",
+      "maxMs": 120000
+    }
+  },
+  {
+    "id": "ws-author",
+    "prompt": "who wrote pride and prejudice",
+    "expect": {
+      "graphIntent": "web_search",
+      "status": "done",
+      "maxMs": 120000
+    }
+  },
+  {
+    "id": "ws-element",
+    "prompt": "what is the chemical symbol for gold",
+    "expect": {
+      "graphIntent": "web_search",
+      "status": "done",
+      "maxMs": 120000,
+      "mustContainAny": [
+        "Au",
+        "gold"
+      ]
+    }
+  },
+  {
+    "id": "ws-zip",
+    "prompt": "what is the zip code for san francisco",
+    "expect": {
+      "graphIntent": "web_search",
+      "status": "done",
+      "maxMs": 120000
+    }
+  },
+  {
+    "id": "ws-area",
+    "prompt": "what is the area code for new york",
+    "expect": {
+      "graphIntent": "web_search",
+      "status": "done",
+      "maxMs": 120000
+    }
+  },
+  {
+    "id": "ws-capitol",
+    "prompt": "where is the us capitol building",
+    "expect": {
+      "graphIntent": "web_search",
+      "status": "done",
+      "maxMs": 120000
+    }
+  },
+  {
+    "id": "ws-museum",
+    "prompt": "is the louvre open on mondays",
+    "expect": {
+      "graphIntent": "web_search",
+      "status": "done",
+      "maxMs": 120000
+    }
   }
- },
- {
-  "id": "ws-news-world",
-  "prompt": "what happened in the news today",
-  "expect": {
-   "graphIntent": "web_search",
-   "status": "done",
-   "maxMs": 120000
-  }
- },
- {
-  "id": "ws-news-ai",
-  "prompt": "find me the latest AI news",
-  "expect": {
-   "graphIntent": "web_search",
-   "status": "done",
-   "maxMs": 120000
-  }
- },
- {
-  "id": "ws-weather-sf",
-  "prompt": "whats the weather in san francisco right now",
-  "expect": {
-   "graphIntent": "web_search",
-   "status": "done",
-   "maxMs": 120000
-  }
- },
- {
-  "id": "ws-weather-nyc",
-  "prompt": "weather in new york today",
-  "expect": {
-   "graphIntent": "web_search",
-   "status": "done",
-   "maxMs": 120000
-  }
- },
- {
-  "id": "ws-weather-local",
-  "prompt": "what is the weather right now",
-  "expect": {
-   "graphIntent": "web_search",
-   "status": "done",
-   "maxMs": 120000
-  }
- },
- {
-  "id": "ws-stock-aapl",
-  "prompt": "what is the price of apple stock",
-  "expect": {
-   "graphIntent": "web_search",
-   "status": "done",
-   "maxMs": 120000
-  }
- },
- {
-  "id": "ws-stock-tsla",
-  "prompt": "current tesla stock price",
-  "expect": {
-   "graphIntent": "web_search",
-   "status": "done",
-   "maxMs": 120000
-  }
- },
- {
-  "id": "ws-price-iphone",
-  "prompt": "how much does an iphone 16 cost",
-  "expect": {
-   "graphIntent": "web_search",
-   "status": "done",
-   "maxMs": 120000
-  }
- },
- {
-  "id": "ws-price-ps5",
-  "prompt": "what does a ps5 cost",
-  "expect": {
-   "graphIntent": "web_search",
-   "status": "done",
-   "maxMs": 120000
-  }
- },
- {
-  "id": "ws-who-ceo",
-  "prompt": "who is the ceo of google",
-  "expect": {
-   "graphIntent": "web_search",
-   "status": "done",
-   "maxMs": 120000
-  }
- },
- {
-  "id": "ws-who-pres",
-  "prompt": "who is the president of france",
-  "expect": {
-   "graphIntent": "web_search",
-   "status": "done",
-   "maxMs": 120000
-  }
- },
- {
-  "id": "ws-pop-tokyo",
-  "prompt": "what is the population of tokyo",
-  "expect": {
-   "graphIntent": "web_search",
-   "status": "done",
-   "maxMs": 120000
-  }
- },
- {
-  "id": "ws-pop-world",
-  "prompt": "how many people live on earth",
-  "expect": {
-   "graphIntent": "web_search",
-   "status": "done",
-   "maxMs": 120000
-  }
- },
- {
-  "id": "ws-compare-1",
-  "prompt": "compare iphone vs android",
-  "expect": {
-   "graphIntent": "web_search",
-   "status": "done",
-   "maxMs": 120000
-  }
- },
- {
-  "id": "ws-compare-2",
-  "prompt": "macbook air vs pro which is better",
-  "expect": {
-   "graphIntent": "web_search",
-   "status": "done",
-   "maxMs": 120000
-  }
- },
- {
-  "id": "ws-compare-3",
-  "prompt": "spotify vs apple music comparison",
-  "expect": {
-   "graphIntent": "web_search",
-   "status": "done",
-   "maxMs": 120000
-  }
- },
- {
-  "id": "ws-best-laptop",
-  "prompt": "what is the best laptop for students",
-  "expect": {
-   "graphIntent": "web_search",
-   "status": "done",
-   "maxMs": 120000
-  }
- },
- {
-  "id": "ws-best-phone",
-  "prompt": "what are the best phones in 2026",
-  "expect": {
-   "graphIntent": "web_search",
-   "status": "done",
-   "maxMs": 120000
-  }
- },
- {
-  "id": "ws-best-pizza",
-  "prompt": "whats the best pizza place in san francisco",
-  "expect": {
-   "graphIntent": "web_search",
-   "status": "done",
-   "maxMs": 120000
-  }
- },
- {
-  "id": "ws-recipe-1",
-  "prompt": "how to make pancakes",
-  "expect": {
-   "graphIntent": "web_search",
-   "status": "done",
-   "maxMs": 120000
-  }
- },
- {
-  "id": "ws-recipe-2",
-  "prompt": "find me a recipe for chocolate cake",
-  "expect": {
-   "graphIntent": "web_search",
-   "status": "done",
-   "maxMs": 120000
-  }
- },
- {
-  "id": "ws-howto-1",
-  "prompt": "how to fix a leaky faucet",
-  "expect": {
-   "graphIntent": "web_search",
-   "status": "done",
-   "maxMs": 120000
-  }
- },
- {
-  "id": "ws-howto-2",
-  "prompt": "how to tie a tie",
-  "expect": {
-   "graphIntent": "web_search",
-   "status": "done",
-   "maxMs": 120000
-  }
- },
- {
-  "id": "ws-howto-3",
-  "prompt": "how do i reset my router",
-  "expect": {
-   "graphIntent": "web_search",
-   "status": "done",
-   "maxMs": 120000
-  }
- },
- {
-  "id": "ws-movie-1",
-  "prompt": "when does the next marvel movie come out",
-  "expect": {
-   "graphIntent": "web_search",
-   "status": "done",
-   "maxMs": 120000
-  }
- },
- {
-  "id": "ws-movie-2",
-  "prompt": "what movies are playing this weekend",
-  "expect": {
-   "graphIntent": "web_search",
-   "status": "done",
-   "maxMs": 120000
-  }
- },
- {
-  "id": "ws-sports-1",
-  "prompt": "who won the last superbowl",
-  "expect": {
-   "graphIntent": "web_search",
-   "status": "done",
-   "maxMs": 120000
-  }
- },
- {
-  "id": "ws-sports-2",
-  "prompt": "latest nba scores",
-  "expect": {
-   "graphIntent": "web_search",
-   "status": "done",
-   "maxMs": 120000
-  }
- },
- {
-  "id": "ws-sports-3",
-  "prompt": "did the warriors win last night",
-  "expect": {
-   "graphIntent": "web_search",
-   "status": "done",
-   "maxMs": 120000
-  }
- },
- {
-  "id": "ws-release-1",
-  "prompt": "when was the iphone released",
-  "expect": {
-   "graphIntent": "web_search",
-   "status": "done",
-   "maxMs": 120000
-  }
- },
- {
-  "id": "ws-define-1",
-  "prompt": "look up the definition of epistemology",
-  "expect": {
-   "graphIntent": "web_search",
-   "status": "done",
-   "maxMs": 120000
-  }
- },
- {
-  "id": "ws-find-1",
-  "prompt": "find information about the mars rover",
-  "expect": {
-   "graphIntent": "web_search",
-   "status": "done",
-   "maxMs": 120000
-  }
- },
- {
-  "id": "ws-find-2",
-  "prompt": "search for cheap flights to tokyo",
-  "expect": {
-   "graphIntent": "web_search",
-   "status": "done",
-   "maxMs": 120000
-  }
- },
- {
-  "id": "ws-find-3",
-  "prompt": "find me hotels in paris",
-  "expect": {
-   "graphIntent": "web_search",
-   "status": "done",
-   "maxMs": 120000
-  }
- },
- {
-  "id": "ws-restaurants",
-  "prompt": "good restaurants near downtown austin",
-  "expect": {
-   "graphIntent": "web_search",
-   "status": "done",
-   "maxMs": 120000
-  }
- },
- {
-  "id": "ws-cafes",
-  "prompt": "best coffee shops in seattle",
-  "expect": {
-   "graphIntent": "web_search",
-   "status": "done",
-   "maxMs": 120000
-  }
- },
- {
-  "id": "ws-crypto",
-  "prompt": "what is the price of bitcoin right now",
-  "expect": {
-   "graphIntent": "web_search",
-   "status": "done",
-   "maxMs": 120000
-  }
- },
- {
-  "id": "ws-forex",
-  "prompt": "how much is a euro in dollars today",
-  "expect": {
-   "graphIntent": "web_search",
-   "status": "done",
-   "maxMs": 120000
-  }
- },
- {
-  "id": "ws-gas",
-  "prompt": "current gas prices in california",
-  "expect": {
-   "graphIntent": "web_search",
-   "status": "done",
-   "maxMs": 120000
-  }
- },
- {
-  "id": "ws-flight-status",
-  "prompt": "check the status of united flight 100",
-  "expect": {
-   "graphIntent": "web_search",
-   "status": "done",
-   "maxMs": 120000
-  }
- },
- {
-  "id": "ws-time-tokyo",
-  "prompt": "what time is it in tokyo right now",
-  "expect": {
-   "graphIntent": "web_search",
-   "status": "done",
-   "maxMs": 120000
-  }
- },
- {
-  "id": "ws-holiday",
-  "prompt": "when is thanksgiving this year",
-  "expect": {
-   "graphIntent": "web_search",
-   "status": "done",
-   "maxMs": 120000
-  }
- },
- {
-  "id": "ws-history-news",
-  "prompt": "search for the history of the internet",
-  "expect": {
-   "graphIntent": "web_search",
-   "status": "done",
-   "maxMs": 120000
-  }
- },
- {
-  "id": "ws-science",
-  "prompt": "latest discoveries in space",
-  "expect": {
-   "graphIntent": "web_search",
-   "status": "done",
-   "maxMs": 120000
-  }
- },
- {
-  "id": "ws-health",
-  "prompt": "find info about vitamin d benefits",
-  "expect": {
-   "graphIntent": "web_search",
-   "status": "done",
-   "maxMs": 120000
-  }
- },
- {
-  "id": "ws-job",
-  "prompt": "search for remote software engineer jobs",
-  "expect": {
-   "graphIntent": "web_search",
-   "status": "done",
-   "maxMs": 120000
-  }
- },
- {
-  "id": "ws-emoji-img",
-  "prompt": "find me pictures of cute cats",
-  "expect": {
-   "graphIntent": "web_search",
-   "status": "done",
-   "maxMs": 120000,
-   "hasItems": true
-  }
- },
- {
-  "id": "ws-img-sonic",
-  "prompt": "search for images of sonic the hedgehog",
-  "expect": {
-   "graphIntent": "web_search",
-   "status": "done",
-   "maxMs": 120000,
-   "hasItems": true
-  }
- },
- {
-  "id": "ws-img-sunset",
-  "prompt": "find photos of sunsets over the ocean",
-  "expect": {
-   "graphIntent": "web_search",
-   "status": "done",
-   "maxMs": 120000,
-   "hasItems": true
-  }
- },
- {
-  "id": "ws-img-dog",
-  "prompt": "show me pictures of golden retrievers",
-  "expect": {
-   "graphIntent": "web_search",
-   "status": "done",
-   "maxMs": 120000,
-   "hasItems": true
-  }
- },
- {
-  "id": "ws-img-city",
-  "prompt": "find images of tokyo at night",
-  "expect": {
-   "graphIntent": "web_search",
-   "status": "done",
-   "maxMs": 120000,
-   "hasItems": true
-  }
- },
- {
-  "id": "ws-vid-1",
-  "prompt": "find me videos about guitar lessons",
-  "expect": {
-   "graphIntent": "web_search",
-   "status": "done",
-   "maxMs": 120000,
-   "hasItems": true
-  }
- },
- {
-  "id": "ws-vid-2",
-  "prompt": "search for tutorial videos on photoshop",
-  "expect": {
-   "graphIntent": "web_search",
-   "status": "done",
-   "maxMs": 120000,
-   "hasItems": true
-  }
- },
- {
-  "id": "ws-vid-3",
-  "prompt": "find videos of the moon landing",
-  "expect": {
-   "graphIntent": "web_search",
-   "status": "done",
-   "maxMs": 120000,
-   "hasItems": true
-  }
- },
- {
-  "id": "ws-list-books",
-  "prompt": "top rated sci fi books this year",
-  "expect": {
-   "graphIntent": "web_search",
-   "status": "done",
-   "maxMs": 120000
-  }
- },
- {
-  "id": "ws-list-apps",
-  "prompt": "best productivity apps 2026",
-  "expect": {
-   "graphIntent": "web_search",
-   "status": "done",
-   "maxMs": 120000
-  }
- },
- {
-  "id": "ws-meaning",
-  "prompt": "what does the word serendipity mean",
-  "expect": {
-   "graphIntent": "web_search",
-   "status": "done",
-   "maxMs": 120000
-  }
- },
- {
-  "id": "ws-translate-es",
-  "prompt": "translate good morning to spanish",
-  "expect": {
-   "graphIntent": "web_search",
-   "status": "done",
-   "maxMs": 120000,
-   "commsIntentIn": [
-    "general_quick",
-    "handoff"
-   ]
-  }
- },
- {
-  "id": "ws-explains",
-  "prompt": "explain how blockchain works",
-  "expect": {
-   "graphIntent": "web_search",
-   "status": "done",
-   "maxMs": 120000
-  }
- },
- {
-  "id": "ws-explain2",
-  "prompt": "how does photosynthesis work in plants",
-  "expect": {
-   "graphIntent": "web_search",
-   "status": "done",
-   "maxMs": 120000
-  }
- },
- {
-  "id": "ws-speed",
-  "prompt": "how fast does light travel",
-  "expect": {
-   "graphIntent": "web_search",
-   "status": "done",
-   "maxMs": 120000
-  }
- },
- {
-  "id": "ws-distance",
-  "prompt": "how far is the moon from earth",
-  "expect": {
-   "graphIntent": "web_search",
-   "status": "done",
-   "maxMs": 120000
-  }
- },
- {
-  "id": "ws-age",
-  "prompt": "how old is the oldest person alive",
-  "expect": {
-   "graphIntent": "web_search",
-   "status": "done",
-   "maxMs": 120000
-  }
- },
- {
-  "id": "ws-tallest",
-  "prompt": "what is the tallest building in the world",
-  "expect": {
-   "graphIntent": "web_search",
-   "status": "done",
-   "maxMs": 120000
-  }
- },
- {
-  "id": "ws-ocean",
-  "prompt": "what is the deepest part of the ocean",
-  "expect": {
-   "graphIntent": "web_search",
-   "status": "done",
-   "maxMs": 120000
-  }
- },
- {
-  "id": "ws-currency",
-  "prompt": "what currency does japan use",
-  "expect": {
-   "graphIntent": "web_search",
-   "status": "done",
-   "maxMs": 120000
-  }
- },
- {
-  "id": "ws-lang",
-  "prompt": "what language is spoken in brazil",
-  "expect": {
-   "graphIntent": "web_search",
-   "status": "done",
-   "maxMs": 120000
-  }
- },
- {
-  "id": "ws-inventor",
-  "prompt": "who invented the telephone",
-  "expect": {
-   "graphIntent": "web_search",
-   "status": "done",
-   "maxMs": 120000
-  }
- },
- {
-  "id": "ws-year",
-  "prompt": "what year did the berlin wall fall",
-  "expect": {
-   "graphIntent": "web_search",
-   "status": "done",
-   "maxMs": 120000
-  }
- },
- {
-  "id": "ws-author",
-  "prompt": "who wrote pride and prejudice",
-  "expect": {
-   "graphIntent": "web_search",
-   "status": "done",
-   "maxMs": 120000
-  }
- },
- {
-  "id": "ws-element",
-  "prompt": "what is the chemical symbol for gold",
-  "expect": {
-   "graphIntent": "web_search",
-   "status": "done",
-   "maxMs": 120000,
-   "mustContainAny": [
-    "Au",
-    "gold"
-   ]
-  }
- },
- {
-  "id": "ws-zip",
-  "prompt": "what is the zip code for san francisco",
-  "expect": {
-   "graphIntent": "web_search",
-   "status": "done",
-   "maxMs": 120000
-  }
- },
- {
-  "id": "ws-area",
-  "prompt": "what is the area code for new york",
-  "expect": {
-   "graphIntent": "web_search",
-   "status": "done",
-   "maxMs": 120000
-  }
- },
- {
-  "id": "ws-capitol",
-  "prompt": "where is the us capitol building",
-  "expect": {
-   "graphIntent": "web_search",
-   "status": "done",
-   "maxMs": 120000
-  }
- },
- {
-  "id": "ws-museum",
-  "prompt": "is the louvre open on mondays",
-  "expect": {
-   "graphIntent": "web_search",
-   "status": "done",
-   "maxMs": 120000
-  }
- }
 ]

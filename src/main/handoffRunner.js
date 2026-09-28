@@ -31,6 +31,11 @@ const COMMS_GRAPH_PORT = parseInt(process.env.COMMS_GRAPH_PORT || '3015', 10);
 /** @type {Map<string, { abortController: AbortController, stateGraph: any, progressCallback: Function }>} */
 const _activeRuns = new Map();
 
+// A task that emits no progress for this long is considered stalled (provider
+// hang, runaway graph). It is force-failed so the serial prompt queue isn't
+// poisoned for every subsequent prompt.
+const RUN_STALL_MS = parseInt(process.env.TASK_RUN_STALL_MS || '240000', 10);
+
 // ── Pending plan contexts (per task) ───────────────────────────────────────────
 /** @type {Map<string, { planFile: string, prompt: string, agentId: string|null, source: string, originalPrompt: string|null, sessionId: string|null }>} */
 const _pendingPlanContexts = new Map();
@@ -119,6 +124,9 @@ function _makeProgressCallback(taskId, agentId) {
   return (event) => {
     if (!event || typeof event !== 'object') return;
 
+    // Any progress event proves the run is alive — re-arm the stall watchdog.
+    _activeRuns.get(taskId)?.armStall?.();
+
     // Tag the event with taskId so the renderer can route it to the right queue card
     const taggedEvent = { ...event, taskId };
 
@@ -189,6 +197,25 @@ async function execute({ taskId, prompt, agentId, source, originalPrompt, sessio
   try {
     stateGraph = _createStateGraph();
     _activeRuns.set(taskId, { abortController, stateGraph, progressCallback });
+
+    // Stall watchdog: if no progress events arrive for RUN_STALL_MS, abort the
+    // run and reject — the serial prompt queue must not hang forever on a
+    // stuck provider call.
+    let _stallReject;
+    const _stallPromise = new Promise((_, reject) => { _stallReject = reject; });
+    const _armStall = () => {
+      const run = _activeRuns.get(taskId);
+      if (!run) return;
+      clearTimeout(run.stallTimer);
+      run.stallTimer = setTimeout(() => {
+        const err = new Error(`Task stalled — no progress for ${RUN_STALL_MS}ms`);
+        err._stalled = true;
+        abortController.abort();
+        _stallReject(err);
+      }, RUN_STALL_MS);
+    };
+    _activeRuns.get(taskId).armStall = _armStall;
+    _armStall();
 
     console.log(`[HandoffRunner] Starting task ${taskId}: ${prompt.substring(0, 80)}${planFile ? ' (with plan)' : ''}`);
 
@@ -280,7 +307,10 @@ async function execute({ taskId, prompt, agentId, source, originalPrompt, sessio
     if (_runEntry) _runEntry.state = initialState;
 
     // Execute the stategraph
-    const finalState = await stateGraph.execute(initialState, null, abortController.signal);
+    const finalState = await Promise.race([
+      stateGraph.execute(initialState, null, abortController.signal),
+      _stallPromise,
+    ]);
 
     // Pure-interaction plans (open/focus/click steps) often leave
     // finalState.answer empty — the step outputs ("Notes already open and
@@ -544,7 +574,7 @@ async function execute({ taskId, prompt, agentId, source, originalPrompt, sessio
   } catch (err) {
     console.error(`[HandoffRunner] Task ${taskId} failed:`, err.message);
 
-    const status = abortController.signal.aborted ? 'cancelled' : 'failed';
+    const status = (abortController.signal.aborted && !err._stalled) ? 'cancelled' : 'failed';
     _notifyComplete(taskId, agentId, status, err.message, null, sessionId);
 
     if (_ipcBroadcast) {
@@ -563,6 +593,7 @@ async function execute({ taskId, prompt, agentId, source, originalPrompt, sessio
     return { ok: false, status, error: err.message };
 
   } finally {
+    clearTimeout(_activeRuns.get(taskId)?.stallTimer);
     _activeRuns.delete(taskId);
   }
 }
