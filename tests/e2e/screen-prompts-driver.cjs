@@ -108,6 +108,14 @@ const probes = {
     if (z) { z.click(); return true; }
     return false;
   },
+  // image kind — a <img> that actually decoded (naturalWidth catches 404s)
+  hasImg: () => [...document.querySelectorAll('img')].some(i => i.complete && i.naturalWidth > 0),
+  imgCount: () => [...document.querySelectorAll('img')].filter(i => i.complete && i.naturalWidth > 0).length,
+  // scene kind — sandboxed iframe + postMessage render heartbeat recorded as
+  // data-scene-status by SceneScreen (canvas inside the opaque iframe is not
+  // reachable from page probes)
+  sceneIframe: () => [...document.querySelectorAll('iframe')].some(f => (f.getAttribute('sandbox') || '').includes('allow-scripts')),
+  sceneStatus: () => document.querySelector('[data-scene-status]')?.getAttribute('data-scene-status') || null,
 };
 async function probe(page, name, arg) {
   try { return await page.evaluate(`(${probes[name].toString()})(${JSON.stringify(arg ?? '')})`); }
@@ -175,6 +183,18 @@ async function _checkScreen(entry, ghost) {
     failures.push('no <canvas> on screen');
   if (ex.screenWebgl && !(await _probePoll(ghost, 'webgl')))
     failures.push('no canvas with a live WebGL/WebGL2 context');
+  if (ex.screenImg && !(await _probePoll(ghost, 'hasImg')))
+    failures.push('no loaded <img> on screen');
+  if (ex.screenImgs && (await probe(ghost, 'imgCount')) < ex.screenImgs)
+    failures.push(`expected ≥${ex.screenImgs} loaded imgs, got ${await probe(ghost, 'imgCount')}`);
+  if (ex.screenScene) {
+    if (!(await _probePoll(ghost, 'sceneIframe'))) failures.push('no sandboxed scene iframe on screen');
+    else {
+      let st = null;
+      for (let i = 0; i < 20 && st !== 'rendered'; i++) { await sleep(800); st = await probe(ghost, 'sceneStatus'); }
+      if (st !== 'rendered') failures.push(`scene never reported rendered (status=${st})`);
+    }
+  }
   if (ex.screenBlocking && !(await probe(ghost, 'blockingOverlay')))
     failures.push('no blocking overlay on screen');
   if (ex.screenCounter) {

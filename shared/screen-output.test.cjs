@@ -185,6 +185,20 @@ it('scene strips remote script/link loads and file:// refs', () => {
   assert(o.scene.js === 'console.log(1)');
 });
 
+it('scene accepts js-only payloads and normalizes the libs allowlist', () => {
+  const { output: o } = normalizeScreenOutput({
+    kind: 'scene', scene: { js: 'return { tick(t){} }', libs: ['three'] },
+  });
+  assert(o.scene.js.length > 0 && o.scene.libs[0] === 'three');
+  // Unknown/missing libs drop out; non-array libs ignored.
+  const { output: o2 } = normalizeScreenOutput({
+    kind: 'scene', scene: { js: 'x=1', libs: ['three', 'evil-lib', 'three'] },
+  });
+  assert(o2.scene.libs.length === 2 && o2.scene.libs.every(l => l === 'three'));
+  const { output: o3 } = normalizeScreenOutput({ kind: 'scene', scene: { js: 'x=1', libs: 'three' } });
+  assert(o3.scene.libs === undefined);
+});
+
 it('three defaults to starfield when scene omitted or unknown', () => {
   const { output: o } = normalizeScreenOutput({ kind: 'three' });
   assert(o.three.scene === 'starfield' && o.three.speed === 1 && o.three.density === 0.5);

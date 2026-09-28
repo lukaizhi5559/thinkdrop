@@ -43,6 +43,7 @@ export interface ScreenScene {
   html?: string;
   css?: string;
   js?: string;
+  libs?: ('three')[]; // vendor libs injected by the renderer — see /screen/vendor
 }
 
 export interface ScreenThree {

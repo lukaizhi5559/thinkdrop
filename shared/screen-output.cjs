@@ -45,6 +45,9 @@ const DISMISS = ['auto', 'manual'];
 // three kind: preset WebGL scenes rendered by ThreeScreen (bundled three.js).
 // Deterministic presets — generative 3D stays behind the 'scene' escape hatch.
 const THREE_SCENES = ['starfield', 'particles', 'wave', 'cube', 'knot', 'globe'];
+// Vendor libraries a generated scene may request — served locally by
+// /screen/vendor/<lib> so sandboxed scenes never fetch remote code.
+const SCENE_LIBS = ['three'];
 
 /**
  * Mood → visual defaults. `accent` tints borders/glows/accents in the renderer;
@@ -142,6 +145,13 @@ function _scene(raw) {
   if (raw.html) s.html = stripRemote(_str(raw.html, MAX_GENERATED_BYTES));
   if (raw.css) s.css = _str(raw.css, MAX_GENERATED_BYTES);
   if (raw.js) s.js = _str(raw.js, MAX_GENERATED_BYTES);
+  // Vendor-lib allowlist — the renderer injects
+  // <script src="/screen/vendor/<lib>"> tags locally; generated markup never
+  // names remote sources (stripRemote above). 'three' is the only lib today.
+  if (Array.isArray(raw.libs)) {
+    const libs = raw.libs.map(l => _oneOf(l, SCENE_LIBS)).filter(Boolean).slice(0, 3);
+    if (libs.length) s.libs = libs;
+  }
   return Object.keys(s).length ? s : null;
 }
 function _three(raw) {
@@ -247,8 +257,10 @@ function normalizeScreenOutput(raw) {
     }
     case 'scene': {
       out.scene = _scene(raw.scene);
-      if (!out.scene || (!out.scene.name && !out.scene.html)) {
-        return { ok: false, error: 'scene kind requires scene.name (registered) or scene.html (generated)' };
+      // js-only scenes are valid — the harness supplies the markup shell
+      // (three.js scenes are typically a lone module script).
+      if (!out.scene || (!out.scene.name && !out.scene.html && !out.scene.js)) {
+        return { ok: false, error: 'scene kind requires scene.name (registered), scene.html, or scene.js (generated)' };
       }
       break;
     }

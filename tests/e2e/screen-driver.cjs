@@ -73,6 +73,15 @@ const probes = {
     if (b) { b.click(); return true; }
     return false;
   },
+  // image kind — img element that actually loaded (naturalWidth>0 catches
+  // broken hotlinks that still leave an <img> in the DOM)
+  hasImg: () => [...document.querySelectorAll('img')].some(i => i.complete && i.naturalWidth > 0),
+  imgCount: () => [...document.querySelectorAll('img')].filter(i => i.complete && i.naturalWidth > 0).length,
+  // scene kind — sandboxed iframe + render heartbeat (the canvas inside the
+  // opaque iframe is unreachable; the frame posts 'td-scene-rendered' which
+  // SceneScreen records as data-scene-status on its wrapper)
+  sceneIframe: () => [...document.querySelectorAll('iframe')].some(f => (f.getAttribute('sandbox') || '').includes('allow-scripts')),
+  sceneStatus: () => document.querySelector('[data-scene-status]')?.getAttribute('data-scene-status') || null,
 };
 
 async function probe(page, name, arg) {
@@ -114,11 +123,21 @@ async function main() {
     }
     if (r.status !== 200) { out.failures.push(`display POST → ${r.status} ${r.error || ''}`); }
 
-    // wait for content to paint (chart lazy-loads antv; three lazy-loads three.js)
-    const waitMs = (ex.canvas || ex.webgl) ? 9000 : 3000;
-    await sleep((ex.canvas || ex.webgl) ? waitMs : 1200);
+    // Auto-advance decks can flip past slide 1 during the paint wait — read
+    // the counter first (300ms settle), then take the generic wait.
+    let c0 = null;
+    let earlyTextOk = false;
+    if (ex.autoAdvance) {
+      await sleep(300);
+      c0 = await probe(page, 'counter');
+      earlyTextOk = ex.text == null || (await probe(page, 'hasText', ex.text));
+    }
 
-    if (ex.text != null && !(await probe(page, 'hasText', ex.text)))
+    // wait for content to paint (chart lazy-loads antv; three lazy-loads three.js)
+    const waitMs = (ex.canvas || ex.webgl || ex.sceneRendered) ? 9000 : 3000;
+    await sleep((ex.canvas || ex.webgl || ex.sceneRendered) ? waitMs : 1200);
+
+    if (ex.text != null && !(earlyTextOk || (await probe(page, 'hasText', ex.text))))
       out.failures.push(`text "${String(ex.text).slice(0, 50)}" not in DOM`);
     if (ex.text2 != null && !(await probe(page, 'hasText', ex.text2)))
       out.failures.push(`text "${ex.text2}" not in DOM`);
@@ -136,9 +155,20 @@ async function main() {
       out.failures.push('no running scroll animation on text');
     if (ex.blockingScrim && !(await probe(page, 'blockingOverlay')))
       out.failures.push('no blocking overlay element');
+    if (ex.img && !(await probe(page, 'hasImg')))
+      out.failures.push('no loaded <img> rendered (naturalWidth=0 or absent)');
+    if (ex.minImgs && (await probe(page, 'imgCount')) < ex.minImgs)
+      out.failures.push(`expected ≥${ex.minImgs} loaded imgs, got ${await probe(page, 'imgCount')}`);
+    if (ex.sceneIframe && !(await probe(page, 'sceneIframe')))
+      out.failures.push('no sandboxed scene iframe rendered');
+    if (ex.sceneRendered) {
+      let st = null;
+      for (let i = 0; i < 20 && st !== 'rendered'; i++) { await sleep(700); st = await probe(page, 'sceneStatus'); }
+      if (st !== 'rendered') out.failures.push(`scene never reported rendered (status=${st})`);
+    }
 
     if (ex.autoAdvance) {
-      const c0 = await probe(page, 'counter');
+      if (c0 == null) c0 = await probe(page, 'counter');
       if (!c0 || c0[0] !== 1) out.failures.push(`counter expected 1/N, got ${JSON.stringify(c0)}`);
       else {
         let adv = null;

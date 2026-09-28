@@ -1,0 +1,56 @@
+[
+  {
+    "id": "s10-image-search",
+    "prompt": "show me a pic of sonic the hedgehog on my screen",
+    "desc": "image subject → brave-image fetch → image kind paints a loaded img",
+    "expect": { "status": "done", "screenImg": true, "graphIntent": ["screen_display", "web_search"], "maxMs": 120000 }
+  },
+  {
+    "id": "s10-image-search-2",
+    "prompt": "show me a picture of the golden gate bridge on my screen",
+    "desc": "second subject — caption carries the subject",
+    "expect": { "status": "done", "screenImg": true, "graphIntent": ["screen_display", "web_search"], "maxMs": 120000 }
+  },
+  {
+    "id": "s10-image-deck",
+    "prompt": "make me a slideshow of dog photos on my screen",
+    "desc": "image search → deck slides carrying images",
+    "expect": { "status": "done", "screenImgs": 1, "graphIntent": ["screen_display", "web_search"], "maxMs": 120000 }
+  },
+  {
+    "id": "s10-three-gen",
+    "prompt": "make a face in 3d of a mouth opening and closing on the screen",
+    "desc": "no preset match → LLM-generated scene.js in sandboxed iframe",
+    "expect": { "status": "done", "screenScene": true, "graphIntent": ["screen_display"], "maxMs": 120000 }
+  },
+  {
+    "id": "s10-three-gen-2",
+    "prompt": "show me a 3d heart beating on the screen",
+    "desc": "generative — no preset for 'heart'",
+    "expect": { "status": "done", "screenScene": true, "graphIntent": ["screen_display"], "maxMs": 120000 }
+  },
+  {
+    "id": "s10-three-preset",
+    "prompt": "show a 3d starfield on my screen",
+    "desc": "regression — named preset stays on the fast path (webgl canvas, no iframe)",
+    "expect": { "status": "done", "screenWebgl": true, "graphIntent": ["screen_display"], "maxMs": 90000 }
+  },
+  {
+    "id": "s10-image-url",
+    "prompt": "display https://www.w3.org/Icons/w3c_home.png on my screen",
+    "desc": "explicit image URL — no fetch step needed",
+    "expect": { "status": "done", "screenImg": true, "graphIntent": ["screen_display"], "maxMs": 90000 }
+  },
+  {
+    "id": "s10-clear",
+    "prompt": "clear my screen",
+    "desc": "lifecycle — clears whatever the last display left",
+    "expect": { "status": "done", "screenEmpty": true, "graphIntent": ["screen_display"], "maxMs": 60000 }
+  },
+  {
+    "id": "s10-fileop-negative",
+    "prompt": "create a file /tmp/s10-pic.txt containing the text picture of a cat",
+    "desc": "file op must not route to screen display despite 'picture'",
+    "expect": { "status": "done", "screenEmpty": true, "fileExists": "/tmp/s10-pic.txt", "graphIntent": ["command_automate"], "maxMs": 90000 }
+  }
+]

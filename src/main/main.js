@@ -551,6 +551,38 @@ function startOverlayControlServer() {
       return;
     }
 
+    // ── GET /screen/vendor/<lib> — local vendor modules for sandboxed scene
+    // iframes. Generated scene markup can't name remote sources (normalizer
+    // strips them); libs are served from node_modules through this fixed
+    // allowlist so `import THREE from '…/screen/vendor/three.module.js'`
+    // resolves inside the sandboxed srcdoc.
+    if (req.method === 'GET' && req.url.startsWith('/screen/vendor/')) {
+      const lib = decodeURIComponent(req.url.slice('/screen/vendor/'.length).split('?')[0]);
+      // three.module.js re-imports from ./three.core.js — both must resolve.
+      // three's package exports map hides ./build/* from require.resolve, so
+      // locate the package dir via the main entry and read the file directly.
+      const VENDOR_LIBS = {
+        'three.module.js': ['three', 'three.module.js'],
+        'three.core.js':   ['three', 'three.core.js'],
+      };
+      const spec = VENDOR_LIBS[lib];
+      if (spec) {
+        try {
+          const pkgDir = path.dirname(require.resolve(spec[0]));
+          const filePath = path.join(pkgDir, '..', 'build', spec[1]);
+          const code = fs.readFileSync(filePath, 'utf8');
+          res.setHeader('Content-Type', 'text/javascript; charset=utf-8');
+          res.writeHead(200).end(code);
+          return;
+        } catch (e) {
+          res.writeHead(404).end(JSON.stringify({ ok: false, error: `vendor lib unavailable: ${e.message}` }));
+          return;
+        }
+      }
+      res.writeHead(404).end(JSON.stringify({ ok: false, error: `unknown vendor lib: ${lib}` }));
+      return;
+    }
+
     // ── GET /activity — SkillScheduler checks before firing bridge tasks ───────
     // Returns whether the user is currently active so bridge-type scheduled skills
     // can defer execution rather than interrupting mid-session work.

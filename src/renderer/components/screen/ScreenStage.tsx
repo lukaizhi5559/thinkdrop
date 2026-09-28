@@ -3,6 +3,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import type { ScreenOutput, ScreenClearMessage } from './types';
 import { TextScreen } from './TextScreen';
 import { ImageScreen } from './ImageScreen';
+import { SceneScreen } from './SceneScreen';
 import { EmojiScreen } from './EmojiGlyph';
 import { EffectScreen } from './EffectScreen';
 import { ChartScreen } from './ChartScreen';
@@ -248,6 +249,7 @@ function KindView({ output, animateClass, onDismiss }: { output: ScreenOutput; a
     case 'alert': return <AlertCurtain output={output} onDismiss={onDismiss} />;
     case 'deck':   return <DeckScreen   output={output} onDismiss={onDismiss} />;
     case 'three':  return <ThreeScreen  output={output} />;
+    case 'scene':  return <SceneScreen  output={output} />;
     default:      return <KindStub    output={output} />;
   }
 }

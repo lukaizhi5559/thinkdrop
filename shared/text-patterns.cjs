@@ -283,12 +283,19 @@ const SCREEN_CONTENT_LEAD_RE = /^(?:(?:the\s+|a\s+|an\s+)?(?:word|words|phrase|t
  * callers subtract passive questions before trusting this. */
 const SCREEN_OUTPUT_RE = new RegExp([
   '\\b(?:show|put|display|paint|write|post|flash|project)\\b[^.]{0,60}\\bon(?:to)?\\s+(?:the\\s+|my\\s+)?screen\\b',
+  // URL payloads carry their own dots — "display https://x/y.png on my
+  // screen" can't span the [^.] window above.
+  '\\b(?:show|put|display|project)\\s+(?:this\\s+)?https?://\\S+\\s+on(?:to)?\\s+(?:the\\s+|my\\s+)?screen\\b',
   '\\bon\\s+screen\\s+(?:display|mode)\\b',
   '\\b(?:clear|hide|dismiss|wipe)\\s+(?:the\\s+|my\\s+)?screen\\b',
   '\\btake\\s+\\w+\\s+off\\s+(?:the\\s+|my\\s+)?screen\\b',
   '\\bmake\\s+it\\s+(?:rain|snow)\\b',
   '\\b(?:fireworks?|confetti|emoji[\\s-]?rain)\\b[^.]{0,40}\\bscreen\\b',
   '\\bscreen\\b[^.]{0,40}\\b(?:fireworks?|confetti|emoji[\\s-]?rain)\\b',
+  // 3D/WebGL phrasing + a build-or-display verb + "screen" — "make a face in
+  // 3d on the screen", "build me a spinning torus on my screen". Both markers
+  // required so "create a 3d model file" (no screen) can't drift in.
+  '\\b(?:show|display|make|create|generate|build|draw|render|put)\\b[^.]{0,70}\\b(?:3\\s?-?d|three\\.?js|webgl|starfield|particle\\s|spinning\\s|wireframe|hologram)\\b[^.]{0,45}\\bscreen\\b',
 ].join('|'), 'i');
 
 /** Fetch-then-display shape: a lookup verb AND a display verb targeting the
@@ -331,8 +338,15 @@ function inferScreenOutput(message) {
 
   if (SCREEN_EFFECT_RE.test(msg)) out.kind = 'effect';
   else if (SCREEN_EMOJI_RE.test(msg)) out.kind = 'emoji';
-  else if (SCREEN_IMG_URL_RE.test(msg) || SCREEN_IMG_PATH_RE.test(msg)
-           || (/\b(?:image|picture|photo|img)\b/i.test(msg) && /https?:\/\/|~\//.test(msg))) out.kind = 'image';
+  else if (SCREEN_IMG_URL_RE.test(msg) || SCREEN_IMG_PATH_RE.test(msg)) {
+    out.kind = 'image';
+  // "a pic/picture/photo of X" — no URL needed; the fetch step supplies the
+  // image (Brave image search). Capture the subject for the query/caption.
+  } else if (/\b(?:pic|pics|picture|pictures|photo|photos|image|images|img)\s+of\s+/i.test(msg)) {
+    out.kind = 'image';
+    const sm = msg.match(/\b(?:pic|pics|picture|pictures|photo|photos|image|images|img)\s+of\s+(.{1,120}?)(?:\s+on\s+(?:the\s+|my\s+)?screen\b|$)/i);
+    if (sm) out.content = sm[1].trim();
+  }
   else if (SCREEN_ALERT_RE.test(msg)) out.kind = 'alert';
   else if (SCREEN_DECK_RE.test(msg)) out.kind = 'deck';
   else if (SCREEN_CHART_RE.test(msg)) out.kind = 'chart';
@@ -399,6 +413,8 @@ module.exports = {
   SCREEN_VISUAL_KIND_RE,
   VISUAL_INTO_APP_RE,
   SCREEN_THREE_RE,
+  SCREEN_IMG_URL_RE,
+  SCREEN_IMG_PATH_RE,
   LOCAL_DATA_SUBJECT_RE,
   DEVICE_STATE_RE,
   FILE_PATH_RE,

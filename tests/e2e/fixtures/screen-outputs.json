@@ -1,206 +1,547 @@
 [
-  {
-    "id": "chart-pie",
-    "desc": "pie chart — ant-design-charts Pie renders a canvas + labels",
-    "payload": {
-      "kind": "chart", "title": "Browsers by share", "mood": "neutral",
-      "chart": { "type": "pie", "label": "Share %",
-        "data": [{ "browser": "Arc", "share": 40 }, { "browser": "Safari", "share": 35 }, { "browser": "Chrome", "share": 25 }] }
-    },
-    "expect": { "canvas": true, "text": "Browsers by share" }
+ {
+  "id": "chart-pie",
+  "desc": "pie chart \u2014 ant-design-charts Pie renders a canvas + labels",
+  "payload": {
+   "kind": "chart",
+   "title": "Browsers by share",
+   "mood": "neutral",
+   "chart": {
+    "type": "pie",
+    "label": "Share %",
+    "data": [
+     {
+      "browser": "Arc",
+      "share": 40
+     },
+     {
+      "browser": "Safari",
+      "share": 35
+     },
+     {
+      "browser": "Chrome",
+      "share": 25
+     }
+    ]
+   }
   },
-  {
-    "id": "chart-donut",
-    "desc": "donut — innerRadius path",
-    "payload": {
-      "kind": "chart", "title": "Disk usage", "mood": "warm",
-      "chart": { "type": "donut",
-        "data": [{ "part": "used", "gb": 420 }, { "part": "free", "gb": 80 }] }
-    },
-    "expect": { "canvas": true, "text": "Disk usage" }
-  },
-  {
-    "id": "chart-bar",
-    "desc": "bar chart with explicit xKey/yKey",
-    "payload": {
-      "kind": "chart", "title": "Commits this week",
-      "chart": { "type": "bar", "xKey": "day", "yKey": "count",
-        "data": [{ "day": "Mon", "count": 4 }, { "day": "Tue", "count": 7 }, { "day": "Wed", "count": 3 }, { "day": "Thu", "count": 9 }, { "day": "Fri", "count": 6 }] }
-    },
-    "expect": { "canvas": true, "text": "Commits this week" }
-  },
-  {
-    "id": "chart-line",
-    "desc": "line chart — xKey/yKey fallback resolution (unnamed keys)",
-    "payload": {
-      "kind": "chart", "title": "Latency p50",
-      "chart": { "type": "line",
-        "data": [{ "t": "09:00", "ms": 120 }, { "t": "10:00", "ms": 95 }, { "t": "11:00", "ms": 140 }, { "t": "12:00", "ms": 88 }] }
-    },
-    "expect": { "canvas": true, "text": "Latency p50" }
-  },
-  {
-    "id": "chart-area",
-    "desc": "area chart",
-    "payload": {
-      "kind": "chart", "title": "CPU %",
-      "chart": { "type": "area",
-        "data": [{ "min": "1", "cpu": 22 }, { "min": "2", "cpu": 61 }, { "min": "3", "cpu": 45 }, { "min": "4", "cpu": 70 }] }
-    },
-    "expect": { "canvas": true, "text": "CPU %" }
-  },
-  {
-    "id": "chart-stat",
-    "desc": "stat — custom big-number card, no antv canvas",
-    "payload": {
-      "kind": "chart", "title": "Tests passing", "mood": "calm",
-      "chart": { "type": "stat", "label": "of 20 prompts", "data": [{ "metric": "pass", "n": 20 }] }
-    },
-    "expect": { "text": "20", "text2": "of 20 prompts" }
-  },
-  {
-    "id": "deck-auto",
-    "desc": "deck auto-advance: 3 slides, slideMs 1200 → counter moves without interaction",
-    "payload": {
-      "kind": "deck", "title": "Sprint review", "mood": "neutral",
-      "deck": {
-        "transition": "fade", "slideMs": 1200, "controls": false,
-        "slides": [
-          { "title": "Stage 5", "body": "Automation corpus — ninety runs green" },
-          { "title": "Stage 6", "bullets": ["multi-intent split", "multi-compose det plans", "nineteen clean"] },
-          { "title": "Stage 7", "body": "p50 6.3s · p95 20s — all budgets green" }
-        ]
-      }
-    },
-    "expect": { "text": "Stage 5", "autoAdvance": true }
-  },
-  {
-    "id": "deck-controls",
-    "desc": "deck with controls:true — nav zones + Done button on last slide",
-    "payload": {
-      "kind": "deck", "mood": "playful",
-      "deck": {
-        "transition": "slide", "slideMs": 60000, "controls": true, "dismiss": "manual",
-        "slides": [
-          { "title": "Slide one", "body": "first" },
-          { "title": "Slide two", "body": "second" }
-        ]
-      }
-    },
-    "expect": { "text": "Slide one", "navRight": "Slide two" }
-  },
-  {
-    "id": "deck-chart-slide",
-    "desc": "deck slide embedding a chart — ChartScreen reused inside SlideBody",
-    "payload": {
-      "kind": "deck", "mood": "neutral",
-      "deck": {
-        "transition": "zoom", "slideMs": 60000,
-        "slides": [
-          { "title": "Numbers slide", "chart": { "type": "bar",
-            "data": [{ "q": "Q1", "v": 10 }, { "q": "Q2", "v": 14 }, { "q": "Q3", "v": 9 }] } }
-        ]
-      }
-    },
-    "expect": { "text": "Numbers slide", "canvas": true }
-  },
-  {
-    "id": "text-scripture",
-    "desc": "scripture-style text — hero font, title, emoji accent",
-    "payload": {
-      "kind": "text", "title": "Psalm 23:1", "mood": "calm", "fontSize": "hero",
-      "text": "The Lord is my shepherd; I shall not want.",
-      "durationMs": 0, "dismiss": "manual"
-    },
-    "expect": { "text": "The Lord is my shepherd", "text2": "Psalm 23:1", "emoji": true }
-  },
-  {
-    "id": "text-scroll",
-    "desc": "long passage, fit:scroll → marquee scroll animation engaged",
-    "payload": {
-      "kind": "text", "title": "John 1:1–5", "mood": "sad", "fontSize": "xl", "fit": "scroll",
-      "text": "In the beginning was the Word, and the Word was with God, and the Word was God. He was in the beginning with God. All things were made through him, and without him was not any thing made that was made. In him was life, and the life was the light of men. The light shines in the darkness, and the darkness has not overcome it. In the beginning was the Word, and the Word was with God, and the Word was God. He was in the beginning with God.",
-      "durationMs": 0, "dismiss": "manual"
-    },
-    "expect": { "text": "In the beginning was the Word", "scrolling": true }
-  },
-  {
-    "id": "text-markdown",
-    "desc": "markdown-lite — **bold** → strong, *italic* → em",
-    "payload": {
-      "kind": "text", "mood": "happy", "fontSize": "lg",
-      "text": "This is **bold text** and this is *italic text*.",
-      "durationMs": 0, "dismiss": "manual"
-    },
-    "expect": { "strong": "bold text", "em": "italic text" }
-  },
-  {
-    "id": "emoji",
-    "desc": "emoji kind — giant glyph",
-    "payload": { "kind": "emoji", "emoji": "🎉", "text": "Stage 8 done", "mood": "playful" },
-    "expect": { "text": "Stage 8 done" }
-  },
-  {
-    "id": "effect-confetti",
-    "desc": "effect kind — confetti canvas particles",
-    "payload": { "kind": "effect", "effect": "confetti", "intensity": 0.8, "durationMs": 0, "dismiss": "manual" },
-    "expect": { "canvas": true }
-  },
-  {
-    "id": "alert-block",
-    "desc": "alert kind — blocking scrim, click-outside dismiss",
-    "payload": {
-      "kind": "alert", "severity": "warn", "title": "Standup in 5",
-      "text": "Your calendar says standup starts soon.", "blocking": true, "dismiss": "manual"
-    },
-    "expect": { "text": "Standup in 5", "blockingScrim": true }
-  },
-  {
-    "id": "auto-dismiss",
-    "desc": "auto-dismiss — durationMs:1500 removes itself",
-    "payload": { "kind": "emoji", "emoji": "⏱️", "durationMs": 1500 },
-    "expect": { "text": null, "goneAfter": 4000 }
-  },
-  {
-    "id": "three-starfield",
-    "desc": "three.js starfield — lazy-loaded WebGL canvas",
-    "payload": {
-      "kind": "three", "mood": "neutral",
-      "three": { "scene": "starfield", "text": "Starfield" }
-    },
-    "expect": { "webgl": true, "text": "Starfield" }
-  },
-  {
-    "id": "three-cube",
-    "desc": "spinning wireframe cube with caption",
-    "payload": {
-      "kind": "three", "mood": "calm",
-      "three": { "scene": "cube", "color": "#34d399", "speed": 1.4, "text": "Rotating cube" }
-    },
-    "expect": { "webgl": true, "text": "Rotating cube" }
-  },
-  {
-    "id": "three-wave",
-    "desc": "particle wave — vertex-displaced plane",
-    "payload": {
-      "kind": "three", "mood": "sad",
-      "three": { "scene": "wave", "density": 0.8 }
-    },
-    "expect": { "webgl": true }
-  },
-  {
-    "id": "three-knot",
-    "desc": "torus knot wireframe — geometry density scales",
-    "payload": {
-      "kind": "three", "mood": "playful",
-      "three": { "scene": "knot", "speed": 0.6 }
-    },
-    "expect": { "webgl": true }
-  },
-  {
-    "id": "invalid-kind",
-    "desc": "invalid payload → 400",
-    "payload": { "kind": "hologram", "text": "nope" },
-    "expect": { "httpStatus": 400 }
+  "expect": {
+   "canvas": true,
+   "text": "Browsers by share"
   }
+ },
+ {
+  "id": "chart-donut",
+  "desc": "donut \u2014 innerRadius path",
+  "payload": {
+   "kind": "chart",
+   "title": "Disk usage",
+   "mood": "warm",
+   "chart": {
+    "type": "donut",
+    "data": [
+     {
+      "part": "used",
+      "gb": 420
+     },
+     {
+      "part": "free",
+      "gb": 80
+     }
+    ]
+   }
+  },
+  "expect": {
+   "canvas": true,
+   "text": "Disk usage"
+  }
+ },
+ {
+  "id": "chart-bar",
+  "desc": "bar chart with explicit xKey/yKey",
+  "payload": {
+   "kind": "chart",
+   "title": "Commits this week",
+   "chart": {
+    "type": "bar",
+    "xKey": "day",
+    "yKey": "count",
+    "data": [
+     {
+      "day": "Mon",
+      "count": 4
+     },
+     {
+      "day": "Tue",
+      "count": 7
+     },
+     {
+      "day": "Wed",
+      "count": 3
+     },
+     {
+      "day": "Thu",
+      "count": 9
+     },
+     {
+      "day": "Fri",
+      "count": 6
+     }
+    ]
+   }
+  },
+  "expect": {
+   "canvas": true,
+   "text": "Commits this week"
+  }
+ },
+ {
+  "id": "chart-line",
+  "desc": "line chart \u2014 xKey/yKey fallback resolution (unnamed keys)",
+  "payload": {
+   "kind": "chart",
+   "title": "Latency p50",
+   "chart": {
+    "type": "line",
+    "data": [
+     {
+      "t": "09:00",
+      "ms": 120
+     },
+     {
+      "t": "10:00",
+      "ms": 95
+     },
+     {
+      "t": "11:00",
+      "ms": 140
+     },
+     {
+      "t": "12:00",
+      "ms": 88
+     }
+    ]
+   }
+  },
+  "expect": {
+   "canvas": true,
+   "text": "Latency p50"
+  }
+ },
+ {
+  "id": "chart-area",
+  "desc": "area chart",
+  "payload": {
+   "kind": "chart",
+   "title": "CPU %",
+   "chart": {
+    "type": "area",
+    "data": [
+     {
+      "min": "1",
+      "cpu": 22
+     },
+     {
+      "min": "2",
+      "cpu": 61
+     },
+     {
+      "min": "3",
+      "cpu": 45
+     },
+     {
+      "min": "4",
+      "cpu": 70
+     }
+    ]
+   }
+  },
+  "expect": {
+   "canvas": true,
+   "text": "CPU %"
+  }
+ },
+ {
+  "id": "chart-stat",
+  "desc": "stat \u2014 custom big-number card, no antv canvas",
+  "payload": {
+   "kind": "chart",
+   "title": "Tests passing",
+   "mood": "calm",
+   "chart": {
+    "type": "stat",
+    "label": "of 20 prompts",
+    "data": [
+     {
+      "metric": "pass",
+      "n": 20
+     }
+    ]
+   }
+  },
+  "expect": {
+   "text": "20",
+   "text2": "of 20 prompts"
+  }
+ },
+ {
+  "id": "deck-auto",
+  "desc": "deck auto-advance: 3 slides, slideMs 1200 \u2192 counter moves without interaction",
+  "payload": {
+   "kind": "deck",
+   "title": "Sprint review",
+   "mood": "neutral",
+   "deck": {
+    "transition": "fade",
+    "slideMs": 1200,
+    "controls": false,
+    "slides": [
+     {
+      "title": "Stage 5",
+      "body": "Automation corpus \u2014 ninety runs green"
+     },
+     {
+      "title": "Stage 6",
+      "bullets": [
+       "multi-intent split",
+       "multi-compose det plans",
+       "nineteen clean"
+      ]
+     },
+     {
+      "title": "Stage 7",
+      "body": "p50 6.3s \u00b7 p95 20s \u2014 all budgets green"
+     }
+    ]
+   }
+  },
+  "expect": {
+   "text": "Stage 5",
+   "autoAdvance": true
+  }
+ },
+ {
+  "id": "deck-controls",
+  "desc": "deck with controls:true \u2014 nav zones + Done button on last slide",
+  "payload": {
+   "kind": "deck",
+   "mood": "playful",
+   "deck": {
+    "transition": "slide",
+    "slideMs": 60000,
+    "controls": true,
+    "dismiss": "manual",
+    "slides": [
+     {
+      "title": "Slide one",
+      "body": "first"
+     },
+     {
+      "title": "Slide two",
+      "body": "second"
+     }
+    ]
+   }
+  },
+  "expect": {
+   "text": "Slide one",
+   "navRight": "Slide two"
+  }
+ },
+ {
+  "id": "deck-chart-slide",
+  "desc": "deck slide embedding a chart \u2014 ChartScreen reused inside SlideBody",
+  "payload": {
+   "kind": "deck",
+   "mood": "neutral",
+   "deck": {
+    "transition": "zoom",
+    "slideMs": 60000,
+    "slides": [
+     {
+      "title": "Numbers slide",
+      "chart": {
+       "type": "bar",
+       "data": [
+        {
+         "q": "Q1",
+         "v": 10
+        },
+        {
+         "q": "Q2",
+         "v": 14
+        },
+        {
+         "q": "Q3",
+         "v": 9
+        }
+       ]
+      }
+     }
+    ]
+   }
+  },
+  "expect": {
+   "text": "Numbers slide",
+   "canvas": true
+  }
+ },
+ {
+  "id": "text-scripture",
+  "desc": "scripture-style text \u2014 hero font, title, emoji accent",
+  "payload": {
+   "kind": "text",
+   "title": "Psalm 23:1",
+   "mood": "calm",
+   "fontSize": "hero",
+   "text": "The Lord is my shepherd; I shall not want.",
+   "durationMs": 0,
+   "dismiss": "manual"
+  },
+  "expect": {
+   "text": "The Lord is my shepherd",
+   "text2": "Psalm 23:1",
+   "emoji": true
+  }
+ },
+ {
+  "id": "text-scroll",
+  "desc": "long passage, fit:scroll \u2192 marquee scroll animation engaged",
+  "payload": {
+   "kind": "text",
+   "title": "John 1:1\u20135",
+   "mood": "sad",
+   "fontSize": "xl",
+   "fit": "scroll",
+   "text": "In the beginning was the Word, and the Word was with God, and the Word was God. He was in the beginning with God. All things were made through him, and without him was not any thing made that was made. In him was life, and the life was the light of men. The light shines in the darkness, and the darkness has not overcome it. In the beginning was the Word, and the Word was with God, and the Word was God. He was in the beginning with God.",
+   "durationMs": 0,
+   "dismiss": "manual"
+  },
+  "expect": {
+   "text": "In the beginning was the Word",
+   "scrolling": true
+  }
+ },
+ {
+  "id": "text-markdown",
+  "desc": "markdown-lite \u2014 **bold** \u2192 strong, *italic* \u2192 em",
+  "payload": {
+   "kind": "text",
+   "mood": "happy",
+   "fontSize": "lg",
+   "text": "This is **bold text** and this is *italic text*.",
+   "durationMs": 0,
+   "dismiss": "manual"
+  },
+  "expect": {
+   "strong": "bold text",
+   "em": "italic text"
+  }
+ },
+ {
+  "id": "emoji",
+  "desc": "emoji kind \u2014 giant glyph",
+  "payload": {
+   "kind": "emoji",
+   "emoji": "\ud83c\udf89",
+   "text": "Stage 8 done",
+   "mood": "playful"
+  },
+  "expect": {
+   "text": "Stage 8 done"
+  }
+ },
+ {
+  "id": "effect-confetti",
+  "desc": "effect kind \u2014 confetti canvas particles",
+  "payload": {
+   "kind": "effect",
+   "effect": "confetti",
+   "intensity": 0.8,
+   "durationMs": 0,
+   "dismiss": "manual"
+  },
+  "expect": {
+   "canvas": true
+  }
+ },
+ {
+  "id": "alert-block",
+  "desc": "alert kind \u2014 blocking scrim, click-outside dismiss",
+  "payload": {
+   "kind": "alert",
+   "severity": "warn",
+   "title": "Standup in 5",
+   "text": "Your calendar says standup starts soon.",
+   "blocking": true,
+   "dismiss": "manual"
+  },
+  "expect": {
+   "text": "Standup in 5",
+   "blockingScrim": true
+  }
+ },
+ {
+  "id": "auto-dismiss",
+  "desc": "auto-dismiss \u2014 durationMs:1500 removes itself",
+  "payload": {
+   "kind": "emoji",
+   "emoji": "\u23f1\ufe0f",
+   "durationMs": 1500
+  },
+  "expect": {
+   "text": null,
+   "goneAfter": 4000
+  }
+ },
+ {
+  "id": "three-starfield",
+  "desc": "three.js starfield \u2014 lazy-loaded WebGL canvas",
+  "payload": {
+   "kind": "three",
+   "mood": "neutral",
+   "three": {
+    "scene": "starfield",
+    "text": "Starfield"
+   }
+  },
+  "expect": {
+   "webgl": true,
+   "text": "Starfield"
+  }
+ },
+ {
+  "id": "three-cube",
+  "desc": "spinning wireframe cube with caption",
+  "payload": {
+   "kind": "three",
+   "mood": "calm",
+   "three": {
+    "scene": "cube",
+    "color": "#34d399",
+    "speed": 1.4,
+    "text": "Rotating cube"
+   }
+  },
+  "expect": {
+   "webgl": true,
+   "text": "Rotating cube"
+  }
+ },
+ {
+  "id": "three-wave",
+  "desc": "particle wave \u2014 vertex-displaced plane",
+  "payload": {
+   "kind": "three",
+   "mood": "sad",
+   "three": {
+    "scene": "wave",
+    "density": 0.8
+   }
+  },
+  "expect": {
+   "webgl": true
+  }
+ },
+ {
+  "id": "three-knot",
+  "desc": "torus knot wireframe \u2014 geometry density scales",
+  "payload": {
+   "kind": "three",
+   "mood": "playful",
+   "three": {
+    "scene": "knot",
+    "speed": 0.6
+   }
+  },
+  "expect": {
+   "webgl": true
+  }
+ },
+ {
+  "id": "image-dataurl",
+  "desc": "image kind \u2014 dataUrl card renders a loaded img",
+  "payload": {
+   "kind": "image",
+   "dataUrl": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==",
+   "caption": "test image card",
+   "durationMs": 8000
+  },
+  "expect": {
+   "img": true,
+   "text": "test image card"
+  }
+ },
+ {
+  "id": "deck-image-slide",
+  "desc": "deck slide with image \u2014 slide.image renders img",
+  "payload": {
+   "kind": "deck",
+   "deck": {
+    "slides": [
+     {
+      "title": "One",
+      "image": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="
+     },
+     {
+      "title": "Two",
+      "body": "no image"
+     }
+    ],
+    "controls": true,
+    "slideMs": 4000
+   },
+   "blocking": true
+  },
+  "expect": {
+   "img": true,
+   "text": "1 / 2"
+  }
+ },
+ {
+  "id": "scene-three-gen",
+  "desc": "generated scene \u2014 js body + libs:three renders via sandboxed iframe",
+  "payload": {
+   "kind": "scene",
+   "title": "generated torus",
+   "scene": {
+    "libs": [
+     "three"
+    ],
+    "js": "const m = new THREE.Mesh(new THREE.TorusKnotGeometry(1.4,0.35,80,10), new THREE.MeshNormalMaterial({wireframe:true})); ctx.scene.add(m); return { tick(t){ m.rotation.x=t*0.6; m.rotation.y=t*0.4; } };"
+   },
+   "durationMs": 30000
+  },
+  "expect": {
+   "sceneIframe": true,
+   "sceneRendered": true,
+   "text": "generated torus"
+  }
+ },
+ {
+  "id": "scene-plain",
+  "desc": "generated scene \u2014 html/css/js without libs still heartbeats",
+  "payload": {
+   "kind": "scene",
+   "scene": {
+    "js": "const d=document.createElement('div'); d.id='gen'; document.body.appendChild(d);"
+   },
+   "durationMs": 30000
+  },
+  "expect": {
+   "sceneIframe": true,
+   "sceneRendered": true
+  }
+ },
+ {
+  "id": "invalid-kind",
+  "desc": "invalid payload \u2192 400",
+  "payload": {
+   "kind": "hologram",
+   "text": "nope"
+  },
+  "expect": {
+   "httpStatus": 400
+  }
+ }
 ]
