@@ -68,6 +68,9 @@ export interface ScreenOutput {
   durationMs: number;      // 0 = sticky
   dismiss: 'auto' | 'manual';
   blocking: boolean;
+  /** capture pointer input only while the cursor is over the content —
+   *  wheel scroll / swipe nav. No full-window capture, no backdrop dismiss. */
+  interactive: boolean;
   priority: number;
   createdAt: number;
 

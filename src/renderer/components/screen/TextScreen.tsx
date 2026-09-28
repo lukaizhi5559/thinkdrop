@@ -1,4 +1,6 @@
 import React, { useLayoutEffect, useRef, useState } from 'react';
+
+const ipcRenderer = (window as any).electron?.ipcRenderer;
 import type { ScreenOutput } from './types';
 import { MOOD_ACCENT } from './types';
 import { EmojiGlyph } from './EmojiGlyph';
@@ -34,6 +36,10 @@ export function TextScreen({ output, animateClass }: { output: ScreenOutput; ani
 
   const [fontSize, setFontSize] = useState(baseSize);
   const [overflowPx, setOverflowPx] = useState(0); // >0 → scroll mode
+  // Trackpad manual scroll: null = auto-marquee; a number = user-driven
+  // offset (px). Set by wheel events; auto-scroll resumes after idle.
+  const [manualY, setManualY] = useState<number | null>(null);
+  const manualIdle = useRef<ReturnType<typeof setTimeout> | null>(null);
   const shrinkGuard = useRef(0);
 
   // Measure + shrink loop. Runs when fontSize changes until content fits or
@@ -66,11 +72,16 @@ export function TextScreen({ output, animateClass }: { output: ScreenOutput; ani
   }, [fontSize, forceScroll, output.id]);
 
   // Scroll pass: translateY 0 → -overflowPx with holds at both ends, looping.
+  // Suspended while the user is driving the scroll offset manually.
   useLayoutEffect(() => {
     scrollAnim.current?.cancel();
     scrollAnim.current = null;
     const text = textRef.current;
-    if (!text || overflowPx <= 0) return;
+    if (!text || overflowPx <= 0 || manualY != null) {
+      if (text && manualY != null) text.style.transform = `translateY(${-manualY}px)`;
+      return;
+    }
+    text.style.transform = ''; // clear any manual offset before the anim resumes
     const scrollFrac = 1 - SCROLL_HOLD_FRAC * 2;
     const duration = Math.max(8000, (overflowPx / SCROLL_PX_PER_SEC) * 1000 / scrollFrac);
     scrollAnim.current = text.animate(
@@ -83,15 +94,46 @@ export function TextScreen({ output, animateClass }: { output: ScreenOutput; ani
       { duration, iterations: Infinity, easing: 'linear' },
     );
     return () => { scrollAnim.current?.cancel(); scrollAnim.current = null; };
-  }, [overflowPx]);
+  }, [overflowPx, manualY]);
 
   const scrolling = overflowPx > 0;
+
+  // Trackpad scroll: wheel deltas drive a manual offset, clamped to the
+  // overflow range. Marquee resumes ~4s after the last wheel event.
+  const onWheel = (e: React.WheelEvent) => {
+    if (!scrolling) return;
+    if (manualIdle.current) clearTimeout(manualIdle.current);
+    setManualY(prev => {
+      const cur = prev ?? (() => {
+        // Seed from the running animation's current offset so the transition
+        // is seamless — WAAPI doesn't write inline style, read the computed
+        // matrix's translateY.
+        try {
+          const cs = textRef.current ? getComputedStyle(textRef.current).transform : '';
+          return cs && cs !== 'none' ? Math.abs(new DOMMatrixReadOnly(cs).m42) : 0;
+        } catch (_) { return 0; }
+      })();
+      return Math.max(0, Math.min(overflowPx, cur + e.deltaY));
+    });
+    manualIdle.current = setTimeout(() => setManualY(null), 4000);
+  };
+
+  // Hover-capture: while the cursor is over a scrollable card, main lifts
+  // click-through so wheel/trackpad events actually reach us. On leave the
+  // window goes back to click-through (clicks pass to apps below).
+  const hoverProps = scrolling ? {
+    onWheel,
+    onMouseEnter: () => { try { ipcRenderer?.send('ghostlayer:hover-interactive', { hovering: true }); } catch (_) {} },
+    onMouseLeave: () => { try { ipcRenderer?.send('ghostlayer:hover-interactive', { hovering: false }); } catch (_) {} },
+  } : {};
 
   return (
     <div
       ref={cardRef}
       className={animateClass}
+      {...hoverProps}
       style={{
+        pointerEvents: scrolling ? 'auto' : 'none',
         display: 'flex',
         flexDirection: 'column',
         alignItems: 'center',

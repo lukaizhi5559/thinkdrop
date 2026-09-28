@@ -1,7 +1,7 @@
 [
  {
   "id": "chart-pie",
-  "desc": "pie chart \u2014 ant-design-charts Pie renders a canvas + labels",
+  "desc": "pie chart — ant-design-charts Pie renders a canvas + labels",
   "payload": {
    "kind": "chart",
    "title": "Browsers by share",
@@ -32,7 +32,7 @@
  },
  {
   "id": "chart-donut",
-  "desc": "donut \u2014 innerRadius path",
+  "desc": "donut — innerRadius path",
   "payload": {
    "kind": "chart",
    "title": "Disk usage",
@@ -97,7 +97,7 @@
  },
  {
   "id": "chart-line",
-  "desc": "line chart \u2014 xKey/yKey fallback resolution (unnamed keys)",
+  "desc": "line chart — xKey/yKey fallback resolution (unnamed keys)",
   "payload": {
    "kind": "chart",
    "title": "Latency p50",
@@ -163,7 +163,7 @@
  },
  {
   "id": "chart-stat",
-  "desc": "stat \u2014 custom big-number card, no antv canvas",
+  "desc": "stat — custom big-number card, no antv canvas",
   "payload": {
    "kind": "chart",
    "title": "Tests passing",
@@ -186,7 +186,7 @@
  },
  {
   "id": "deck-auto",
-  "desc": "deck auto-advance: 3 slides, slideMs 1200 \u2192 counter moves without interaction",
+  "desc": "deck auto-advance: 3 slides, slideMs 1200 → counter moves without interaction",
   "payload": {
    "kind": "deck",
    "title": "Sprint review",
@@ -198,7 +198,7 @@
     "slides": [
      {
       "title": "Stage 5",
-      "body": "Automation corpus \u2014 ninety runs green"
+      "body": "Automation corpus — ninety runs green"
      },
      {
       "title": "Stage 6",
@@ -210,7 +210,7 @@
      },
      {
       "title": "Stage 7",
-      "body": "p50 6.3s \u00b7 p95 20s \u2014 all budgets green"
+      "body": "p50 6.3s · p95 20s — all budgets green"
      }
     ]
    }
@@ -222,7 +222,7 @@
  },
  {
   "id": "deck-controls",
-  "desc": "deck with controls:true \u2014 nav zones + Done button on last slide",
+  "desc": "deck with controls:true — nav zones + Done button on last slide",
   "payload": {
    "kind": "deck",
    "mood": "playful",
@@ -250,7 +250,7 @@
  },
  {
   "id": "deck-chart-slide",
-  "desc": "deck slide embedding a chart \u2014 ChartScreen reused inside SlideBody",
+  "desc": "deck slide embedding a chart — ChartScreen reused inside SlideBody",
   "payload": {
    "kind": "deck",
    "mood": "neutral",
@@ -288,7 +288,7 @@
  },
  {
   "id": "text-scripture",
-  "desc": "scripture-style text \u2014 hero font, title, emoji accent",
+  "desc": "scripture-style text — hero font, title, emoji accent",
   "payload": {
    "kind": "text",
    "title": "Psalm 23:1",
@@ -306,10 +306,10 @@
  },
  {
   "id": "text-scroll",
-  "desc": "long passage, fit:scroll \u2192 marquee scroll animation engaged",
+  "desc": "long passage, fit:scroll → marquee scroll animation engaged",
   "payload": {
    "kind": "text",
-   "title": "John 1:1\u20135",
+   "title": "John 1:1–5",
    "mood": "sad",
    "fontSize": "xl",
    "fit": "scroll",
@@ -324,7 +324,7 @@
  },
  {
   "id": "text-markdown",
-  "desc": "markdown-lite \u2014 **bold** \u2192 strong, *italic* \u2192 em",
+  "desc": "markdown-lite — **bold** → strong, *italic* → em",
   "payload": {
    "kind": "text",
    "mood": "happy",
@@ -340,10 +340,10 @@
  },
  {
   "id": "emoji",
-  "desc": "emoji kind \u2014 giant glyph",
+  "desc": "emoji kind — giant glyph",
   "payload": {
    "kind": "emoji",
-   "emoji": "\ud83c\udf89",
+   "emoji": "🎉",
    "text": "Stage 8 done",
    "mood": "playful"
   },
@@ -353,7 +353,7 @@
  },
  {
   "id": "effect-confetti",
-  "desc": "effect kind \u2014 confetti canvas particles",
+  "desc": "effect kind — confetti canvas particles",
   "payload": {
    "kind": "effect",
    "effect": "confetti",
@@ -367,7 +367,7 @@
  },
  {
   "id": "alert-block",
-  "desc": "alert kind \u2014 blocking scrim, click-outside dismiss",
+  "desc": "alert kind — blocking scrim, click-outside dismiss",
   "payload": {
    "kind": "alert",
    "severity": "warn",
@@ -383,10 +383,10 @@
  },
  {
   "id": "auto-dismiss",
-  "desc": "auto-dismiss \u2014 durationMs:1500 removes itself",
+  "desc": "auto-dismiss — durationMs:1500 removes itself",
   "payload": {
    "kind": "emoji",
-   "emoji": "\u23f1\ufe0f",
+   "emoji": "⏱️",
    "durationMs": 1500
   },
   "expect": {
@@ -396,7 +396,7 @@
  },
  {
   "id": "three-starfield",
-  "desc": "three.js starfield \u2014 lazy-loaded WebGL canvas",
+  "desc": "three.js starfield — lazy-loaded WebGL canvas",
   "payload": {
    "kind": "three",
    "mood": "neutral",
@@ -430,7 +430,7 @@
  },
  {
   "id": "three-wave",
-  "desc": "particle wave \u2014 vertex-displaced plane",
+  "desc": "particle wave — vertex-displaced plane",
   "payload": {
    "kind": "three",
    "mood": "sad",
@@ -445,7 +445,7 @@
  },
  {
   "id": "three-knot",
-  "desc": "torus knot wireframe \u2014 geometry density scales",
+  "desc": "torus knot wireframe — geometry density scales",
   "payload": {
    "kind": "three",
    "mood": "playful",
@@ -460,7 +460,7 @@
  },
  {
   "id": "image-dataurl",
-  "desc": "image kind \u2014 dataUrl card renders a loaded img",
+  "desc": "image kind — dataUrl card renders a loaded img",
   "payload": {
    "kind": "image",
    "dataUrl": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==",
@@ -474,7 +474,7 @@
  },
  {
   "id": "deck-image-slide",
-  "desc": "deck slide with image \u2014 slide.image renders img",
+  "desc": "deck slide with image — slide.image renders img",
   "payload": {
    "kind": "deck",
    "deck": {
@@ -500,7 +500,7 @@
  },
  {
   "id": "scene-three-gen",
-  "desc": "generated scene \u2014 js body + libs:three renders via sandboxed iframe",
+  "desc": "generated scene — js body + libs:three renders via sandboxed iframe",
   "payload": {
    "kind": "scene",
    "title": "generated torus",
@@ -520,7 +520,7 @@
  },
  {
   "id": "scene-plain",
-  "desc": "generated scene \u2014 html/css/js without libs still heartbeats",
+  "desc": "generated scene — html/css/js without libs still heartbeats",
   "payload": {
    "kind": "scene",
    "scene": {
@@ -534,8 +534,58 @@
   }
  },
  {
+  "id": "deck-swipe",
+  "desc": "controls deck — trackpad swipe (wheel deltaX) advances slides",
+  "payload": {
+   "kind": "deck",
+   "title": "Swipe test",
+   "mood": "neutral",
+   "blocking": true,
+   "deck": {
+    "transition": "fade",
+    "slideMs": 60000,
+    "controls": true,
+    "slides": [
+     {
+      "title": "One"
+     },
+     {
+      "title": "Two"
+     },
+     {
+      "title": "Three"
+     }
+    ]
+   }
+  },
+  "expect": {
+   "swipe": 200,
+   "text": "One"
+  }
+ },
+ {
+  "id": "text-wheel",
+  "desc": "interactive scroll text — wheel deltaY scrolls the passage manually",
+  "payload": {
+   "kind": "text",
+   "title": "Psalm 23",
+   "mood": "neutral",
+   "fontSize": "xl",
+   "fit": "scroll",
+   "interactive": true,
+   "text": "In the beginning was the Word, and the Word was with God, and the Word was God. In the beginning was the Word, and the Word was with God, and the Word was God. In the beginning was the Word, and the Word was with God, and the Word was God. In the beginning was the Word, and the Word was with God, and the Word was God. In the beginning was the Word, and the Word was with God, and the Word was God. In the beginning was the Word, and the Word was with God, and the Word was God. In the beginning was the Word, and the Word was with God, and the Word was God. In the beginning was the Word, and the Word was with God, and the Word was God. In the beginning was the Word, and the Word was with God, and the Word was God. In the beginning was the Word, and the Word was with God, and the Word was God. In the beginning was the Word, and the Word was with God, and the Word was God. In the beginning was the Word, and the Word was with God, and the Word was God. In the beginning was the Word, and the Word was with God, and the Word was God. In the beginning was the Word, and the Word was with God, and the Word was God. In the beginning was the Word, and the Word was with God, and the Word was God. In the beginning was the Word, and the Word was with God, and the Word was God. In the beginning was the Word, and the Word was with God, and the Word was God. In the beginning was the Word, and the Word was with God, and the Word was God. In the beginning was the Word, and the Word was with God, and the Word was God. In the beginning was the Word, and the Word was with God, and the Word was God. In the beginning was the Word, and the Word was with God, and the Word was God. In the beginning was the Word, and the Word was with God, and the Word was God. In the beginning was the Word, and the Word was with God, and the Word was God. In the beginning was the Word, and the Word was with God, and the Word was God. In the beginning was the Word, and the Word was with God, and the Word was God. In the beginning was the Word, and the Word was with God, and the Word was God. In the beginning was the Word, and the Word was with God, and the Word was God. In the beginning was the Word, and the Word was with God, and the Word was God. In the beginning was the Word, and the Word was with God, and the Word was God. In the beginning was the Word, and the Word was with God, and the Word was God. ",
+   "durationMs": 0,
+   "dismiss": "manual"
+  },
+  "expect": {
+   "text": "In the beginning",
+   "scrolling": true,
+   "textWheel": true
+  }
+ },
+ {
   "id": "invalid-kind",
-  "desc": "invalid payload \u2192 400",
+  "desc": "invalid payload → 400",
   "payload": {
    "kind": "hologram",
    "text": "nope"

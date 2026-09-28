@@ -27,6 +27,7 @@ export function DeckScreen({ output, onDismiss }: { output: ScreenOutput; onDism
   const [idx, setIdx] = useState(0);
   const [dir, setDir] = useState<1 | -1>(1);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const swipeLock = useRef(0);
 
   const slides = deck?.slides || [];
   const count = slides.length;
@@ -49,11 +50,45 @@ export function DeckScreen({ output, onDismiss }: { output: ScreenOutput; onDism
     return () => { if (timer.current) clearTimeout(timer.current); };
   }, [idx, deck, count]);
 
+  // Arrow keys — main registers global Left/Right while a controls-deck is
+  // displayed; ScreenStage re-broadcasts them as this DOM event.
+  useEffect(() => {
+    if (!deck?.controls) return;
+    const onNav = (e: Event) => {
+      const dir = (e as CustomEvent).detail?.dir;
+      setIdx(i => {
+        const next = dir === 'prev' ? i - 1 : i + 1;
+        if (next < 0 || next >= count) return i;
+        setDir(dir === 'prev' ? -1 : 1);
+        return next;
+      });
+    };
+    window.addEventListener('screen:deck-nav', onNav);
+    return () => window.removeEventListener('screen:deck-nav', onNav);
+  }, [deck?.controls, count]);
+
   if (!deck || !count) return null;
   const slide = slides[idx];
 
+  // Trackpad swipe → slide nav. Debounced: a swipe emits a burst of wheel
+  // deltas; one threshold crossing = one slide.
+  const onWheel = (e: React.WheelEvent) => {
+    if (!deck.controls || Math.abs(e.deltaX) < 24) return;
+    const now = Date.now();
+    if (now - swipeLock.current < 400) return;
+    swipeLock.current = now;
+    setIdx(i => {
+      const next = e.deltaX > 0 ? i + 1 : i - 1;
+      if (next < 0 || next >= count) return i;
+      setDir(e.deltaX > 0 ? 1 : -1);
+      return next;
+    });
+  };
+
   return (
-    <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+    <div
+      onWheel={onWheel}
+      style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
       <style>{`
         @keyframes deckInFade  { from { opacity: 0; } to { opacity: 1; } }
         @keyframes deckInSlide { from { opacity: 0; transform: translateX(${dir * 60}px); } to { opacity: 1; transform: translateX(0); } }

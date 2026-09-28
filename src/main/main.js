@@ -109,12 +109,25 @@ let _dropBoundaryToken = 0;
 // tear the window down mid-display, and so we know when to lift click-through
 // for blocking alerts. The renderer reports vacancy via 'ghostlayer:display-idle'.
 // ---------------------------------------------------------------------------
-const screenDisplays = new Map(); // id -> { blocking: boolean }
+const screenDisplays = new Map(); // id -> { blocking: boolean, arrowNav: boolean }
+
+// Hover-capture: non-blocking interactive regions (scrollable text cards,
+// swipe decks) can't lift click-through permanently — they'd swallow the
+// whole screen's input. forward:true keeps forwarding events to the renderer
+// while clicks still pass through; the renderer reports pointer-enter/leave
+// over interactive regions, and we lift click-through only while hovered.
+let _hoverInteractive = false;
 
 function _applyScreenClickThrough() {
   if (!ghostLayerWindow || ghostLayerWindow.isDestroyed()) return;
   const blocking = [...screenDisplays.values()].some(d => d && d.blocking);
-  try { ghostLayerWindow.setIgnoreMouseEvents(!blocking); } catch (_) {}
+  try {
+    if (blocking || _hoverInteractive) {
+      ghostLayerWindow.setIgnoreMouseEvents(false);
+    } else {
+      ghostLayerWindow.setIgnoreMouseEvents(true, { forward: true });
+    }
+  } catch (_) {}
 }
 
 // ── Esc-to-clear ─────────────────────────────────────────────────────────────
@@ -146,6 +159,38 @@ function _updateEscShortcut() {
   }
 }
 
+// ── Arrow-key deck navigation ────────────────────────────────────────────────
+// Same constraint as Esc — the window can't take key events, so Left/Right
+// are global shortcuts registered only while a deck with controls is
+// displayed. The renderer turns them into slide nav via
+// 'ghostlayer:display-nav'.
+let _navRegistered = false;
+
+function _updateNavShortcut() {
+  const want = [...screenDisplays.values()].some(d => d && d.arrowNav);
+  const send = (dir) => {
+    if (ghostLayerWindow && !ghostLayerWindow.isDestroyed()) {
+      try { ghostLayerWindow.webContents.send('ghostlayer:display-nav', { dir }); } catch (_) {}
+    }
+  };
+  if (want && !_navRegistered) {
+    try {
+      const r = globalShortcut.register('Right', () => send('next'));
+      const l = globalShortcut.register('Left', () => send('prev'));
+      _navRegistered = r && l;
+      if (!_navRegistered) {
+        try { globalShortcut.unregister('Right'); globalShortcut.unregister('Left'); } catch (_) {}
+        console.warn('[Screen] Arrow-key registration failed — keyboard deck nav unavailable');
+      }
+    } catch (e) {
+      console.warn('[Screen] Arrow-key registration error:', e.message);
+    }
+  } else if (!want && _navRegistered) {
+    try { globalShortcut.unregister('Right'); globalShortcut.unregister('Left'); } catch (_) {}
+    _navRegistered = false;
+  }
+}
+
 /**
  * Shared clear path for /screen/clear, the Esc shortcut, and future callers.
  * id=null clears all. The renderer confirms vacancy via 'ghostlayer:display-idle'.
@@ -155,6 +200,7 @@ function clearScreenDisplays(id = null) {
   else screenDisplays.clear();
   _applyScreenClickThrough();
   _updateEscShortcut();
+  _updateNavShortcut();
   if (ghostLayerWindow && !ghostLayerWindow.isDestroyed()) {
     try { ghostLayerWindow.webContents.send('ghostlayer:display-clear', { id: id || null }); } catch (_) {}
   }
@@ -1597,10 +1643,14 @@ function startOverlayControlServer() {
             }
           }
 
-          screenDisplays.set(output.id, { blocking: output.blocking === true });
+          screenDisplays.set(output.id, {
+            blocking: output.blocking === true,
+            arrowNav: output.kind === 'deck' && output.deck && output.deck.controls === true,
+          });
           showGhostLayer();
           _applyScreenClickThrough();
           _updateEscShortcut();
+          _updateNavShortcut();
           if (ghostLayerWindow && !ghostLayerWindow.isDestroyed()) {
             ghostLayerWindow.webContents.send('ghostlayer:display', output);
           }
@@ -3111,9 +3161,21 @@ ipcMain.on('ghostlayer:capture-ready', () => {
 // click-through, and hide the window — unless a drop session owns the screen.
 ipcMain.on('ghostlayer:display-idle', () => {
   screenDisplays.clear();
+  _hoverInteractive = false;
   _applyScreenClickThrough();
   _updateEscShortcut();
+  _updateNavShortcut();
   if (!dropSessionActive) hideGhostLayer();
+});
+
+// Interactive-region hover — scrollable text cards / interactive items report
+// pointer enter/leave so click-through lifts only while the cursor is over
+// them (wheel/trackpad events then reach the card).
+ipcMain.on('ghostlayer:hover-interactive', (_e, data) => {
+  const next = !!(data && data.hovering);
+  if (next === _hoverInteractive) return;
+  _hoverInteractive = next;
+  _applyScreenClickThrough();
 });
 
 // Renderer-initiated dismiss (e.g. click on a blocking alert curtain).

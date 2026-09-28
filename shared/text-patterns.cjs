@@ -269,8 +269,18 @@ const VISUAL_INTO_APP_RE = /\b(?:charts?|graphs?|plots?|deck|slides?|slideshow|p
  *  fetch is needed before display. DEVICE_STATE_RE covers the telemetry
  *  family (battery/disk/uptime); this covers the app-activity family. */
 const LOCAL_DATA_SUBJECT_RE = /\b(?:my|the|our)\s+(?:task\s+)?(?:activit\w+|usage|productivity|task\s+(?:history|count|log|journal)|journal|conversations?\s+(?:history|count|log)|chat\s+history|message\s+count|screen\s+time)\b|\b(?:task|app|usage)\s+activit\w+\b/i;
+
+/** Scripture reference — book name + chapter[:verse[-end]]. Used to gather
+ *  the passage deterministically (bible-api.com) instead of web_search,
+ *  which paints whatever snippet ranked ("exodus 2" → a reddit title). */
+const SCRIPTURE_REF_RE = /\b(?:[1-3]\s+)?(?:genesis|exodus|leviticus|numbers|deuteronomy|joshua|judges|ruth|samuel|kings|chronicles|ezra|nehemiah|esther|job|psalms?|proverbs?|ecclesiastes|song(?:\s+of\s+(?:songs|solomon))?|isaiah|jeremiah|lamentations|ezekiel|daniel|hosea|joel|amos|obadiah|jonah|micah|nahum|habakkuk|zephaniah|haggai|zechariah|malachi|matthew|mark|luke|john|acts|romans|corinthians|galatians|ephesians|philippians|colossians|thessalonians|timothy|titus|philemon|hebrews|james|peter|jude|revelation)\s+\d+(?::\d+(?:[-–]\d+)?)?\b/i;
+
+/** Subjects whose value is a thing you LOOK AT, not a datum — "a person
+ *  running", "a sunset", "mario". Used to default no-kind screen requests to
+ *  the image kind. Abstract/data nouns stay on the fetch+text path. */
+const SCREEN_CONCRETE_SUBJECT_RE = /\b(?:show|display|put|project)\s+(?:me\s+)?(?:a|an|the|some)\s+((?:(?!verse|chapter|quote|summary|list|results?|chart|text|message|lyrics|stats?|answer|report|graph|table|data|plot|word|words|sentence|notification|alert|warning|count|number|price|status|map)\b)[\w' -]{1,60}?)\s+on(?:to)?\s+(?:(?:the|my)\s+){0,2}screen\b/i;
 const SCREEN_QUOTED_RE  = /["“]([^"”\n]{1,300})["”]|'([^'\n]{1,300})'/;
-const SCREEN_DISPLAY_TAIL_RE = /\b(.+?)\s+on(?:to)?\s+(?:the\s+|my\s+)?screen\b/i;
+const SCREEN_DISPLAY_TAIL_RE = /\b(.+?)\s+on(?:to)?\s+(?:(?:the|my)\s+){0,2}screen\b/i;
 const SCREEN_DISPLAY_VERB_RE = /\b(?:show|put|display|paint|write|post|flash|project)\b/i;
 const SCREEN_CONTENT_LEAD_RE = /^(?:(?:the\s+|a\s+|an\s+)?(?:word|words|phrase|text|message|sentence)\s+|(?:that\s+)?(?:says?|reads?|saying)\s+)/i;
 
@@ -282,10 +292,12 @@ const SCREEN_CONTENT_LEAD_RE = /^(?:(?:the\s+|a\s+|an\s+)?(?:word|words|phrase|t
  * effect word marks the utterance deterministically; SCREEN_OBSERVATION_RE
  * callers subtract passive questions before trusting this. */
 const SCREEN_OUTPUT_RE = new RegExp([
-  '\\b(?:show|put|display|paint|write|post|flash|project)\\b[^.]{0,60}\\bon(?:to)?\\s+(?:the\\s+|my\\s+)?screen\\b',
+  // Article group tolerates doubled/dropped determiners — "on the my screen"
+  // (typo) and bare "on screen" both fire.
+  '\\b(?:show|put|display|paint|write|post|flash|project)\\b[^.]{0,60}\\bon(?:to)?\\s+(?:(?:the|my)\\s+){0,2}screen\\b',
   // URL payloads carry their own dots — "display https://x/y.png on my
   // screen" can't span the [^.] window above.
-  '\\b(?:show|put|display|project)\\s+(?:this\\s+)?https?://\\S+\\s+on(?:to)?\\s+(?:the\\s+|my\\s+)?screen\\b',
+  '\\b(?:show|put|display|project)\\s+(?:this\\s+)?https?://\\S+\\s+on(?:to)?\\s+(?:(?:the|my)\\s+){0,2}screen\\b',
   '\\bon\\s+screen\\s+(?:display|mode)\\b',
   '\\b(?:clear|hide|dismiss|wipe)\\s+(?:the\\s+|my\\s+)?screen\\b',
   '\\btake\\s+\\w+\\s+off\\s+(?:the\\s+|my\\s+)?screen\\b',
@@ -302,7 +314,7 @@ const SCREEN_OUTPUT_RE = new RegExp([
  * screen — "look up the bitcoin price and show it on my screen". The display
  * half's referential 'it' suppresses the normal fetch heuristic, so the
  * lookup clause must re-enable it deterministically. */
-const LOOKUP_THEN_DISPLAY_RE = /\b(?:look\s*up|lookup|search(?:\s+for)?|find|fetch|get|check|pull\s+up)\b[^.]{0,90}\b(?:show|put|display|paint|post)\b[^.]{0,45}\bon(?:to)?\s+(?:the\s+|my\s+)?screen\b/i;
+const LOOKUP_THEN_DISPLAY_RE = /\b(?:look\s*up|lookup|search(?:\s+for)?|find|fetch|get|check|pull\s+up)\b[^.]{0,90}\b(?:show|put|display|paint|post)\b[^.]{0,45}\bon(?:to)?\s+(?:(?:the|my)\s+){0,2}screen\b/i;
 
 /** Device-state questions — "what's my battery", "how much disk space",
  * "is my wifi on", "check my uptime". Fresh telemetry only exists via OS
@@ -344,13 +356,21 @@ function inferScreenOutput(message) {
   // image (Brave image search). Capture the subject for the query/caption.
   } else if (/\b(?:pic|pics|picture|pictures|photo|photos|image|images|img)\s+of\s+/i.test(msg)) {
     out.kind = 'image';
-    const sm = msg.match(/\b(?:pic|pics|picture|pictures|photo|photos|image|images|img)\s+of\s+(.{1,120}?)(?:\s+on\s+(?:the\s+|my\s+)?screen\b|$)/i);
+    const sm = msg.match(/\b(?:pic|pics|picture|pictures|photo|photos|image|images|img)\s+of\s+(.{1,120}?)(?:\s+on\s+(?:(?:the|my)\s+){0,2}screen\b|$)/i);
     if (sm) out.content = sm[1].trim();
   }
   else if (SCREEN_ALERT_RE.test(msg)) out.kind = 'alert';
   else if (SCREEN_DECK_RE.test(msg)) out.kind = 'deck';
   else if (SCREEN_CHART_RE.test(msg)) out.kind = 'chart';
   else if (SCREEN_THREE_RE.test(msg)) out.kind = 'three';
+  // No kind noun at all — "show a person running on the my screen" names a
+  // concrete thing you look at. Default to an image fetch; abstract/data
+  // nouns (summary, verse, list…) are carved out of the pattern and stay on
+  // the fetch+text path.
+  else {
+    const cs = msg.match(SCREEN_CONCRETE_SUBJECT_RE);
+    if (cs) { out.kind = 'image'; out.content = cs[1].trim(); }
+  }
 
   // Alert copy: "...that says X" → X is the alert text. The screenOutput
   // node fills payload.text from screenOutputContent; when the classifier
@@ -419,5 +439,7 @@ module.exports = {
   DEVICE_STATE_RE,
   FILE_PATH_RE,
   SCREEN_CAPTURE_RE,
+  SCRIPTURE_REF_RE,
+  SCREEN_CONCRETE_SUBJECT_RE,
   inferScreenOutput,
 };

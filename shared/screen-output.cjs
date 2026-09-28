@@ -196,6 +196,10 @@ function normalizeScreenOutput(raw) {
     durationMs: _num(raw.durationMs, 0, 10 * 60 * 1000) ?? d.durationMs,
     dismiss: _oneOf(raw.dismiss, DISMISS) || 'auto',
     blocking: raw.blocking === true,
+    // interactive — capture pointer input only while the cursor is over the
+    // item's content (wheel scroll, swipe nav). Unlike `blocking` it does NOT
+    // capture the full window and carries no backdrop-dismiss semantics.
+    interactive: raw.interactive === true,
     priority: _num(raw.priority, 0, 100) ?? d.priority,
     createdAt: Date.now(),
   };

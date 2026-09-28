@@ -230,6 +230,41 @@ it('caps deck slide count', () => {
   assert(o.deck.slides.length === 40);
 });
 
+// ── Interactive flag ─────────────────────────────────────────────────────────
+section('interactive flag');
+
+it('interactive defaults false, honors true, independent of blocking', () => {
+  assert(normalizeScreenOutput({ kind: 'text', text: 'hi' }).output.interactive === false);
+  assert(normalizeScreenOutput({ kind: 'text', text: 'hi', interactive: true }).output.interactive === true);
+  const { output: o } = normalizeScreenOutput({ kind: 'deck', deck: { slides: [{ title: 'a' }] }, interactive: true });
+  assert(o.interactive === true && o.blocking === false);
+});
+
+// ── inferScreenOutput routing vocabulary ────────────────────────────────────
+section('inferScreenOutput');
+
+it('tolerates doubled/dropped articles before "screen"', () => {
+  const { SCREEN_OUTPUT_RE } = require('./text-patterns.cjs');
+  assert(SCREEN_OUTPUT_RE.test('show a person running on the my screen'));
+  assert(SCREEN_OUTPUT_RE.test('show hello on screen'));
+  assert(SCREEN_OUTPUT_RE.test('display https://x.org/a.png on the my screen'));
+});
+
+it('no-kind concrete subjects default to image; abstract/data stay text', () => {
+  const { inferScreenOutput } = require('./text-patterns.cjs');
+  assert(inferScreenOutput('show a person running on the my screen').kind === 'image');
+  assert(inferScreenOutput('show a person running on the my screen').content === 'person running');
+  assert(inferScreenOutput('show me a summary of my day on the screen').kind === null);
+  assert(inferScreenOutput('show me exodus 2 on my screen').kind === null);
+  assert(inferScreenOutput('show a 3d starfield on my screen').kind === 'three');
+});
+
+it('scripture refs match SCRIPTURE_REF_RE', () => {
+  const { SCRIPTURE_REF_RE } = require('./text-patterns.cjs');
+  assert(SCRIPTURE_REF_RE.test('exodus 2') && SCRIPTURE_REF_RE.test('john 3:16') && SCRIPTURE_REF_RE.test('psalm 23'));
+  assert(!SCRIPTURE_REF_RE.test('a person running') && !SCRIPTURE_REF_RE.test('chapter 2 of the report'));
+});
+
 // ── Summary ──────────────────────────────────────────────────────────────────
 console.log(`\n${'═'.repeat(72)}`);
 console.log(`  ${_passed} passed, ${_failed} failed`);

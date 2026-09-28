@@ -154,6 +154,13 @@ function _checkExpect(entry, outcome) {
   for (const m of ex.mustContain || []) {
     if (!_matchOne(text, m)) failures.push(`mustContain "${m}" not found in result (${text.length} chars)`);
   }
+  // resultNotMatch — the task's final narrative must never contain these
+  // (e.g. "wasn't able"/"[object Object]" apologies after a successful
+  // display — the mario incident).
+  for (const m of ex.resultNotMatch || []) {
+    const re = m instanceof RegExp ? m : new RegExp(m, 'i');
+    if (re.test(text)) failures.push(`resultNotMatch "${m}" found in result`);
+  }
   if (ex.fileExists && !fs.existsSync(ex.fileExists)) {
     failures.push(`fileExists: ${ex.fileExists} not found`);
   }

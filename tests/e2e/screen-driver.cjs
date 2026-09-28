@@ -82,6 +82,31 @@ const probes = {
   // SceneScreen records as data-scene-status on its wrapper)
   sceneIframe: () => [...document.querySelectorAll('iframe')].some(f => (f.getAttribute('sandbox') || '').includes('allow-scripts')),
   sceneStatus: () => document.querySelector('[data-scene-status]')?.getAttribute('data-scene-status') || null,
+  // Wheel/swipe input — dispatch a wheel event on the topmost element at the
+  // viewport center so it bubbles through the deck/text handlers like a real
+  // trackpad event. (JS dispatch can't prove OS-level capture, but it does
+  // exercise the handler + nav logic end to end.)
+  dispatchWheel: (arg) => {
+    const { dx, dy } = typeof arg === 'string' ? JSON.parse(arg) : (arg || {});
+    const els = document.elementsFromPoint(innerWidth / 2, innerHeight / 2);
+    if (!els.length) return false;
+    // Dispatch down the whole hit-test stack — elementFromPoint can land on a
+    // sibling overlay div above the deck/text card, in which case the event
+    // never enters the card's subtree. Dispatching on every element at the
+    // point mirrors what a real event does (and the deck debounces repeats).
+    for (const el of els) {
+      el.dispatchEvent(new WheelEvent('wheel', { deltaX: dx || 0, deltaY: dy || 0, bubbles: true, cancelable: true }));
+    }
+    return els.length;
+  },
+  // Manual-scroll offset on a scrolling text card — the text div's computed
+  // translateY (negative while scrolling; |v| = px offset)
+  textScrollOffset: () => {
+    const el = [...document.querySelectorAll('div')].find(d => (d.style.whiteSpace || '') === 'pre-wrap');
+    if (!el) return null;
+    const t = getComputedStyle(el).transform;
+    return t && t !== 'none' ? Math.abs(new DOMMatrixReadOnly(t).m42) : 0;
+  },
 };
 
 async function probe(page, name, arg) {
@@ -181,6 +206,33 @@ async function main() {
       else {
         await sleep(700);
         if (!(await probe(page, 'hasText', ex.navRight))) out.failures.push(`nav click did not reach "${ex.navRight}"`);
+      }
+    }
+    // Trackpad swipe → slide nav (controls deck, deltaX)
+    if (ex.swipe) {
+      const before = await probe(page, 'counter');
+      if (!(await probe(page, 'dispatchWheel', { dx: ex.swipe, dy: 0 }))) {
+        out.failures.push('no element at viewport center for wheel dispatch');
+      } else {
+        await sleep(800);
+        const after = await probe(page, 'counter');
+        const dir = ex.swipe > 0 ? 1 : -1;
+        if (!after || !before || after[0] !== before[0] + dir) {
+          out.failures.push(`swipe dx=${ex.swipe} did not move counter (${JSON.stringify(before)} → ${JSON.stringify(after)})`);
+        }
+      }
+    }
+    // Trackpad scroll → manual text offset (scrolling text card, deltaY)
+    if (ex.textWheel) {
+      const before = await probe(page, 'textScrollOffset');
+      if (!(await probe(page, 'dispatchWheel', { dx: 0, dy: 400 }))) {
+        out.failures.push('no element at viewport center for wheel dispatch');
+      } else {
+        await sleep(600);
+        const after = await probe(page, 'textScrollOffset');
+        if (after == null || after <= (before || 0) + 10) {
+          out.failures.push(`wheel scroll did not move text offset (${before} → ${after})`);
+        }
       }
     }
 

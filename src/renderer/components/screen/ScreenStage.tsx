@@ -76,13 +76,23 @@ export function ScreenStage({ onOccupancyChange }: { onOccupancyChange?: (occupi
       else if (data?.type === 'capture_end') setFaded(false);
     };
 
+    // Arrow-key slide nav — main registers global Left/Right while a
+    // controls-deck is displayed and forwards them here; DeckScreen listens
+    // on the DOM event so the stage stays kind-agnostic.
+    const handleNav = (data: { dir?: 'next' | 'prev' }) => {
+      const dir = data?.dir === 'prev' ? 'prev' : 'next';
+      window.dispatchEvent(new CustomEvent('screen:deck-nav', { detail: { dir } }));
+    };
+
     ipcRenderer.on('ghostlayer:display', handleDisplay, STAGE_TOKEN);
     ipcRenderer.on('ghostlayer:display-clear', handleClear, STAGE_TOKEN);
+    ipcRenderer.on('ghostlayer:display-nav', handleNav, STAGE_TOKEN);
     ipcRenderer.on('app-agent:highlight', handleAgentMsg, STAGE_TOKEN);
 
     return () => {
       ipcRenderer.removeListenerByToken('ghostlayer:display', STAGE_TOKEN);
       ipcRenderer.removeListenerByToken('ghostlayer:display-clear', STAGE_TOKEN);
+      ipcRenderer.removeListenerByToken('ghostlayer:display-nav', STAGE_TOKEN);
       ipcRenderer.removeListenerByToken('app-agent:highlight', STAGE_TOKEN);
     };
   }, []);
@@ -182,13 +192,24 @@ function ScreenItem({ output, outSeq, onRemove }: {
     >
       <Scrim output={output} />
       <div style={{ position: 'relative', display: 'flex', width: '100%', ...positionFlex(output.position) }}>
-        <KindView
-          output={output}
-          animateClass=""
-          onDismiss={() => {
-            try { ipcRenderer?.send('ghostlayer:display-clear-request', { id: output.id }); } catch (_) {}
-          }}
-        />
+        {/* Interactive items (non-blocking): the content box lifts
+            click-through only while hovered — main forwards pointer moves so
+            enter/leave fire even while clicks pass through. Blocking items
+            keep 'auto' so descendants' own pointer-events (nav zones, cards)
+            stay hit-testable — 'none' here would suppress them too. */}
+        <div
+          onMouseEnter={output.interactive ? () => { try { ipcRenderer?.send('ghostlayer:hover-interactive', { hovering: true }); } catch (_) {} } : undefined}
+          onMouseLeave={output.interactive ? () => { try { ipcRenderer?.send('ghostlayer:hover-interactive', { hovering: false }); } catch (_) {} } : undefined}
+          style={{ pointerEvents: (output.blocking || output.interactive) ? 'auto' : 'none' }}
+        >
+          <KindView
+            output={output}
+            animateClass=""
+            onDismiss={() => {
+              try { ipcRenderer?.send('ghostlayer:display-clear-request', { id: output.id }); } catch (_) {}
+            }}
+          />
+        </div>
       </div>
     </div>
   );
