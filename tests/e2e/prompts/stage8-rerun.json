@@ -1,0 +1,14 @@
+[
+  {
+    "id": "s8-general",
+    "prompt": "what is the capital of Norway",
+    "expect": {
+      "status": "done",
+      "commsIntent": "general_quick",
+      "mustContain": [
+        "Oslo"
+      ],
+      "maxMs": 60000
+    }
+  }
+]
