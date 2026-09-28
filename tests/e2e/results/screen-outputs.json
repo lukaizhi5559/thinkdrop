@@ -1,0 +1,124 @@
+{
+  "at": "2026-09-28T01:12:26.408Z",
+  "results": [
+    {
+      "id": "chart-pie",
+      "pass": true,
+      "failures": [],
+      "ms": 10255,
+      "httpStatus": 200
+    },
+    {
+      "id": "chart-donut",
+      "pass": true,
+      "failures": [],
+      "ms": 10215,
+      "httpStatus": 200
+    },
+    {
+      "id": "chart-bar",
+      "pass": true,
+      "failures": [],
+      "ms": 10211,
+      "httpStatus": 200
+    },
+    {
+      "id": "chart-line",
+      "pass": true,
+      "failures": [],
+      "ms": 10210,
+      "httpStatus": 200
+    },
+    {
+      "id": "chart-area",
+      "pass": true,
+      "failures": [],
+      "ms": 10225,
+      "httpStatus": 200
+    },
+    {
+      "id": "chart-stat",
+      "pass": true,
+      "failures": [],
+      "ms": 2436,
+      "httpStatus": 200
+    },
+    {
+      "id": "deck-auto",
+      "pass": true,
+      "failures": [],
+      "ms": 2842,
+      "httpStatus": 200
+    },
+    {
+      "id": "deck-controls",
+      "pass": true,
+      "failures": [],
+      "ms": 3225,
+      "httpStatus": 200
+    },
+    {
+      "id": "deck-chart-slide",
+      "pass": true,
+      "failures": [],
+      "ms": 10214,
+      "httpStatus": 200
+    },
+    {
+      "id": "text-scripture",
+      "pass": true,
+      "failures": [],
+      "ms": 2411,
+      "httpStatus": 200
+    },
+    {
+      "id": "text-scroll",
+      "pass": true,
+      "failures": [],
+      "ms": 2420,
+      "httpStatus": 200
+    },
+    {
+      "id": "text-markdown",
+      "pass": true,
+      "failures": [],
+      "ms": 2410,
+      "httpStatus": 200
+    },
+    {
+      "id": "emoji",
+      "pass": true,
+      "failures": [],
+      "ms": 2409,
+      "httpStatus": 200
+    },
+    {
+      "id": "effect-confetti",
+      "pass": true,
+      "failures": [],
+      "ms": 10216,
+      "httpStatus": 200
+    },
+    {
+      "id": "alert-block",
+      "pass": true,
+      "failures": [],
+      "ms": 2413,
+      "httpStatus": 200
+    },
+    {
+      "id": "auto-dismiss",
+      "pass": true,
+      "failures": [],
+      "ms": 5231,
+      "httpStatus": 200
+    },
+    {
+      "id": "invalid-kind",
+      "pass": true,
+      "failures": [],
+      "ms": 0,
+      "httpStatus": 400
+    }
+  ]
+}
