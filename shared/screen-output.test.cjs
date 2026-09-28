@@ -185,6 +185,23 @@ it('scene strips remote script/link loads and file:// refs', () => {
   assert(o.scene.js === 'console.log(1)');
 });
 
+it('three defaults to starfield when scene omitted or unknown', () => {
+  const { output: o } = normalizeScreenOutput({ kind: 'three' });
+  assert(o.three.scene === 'starfield' && o.three.speed === 1 && o.three.density === 0.5);
+  const { output: o2 } = normalizeScreenOutput({ kind: 'three', three: { scene: 'hologram' } });
+  assert(o2.three.scene === 'starfield');
+  assert(normalizeScreenOutput({ kind: 'three', three: { scene: 'knot' } }).ok === true);
+});
+
+it('three clamps speed/density and validates color', () => {
+  const { output: o } = normalizeScreenOutput({
+    kind: 'three', three: { scene: 'wave', speed: 99, density: 0, color: 'red', text: 'hi' },
+  });
+  assert(o.three.speed === 2 && o.three.density === 0.1);
+  assert(o.three.color === undefined && o.three.text === 'hi');
+  assert(normalizeScreenOutput({ kind: 'three', three: { color: '#a3f' } }).output.three.color === '#a3f');
+});
+
 // ── Safety clamps ────────────────────────────────────────────────────────────
 section('safety clamps');
 

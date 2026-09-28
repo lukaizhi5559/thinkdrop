@@ -1,0 +1,58 @@
+{
+  "file": "/tmp/s9-retry.json",
+  "at": "2026-09-28T02:14:59.995Z",
+  "results": [
+    {
+      "id": "s9-chart-activity",
+      "prompt": "plot a bar chart of my task activity over the past week",
+      "status": "done",
+      "totalMs": 8981,
+      "resultText": "Done.\n\nStep outputs:\n[shell.run]:\nSun: 103",
+      "failures": [],
+      "pass": true,
+      "taskId": "task_95902d8f",
+      "graphIntent": {
+        "intent": "command_automate",
+        "parser": "multi-intent-pipeline",
+        "subIntents": [
+          "command_automate",
+          "screen_display"
+        ]
+      }
+    },
+    {
+      "id": "s9-chart-noqualifier",
+      "prompt": "show me a donut chart of browsers: arc 40, safari 35, chrome 25",
+      "status": "done",
+      "totalMs": 4427,
+      "resultText": "## Screen\n\nOn screen.",
+      "failures": [],
+      "pass": true,
+      "taskId": "task_e28f2783",
+      "graphIntent": {
+        "intent": "screen_display",
+        "parser": "llm-decompose",
+        "subIntents": [
+          "screen_display"
+        ]
+      }
+    },
+    {
+      "id": "s9-fileop-negative",
+      "prompt": "create a file /tmp/s9-chart.txt containing the text bar chart",
+      "status": "done",
+      "totalMs": 5934,
+      "resultText": "Done.\n\nStep outputs:\n[shell.run]: completed",
+      "failures": [],
+      "pass": true,
+      "taskId": "task_e6d05508",
+      "graphIntent": {
+        "intent": "command_automate",
+        "parser": "llm-decompose",
+        "subIntents": [
+          "command_automate"
+        ]
+      }
+    }
+  ]
+}

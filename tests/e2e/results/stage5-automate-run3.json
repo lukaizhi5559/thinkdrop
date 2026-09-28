@@ -1,15 +1,15 @@
 {
   "file": "tests/e2e/prompts/stage5-automate.json",
-  "run": 2,
-  "at": "2026-09-27T23:54:31.934Z",
+  "run": 3,
+  "at": "2026-09-27T23:59:09.393Z",
   "results": [
     {
       "id": "s5-file-create",
       "prompt": "create a file at /tmp/e2e/hello.txt containing the text hello thinkdrop",
-      "at": "2026-09-27T23:49:48.998Z",
+      "at": "2026-09-27T23:54:31.936Z",
       "commsIntent": "handoff",
-      "commsLatencyMs": 2408,
-      "taskId": "task_f5f1f79f",
+      "commsLatencyMs": 3464,
+      "taskId": "task_d48ba27c",
       "status": "done",
       "resultText": "Done.\n\nStep outputs:\n[shell.run]: completed",
       "graphIntent": {
@@ -21,11 +21,11 @@
         ]
       },
       "screens": [],
-      "events": 844,
+      "events": 1658,
       "approvals": 1,
       "questions": 0,
       "authResumes": 0,
-      "totalMs": 5417,
+      "totalMs": 8006,
       "error": null,
       "failures": [],
       "pass": true
@@ -33,10 +33,10 @@
     {
       "id": "s5-file-read",
       "prompt": "read the file /tmp/e2e/hello.txt and tell me what it says",
-      "at": "2026-09-27T23:49:54.415Z",
+      "at": "2026-09-27T23:54:39.942Z",
       "commsIntent": "handoff",
-      "commsLatencyMs": 3240,
-      "taskId": "task_f8845fe9",
+      "commsLatencyMs": 2004,
+      "taskId": "task_faf26620",
       "status": "done",
       "resultText": "Done.\n\nStep outputs:\n[fs.read/read]:\nhello thinkdrop",
       "graphIntent": {
@@ -48,11 +48,11 @@
         ]
       },
       "screens": [],
-      "events": 872,
+      "events": 1686,
       "approvals": 1,
       "questions": 0,
       "authResumes": 0,
-      "totalMs": 7755,
+      "totalMs": 8053,
       "error": null,
       "failures": [],
       "pass": true
@@ -60,10 +60,10 @@
     {
       "id": "s5-file-append",
       "prompt": "append the line 'second entry' to /tmp/e2e/log.txt",
-      "at": "2026-09-27T23:50:02.171Z",
+      "at": "2026-09-27T23:54:47.996Z",
       "commsIntent": "handoff",
-      "commsLatencyMs": 2485,
-      "taskId": "task_7cb027f6",
+      "commsLatencyMs": 2104,
+      "taskId": "task_eee4ff96",
       "status": "done",
       "resultText": "Done.\n\nStep outputs:\n[shell.run]: completed",
       "graphIntent": {
@@ -75,11 +75,11 @@
         ]
       },
       "screens": [],
-      "events": 900,
+      "events": 1714,
       "approvals": 1,
       "questions": 0,
       "authResumes": 0,
-      "totalMs": 5509,
+      "totalMs": 5131,
       "error": null,
       "failures": [],
       "pass": true
@@ -87,10 +87,10 @@
     {
       "id": "s5-file-rename",
       "prompt": "rename /tmp/e2e/hello.txt to /tmp/e2e/hello-renamed.txt",
-      "at": "2026-09-27T23:50:07.680Z",
+      "at": "2026-09-27T23:54:53.127Z",
       "commsIntent": "handoff",
-      "commsLatencyMs": 1735,
-      "taskId": "task_9083b40c",
+      "commsLatencyMs": 2269,
+      "taskId": "task_46826325",
       "status": "done",
       "resultText": "Done.\n\nStep outputs:\n[shell.run]: completed",
       "graphIntent": {
@@ -102,11 +102,11 @@
         ]
       },
       "screens": [],
-      "events": 928,
+      "events": 1742,
       "approvals": 1,
       "questions": 0,
       "authResumes": 0,
-      "totalMs": 6253,
+      "totalMs": 6802,
       "error": null,
       "failures": [],
       "pass": true
@@ -114,10 +114,10 @@
     {
       "id": "s5-file-move",
       "prompt": "move /tmp/e2e/log.txt into /tmp/e2e/archive",
-      "at": "2026-09-27T23:50:13.934Z",
+      "at": "2026-09-27T23:54:59.929Z",
       "commsIntent": "handoff",
-      "commsLatencyMs": 2594,
-      "taskId": "task_9b78c07b",
+      "commsLatencyMs": 1804,
+      "taskId": "task_bc2eb968",
       "status": "done",
       "resultText": "Done.\n\nStep outputs:\n[shell.run]: completed",
       "graphIntent": {
@@ -129,11 +129,11 @@
         ]
       },
       "screens": [],
-      "events": 956,
+      "events": 1770,
       "approvals": 1,
       "questions": 0,
       "authResumes": 0,
-      "totalMs": 5620,
+      "totalMs": 6325,
       "error": null,
       "failures": [],
       "pass": true
@@ -141,12 +141,12 @@
     {
       "id": "s5-file-list",
       "prompt": "list the files in /tmp/e2e",
-      "at": "2026-09-27T23:50:19.554Z",
+      "at": "2026-09-27T23:55:06.254Z",
       "commsIntent": "handoff",
-      "commsLatencyMs": 2589,
-      "taskId": "task_1d012983",
+      "commsLatencyMs": 2651,
+      "taskId": "task_24f8025b",
       "status": "done",
-      "resultText": "Done.\n\nStep outputs:\n[shell.run]:\ntotal 88\ndrwxr-xr-x@  13 lukaizhi  wheel    416 Sep 27 19:50 .\ndrwxrwxrwt  606 root      wheel  19392 Sep 27 19:48 ..\n-rw-r--r--@   1 lukaizhi  wheel     12 Sep 27 19:50 archive\n-rw-r--r--@   1 lukaizhi  wheel     15 Sep 27 19:49 hello-renamed.txt\n-rw-r--r--@   1 lukaizhi  wheel     11 Sep 27 19:47 ",
+      "resultText": "Done.\n\nStep outputs:\n[shell.run]:\ntotal 88\ndrwxr-xr-x@  13 lukaizhi  wheel    416 Sep 27 19:55 .\ndrwxrwxrwt  609 root      wheel  19488 Sep 27 19:53 ..\n-rw-r--r--@   1 lukaizhi  wheel     12 Sep 27 19:54 archive\n-rw-r--r--@   1 lukaizhi  wheel     15 Sep 27 19:54 hello-renamed.txt\n-rw-r--r--@   1 lukaizhi  wheel     11 Sep 27 19:52 ",
       "graphIntent": {
         "intent": "command_automate",
         "parser": "llm-decompose",
@@ -156,11 +156,11 @@
         ]
       },
       "screens": [],
-      "events": 984,
+      "events": 1798,
       "approvals": 1,
       "questions": 0,
       "authResumes": 0,
-      "totalMs": 5606,
+      "totalMs": 5669,
       "error": null,
       "failures": [],
       "pass": true
@@ -168,10 +168,10 @@
     {
       "id": "s5-sys-battery",
       "prompt": "what's my battery percentage",
-      "at": "2026-09-27T23:50:25.162Z",
+      "at": "2026-09-27T23:55:11.923Z",
       "commsIntent": "handoff",
-      "commsLatencyMs": 2882,
-      "taskId": "task_b1a03d7b",
+      "commsLatencyMs": 3077,
+      "taskId": "task_2b153134",
       "status": "done",
       "resultText": "Done.\n\nStep outputs:\n[shell.run]:\nNow drawing from 'AC Power'\n -InternalBattery-0 (id=23003235)\t100%; charged; 0:00 remaining present: true",
       "graphIntent": {
@@ -183,11 +183,11 @@
         ]
       },
       "screens": [],
-      "events": 1012,
+      "events": 1826,
       "approvals": 1,
       "questions": 0,
       "authResumes": 0,
-      "totalMs": 5905,
+      "totalMs": 6094,
       "error": null,
       "failures": [],
       "pass": true
@@ -195,10 +195,10 @@
     {
       "id": "s5-sys-disk",
       "prompt": "how much free disk space do I have",
-      "at": "2026-09-27T23:50:31.068Z",
+      "at": "2026-09-27T23:55:18.018Z",
       "commsIntent": "handoff",
-      "commsLatencyMs": 1701,
-      "taskId": "task_fc2364d7",
+      "commsLatencyMs": 2070,
+      "taskId": "task_fcd5b4f5",
       "status": "done",
       "resultText": "Done.\n\nStep outputs:\n[shell.run]:\nFilesystem        Size    Used   Avail Capacity iused ifree %iused  Mounted on\n/dev/disk3s1s1   228Gi    17Gi    31Gi    37%    412k  320M    0%   /",
       "graphIntent": {
@@ -210,11 +210,11 @@
         ]
       },
       "screens": [],
-      "events": 1040,
+      "events": 1854,
       "approvals": 1,
       "questions": 0,
       "authResumes": 0,
-      "totalMs": 4725,
+      "totalMs": 5084,
       "error": null,
       "failures": [],
       "pass": true
@@ -222,12 +222,12 @@
     {
       "id": "s5-sys-procs",
       "prompt": "list the top 5 processes using the most memory",
-      "at": "2026-09-27T23:50:35.793Z",
+      "at": "2026-09-27T23:55:23.103Z",
       "commsIntent": "handoff",
-      "commsLatencyMs": 1760,
-      "taskId": "task_0b3e427d",
+      "commsLatencyMs": 1521,
+      "taskId": "task_1446bb9c",
       "status": "done",
-      "resultText": "Done.\n\nStep outputs:\n[shell.run]:\nUSER               PID  %CPU %MEM      VSZ    RSS   TT  STAT STARTED      TIME COMMAND\nlukaizhi         80224 173.8  0.1 426981664   9776   ??  R     3:29AM 444:51.04 /usr/libexec/replayd\nlukaizhi         87874  45.1  2.5 1926486848 208896   ??  S     7:36PM   1:43.86 /Applications/Google Chrome.app",
+      "resultText": "Done.\n\nStep outputs:\n[shell.run]:\nUSER               PID  %CPU %MEM      VSZ    RSS   TT  STAT STARTED      TIME COMMAND\nlukaizhi         80224 178.6  0.1 426982176  11680   ??  R     3:29AM 453:47.12 /usr/libexec/replayd\nlukaizhi         87874  41.8  3.6 1926472576 301152   ??  S     7:36PM   4:10.97 /Applications/Google Chrome.app",
       "graphIntent": {
         "intent": "command_automate",
         "parser": "llm-decompose",
@@ -237,11 +237,11 @@
         ]
       },
       "screens": [],
-      "events": 1068,
+      "events": 1882,
       "approvals": 1,
       "questions": 0,
       "authResumes": 0,
-      "totalMs": 7790,
+      "totalMs": 4533,
       "error": null,
       "failures": [],
       "pass": true
@@ -249,12 +249,12 @@
     {
       "id": "s5-sys-uptime",
       "prompt": "how long has my computer been running",
-      "at": "2026-09-27T23:50:43.583Z",
+      "at": "2026-09-27T23:55:27.637Z",
       "commsIntent": "handoff",
-      "commsLatencyMs": 1647,
-      "taskId": "task_1d58f94e",
+      "commsLatencyMs": 8570,
+      "taskId": "task_35819f7f",
       "status": "done",
-      "resultText": "Done.\n\nStep outputs:\n[shell.run]:\n19:50  up 2 days, 10:32, 1 user, load averages: 8.23 5.43 4.48",
+      "resultText": "Done.\n\nStep outputs:\n[shell.run]:\n19:55  up 2 days, 10:37, 1 user, load averages: 5.74 5.63 4.82",
       "graphIntent": {
         "intent": "command_automate",
         "parser": "llm-decompose",
@@ -264,11 +264,11 @@
         ]
       },
       "screens": [],
-      "events": 1096,
+      "events": 1910,
       "approvals": 1,
       "questions": 0,
       "authResumes": 0,
-      "totalMs": 4659,
+      "totalMs": 11585,
       "error": null,
       "failures": [],
       "pass": true
@@ -276,12 +276,12 @@
     {
       "id": "s5-screenshot",
       "prompt": "take a screenshot of my screen",
-      "at": "2026-09-27T23:50:48.243Z",
+      "at": "2026-09-27T23:55:39.223Z",
       "commsIntent": "handoff",
-      "commsLatencyMs": 2641,
-      "taskId": "task_b2c34c40",
+      "commsLatencyMs": 2703,
+      "taskId": "task_718254c0",
       "status": "done",
-      "resultText": "Done.\n\nStep outputs:\n[screen.capture]:\nSports Update --- Exciting opport: --- Ant Design Cha: --- Thinkdrop aire --- | Parts Unlimited --- & Apple --- (11) Galactu ) --- ) () --- = --- 94 edclub Kiddle - visual sea... Meta Jitsi Meet Google Translate & Super Mario Bros... HTML Basic --- AngularJS on Rails... Getting Started --- [3 All Bo",
+      "resultText": "Done.\n\nStep outputs:\n[screen.capture]:\n| Sports Update ' --- Ant Design Cha: --- Thinkdrop aire --- Parts Unlimited --- & Apple --- (1M) TheFarn 4 --- = 25 https://www.youtube.com/watch?v=kgb5ZLgRPDs --- % --- BEB 6 & --- : --- 44 edclub --- Kiddle - visual sea... (%) Meta Jitsi Meet --- Google Translate & Super Mario Bros... HTML Basic ",
       "graphIntent": {
         "intent": "command_automate",
         "parser": "llm-decompose",
@@ -291,11 +291,11 @@
         ]
       },
       "screens": [],
-      "events": 1124,
+      "events": 1938,
       "approvals": 2,
       "questions": 0,
       "authResumes": 0,
-      "totalMs": 10164,
+      "totalMs": 10228,
       "error": null,
       "failures": [],
       "pass": true
@@ -303,12 +303,12 @@
     {
       "id": "s5-remind",
       "prompt": "remind me in 30 minutes to stretch",
-      "at": "2026-09-27T23:50:58.408Z",
+      "at": "2026-09-27T23:55:49.451Z",
       "commsIntent": "handoff",
-      "commsLatencyMs": 3631,
-      "taskId": "task_c7764f58",
+      "commsLatencyMs": 3139,
+      "taskId": "task_b3381fec",
       "status": "done",
-      "resultText": "Done.\n\nStep outputs:\n[schedule]:\nReminder set for 08:21 PM — \"stretch\"",
+      "resultText": "Done.\n\nStep outputs:\n[schedule]:\nReminder set for 08:25 PM — \"stretch\"",
       "graphIntent": {
         "intent": "command_automate",
         "parser": "llm-decompose",
@@ -318,11 +318,11 @@
         ]
       },
       "screens": [],
-      "events": 1150,
+      "events": 1964,
       "approvals": 1,
       "questions": 0,
       "authResumes": 0,
-      "totalMs": 6647,
+      "totalMs": 6156,
       "error": null,
       "failures": [],
       "pass": true
@@ -330,10 +330,10 @@
     {
       "id": "s5-remind-cancel",
       "prompt": "cancel my stretch reminder",
-      "at": "2026-09-27T23:51:05.056Z",
+      "at": "2026-09-27T23:55:55.608Z",
       "commsIntent": "handoff",
-      "commsLatencyMs": 3666,
-      "taskId": "task_27b063a6",
+      "commsLatencyMs": 2307,
+      "taskId": "task_425a5a87",
       "status": "done",
       "resultText": "Done.\n\nStep outputs:\n[schedule_cancel]:\nCancelled 1 reminder(s): \"stretch\"",
       "graphIntent": {
@@ -345,11 +345,11 @@
         ]
       },
       "screens": [],
-      "events": 1175,
+      "events": 1989,
       "approvals": 1,
       "questions": 0,
       "authResumes": 0,
-      "totalMs": 6679,
+      "totalMs": 6828,
       "error": null,
       "failures": [],
       "pass": true
@@ -357,10 +357,10 @@
     {
       "id": "s5-open-notes",
       "prompt": "open the Notes app",
-      "at": "2026-09-27T23:51:11.735Z",
+      "at": "2026-09-27T23:56:02.437Z",
       "commsIntent": "handoff",
-      "commsLatencyMs": 2311,
-      "taskId": "task_fb2f3bf5",
+      "commsLatencyMs": 2349,
+      "taskId": "task_ac1ca48b",
       "status": "done",
       "resultText": "Done.\n\nStep outputs:\n[shell.run]:\nNotes already open and focused — no action needed",
       "graphIntent": {
@@ -372,11 +372,11 @@
         ]
       },
       "screens": [],
-      "events": 1199,
+      "events": 2013,
       "approvals": 1,
       "questions": 0,
       "authResumes": 0,
-      "totalMs": 9831,
+      "totalMs": 9877,
       "error": null,
       "failures": [],
       "pass": true
@@ -384,10 +384,10 @@
     {
       "id": "s5-open-url",
       "prompt": "open youtube.com in my browser",
-      "at": "2026-09-27T23:51:21.566Z",
+      "at": "2026-09-27T23:56:12.314Z",
       "commsIntent": "handoff",
-      "commsLatencyMs": 2543,
-      "taskId": "task_cbdf70af",
+      "commsLatencyMs": 2926,
+      "taskId": "task_46520658",
       "status": "done",
       "resultText": "Done.\n\nStep outputs:\n[shell.run]: completed",
       "graphIntent": {
@@ -399,11 +399,11 @@
         ]
       },
       "screens": [],
-      "events": 1227,
+      "events": 2041,
       "approvals": 1,
       "questions": 0,
       "authResumes": 0,
-      "totalMs": 22082,
+      "totalMs": 9016,
       "error": null,
       "failures": [],
       "pass": true
@@ -411,10 +411,10 @@
     {
       "id": "s5-shell",
       "prompt": "run 'echo stage five works' in the terminal",
-      "at": "2026-09-27T23:51:43.649Z",
+      "at": "2026-09-27T23:56:21.330Z",
       "commsIntent": "handoff",
-      "commsLatencyMs": 1110,
-      "taskId": "task_90667e5c",
+      "commsLatencyMs": 1047,
+      "taskId": "task_48d0a6af",
       "status": "done",
       "resultText": "Done.\n\nStep outputs:\n[shell.run]:\nstage five works",
       "graphIntent": {
@@ -426,11 +426,11 @@
         ]
       },
       "screens": [],
-      "events": 1255,
+      "events": 2069,
       "approvals": 1,
       "questions": 0,
       "authResumes": 0,
-      "totalMs": 5644,
+      "totalMs": 5573,
       "error": null,
       "failures": [],
       "pass": true
@@ -438,10 +438,10 @@
     {
       "id": "s5-running-apps",
       "prompt": "what apps are currently running on my mac",
-      "at": "2026-09-27T23:51:49.293Z",
+      "at": "2026-09-27T23:56:26.903Z",
       "commsIntent": "handoff",
-      "commsLatencyMs": 1935,
-      "taskId": "task_c3dab3c1",
+      "commsLatencyMs": 2307,
+      "taskId": "task_ed7277e8",
       "status": "done",
       "resultText": "Done.\n\nStep outputs:\n[shell.run]:\nFinder, stable, Devin, Google Chrome, Notes",
       "graphIntent": {
@@ -453,11 +453,11 @@
         ]
       },
       "screens": [],
-      "events": 1283,
+      "events": 2097,
       "approvals": 1,
       "questions": 0,
       "authResumes": 0,
-      "totalMs": 4952,
+      "totalMs": 5331,
       "error": null,
       "failures": [],
       "pass": true
@@ -465,12 +465,12 @@
     {
       "id": "s5-file-multi",
       "prompt": "create a file /tmp/e2e/multi.txt with the words alpha beta then rename it to /tmp/e2e/multi-renamed.txt",
-      "at": "2026-09-27T23:51:54.245Z",
+      "at": "2026-09-27T23:56:32.235Z",
       "commsIntent": "handoff",
-      "commsLatencyMs": 2190,
-      "taskId": "task_615561f3",
+      "commsLatencyMs": 2569,
+      "taskId": "task_2b50a3b6",
       "status": "done",
-      "resultText": "=== Summary ===\nCreated /tmp/e2e/multi.txt containing the words \"alpha beta\", then renamed it to /tmp/e2e/multi-renamed.txt. The rename succeeded, confirmed by a directory listing showing /tmp/e2e/multi-renamed.txt (11 bytes) still present at the original content size.\n\n=== Shell output (Create /tmp/e2e/multi.txt containing 'alpha beta') ===\nCREATED: /tmp/e2e/multi.txt\n\n\n=== Shell output (Rename multi.txt to multi-renamed.txt) ===\n-rw-r--r--@ 1 lukaizhi  wheel  11 Sep 27 19:52 /tmp/e2e/multi-renamed.txt\nRENAMED: /tmp/e2e/multi-renamed.txt",
+      "resultText": "Summary of actions taken:\n\n1. **Created** `/tmp/e2e/multi.txt` containing the text `alpha beta` (11 bytes).\n2. **Renamed** the file to `/tmp/e2e/multi-renamed.txt`.\n\nThe original file no longer exists under its original name; the content `alpha beta` now resides in `/tmp/e2e/multi-renamed.txt`. The final listing confirms the renamed file exists, is owned by `lukaizhi`, has read/write permissions for the user (and read for group/others), and is 11 bytes in size.",
       "graphIntent": {
         "intent": "command_automate",
         "parser": "llm-decompose",
@@ -480,11 +480,11 @@
         ]
       },
       "screens": [],
-      "events": 1336,
+      "events": 2142,
       "approvals": 1,
       "questions": 0,
       "authResumes": 0,
-      "totalMs": 23244,
+      "totalMs": 22180,
       "error": null,
       "failures": [],
       "pass": true
@@ -492,12 +492,12 @@
     {
       "id": "s5-mixed-save",
       "prompt": "search the web for the current time in Tokyo and save it to /tmp/e2e/tokyo.txt",
-      "at": "2026-09-27T23:52:17.489Z",
+      "at": "2026-09-27T23:56:54.415Z",
       "commsIntent": "handoff",
-      "commsLatencyMs": 1095,
-      "taskId": "task_d4e560aa",
+      "commsLatencyMs": 1077,
+      "taskId": "task_7d016d95",
       "status": "done",
-      "resultText": "Done.\n\nStep outputs:\n[shell.run]:\n-rw-r--r--@ 1 lukaizhi  wheel  253 Sep 27 19:52 /tmp/e2e/tokyo.txt\nSAVED: /tmp/e2e/tokyo.txt",
+      "resultText": "Done.\n\nStep outputs:\n[shell.run]:\nSAVED: /tmp/e2e/tokyo.txt\n-rw-r--r--@ 1 lukaizhi  wheel  253 Sep 27 19:57 /tmp/e2e/tokyo.txt",
       "graphIntent": {
         "intent": "web_search",
         "parser": "multi-intent-pipeline",
@@ -508,11 +508,11 @@
         ]
       },
       "screens": [],
-      "events": 1375,
+      "events": 2181,
       "approvals": 1,
       "questions": 0,
       "authResumes": 0,
-      "totalMs": 20654,
+      "totalMs": 17644,
       "error": null,
       "failures": [],
       "pass": true
@@ -520,10 +520,10 @@
     {
       "id": "s5-ref-seed",
       "prompt": "create a file /tmp/e2e/notes.txt with the words remember milk",
-      "at": "2026-09-27T23:52:38.143Z",
+      "at": "2026-09-27T23:57:12.063Z",
       "commsIntent": "handoff",
-      "commsLatencyMs": 3089,
-      "taskId": "task_bcba64ca",
+      "commsLatencyMs": 2742,
+      "taskId": "task_4f75eca6",
       "status": "done",
       "resultText": "Done.\n\nStep outputs:\n[shell.run]: completed",
       "graphIntent": {
@@ -535,11 +535,11 @@
         ]
       },
       "screens": [],
-      "events": 1403,
+      "events": 2209,
       "approvals": 1,
       "questions": 0,
       "authResumes": 0,
-      "totalMs": 6110,
+      "totalMs": 8767,
       "error": null,
       "failures": [],
       "pass": true
@@ -547,10 +547,10 @@
     {
       "id": "s5-ref-edit",
       "prompt": "add 'also eggs' to that file",
-      "at": "2026-09-27T23:52:44.253Z",
+      "at": "2026-09-27T23:57:20.831Z",
       "commsIntent": "handoff",
-      "commsLatencyMs": 846,
-      "taskId": "task_b890c487",
+      "commsLatencyMs": 1250,
+      "taskId": "task_f4eb771f",
       "status": "done",
       "resultText": "Done.\n\nStep outputs:\n[shell.run]: completed",
       "graphIntent": {
@@ -562,11 +562,11 @@
         ]
       },
       "screens": [],
-      "events": 1432,
+      "events": 2238,
       "approvals": 1,
       "questions": 0,
       "authResumes": 0,
-      "totalMs": 9869,
+      "totalMs": 10280,
       "error": null,
       "failures": [],
       "pass": true
@@ -574,12 +574,12 @@
     {
       "id": "s5-tweet",
       "prompt": "post a tweet saying hello world",
-      "at": "2026-09-27T23:52:54.122Z",
+      "at": "2026-09-27T23:57:31.111Z",
       "commsIntent": "handoff",
-      "commsLatencyMs": 3782,
-      "taskId": "task_15e4496f",
+      "commsLatencyMs": 2330,
+      "taskId": "task_468c3df7",
       "status": "awaiting-approval",
-      "resultText": "I'll post that tweet in the background and let you know when it's done, so what else can I help you with?",
+      "resultText": "I'll post that tweet saying hello world in the background and let you know when it's done, what else can I help you with?",
       "graphIntent": {
         "intent": "command_automate",
         "parser": "llm-decompose",
@@ -589,11 +589,11 @@
         ]
       },
       "screens": [],
-      "events": 1452,
+      "events": 2258,
       "approvals": 0,
       "questions": 0,
       "authResumes": 0,
-      "totalMs": 6800,
+      "totalMs": 5350,
       "error": null,
       "failures": [],
       "pass": true
@@ -601,12 +601,12 @@
     {
       "id": "s5-email",
       "prompt": "send an email to myself with the subject test run",
-      "at": "2026-09-27T23:53:00.923Z",
+      "at": "2026-09-27T23:57:36.461Z",
       "commsIntent": "handoff",
-      "commsLatencyMs": 2218,
-      "taskId": "task_d16bddeb",
+      "commsLatencyMs": 3223,
+      "taskId": "task_84eac4c0",
       "status": "awaiting-approval",
-      "resultText": "I'll send that email to yourself in the background and let you know once it's done. Anything else I can help with?",
+      "resultText": "I'll send that email to yourself with the subject 'test run' in the background and let you know when it's done—what else can I help you with?",
       "graphIntent": {
         "intent": "command_automate",
         "parser": "llm-decompose",
@@ -616,11 +616,11 @@
         ]
       },
       "screens": [],
-      "events": 1473,
+      "events": 2279,
       "approvals": 0,
       "questions": 0,
       "authResumes": 0,
-      "totalMs": 8232,
+      "totalMs": 9250,
       "error": null,
       "failures": [],
       "pass": true
@@ -628,12 +628,12 @@
     {
       "id": "s5-sms",
       "prompt": "text mom that I'll be late",
-      "at": "2026-09-27T23:53:09.155Z",
+      "at": "2026-09-27T23:57:45.712Z",
       "commsIntent": "handoff",
-      "commsLatencyMs": 2346,
-      "taskId": "task_c84e8f5a",
+      "commsLatencyMs": 1969,
+      "taskId": "task_348ddcd3",
       "status": "awaiting-approval",
-      "resultText": "I'll text your mom that you'll be late and let you know when it's sent, what else can I help you with?",
+      "resultText": "I'll text your mom that you'll be late and let you know once it's sent — what else can I help with?",
       "graphIntent": {
         "intent": "command_automate",
         "parser": "llm-decompose",
@@ -643,11 +643,11 @@
         ]
       },
       "screens": [],
-      "events": 1502,
+      "events": 2312,
       "approvals": 0,
       "questions": 0,
       "authResumes": 0,
-      "totalMs": 33900,
+      "totalMs": 35014,
       "error": null,
       "failures": [],
       "pass": true
@@ -655,12 +655,12 @@
     {
       "id": "s5-todoist",
       "prompt": "add buy milk to my todoist",
-      "at": "2026-09-27T23:53:43.055Z",
+      "at": "2026-09-27T23:58:20.727Z",
       "commsIntent": "handoff",
-      "commsLatencyMs": 1183,
-      "taskId": "task_d89d6082",
+      "commsLatencyMs": 749,
+      "taskId": "task_efbb6251",
       "status": "awaiting-approval",
-      "resultText": "Give me a beat.",
+      "resultText": "One moment.",
       "graphIntent": {
         "intent": "command_automate",
         "parser": "llm-decompose",
@@ -670,11 +670,11 @@
         ]
       },
       "screens": [],
-      "events": 1537,
+      "events": 2347,
       "approvals": 0,
       "questions": 0,
       "authResumes": 1,
-      "totalMs": 19237,
+      "totalMs": 18810,
       "error": null,
       "failures": [],
       "pass": true
@@ -682,12 +682,12 @@
     {
       "id": "s5-github-issue",
       "prompt": "create a github issue titled 'test issue' in the thinkdrop repo",
-      "at": "2026-09-27T23:54:02.293Z",
+      "at": "2026-09-27T23:58:39.537Z",
       "commsIntent": "handoff",
-      "commsLatencyMs": 3060,
-      "taskId": "task_8f24ad1f",
+      "commsLatencyMs": 2921,
+      "taskId": "task_c980d703",
       "status": "awaiting-approval",
-      "resultText": "I'll get that GitHub issue created in the background and let you know once it's done, so what else can I help you with?",
+      "resultText": "I'll create that GitHub issue in the thinkdrop repo in the background and let you know when it's done, what else can I help with?",
       "graphIntent": {
         "intent": "command_automate",
         "parser": "llm-decompose",
@@ -697,11 +697,11 @@
         ]
       },
       "screens": [],
-      "events": 1557,
+      "events": 2367,
       "approvals": 0,
       "questions": 0,
       "authResumes": 0,
-      "totalMs": 6137,
+      "totalMs": 5937,
       "error": null,
       "failures": [],
       "pass": true
@@ -709,12 +709,12 @@
     {
       "id": "s5-spotify",
       "prompt": "play my discover weekly playlist on spotify",
-      "at": "2026-09-27T23:54:08.431Z",
+      "at": "2026-09-27T23:58:45.474Z",
       "commsIntent": "handoff",
-      "commsLatencyMs": 2344,
-      "taskId": "task_393648fb",
+      "commsLatencyMs": 2170,
+      "taskId": "task_ed09b279",
       "status": "awaiting-approval",
-      "resultText": "I'll start your Discover Weekly playlist on Spotify in the background and let you know when it's playing, what else can I help with?",
+      "resultText": "I'll get your Discover Weekly playing in the background and let you know once it's going. What else can I help you with?",
       "graphIntent": {
         "intent": "command_automate",
         "parser": "llm-decompose",
@@ -724,11 +724,11 @@
         ]
       },
       "screens": [],
-      "events": 1577,
+      "events": 2387,
       "approvals": 0,
       "questions": 0,
       "authResumes": 0,
-      "totalMs": 6918,
+      "totalMs": 6700,
       "error": null,
       "failures": [],
       "pass": true
@@ -736,12 +736,12 @@
     {
       "id": "s5-slack-msg",
       "prompt": "send a slack message to the engineering channel saying standup is in 5 minutes",
-      "at": "2026-09-27T23:54:15.350Z",
+      "at": "2026-09-27T23:58:52.174Z",
       "commsIntent": "handoff",
-      "commsLatencyMs": 2372,
-      "taskId": "task_32d8ced1",
+      "commsLatencyMs": 2832,
+      "taskId": "task_d06f1f21",
       "status": "awaiting-approval",
-      "resultText": "I'll get that message sent to the engineering channel in the background and let you know once it's done — what else can I help you with?",
+      "resultText": "I'll send that Slack message to the engineering channel in the background and let you know once it's done; what else can I help you with?",
       "graphIntent": {
         "intent": "command_automate",
         "parser": "llm-decompose",
@@ -751,11 +751,11 @@
         ]
       },
       "screens": [],
-      "events": 1598,
+      "events": 2408,
       "approvals": 0,
       "questions": 0,
       "authResumes": 0,
-      "totalMs": 6896,
+      "totalMs": 7346,
       "error": null,
       "failures": [],
       "pass": true
@@ -763,10 +763,10 @@
     {
       "id": "s5-amazon",
       "prompt": "search amazon for wireless headphones and show me the top results",
-      "at": "2026-09-27T23:54:22.246Z",
+      "at": "2026-09-27T23:58:59.521Z",
       "commsIntent": "handoff",
-      "commsLatencyMs": 899,
-      "taskId": "task_dfe9b830",
+      "commsLatencyMs": 781,
+      "taskId": "task_8b00ea65",
       "status": "awaiting-approval",
       "resultText": "Hold on, let me look that up for you.",
       "graphIntent": {
@@ -778,11 +778,11 @@
         ]
       },
       "screens": [],
-      "events": 1616,
+      "events": 2426,
       "approvals": 0,
       "questions": 0,
       "authResumes": 0,
-      "totalMs": 6924,
+      "totalMs": 6800,
       "error": null,
       "failures": [],
       "pass": true
@@ -790,12 +790,12 @@
     {
       "id": "s5-volume",
       "prompt": "set my volume to 50 percent",
-      "at": "2026-09-27T23:54:29.170Z",
+      "at": "2026-09-27T23:59:06.321Z",
       "commsIntent": "handoff",
-      "commsLatencyMs": 1250,
-      "taskId": "task_387bb5c2",
+      "commsLatencyMs": 1552,
+      "taskId": "task_18b5deff",
       "status": "awaiting-approval",
-      "resultText": "I'll get your volume set to 50 percent in the background and let you know when it's done — what else can I help with?",
+      "resultText": "I'll set your volume to 50 percent in the background and let you know as soon as it's done. What else can I help you with?",
       "graphIntent": {
         "intent": "command_automate",
         "parser": "llm-decompose",
@@ -805,11 +805,11 @@
         ]
       },
       "screens": [],
-      "events": 1630,
+      "events": 2440,
       "approvals": 0,
       "questions": 0,
       "authResumes": 0,
-      "totalMs": 2763,
+      "totalMs": 3072,
       "error": null,
       "failures": [],
       "pass": true

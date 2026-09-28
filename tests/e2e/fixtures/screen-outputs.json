@@ -162,6 +162,42 @@
     "expect": { "text": null, "goneAfter": 4000 }
   },
   {
+    "id": "three-starfield",
+    "desc": "three.js starfield — lazy-loaded WebGL canvas",
+    "payload": {
+      "kind": "three", "mood": "neutral",
+      "three": { "scene": "starfield", "text": "Starfield" }
+    },
+    "expect": { "webgl": true, "text": "Starfield" }
+  },
+  {
+    "id": "three-cube",
+    "desc": "spinning wireframe cube with caption",
+    "payload": {
+      "kind": "three", "mood": "calm",
+      "three": { "scene": "cube", "color": "#34d399", "speed": 1.4, "text": "Rotating cube" }
+    },
+    "expect": { "webgl": true, "text": "Rotating cube" }
+  },
+  {
+    "id": "three-wave",
+    "desc": "particle wave — vertex-displaced plane",
+    "payload": {
+      "kind": "three", "mood": "sad",
+      "three": { "scene": "wave", "density": 0.8 }
+    },
+    "expect": { "webgl": true }
+  },
+  {
+    "id": "three-knot",
+    "desc": "torus knot wireframe — geometry density scales",
+    "payload": {
+      "kind": "three", "mood": "playful",
+      "three": { "scene": "knot", "speed": 0.6 }
+    },
+    "expect": { "webgl": true }
+  },
+  {
     "id": "invalid-kind",
     "desc": "invalid payload → 400",
     "payload": { "kind": "hologram", "text": "nope" },

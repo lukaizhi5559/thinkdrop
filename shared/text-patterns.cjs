@@ -234,8 +234,41 @@ const SCREEN_EMOJI_RE   = /\p{Extended_Pictographic}/u;
 const SCREEN_IMG_URL_RE = /https?:\/\/\S+?\.(?:png|jpe?g|gif|webp|svg)(?:\?\S*)?/i;
 const SCREEN_IMG_PATH_RE = /(?:~?\/[\w\-./ ]+?\.(?:png|jpe?g|gif|webp|svg))/i;
 const SCREEN_ALERT_RE   = /\b(?:alert|warning|caution)\b/i;
-const SCREEN_DECK_RE    = /\b(?:slides?|slide\s?deck|deck)\b/i;
+const SCREEN_DECK_RE    = /\b(?:slides?|slide\s?deck|deck|slideshow|pitch\s*deck|presentation)\b/i;
 const SCREEN_CHART_RE   = /\b(?:pie|donut|bar|line|area|scatter)?\s*(?:chart|graph)\b/i;
+
+/** three.js/WebGL scene phrasing — "show a 3d starfield", "a spinning cube",
+ *  "some particles". Marks the 'three' screen kind in inferScreenOutput. */
+const SCREEN_THREE_RE   = /\b(?:3\s?-?d|three\.?js|webgl|starfield|particle\s+(?:field|wave|system|animation)|spinning\s+(?:cube|globe|torus|knot)|torus\s+knot|hologram|wireframe)\b/i;
+
+/** Display verb + presentation-artifact noun — "show me a pie chart", "make a
+ *  slideshow", "give me a line graph". Unlike SCREEN_OUTPUT_RE these need no
+ *  "on screen" tail: a chart/deck is a presentation artifact, so the request
+ *  is only satisfiable by painting it. Callers MUST still subtract the
+ *  artifact-belongs-elsewhere cases before trusting a hit: file ops (chart
+ *  goes to a file), named apps (chart goes inside Excel/Keynote — check
+ *  NAMED_APP_RE / tc.targetService), observation and capture phrasing.
+ *  Bare 'plot' is excluded from the kind list — too ambiguous ("the plot of
+ *  the movie"); it stays in the verb list ("plot a bar chart"). */
+const SCREEN_VISUAL_KIND_RE = new RegExp([
+  '\\b(?:show|display|plot|draw|present|put\\s+up|make|create|generate|render|give\\s+me|pull\\s+up|bring\\s+up|visuali[sz]e)\\b[^.]{0,50}\\b(?:pie|donut|bar|line|area|scatter)?\\s*(?:chart|graph)\\b',
+  '\\b(?:show|display|plot|draw|present|put\\s+up|make|create|generate|render|give\\s+me|pull\\s+up|bring\\s+up)\\b[^.]{0,50}\\b(?:slide\\s?deck|deck|slides?|slideshow|presentation)\\b',
+].join('|'), 'i');
+
+/** Artifact-into-app phrasing — "chart in Excel", "slides on PowerPoint",
+ *  "make a deck in Keynote". A presentation kind word + containment
+ *  preposition points the artifact INSIDE an app — combine with NAMED_APP_RE
+ *  at the call site (the preposition alone hits "slides on my screen").
+ *  Data-label hits don't match: "chart of browsers: arc, safari" — "of"
+ *  and ":" are not containment prepositions. */
+const VISUAL_INTO_APP_RE = /\b(?:charts?|graphs?|plots?|deck|slides?|slideshow|presentations?)\s+(?:in|on|into|inside|using|with|via)\s+/i;
+
+/** Subjects whose data lives locally — "my task activity", "my task journal",
+ *  "my usage". Used by the decompose guard to pick a command_automate gather
+ *  step (journal_stats/sys_query templates) instead of web_search when a
+ *  fetch is needed before display. DEVICE_STATE_RE covers the telemetry
+ *  family (battery/disk/uptime); this covers the app-activity family. */
+const LOCAL_DATA_SUBJECT_RE = /\b(?:my|the|our)\s+(?:task\s+)?(?:activit\w+|usage|productivity|task\s+(?:history|count|log|journal)|journal|conversations?\s+(?:history|count|log)|chat\s+history|message\s+count|screen\s+time)\b|\b(?:task|app|usage)\s+activit\w+\b/i;
 const SCREEN_QUOTED_RE  = /["“]([^"”\n]{1,300})["”]|'([^'\n]{1,300})'/;
 const SCREEN_DISPLAY_TAIL_RE = /\b(.+?)\s+on(?:to)?\s+(?:the\s+|my\s+)?screen\b/i;
 const SCREEN_DISPLAY_VERB_RE = /\b(?:show|put|display|paint|write|post|flash|project)\b/i;
@@ -303,6 +336,7 @@ function inferScreenOutput(message) {
   else if (SCREEN_ALERT_RE.test(msg)) out.kind = 'alert';
   else if (SCREEN_DECK_RE.test(msg)) out.kind = 'deck';
   else if (SCREEN_CHART_RE.test(msg)) out.kind = 'chart';
+  else if (SCREEN_THREE_RE.test(msg)) out.kind = 'three';
 
   // Alert copy: "...that says X" → X is the alert text. The screenOutput
   // node fills payload.text from screenOutputContent; when the classifier
@@ -362,6 +396,10 @@ module.exports = {
   AMBIENT_ARTIFACT_RE,
   SCREEN_OUTPUT_RE,
   LOOKUP_THEN_DISPLAY_RE,
+  SCREEN_VISUAL_KIND_RE,
+  VISUAL_INTO_APP_RE,
+  SCREEN_THREE_RE,
+  LOCAL_DATA_SUBJECT_RE,
   DEVICE_STATE_RE,
   FILE_PATH_RE,
   SCREEN_CAPTURE_RE,

@@ -1,0 +1,249 @@
+{
+  "file": "tests/e2e/prompts/stage9-screen.json",
+  "at": "2026-09-28T02:33:49.940Z",
+  "results": [
+    {
+      "id": "s9-scripture",
+      "prompt": "show John 3:16 on my screen",
+      "status": "done",
+      "totalMs": 24129,
+      "resultText": "Here is John 3:16:\n\n\"For God so loved the world that he gave his one and only Son, that whoever believes in him shall not perish but have eternal life.\"\n\nThis verse has been displayed on your screen.",
+      "failures": [],
+      "pass": true,
+      "taskId": "task_ce4ef5e9",
+      "graphIntent": {
+        "intent": "web_search",
+        "parser": "multi-intent-pipeline",
+        "subIntents": [
+          "web_search",
+          "screen_display"
+        ]
+      }
+    },
+    {
+      "id": "s9-text-literal",
+      "prompt": "display 'hello thinkdrop' on my screen",
+      "status": "done",
+      "totalMs": 4422,
+      "resultText": "## Screen\n\nOn screen.",
+      "failures": [],
+      "pass": true,
+      "taskId": "task_9961e979",
+      "graphIntent": {
+        "intent": "screen_display",
+        "parser": "llm-decompose",
+        "subIntents": [
+          "screen_display"
+        ]
+      }
+    },
+    {
+      "id": "s9-chart-inline",
+      "prompt": "show a pie chart on my screen: apples 5, bananas 3",
+      "status": "done",
+      "totalMs": 22468,
+      "resultText": "I've displayed a pie chart on your screen showing the data you requested: 5 apples and 3 bananas.",
+      "failures": [],
+      "pass": true,
+      "taskId": "task_3843f6c2",
+      "graphIntent": {
+        "intent": "web_search",
+        "parser": "multi-intent-pipeline",
+        "subIntents": [
+          "web_search",
+          "screen_display"
+        ]
+      }
+    },
+    {
+      "id": "s9-chart-activity",
+      "prompt": "plot a bar chart of my task activity over the past week",
+      "status": "done",
+      "totalMs": 6105,
+      "resultText": "I was able to retrieve your task activity data for the past week, which shows **156 tasks completed on Sunday**. However, I was unable to generate or display the bar chart. The screen display step did not return a visual result, so no chart is currently shown.\n\nIf you'd like, I can try re-running the chart generation, or I can provide the data in a different format (such as a table or list) so you can plot it yourself. Let me know how you'd like to proceed!",
+      "failures": [],
+      "pass": true,
+      "taskId": "task_9cdc3496",
+      "graphIntent": {
+        "intent": "command_automate",
+        "parser": "multi-intent-pipeline",
+        "subIntents": [
+          "command_automate",
+          "screen_display"
+        ]
+      }
+    },
+    {
+      "id": "s9-chart-noqualifier",
+      "prompt": "show me a donut chart of browsers: arc 40, safari 35, chrome 25",
+      "status": "done",
+      "totalMs": 5930,
+      "resultText": "I've displayed a donut chart on your screen showing the browser distribution you requested:\n\n*   **Arc:** 40%\n*   **Safari:** 35%\n*   **Chrome:** 25%\n\nThe chart is now visible for you to view.",
+      "failures": [],
+      "pass": true,
+      "taskId": "task_3b4081f3",
+      "graphIntent": {
+        "intent": "web_search",
+        "parser": "multi-intent-pipeline",
+        "subIntents": [
+          "web_search",
+          "screen_display"
+        ]
+      }
+    },
+    {
+      "id": "s9-deck-inline",
+      "prompt": "show slides on my screen: Welcome / Goals / Next steps",
+      "status": "done",
+      "totalMs": 7421,
+      "resultText": "I've displayed the slides on your screen. The presentation now shows the **Welcome**, **Goals**, and **Next steps** slides as requested.",
+      "failures": [],
+      "pass": true,
+      "taskId": "task_3907b699",
+      "graphIntent": {
+        "intent": "web_search",
+        "parser": "multi-intent-pipeline",
+        "subIntents": [
+          "web_search",
+          "screen_display"
+        ]
+      }
+    },
+    {
+      "id": "s9-deck-gather",
+      "prompt": "make a slideshow about the planets on my screen",
+      "status": "done",
+      "totalMs": 4421,
+      "resultText": "## Screen\n\nOn screen.",
+      "failures": [],
+      "pass": true,
+      "taskId": "task_e3b1cfae",
+      "graphIntent": {
+        "intent": "screen_display",
+        "parser": "llm-decompose",
+        "subIntents": [
+          "screen_display"
+        ]
+      }
+    },
+    {
+      "id": "s9-three-starfield",
+      "prompt": "show a 3d starfield on my screen",
+      "status": "done",
+      "totalMs": 5919,
+      "resultText": "## Screen\n\nOn screen.",
+      "failures": [],
+      "pass": true,
+      "taskId": "task_7293e922",
+      "graphIntent": {
+        "intent": "screen_display",
+        "parser": "llm-decompose",
+        "subIntents": [
+          "screen_display"
+        ]
+      }
+    },
+    {
+      "id": "s9-three-cube",
+      "prompt": "display a spinning cube on my screen",
+      "status": "done",
+      "totalMs": 4439,
+      "resultText": "## Screen\n\nOn screen.",
+      "failures": [],
+      "pass": true,
+      "taskId": "task_1f6327f0",
+      "graphIntent": {
+        "intent": "screen_display",
+        "parser": "llm-decompose",
+        "subIntents": [
+          "screen_display"
+        ]
+      }
+    },
+    {
+      "id": "s9-effect-rain",
+      "prompt": "make it rain on my screen",
+      "status": "done",
+      "totalMs": 6650,
+      "resultText": "## Screen\n\nOn screen — rain.",
+      "failures": [],
+      "pass": true,
+      "taskId": "task_8d5d66d5",
+      "graphIntent": {
+        "intent": "screen_display",
+        "parser": "llm-decompose",
+        "subIntents": [
+          "screen_display"
+        ]
+      }
+    },
+    {
+      "id": "s9-emoji",
+      "prompt": "put 🚀 on my screen",
+      "status": "done",
+      "totalMs": 2912,
+      "resultText": "## Screen\n\nOn screen.",
+      "failures": [],
+      "pass": true,
+      "taskId": "task_2a54c050",
+      "graphIntent": {
+        "intent": "screen_display",
+        "parser": "llm-decompose",
+        "subIntents": [
+          "screen_display"
+        ]
+      }
+    },
+    {
+      "id": "s9-alert",
+      "prompt": "show an alert on my screen saying standup in 5 minutes",
+      "status": "done",
+      "totalMs": 2910,
+      "resultText": "## Screen\n\nOn screen.",
+      "failures": [],
+      "pass": true,
+      "taskId": "task_d8b6e214",
+      "graphIntent": {
+        "intent": "screen_display",
+        "parser": "llm-decompose",
+        "subIntents": [
+          "screen_display"
+        ]
+      }
+    },
+    {
+      "id": "s9-clear",
+      "prompt": "clear my screen",
+      "status": "done",
+      "totalMs": 5917,
+      "resultText": "## Screen\n\nCleared the screen.",
+      "failures": [],
+      "pass": true,
+      "taskId": "task_841a01a3",
+      "graphIntent": {
+        "intent": "screen_display",
+        "parser": "llm-decompose",
+        "subIntents": [
+          "screen_display"
+        ]
+      }
+    },
+    {
+      "id": "s9-fileop-negative",
+      "prompt": "create a file /tmp/s9-chart.txt containing the text bar chart",
+      "status": "done",
+      "totalMs": 7845,
+      "resultText": "Done.\n\nStep outputs:\n[shell.run]: completed",
+      "failures": [],
+      "pass": true,
+      "taskId": "task_9aa9f81a",
+      "graphIntent": {
+        "intent": "command_automate",
+        "parser": "llm-decompose",
+        "subIntents": [
+          "command_automate"
+        ]
+      }
+    }
+  ]
+}

@@ -30,7 +30,7 @@
  *   emoji      — accent emoji rendered alongside content (any kind)
  */
 
-const KINDS = ['text', 'image', 'chart', 'effect', 'emoji', 'alert', 'deck', 'scene'];
+const KINDS = ['text', 'image', 'chart', 'effect', 'emoji', 'alert', 'deck', 'scene', 'three'];
 
 const POSITIONS = ['center', 'top', 'bottom', 'banner', 'fullscreen'];
 const SCRIMS = ['none', 'dim', 'blur', 'black', 'white'];
@@ -42,6 +42,9 @@ const FITS = ['contain', 'cover'];
 const FONT_SIZES = ['md', 'lg', 'xl', 'hero'];
 const TRANSITIONS = ['slide', 'fade', 'zoom'];
 const DISMISS = ['auto', 'manual'];
+// three kind: preset WebGL scenes rendered by ThreeScreen (bundled three.js).
+// Deterministic presets — generative 3D stays behind the 'scene' escape hatch.
+const THREE_SCENES = ['starfield', 'particles', 'wave', 'cube', 'knot', 'globe'];
 
 /**
  * Mood → visual defaults. `accent` tints borders/glows/accents in the renderer;
@@ -69,6 +72,7 @@ const KIND_DEFAULTS = {
   alert:  { position: 'fullscreen', scrim: 'black', durationMs: 0,    priority: 90, severity: 'warn' },
   deck:   { position: 'fullscreen', scrim: 'blur', durationMs: 0,     priority: 40 },
   scene:  { position: 'fullscreen', scrim: 'none', durationMs: 0,     priority: 50 },
+  three:  { position: 'fullscreen', scrim: 'none', durationMs: 15000, priority: 15 },
 };
 
 /** Max accepted sizes — defensive clamps for a localhost trust boundary. */
@@ -139,6 +143,18 @@ function _scene(raw) {
   if (raw.css) s.css = _str(raw.css, MAX_GENERATED_BYTES);
   if (raw.js) s.js = _str(raw.js, MAX_GENERATED_BYTES);
   return Object.keys(s).length ? s : null;
+}
+function _three(raw) {
+  if (!raw || typeof raw !== 'object') return null;
+  const t = {};
+  t.scene = _oneOf(raw.scene, THREE_SCENES) || 'starfield';
+  // Optional accent override (hex); renderer falls back to the mood accent.
+  if (typeof raw.color === 'string' && /^#[0-9a-fA-F]{3,8}$/.test(raw.color)) t.color = raw.color;
+  t.speed = _num(raw.speed, 0, 2) ?? 1;
+  // 0.1–1 particle/geometry density multiplier; default 0.5.
+  t.density = _num(raw.density, 0.1, 1) ?? 0.5;
+  if (raw.text) t.text = _str(raw.text, MAX_TITLE_LEN);
+  return t;
 }
 
 /**
@@ -236,6 +252,11 @@ function normalizeScreenOutput(raw) {
       }
       break;
     }
+    case 'three': {
+      out.three = _three(raw.three || {});
+      if (!out.three) return { ok: false, error: `three kind requires three.scene: ${THREE_SCENES.join(', ')}` };
+      break;
+    }
   }
 
   return { ok: true, output: out };
@@ -251,5 +272,6 @@ module.exports = {
   SEVERITIES,
   EFFECTS,
   CHART_TYPES,
+  THREE_SCENES,
   KIND_DEFAULTS,
 };

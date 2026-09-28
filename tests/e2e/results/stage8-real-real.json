@@ -1,0 +1,334 @@
+{
+  "file": "tests/e2e/prompts/stage8-real.json",
+  "at": "2026-09-28T00:42:38.172Z",
+  "results": [
+    {
+      "id": "s8-file-create",
+      "prompt": "create a file /tmp/e2e/s8-a.txt with the text stage eight works",
+      "status": "done",
+      "totalMs": 9680,
+      "resultText": "Done.\n\nStep outputs:\n[shell.run]: completed",
+      "failures": [],
+      "pass": true,
+      "taskId": "task_3f9097d1",
+      "graphIntent": {
+        "intent": "command_automate",
+        "parser": "llm-decompose",
+        "subIntents": [
+          "command_automate"
+        ]
+      }
+    },
+    {
+      "id": "s8-file-read",
+      "prompt": "read the file /tmp/e2e/s8-a.txt and tell me what it says",
+      "status": "done",
+      "totalMs": 9558,
+      "resultText": "Done.\n\nStep outputs:\n[fs.read/read]:\nstage eight works",
+      "failures": [],
+      "pass": true,
+      "taskId": "task_a8f3d4b8",
+      "graphIntent": {
+        "intent": "command_automate",
+        "parser": "llm-decompose",
+        "subIntents": [
+          "command_automate"
+        ]
+      }
+    },
+    {
+      "id": "s8-file-append",
+      "prompt": "append the line 'eight done' to /tmp/e2e/s8-a.txt",
+      "status": "done",
+      "totalMs": 6553,
+      "resultText": "Done.\n\nStep outputs:\n[shell.run]: completed",
+      "failures": [],
+      "pass": true,
+      "taskId": "task_a73c361b",
+      "graphIntent": {
+        "intent": "command_automate",
+        "parser": "llm-decompose",
+        "subIntents": [
+          "command_automate"
+        ]
+      }
+    },
+    {
+      "id": "s8-file-list",
+      "prompt": "list the files in /tmp/e2e",
+      "status": "done",
+      "totalMs": 6568,
+      "resultText": "Done.\n\nStep outputs:\n[shell.run]:\ntotal 104\ndrwxr-xr-x@  15 lukaizhi  wheel    480 Sep 27 20:15 .\ndrwxrwxrwt  614 root      wheel  19648 Sep 27 20:11 ..\n-rw-r--r--@   1 lukaizhi  wheel     12 Sep 27 19:54 archive\n-rw-r--r--@   1 lukaizhi  wheel     15 Sep 27 19:54 hello-renamed.txt\n-rw-r--r--@   1 lukaizhi  wheel     11 Sep 27 19:56 multi-renamed.txt\n-rw-r--r--@   1 lukaizhi  wheel     22 Sep 27 19:57 notes.txt\n-rw-r--r--@   1 lukaizhi  wheel     16 Sep 27 18:01 s6-a.txt\n-rw-r--r--@   1 lukaizhi  wheel      6 Sep 27 17:51 s6-chain-done.txt\n-rw-r--r--@   1 lukaizhi  wheel      6 Sep 27 18:02 s6-chain.txt\n-rw-r--r--@   1 lukaizhi  wheel     12 Sep 27 18:05 s6-notes.txt\n-rw-r--r--@   1 lukaizhi  wheel     11 Sep 27 16:29 s6-plan.txt\n-rw-r--r--@   1 lukaizhi  wheel    323 Sep 27 18:05 s6-ws.txt\n-rw-r--r--@   1 lukaizhi  wheel     27 Sep 27 20:39 s8-a.txt\n-rw-r--r--@   1 lukaizhi  wheel     12 Sep 27 20:15 s8-notes.txt\n-rw-r--r--@   1 lukaizhi  wheel    253 Sep 27 19:57 tokyo.txt",
+      "failures": [],
+      "pass": true,
+      "taskId": "task_65bc2644",
+      "graphIntent": {
+        "intent": "command_automate",
+        "parser": "llm-decompose",
+        "subIntents": [
+          "command_automate"
+        ]
+      }
+    },
+    {
+      "id": "s8-battery",
+      "prompt": "what's my battery percentage",
+      "status": "done",
+      "totalMs": 4046,
+      "resultText": "Done.\n\nStep outputs:\n[shell.run]:\nNow drawing from 'AC Power'\n -InternalBattery-0 (id=23003235)\t100%; charged; 0:00 remaining present: true",
+      "failures": [],
+      "pass": true,
+      "taskId": "task_b7c192a9",
+      "graphIntent": {
+        "intent": "command_automate",
+        "parser": "llm-decompose",
+        "subIntents": [
+          "command_automate"
+        ]
+      }
+    },
+    {
+      "id": "s8-disk",
+      "prompt": "how much free disk space do I have",
+      "status": "done",
+      "totalMs": 4066,
+      "resultText": "Done.\n\nStep outputs:\n[shell.run]:\nFilesystem        Size    Used   Avail Capacity iused ifree %iused  Mounted on\n/dev/disk3s1s1   228Gi    17Gi    30Gi    37%    412k  312M    0%   /",
+      "failures": [],
+      "pass": true,
+      "taskId": "task_82b049f0",
+      "graphIntent": {
+        "intent": "command_automate",
+        "parser": "llm-decompose",
+        "subIntents": [
+          "command_automate"
+        ]
+      }
+    },
+    {
+      "id": "s8-uptime",
+      "prompt": "how long has my computer been running",
+      "status": "done",
+      "totalMs": 5578,
+      "resultText": "Done.\n\nStep outputs:\n[shell.run]:\n20:39  up 2 days, 11:21, 1 user, load averages: 8.77 7.67 6.99",
+      "failures": [],
+      "pass": true,
+      "taskId": "task_ae803a79",
+      "graphIntent": {
+        "intent": "command_automate",
+        "parser": "llm-decompose",
+        "subIntents": [
+          "command_automate"
+        ]
+      }
+    },
+    {
+      "id": "s8-apps",
+      "prompt": "what apps are currently running on my mac",
+      "status": "done",
+      "totalMs": 5521,
+      "resultText": "Done.\n\nStep outputs:\n[shell.run]:\nFinder, stable, Devin, Google Chrome, Calculator",
+      "failures": [],
+      "pass": true,
+      "taskId": "task_d93e1462",
+      "graphIntent": {
+        "intent": "command_automate",
+        "parser": "llm-decompose",
+        "subIntents": [
+          "command_automate"
+        ]
+      }
+    },
+    {
+      "id": "s8-shell",
+      "prompt": "run 'echo stage eight works' in the terminal",
+      "status": "done",
+      "totalMs": 5540,
+      "resultText": "Done.\n\nStep outputs:\n[shell.run]:\nstage eight works",
+      "failures": [],
+      "pass": true,
+      "taskId": "task_fc26d033",
+      "graphIntent": {
+        "intent": "command_automate",
+        "parser": "llm-decompose",
+        "subIntents": [
+          "command_automate"
+        ]
+      }
+    },
+    {
+      "id": "s8-open-calc",
+      "prompt": "open the Calculator app",
+      "status": "done",
+      "totalMs": 11110,
+      "resultText": "Done.\n\nStep outputs:\n[shell.run]:\nCalculator already open and focused — no action needed",
+      "failures": [],
+      "pass": true,
+      "taskId": "task_e3fd97e3",
+      "graphIntent": {
+        "intent": "command_automate",
+        "parser": "llm-decompose",
+        "subIntents": [
+          "command_automate"
+        ]
+      }
+    },
+    {
+      "id": "s8-volume-url",
+      "prompt": "set my volume to 30 percent and open apple.com in my browser",
+      "status": "done",
+      "totalMs": 16178,
+      "resultText": "Done.\n\nStep outputs:\n[shell.run]: completed\n\n[shell.run]: completed",
+      "failures": [],
+      "pass": true,
+      "taskId": "task_db60550d",
+      "graphIntent": {
+        "intent": "command_automate",
+        "parser": "llm-decompose",
+        "subIntents": [
+          "command_automate"
+        ]
+      }
+    },
+    {
+      "id": "s8-remind",
+      "prompt": "remind me in 45 minutes to stretch",
+      "status": "done",
+      "totalMs": 37272,
+      "resultText": "Done.\n\nStep outputs:\n[schedule]:\nReminder set for 09:25 PM — \"stretch\"",
+      "failures": [],
+      "pass": true,
+      "taskId": "task_105b73b6",
+      "graphIntent": {
+        "intent": "command_automate",
+        "parser": "llm-decompose",
+        "subIntents": [
+          "command_automate"
+        ]
+      }
+    },
+    {
+      "id": "s8-remind-cancel",
+      "prompt": "cancel my stretch reminder",
+      "status": "done",
+      "totalMs": 12573,
+      "resultText": "Done.\n\nStep outputs:\n[schedule_cancel]:\nCancelled 1 reminder(s): \"stretch\"",
+      "failures": [],
+      "pass": true,
+      "taskId": "task_05946cbc",
+      "graphIntent": {
+        "intent": "command_automate",
+        "parser": "llm-decompose",
+        "subIntents": [
+          "command_automate"
+        ]
+      }
+    },
+    {
+      "id": "s8-ref-seed",
+      "prompt": "create a file /tmp/e2e/s8-notes.txt with the words beacon relay",
+      "status": "done",
+      "totalMs": 5027,
+      "resultText": "Done.\n\nStep outputs:\n[shell.run]: completed",
+      "failures": [],
+      "pass": true,
+      "taskId": "task_956a0748",
+      "graphIntent": {
+        "intent": "command_automate",
+        "parser": "llm-decompose",
+        "subIntents": [
+          "command_automate"
+        ]
+      }
+    },
+    {
+      "id": "s8-ref-recall",
+      "prompt": "what did I just put in that file",
+      "status": "done",
+      "totalMs": 15588,
+      "resultText": "You just put **beacon relay** in `/tmp/e2e/s8-notes.txt` — you created that file with those words at 8:41 PM.",
+      "failures": [],
+      "pass": true,
+      "taskId": "task_9c2f8d7d",
+      "graphIntent": {
+        "intent": "memory_retrieve",
+        "parser": "llm-decompose",
+        "subIntents": [
+          "memory_retrieve"
+        ]
+      }
+    },
+    {
+      "id": "s8-general",
+      "prompt": "what is the capital of Norway",
+      "status": "done",
+      "totalMs": 14639,
+      "resultText": "Oslo — same answer as before, and it hasn't moved.",
+      "failures": [],
+      "pass": true,
+      "commsIntent": "general_quick",
+      "graphIntent": null
+    },
+    {
+      "id": "s8-tweet-plan",
+      "prompt": "post a tweet saying testing ghostlayer",
+      "status": "awaiting-approval",
+      "totalMs": 12729,
+      "resultText": "",
+      "failures": [],
+      "pass": true,
+      "taskId": "task_7eaf59b5",
+      "graphIntent": {
+        "intent": "command_automate",
+        "parser": "llm-decompose",
+        "subIntents": [
+          "command_automate"
+        ]
+      }
+    },
+    {
+      "id": "s8-email-plan",
+      "prompt": "send an email to myself with the subject e2e check",
+      "status": "awaiting-approval",
+      "totalMs": 11107,
+      "resultText": "",
+      "failures": [],
+      "pass": true,
+      "taskId": "task_275e9cdb",
+      "graphIntent": {
+        "intent": "command_automate",
+        "parser": "llm-decompose",
+        "subIntents": [
+          "command_automate"
+        ]
+      }
+    },
+    {
+      "id": "s8-gibberish",
+      "prompt": "zqx jwv kbp fmd",
+      "status": "done",
+      "totalMs": 14766,
+      "resultText": "Same cipher, same verdict — four nonsense words with no key. If there's a message hiding in there, [um] you'll need to hand me the codebook.",
+      "failures": [],
+      "pass": true,
+      "commsIntent": "general_quick",
+      "graphIntent": null
+    },
+    {
+      "id": "s8-deictic",
+      "prompt": "when was that",
+      "status": "done",
+      "totalMs": 16058,
+      "resultText": "I can't tell which \"that\" you mean — the last few turns were the cipher strings (\"zqx jwv kbp fmd\"), and there's nothing in the record tying those to a date.\n\nIf you mean one of the things that surfaced from your recent activity, the closest candidates are:\n\n- **September 25, 2026 at 7:09 PM (two days ago, Friday)** — a note reading \"2018\"\n- **September 25, 2026 at 7:09 PM (two days ago, Friday)** — a note reading \"November 13, 2017\"\n- **September 25, 2026 at 3:15 PM (two days ago, Friday)** — \"When did you start working?\"\n- **September 25, 2026 at 4:19 PM (two days ago, Friday)** — \"Effective Date: 06/30/2026\"\n- **September 26, 2026 at 9:45 PM (last night)** — \"1 day,\"\n\nAlso, from older conversations, you've asked date-relative questions like \"what about two days ago\" (June 29 and July 7, 2026) and \"what about yesterday\" (July 8 and August 3, 2026) in the \"Whats name\" session.\n\nWhich one are you asking about?",
+      "failures": [],
+      "pass": true,
+      "taskId": "task_b9fab371",
+      "graphIntent": {
+        "intent": "memory_retrieve",
+        "parser": "llm-decompose",
+        "subIntents": [
+          "memory_retrieve"
+        ]
+      }
+    }
+  ]
+}

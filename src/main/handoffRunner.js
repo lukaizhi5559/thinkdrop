@@ -175,7 +175,7 @@ function _makeProgressCallback(taskId, agentId) {
  * @param {string[]|null} [args.preflightAuthBypass] - Agent IDs to treat as authed for this run only
  * @param {Object|null}  [args._resumeState] - Paused finalState to resume from (ask_user answer)
  */
-async function execute({ taskId, prompt, agentId, source, originalPrompt, sessionId, planFile, preflightAuthBypass, userApproved, thoughtContext, guessedIntent, _resumeState, _deterministicPlan, _deterministicTemplate, _deterministicLowRisk, _deterministicExternal, _deterministicServiceAgent }) {
+async function execute({ taskId, prompt, agentId, source, originalPrompt, sessionId, planFile, preflightAuthBypass, userApproved, thoughtContext, guessedIntent, _resumeState, _deterministicPlan, _deterministicTemplate, _deterministicLowRisk, _deterministicExternal, _deterministicServiceAgent, _resumeMultiIntent, _resumeIntentQueue, _resumeIntentResults, _resumeDataContext }) {
   if (!_mcpAdapter || !_llmBackend) {
     console.error('[HandoffRunner] Not initialized — call init() first');
     _notifyComplete(taskId, agentId, 'failed', 'HandoffRunner not initialized', null, sessionId);
@@ -238,6 +238,16 @@ async function execute({ taskId, prompt, agentId, source, originalPrompt, sessio
           // Deterministic fast-path metadata survives the approval round-trip —
           // executeCommand uses it for the direct step-output answer + 10s cap.
           ...(_deterministicPlan ? { _deterministicPlan, _deterministicTemplate, _deterministicLowRisk, _deterministicExternal, _deterministicServiceAgent } : {}),
+          // Multi-intent queue restored across a plan-approval resume —
+          // planExecutor maps these _resume* fields onto isMultiIntent/
+          // intentQueue/intentResults/dataContext, and advanceQueue pops
+          // the next step after this plan completes.
+          ...(_resumeMultiIntent ? {
+            _resumeMultiIntent:   true,
+            _resumeIntentQueue:   _resumeIntentQueue || [],
+            _resumeIntentResults: _resumeIntentResults || [],
+            _resumeDataContext:   _resumeDataContext || {},
+          } : {}),
           // Auth bypass: user chose "proceed without" — treat listed agents as
           // authed for this run only (not persisted to auth cache or authed_at)
           ...(preflightAuthBypass?.length ? { preflightAuthBypass } : {}),
@@ -372,6 +382,15 @@ async function execute({ taskId, prompt, agentId, source, originalPrompt, sessio
         _deterministicLowRisk: finalState._deterministicLowRisk ?? null,
         _deterministicExternal: finalState._deterministicExternal || null,
         _deterministicServiceAgent: finalState._deterministicServiceAgent || null,
+        // Multi-intent queue — a mid-pipeline step that pauses for plan
+        // approval must restore the remaining queue on resume or later
+        // sub-intents are silently dropped (observed: [journal_stats,
+        // screen_display] — the det gather resumed as a 1-step plan and the
+        // screen_display step never ran).
+        isMultiIntent: finalState.isMultiIntent || false,
+        intentQueue: finalState.intentQueue || [],
+        intentResults: finalState.intentResults || [],
+        dataContext: finalState.dataContext || {},
       });
       console.log(`[HandoffRunner] Task ${taskId} awaiting plan approval — planFile=${planFileFromState}`);
       // Emit pipeline:done so AutomationProgress clears any planning spinner
@@ -572,6 +591,10 @@ async function resume(taskId, planFile) {
     _deterministicLowRisk: ctx._deterministicLowRisk,
     _deterministicExternal: ctx._deterministicExternal,
     _deterministicServiceAgent: ctx._deterministicServiceAgent,
+    _resumeMultiIntent: ctx.isMultiIntent,
+    _resumeIntentQueue: ctx.intentQueue,
+    _resumeIntentResults: ctx.intentResults,
+    _resumeDataContext: ctx.dataContext,
   });
 }
 

@@ -1,0 +1,40 @@
+{
+  "file": "/tmp/s9-ea.json",
+  "at": "2026-09-28T02:30:39.214Z",
+  "results": [
+    {
+      "id": "s9-emoji",
+      "prompt": "put 🚀 on my screen",
+      "status": "done",
+      "totalMs": 5973,
+      "resultText": "## Screen\n\nOn screen.",
+      "failures": [],
+      "pass": true,
+      "taskId": "task_1c141ed4",
+      "graphIntent": {
+        "intent": "screen_display",
+        "parser": "llm-decompose",
+        "subIntents": [
+          "screen_display"
+        ]
+      }
+    },
+    {
+      "id": "s9-alert",
+      "prompt": "show an alert on my screen saying standup in 5 minutes",
+      "status": "done",
+      "totalMs": 3054,
+      "resultText": "## Screen\n\nOn screen.",
+      "failures": [],
+      "pass": true,
+      "taskId": "task_c5204fb4",
+      "graphIntent": {
+        "intent": "screen_display",
+        "parser": "llm-decompose",
+        "subIntents": [
+          "screen_display"
+        ]
+      }
+    }
+  ]
+}

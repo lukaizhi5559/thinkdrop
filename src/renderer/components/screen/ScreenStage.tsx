@@ -8,6 +8,7 @@ import { EffectScreen } from './EffectScreen';
 import { ChartScreen } from './ChartScreen';
 import { AlertCurtain } from './AlertCurtain';
 import { DeckScreen } from './DeckScreen';
+import { ThreeScreen } from './ThreeScreen';
 
 const ipcRenderer = (window as any).electron?.ipcRenderer;
 const STAGE_TOKEN = 'screen-stage';
@@ -246,6 +247,7 @@ function KindView({ output, animateClass, onDismiss }: { output: ScreenOutput; a
     case 'chart':  return <ChartScreen  output={output} />;
     case 'alert': return <AlertCurtain output={output} onDismiss={onDismiss} />;
     case 'deck':   return <DeckScreen   output={output} onDismiss={onDismiss} />;
+    case 'three':  return <ThreeScreen  output={output} />;
     default:      return <KindStub    output={output} />;
   }
 }

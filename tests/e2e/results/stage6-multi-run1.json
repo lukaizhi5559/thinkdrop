@@ -1,0 +1,515 @@
+{
+  "file": "tests/e2e/prompts/stage6-multi.json",
+  "run": 1,
+  "at": "2026-09-27T22:08:33.897Z",
+  "results": [
+    {
+      "id": "s6-file-create-read",
+      "prompt": "create a file /tmp/e2e/s6-a.txt with the text stage six works then read it back to me",
+      "at": "2026-09-27T22:01:15.000Z",
+      "commsIntent": "handoff",
+      "commsLatencyMs": 2338,
+      "taskId": "task_237acc19",
+      "status": "done",
+      "resultText": "✓ Create the file /tmp/e2e/s6-a.txt with the specified text\n✓ Read the contents of the newly created file",
+      "graphIntent": {
+        "intent": "command_automate",
+        "parser": "llm-decompose",
+        "subPrompts": 1,
+        "subIntents": [
+          "command_automate"
+        ]
+      },
+      "screens": [],
+      "events": 48,
+      "approvals": 1,
+      "questions": 0,
+      "authResumes": 0,
+      "totalMs": 24904,
+      "error": null,
+      "failures": [],
+      "pass": true
+    },
+    {
+      "id": "s6-file-chain",
+      "prompt": "create a file /tmp/e2e/s6-chain.txt with the word hello then rename it to /tmp/e2e/s6-chain-done.txt",
+      "at": "2026-09-27T22:01:39.905Z",
+      "commsIntent": "handoff",
+      "commsLatencyMs": 1464,
+      "taskId": "task_91c58d8b",
+      "status": "done",
+      "resultText": "# Summary\n\nThe task requested was to:\n1. Create a file `/tmp/e2e/s6-chain.txt` containing the word \"hello\"\n2. Rename it to `/tmp/e2e/s6-chain-done.txt`\n\n**What was done:**\nThe file `/tmp/e2e/s6-chain-done.txt` already exists, indicating that both steps (creation and renaming) have already been completed previously.",
+      "graphIntent": {
+        "intent": "command_automate",
+        "parser": "llm-decompose",
+        "subPrompts": 1,
+        "subIntents": [
+          "command_automate"
+        ]
+      },
+      "screens": [],
+      "events": 101,
+      "approvals": 2,
+      "questions": 0,
+      "authResumes": 0,
+      "totalMs": 25503,
+      "error": null,
+      "failures": [],
+      "pass": true
+    },
+    {
+      "id": "s6-screenshot-app",
+      "prompt": "take a screenshot and open the Notes app",
+      "at": "2026-09-27T22:02:05.408Z",
+      "commsIntent": "handoff",
+      "commsLatencyMs": 1352,
+      "taskId": "task_4b785357",
+      "status": "done",
+      "resultText": "Done.\n\nStep outputs:\n[screen.capture]:\nAgent Editor --- & --- thinkdrop - stage6-multi.json --- Control ooo {} stage6-multi.json --- web agen I'll grep the logs for * GhostLayer Visual --- {> ThinkDrop 100-Pr + --- > Repositories tests > e2e > --- > {} stage6-multi.json > --- me --- Files: 34 --- 0 failed (34 total) = iles: passed, alle \n\n[shell.run]:\nNotes already open and focused — no action needed",
+      "graphIntent": {
+        "intent": "command_automate",
+        "parser": "llm-decompose",
+        "subPrompts": 1,
+        "subIntents": [
+          "command_automate"
+        ]
+      },
+      "screens": [],
+      "events": 133,
+      "approvals": 4,
+      "questions": 0,
+      "authResumes": 0,
+      "totalMs": 25450,
+      "error": null,
+      "failures": [],
+      "pass": true
+    },
+    {
+      "id": "s6-web-remind",
+      "prompt": "search the web for the current time in Tokyo and remind me in 2 hours to check it again",
+      "at": "2026-09-27T22:02:30.859Z",
+      "commsIntent": "handoff",
+      "commsLatencyMs": 1556,
+      "taskId": "task_2a4930d3",
+      "status": "done",
+      "resultText": "Completed 1/1 steps (1 failed).",
+      "graphIntent": {
+        "intent": "web_search",
+        "parser": "multi-intent-pipeline",
+        "subPrompts": 2,
+        "subIntents": [
+          "web_search",
+          "command_automate"
+        ]
+      },
+      "screens": [],
+      "events": 181,
+      "approvals": 8,
+      "questions": 0,
+      "authResumes": 0,
+      "totalMs": 67646,
+      "error": null,
+      "failures": [],
+      "pass": true
+    },
+    {
+      "id": "s6-two-services",
+      "prompt": "post a tweet saying good morning and add buy eggs to my todoist",
+      "at": "2026-09-27T22:03:38.506Z",
+      "commsIntent": "handoff",
+      "commsLatencyMs": 1454,
+      "taskId": "task_66fa24ec",
+      "status": "awaiting-approval",
+      "resultText": "I'll handle both of those tasks in the background and let you know once they're done—anything else I can help with?",
+      "graphIntent": {
+        "intent": "command_automate",
+        "parser": "llm-decompose",
+        "subPrompts": 1,
+        "subIntents": [
+          "command_automate"
+        ]
+      },
+      "screens": [],
+      "events": 233,
+      "approvals": 0,
+      "questions": 0,
+      "authResumes": 1,
+      "totalMs": 49553,
+      "error": null,
+      "failures": [],
+      "pass": true
+    },
+    {
+      "id": "s6-remind-file",
+      "prompt": "remind me at 6pm to call the dentist and write 'dentist 6pm' to /tmp/e2e/s6-plan.txt",
+      "at": "2026-09-27T22:04:28.059Z",
+      "commsIntent": "handoff",
+      "commsLatencyMs": 1442,
+      "taskId": "task_c446bb23",
+      "status": "done",
+      "resultText": "Done.\n\nStep outputs:\n[schedule]:\nReminder set for 06:00 PM — \"call the dentist\"",
+      "graphIntent": {
+        "intent": "command_automate",
+        "parser": "llm-decompose",
+        "subPrompts": 1,
+        "subIntents": [
+          "command_automate"
+        ]
+      },
+      "screens": [],
+      "events": 259,
+      "approvals": 1,
+      "questions": 0,
+      "authResumes": 0,
+      "totalMs": 7454,
+      "error": null,
+      "failures": [],
+      "pass": true
+    },
+    {
+      "id": "s6-volume-url",
+      "prompt": "set my volume to 30 percent and open apple.com in my browser",
+      "at": "2026-09-27T22:04:35.513Z",
+      "commsIntent": "handoff",
+      "commsLatencyMs": 644,
+      "taskId": "task_13c186ca",
+      "status": "done",
+      "resultText": "Done.\n\nStep outputs:\n[shell.run]: completed\n\n[shell.run]: completed",
+      "graphIntent": {
+        "intent": "command_automate",
+        "parser": "llm-decompose",
+        "subPrompts": 1,
+        "subIntents": [
+          "command_automate"
+        ]
+      },
+      "screens": [],
+      "events": 294,
+      "approvals": 1,
+      "questions": 0,
+      "authResumes": 0,
+      "totalMs": 11185,
+      "error": null,
+      "failures": [],
+      "pass": true
+    },
+    {
+      "id": "s6-apps-uptime",
+      "prompt": "list my running apps and tell me how long my mac has been on",
+      "at": "2026-09-27T22:04:46.705Z",
+      "commsIntent": "handoff",
+      "commsLatencyMs": 945,
+      "taskId": "task_8c9606a4",
+      "status": "done",
+      "resultText": "Done.\n\nStep outputs:\n[shell.run]:\nFinder, stable, Devin, Google Chrome, Notes, Reminders\n\n[shell.run]:\n18:04  up 2 days,  8:46, 1 user, load averages: 5.54 5.85 5.58",
+      "graphIntent": {
+        "intent": "command_automate",
+        "parser": "llm-decompose",
+        "subPrompts": 1,
+        "subIntents": [
+          "command_automate"
+        ]
+      },
+      "screens": [],
+      "events": 330,
+      "approvals": 1,
+      "questions": 0,
+      "authResumes": 0,
+      "totalMs": 6963,
+      "error": null,
+      "failures": [],
+      "pass": true
+    },
+    {
+      "id": "s6-shell-double",
+      "prompt": "run 'echo alpha' and 'echo omega' in the terminal",
+      "at": "2026-09-27T22:04:53.669Z",
+      "commsIntent": "handoff",
+      "commsLatencyMs": 549,
+      "taskId": "task_bb8990e2",
+      "status": "done",
+      "resultText": "The output of the first command (`echo alpha`) was:\n\n`alpha`\n\nThe output of the second command (`echo omega`) was:\n\n`omega`",
+      "graphIntent": {
+        "intent": "command_automate",
+        "parser": "llm-decompose",
+        "subPrompts": 1,
+        "subIntents": [
+          "command_automate"
+        ]
+      },
+      "screens": [],
+      "events": 391,
+      "approvals": 1,
+      "questions": 0,
+      "authResumes": 0,
+      "totalMs": 15585,
+      "error": null,
+      "failures": [],
+      "pass": true
+    },
+    {
+      "id": "s6-mixed-ws-save",
+      "prompt": "find out who won the last world series and save the answer to /tmp/e2e/s6-ws.txt",
+      "at": "2026-09-27T22:05:09.254Z",
+      "commsIntent": "handoff",
+      "commsLatencyMs": 1437,
+      "taskId": "task_16eca6d0",
+      "status": "done",
+      "resultText": "Succeeded — the shell output shows “SAVED: /tmp/e2e/s6-ws.txt”, confirming the retrieved Dodgers postseason/Backstage Dodgers result text was written to the full path /tmp/e2e/s6-ws.txt.",
+      "graphIntent": {
+        "intent": "web_search",
+        "parser": "multi-intent-pipeline",
+        "subPrompts": 2,
+        "subIntents": [
+          "web_search",
+          "command_automate"
+        ]
+      },
+      "screens": [],
+      "events": 436,
+      "approvals": 1,
+      "questions": 0,
+      "authResumes": 0,
+      "totalMs": 38987,
+      "error": null,
+      "failures": [],
+      "pass": true
+    },
+    {
+      "id": "s6-ref-seed",
+      "prompt": "create a file /tmp/e2e/s6-notes.txt with the words orbit signal",
+      "at": "2026-09-27T22:05:48.241Z",
+      "commsIntent": "handoff",
+      "commsLatencyMs": 1258,
+      "taskId": "task_57485630",
+      "status": "done",
+      "resultText": "Done.\n\nStep outputs:\n[shell.run]: completed",
+      "graphIntent": {
+        "intent": "command_automate",
+        "parser": "llm-decompose",
+        "subPrompts": 1,
+        "subIntents": [
+          "command_automate"
+        ]
+      },
+      "screens": [],
+      "events": 464,
+      "approvals": 1,
+      "questions": 0,
+      "authResumes": 0,
+      "totalMs": 8771,
+      "error": null,
+      "failures": [],
+      "pass": true
+    },
+    {
+      "id": "s6-ref-recall",
+      "prompt": "what did I just put in that file",
+      "at": "2026-09-27T22:05:57.013Z",
+      "commsIntent": "handoff",
+      "commsLatencyMs": 680,
+      "taskId": "task_6801d002",
+      "status": "done",
+      "resultText": "Based on the conversation history and task queue, you just put **\"orbit signal\"** in the file `/tmp/e2e/s6-notes.txt`.\n\nThis was completed at 6:05 PM today (September 27, 2026) when you requested: \"create a file /tmp/e2e/s6-notes.txt with the words orbit signal\"",
+      "graphIntent": {
+        "intent": "memory_retrieve",
+        "parser": "llm-decompose",
+        "subPrompts": 1,
+        "subIntents": [
+          "memory_retrieve"
+        ]
+      },
+      "screens": [],
+      "events": 475,
+      "approvals": 0,
+      "questions": 0,
+      "authResumes": 0,
+      "totalMs": 9714,
+      "error": null,
+      "failures": [],
+      "pass": true
+    },
+    {
+      "id": "s6-past-reminder",
+      "prompt": "remind me yesterday at 5pm to water the plants",
+      "at": "2026-09-27T22:06:06.727Z",
+      "commsIntent": "handoff",
+      "commsLatencyMs": 1529,
+      "taskId": "task_9dfca35c",
+      "status": "done",
+      "resultText": "Done.\n\nStep outputs:\n[schedule]:\nReminder set for 05:00 PM — \"water the plants\"",
+      "graphIntent": {
+        "intent": "command_automate",
+        "parser": "llm-decompose",
+        "subPrompts": 1,
+        "subIntents": [
+          "command_automate"
+        ]
+      },
+      "screens": [],
+      "events": 501,
+      "approvals": 1,
+      "questions": 0,
+      "authResumes": 0,
+      "totalMs": 7556,
+      "error": null,
+      "failures": [],
+      "pass": true
+    },
+    {
+      "id": "s6-gibberish",
+      "prompt": "asdf jkl qwerty zxcv",
+      "at": "2026-09-27T22:06:14.284Z",
+      "commsIntent": "general_quick",
+      "commsLatencyMs": 1683,
+      "taskId": null,
+      "status": "done",
+      "resultText": "I'm not sure what you're after with that one — looks like you've typed out keyboard rows. Are you testing to see if I'm listening, or is there something specific you need?",
+      "graphIntent": null,
+      "screens": [],
+      "events": 0,
+      "approvals": 0,
+      "questions": 0,
+      "authResumes": 0,
+      "totalMs": 1687,
+      "error": null,
+      "failures": [],
+      "pass": true
+    },
+    {
+      "id": "s6-deictic",
+      "prompt": "when was that",
+      "at": "2026-09-27T22:06:15.971Z",
+      "commsIntent": "handoff",
+      "commsLatencyMs": 29,
+      "taskId": "task_d07028fd",
+      "status": "done",
+      "resultText": "Done.\n\nStep outputs:\n[fs.read/read]:\norbit signal",
+      "graphIntent": {
+        "intent": "command_automate",
+        "parser": "llm-decompose",
+        "subPrompts": 1,
+        "subIntents": [
+          "command_automate"
+        ]
+      },
+      "screens": [],
+      "events": 531,
+      "approvals": 1,
+      "questions": 0,
+      "authResumes": 0,
+      "totalMs": 13573,
+      "error": null,
+      "failures": [],
+      "pass": true
+    },
+    {
+      "id": "s6-bare-remind",
+      "prompt": "remind me",
+      "at": "2026-09-27T22:06:29.545Z",
+      "commsIntent": "handoff",
+      "commsLatencyMs": 1611,
+      "taskId": "task_cd3ef3bd",
+      "status": "done",
+      "resultText": "Done.\n\nStep outputs:\n[schedule]:\nReminder set for 06:17 PM — \"stretch\"",
+      "graphIntent": {
+        "intent": "command_automate",
+        "parser": "llm-decompose",
+        "subPrompts": 1,
+        "subIntents": [
+          "command_automate"
+        ]
+      },
+      "screens": [],
+      "events": 558,
+      "approvals": 1,
+      "questions": 0,
+      "authResumes": 0,
+      "totalMs": 71738,
+      "error": null,
+      "failures": [],
+      "pass": true
+    },
+    {
+      "id": "s6-email-generic",
+      "prompt": "email myself a note saying don't forget the meeting tomorrow",
+      "at": "2026-09-27T22:07:41.284Z",
+      "commsIntent": "handoff",
+      "commsLatencyMs": 1197,
+      "taskId": "task_bf6083d7",
+      "status": "awaiting-approval",
+      "resultText": "I'll send that email in the background and let you know when it's sent—what else can I do for you?",
+      "graphIntent": {
+        "intent": "command_automate",
+        "parser": "llm-decompose",
+        "subPrompts": 1,
+        "subIntents": [
+          "command_automate"
+        ]
+      },
+      "screens": [],
+      "events": 579,
+      "approvals": 0,
+      "questions": 0,
+      "authResumes": 0,
+      "totalMs": 20729,
+      "error": null,
+      "failures": [],
+      "pass": true
+    },
+    {
+      "id": "s6-open-calc",
+      "prompt": "open the Calculator app",
+      "at": "2026-09-27T22:08:02.014Z",
+      "commsIntent": "handoff",
+      "commsLatencyMs": 1064,
+      "taskId": "task_b600f019",
+      "status": "done",
+      "resultText": "Confirmed: the Calculator app is open and focused, per the shell output “Calculator already open and focused — no action needed.” No further action was required.",
+      "graphIntent": {
+        "intent": "command_automate",
+        "parser": "llm-decompose",
+        "subPrompts": 1,
+        "subIntents": [
+          "command_automate"
+        ]
+      },
+      "screens": [],
+      "events": 621,
+      "approvals": 2,
+      "questions": 0,
+      "authResumes": 0,
+      "totalMs": 25107,
+      "error": null,
+      "failures": [],
+      "pass": true
+    },
+    {
+      "id": "s6-device-mixed",
+      "prompt": "what's my battery percentage and how much disk space do I have left",
+      "at": "2026-09-27T22:08:27.121Z",
+      "commsIntent": "handoff",
+      "commsLatencyMs": 748,
+      "taskId": "task_c8c94b30",
+      "status": "done",
+      "resultText": "Done.\n\nStep outputs:\n[shell.run]:\nNow drawing from 'Battery Power'\n -InternalBattery-0 (id=23003235)\t92%; discharging; (no estimate) present: true\n\n[shell.run]:\nFilesystem        Size    Used   Avail Capacity iused ifree %iused  Mounted on\n/dev/disk3s1s1   228Gi    17Gi    33Gi    35%    412k  347M    0%   /",
+      "graphIntent": {
+        "intent": "command_automate",
+        "parser": "llm-decompose",
+        "subPrompts": 1,
+        "subIntents": [
+          "command_automate"
+        ]
+      },
+      "screens": [],
+      "events": 657,
+      "approvals": 1,
+      "questions": 0,
+      "authResumes": 0,
+      "totalMs": 6775,
+      "error": null,
+      "failures": [],
+      "pass": true
+    }
+  ]
+}

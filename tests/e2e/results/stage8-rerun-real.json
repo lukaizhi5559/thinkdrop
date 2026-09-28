@@ -1,0 +1,17 @@
+{
+  "file": "tests/e2e/prompts/stage8-rerun.json",
+  "at": "2026-09-28T00:38:45.478Z",
+  "results": [
+    {
+      "id": "s8-general",
+      "prompt": "what is the capital of Norway",
+      "status": "done",
+      "totalMs": 14103,
+      "resultText": "Oslo — fifth time now, and consistency remains the order of the day.",
+      "failures": [],
+      "pass": true,
+      "commsIntent": "general_quick",
+      "graphIntent": null
+    }
+  ]
+}

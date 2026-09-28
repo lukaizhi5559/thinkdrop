@@ -9,7 +9,7 @@
  * the validator; this file only types what arrives after normalization.
  */
 
-export type ScreenKind = 'text' | 'image' | 'chart' | 'effect' | 'emoji' | 'alert' | 'deck' | 'scene';
+export type ScreenKind = 'text' | 'image' | 'chart' | 'effect' | 'emoji' | 'alert' | 'deck' | 'scene' | 'three';
 export type ScreenMood = 'neutral' | 'warm' | 'happy' | 'sad' | 'alert' | 'playful' | 'calm';
 export type ScreenPosition = 'center' | 'top' | 'bottom' | 'banner' | 'fullscreen';
 export type ScreenScrim = 'none' | 'dim' | 'blur' | 'black' | 'white';
@@ -45,6 +45,14 @@ export interface ScreenScene {
   js?: string;
 }
 
+export interface ScreenThree {
+  scene: 'starfield' | 'particles' | 'wave' | 'cube' | 'knot' | 'globe';
+  color?: string;
+  speed: number;   // 0–2 rotation/drift multiplier
+  density: number; // 0.1–1 particle/geometry count multiplier
+  text?: string;   // optional caption chip
+}
+
 export interface ScreenOutput {
   id: string;
   kind: ScreenKind;
@@ -77,6 +85,7 @@ export interface ScreenOutput {
   severity?: 'info' | 'warn' | 'block';
   deck?: ScreenDeck;
   scene?: ScreenScene;
+  three?: ScreenThree;
 }
 
 /** IPC payloads */

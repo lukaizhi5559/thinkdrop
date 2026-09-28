@@ -46,6 +46,9 @@ function post(urlPath, body) {
 const probes = {
   hasText: (needle) => document.body.innerText.toLowerCase().includes(String(needle).toLowerCase()),
   hasCanvas: () => !!document.querySelector('canvas'),
+  webgl: () => [...document.querySelectorAll('canvas')].some(c => {
+    try { return !!(c.getContext('webgl2') || c.getContext('webgl')); } catch (_) { return false; }
+  }),
   counter: () => (document.body.innerText.match(/(\d+)\s*\/\s*(\d+)/) || []).slice(1, 3).map(Number),
   scrollAnimating: () => [...document.querySelectorAll('div')].some(d => (d.getAnimations?.() || []).some(a => a.playState === 'running')),
   tag: (tag) => { const el = document.querySelector(tag); return el ? el.textContent : null; },
@@ -111,9 +114,9 @@ async function main() {
     }
     if (r.status !== 200) { out.failures.push(`display POST → ${r.status} ${r.error || ''}`); }
 
-    // wait for content to paint (first chart lazy-loads the antv bundle)
-    const waitMs = ex.canvas ? 9000 : 3000;
-    await sleep(ex.canvas ? waitMs : 1200);
+    // wait for content to paint (chart lazy-loads antv; three lazy-loads three.js)
+    const waitMs = (ex.canvas || ex.webgl) ? 9000 : 3000;
+    await sleep((ex.canvas || ex.webgl) ? waitMs : 1200);
 
     if (ex.text != null && !(await probe(page, 'hasText', ex.text)))
       out.failures.push(`text "${String(ex.text).slice(0, 50)}" not in DOM`);
@@ -121,6 +124,8 @@ async function main() {
       out.failures.push(`text "${ex.text2}" not in DOM`);
     if (ex.canvas && !(await probe(page, 'hasCanvas')))
       out.failures.push('no <canvas> rendered');
+    if (ex.webgl && !(await probe(page, 'webgl')))
+      out.failures.push('no canvas with a live WebGL/WebGL2 context');
     if (ex.emoji && !(/[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}]/u.test(await page.evaluate(() => document.body.innerText))))
       out.failures.push('no emoji glyph rendered');
     if (ex.strong && (await probe(page, 'tag', 'strong')) !== ex.strong)

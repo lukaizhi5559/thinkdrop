@@ -1,0 +1,72 @@
+[
+  {
+    "id": "s9-scripture",
+    "prompt": "show John 3:16 on my screen",
+    "expect": { "status": "done", "screenShown": true, "graphIntent": ["screen_display"], "maxMs": 120000 }
+  },
+  {
+    "id": "s9-text-literal",
+    "prompt": "display 'hello thinkdrop' on my screen",
+    "expect": { "status": "done", "screenText": "hello thinkdrop", "graphIntent": ["screen_display"], "maxMs": 90000 }
+  },
+  {
+    "id": "s9-chart-inline",
+    "prompt": "show a pie chart on my screen: apples 5, bananas 3",
+    "expect": { "status": "done", "screenCanvas": true, "graphIntent": ["screen_display"], "maxMs": 90000 }
+  },
+  {
+    "id": "s9-chart-activity",
+    "prompt": "plot a bar chart of my task activity over the past week",
+    "expect": { "status": "done", "screenCanvas": true, "graphIntent": ["screen_display", "command_automate"], "maxMs": 120000 }
+  },
+  {
+    "id": "s9-chart-noqualifier",
+    "prompt": "show me a donut chart of browsers: arc 40, safari 35, chrome 25",
+    "expect": { "status": "done", "screenCanvas": true, "graphIntent": ["screen_display"], "maxMs": 90000 }
+  },
+  {
+    "id": "s9-deck-inline",
+    "prompt": "show slides on my screen: Welcome / Goals / Next steps",
+    "expect": { "status": "done", "screenText": "Welcome", "navRight": "Goals", "graphIntent": ["screen_display"], "maxMs": 90000 }
+  },
+  {
+    "id": "s9-deck-gather",
+    "prompt": "make a slideshow about the planets on my screen",
+    "expect": { "status": "done", "screenCounter": true, "graphIntent": ["screen_display", "web_search"], "maxMs": 150000 }
+  },
+  {
+    "id": "s9-three-starfield",
+    "prompt": "show a 3d starfield on my screen",
+    "expect": { "status": "done", "screenWebgl": true, "graphIntent": ["screen_display"], "maxMs": 90000 }
+  },
+  {
+    "id": "s9-three-cube",
+    "prompt": "display a spinning cube on my screen",
+    "expect": { "status": "done", "screenWebgl": true, "graphIntent": ["screen_display"], "maxMs": 90000 }
+  },
+  {
+    "id": "s9-effect-rain",
+    "prompt": "make it rain on my screen",
+    "expect": { "status": "done", "screenCanvas": true, "graphIntent": ["screen_display"], "maxMs": 90000 }
+  },
+  {
+    "id": "s9-emoji",
+    "prompt": "put 🚀 on my screen",
+    "expect": { "status": "done", "screenShown": true, "graphIntent": ["screen_display"], "maxMs": 90000 }
+  },
+  {
+    "id": "s9-alert",
+    "prompt": "show an alert on my screen saying standup in 5 minutes",
+    "expect": { "status": "done", "screenText": "standup in 5", "screenBlocking": true, "graphIntent": ["screen_display"], "maxMs": 90000 }
+  },
+  {
+    "id": "s9-clear",
+    "prompt": "clear my screen",
+    "expect": { "status": "done", "screenEmpty": true, "graphIntent": ["screen_display"], "maxMs": 90000 }
+  },
+  {
+    "id": "s9-fileop-negative",
+    "prompt": "create a file /tmp/s9-chart.txt containing the text bar chart",
+    "expect": { "status": "done", "screenEmpty": true, "fileExists": "/tmp/s9-chart.txt", "maxMs": 90000 }
+  }
+]
