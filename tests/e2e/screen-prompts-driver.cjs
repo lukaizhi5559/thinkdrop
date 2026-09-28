@@ -59,6 +59,32 @@ function _req(port, method, urlPath, body, timeoutMs = 10000) {
 const _getTasks = () => _req(3015, 'GET', '/tasks');
 const _clearScreen = () => _req(3010, 'POST', '/screen/clear', {});
 
+// Quick-tier prompts (general_quick etc.) never mint a task — they're answered
+// inside comms. Verify them via comms.log and pull the answer text with a
+// direct /comms.process call (the IPC submit is fire-and-forget).
+async function _commsQuickOutcome(promptText, t0) {
+  const probe = String(promptText).slice(0, 60);
+  let intent = null, responded = false;
+  try {
+    const lines = fs.readFileSync('/tmp/comms.log', 'utf8').split('\n');
+    for (const line of lines) {
+      const ts = line.match(/^\[(\d{4}-\d{2}-\d{2}T[\d:.]+Z)\]/);
+      if (!ts || new Date(ts[1]).getTime() < t0 - 3000) continue;
+      if (!line.includes(probe)) continue;
+      const m = line.match(/"intentName":"([^"]+)"/);
+      if (m) intent = m[1];
+      if (/\[(GeneralQuick|MemoryStore|MemoryRecall|ChatQuick|Refusal)\w*\] Response/.test(line)) responded = true;
+    }
+  } catch (_) {}
+  let resultText = '';
+  if (responded) {
+    const r = await _req(3015, 'POST', '/comms.process', { text: promptText, source: 'intent-probe' }, 60000);
+    const d = r.json?.data || r.json || {};
+    resultText = d.text || d.fullText || d.response || d.message || '';
+  }
+  return { intent, responded, resultText };
+}
+
 function _matchOne(haystack, rule) {
   const hay = String(haystack ?? '');
   if (rule.startsWith('re:')) return new RegExp(rule.slice(3), 'is').test(hay);
@@ -138,6 +164,9 @@ async function _getTask(taskId) {
 function _checkExpect(entry, outcome) {
   const failures = [];
   const ex = entry.expect || {};
+  if (ex.commsIntent && outcome.commsIntent !== ex.commsIntent) {
+    failures.push(`commsIntent: expected "${ex.commsIntent}", got "${outcome.commsIntent}"`);
+  }
   if (ex.status) {
     const allowed = Array.isArray(ex.status) ? ex.status : [ex.status];
     if (!allowed.includes(outcome.status)) failures.push(`status: expected "${allowed.join('|')}", got "${outcome.status}"`);
@@ -161,8 +190,20 @@ function _checkExpect(entry, outcome) {
     const re = m instanceof RegExp ? m : new RegExp(m, 'i');
     if (re.test(text)) failures.push(`resultNotMatch "${m}" found in result`);
   }
+  for (const m of ex.mustNotContain || []) {
+    if (_matchOne(text, m)) failures.push(`mustNotContain "${m}" present in result`);
+  }
   if (ex.fileExists && !fs.existsSync(ex.fileExists)) {
     failures.push(`fileExists: ${ex.fileExists} not found`);
+  }
+  if (ex.hasItems && !(outcome.itemCount > 0)) {
+    failures.push('expected task.items (WebResultCard feed) — got none');
+  }
+  if (ex.minItems && outcome.itemCount < ex.minItems) {
+    failures.push(`expected ≥${ex.minItems} feed items, got ${outcome.itemCount}`);
+  }
+  if (ex.maxMs && outcome.totalMs > ex.maxMs) {
+    failures.push(`latency: ${outcome.totalMs}ms > budget ${ex.maxMs}ms`);
   }
   return failures;
 }
@@ -259,15 +300,35 @@ async function main() {
 
     await _clearScreen();
     await sleep(400);
-    await submit({ prompt: entry.prompt, sessionId: `s9_${process.pid}` });
+    await submit({ prompt: entry.prompt, sessionId: entry.sessionId || entry.session || `s9_${process.pid}` });
 
     let task = null;
-    const taskWaitMs = 30000;
+    // Quick-tier prompts never mint a task — 12s is enough to detect that;
+    // handoffs need up to 30s for the comms task to appear.
+    const taskWaitMs = entry.expect?.commsIntent ? 12000 : 30000;
     while (Date.now() - t0 < taskWaitMs && !task) {
       await sleep(1000);
       task = await _findTask(entry.prompt, t0);
     }
     if (task) outcome.taskId = task.id;
+
+    // Quick-tier fallback — verify comms intent + answer via comms.log /
+    // /comms.process instead of the task journal.
+    if (!task && entry.expect?.commsIntent) {
+      const q = await _commsQuickOutcome(entry.prompt, t0);
+      outcome.status = q.responded ? 'done' : 'dispatch-failed';
+      outcome.commsIntent = q.intent;
+      outcome.resultText = q.resultText;
+      outcome.totalMs = Date.now() - t0;
+      outcome.graphIntent = _graphIntentFor(entry.prompt, t0);
+      outcome.failures = _checkExpect(entry, outcome);
+      outcome.pass = outcome.failures.length === 0;
+      results.push(outcome);
+      console.log(`${outcome.pass ? '✅' : '❌'} status=${outcome.status} ${outcome.totalMs}ms comms=${outcome.commsIntent}`);
+      outcome.failures.forEach(f => console.log(`        ${f}`));
+      if (!outcome.pass) console.log(`        result: ${(outcome.resultText || '').slice(0, 120).replace(/\n/g, ' ⏎ ')}`);
+      continue;
+    }
 
     let approved = false;
     while (Date.now() < deadline) {
@@ -279,6 +340,13 @@ async function main() {
 
       if (task.status === 'awaiting-approval' && !approved) {
         approved = true;
+        if (entry.approve === false) {
+          // Canary check — reaching plan approval IS the expectation. Cancel
+          // before execution so risky intents (messaging, purchases) never run.
+          await cancel(task.id);
+          outcome.resultText = task.result || '';
+          break;
+        }
         await approve(task.id, task.planFile);
         continue;
       }
@@ -294,6 +362,7 @@ async function main() {
     outcome.totalMs = Date.now() - t0;
     outcome.status = task?.status || outcome.status;
     outcome.resultText = task?.result || '';
+    outcome.itemCount = Array.isArray(task?.items) ? task.items.length : 0;
     outcome.graphIntent = _graphIntentFor(entry.prompt, t0);
     outcome.failures = _checkExpect(entry, outcome);
 

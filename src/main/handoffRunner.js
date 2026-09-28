@@ -319,11 +319,15 @@ async function execute({ taskId, prompt, agentId, source, originalPrompt, sessio
             .filter(r => r && Array.isArray(r.items) && r.items.length > 0)
             .flatMap(r => r.items)
         : []),
-      // web_search image/video results land in contextDocs (not skillResults) —
-      // map them into items so they render as cards too.
-      ...(Array.isArray(finalState.contextDocs)
-        ? finalState.contextDocs
-            .filter(d => d && (d.isImage || d.imageUrl || d.mediaType === 'video') && (d.imageUrl || d.url))
+      // web_search results land in contextDocs (not skillResults) — map them
+      // into items so they render as cards too. Use _allContextDocs (the union
+      // accumulated across multi-intent queue steps) so a mid-pipeline search
+      // still produces cards after a later screen_display step wiped
+      // contextDocs. Link-only docs (no thumbnail) become title/snippet/favicon
+      // cards — WebResultCard renders that shape fine.
+      ...(Array.isArray(finalState._allContextDocs || finalState.contextDocs)
+        ? (finalState._allContextDocs || finalState.contextDocs)
+            .filter(d => d && (d.imageUrl || (d.url && d.url.startsWith('http'))))
             .map(d => ({
               title: d.title || undefined,
               imageUrl: d.imageUrl,
