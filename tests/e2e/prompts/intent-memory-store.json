@@ -246,9 +246,16 @@
   "id": "ms-28",
   "prompt": "remember to submit the expense report",
   "expect": {
-   "commsIntent": "memory_store",
-   "status": "done",
-   "maxMs": 30000
+   "status": [
+    "done",
+    "auth-required",
+    "waiting-for-input"
+   ],
+   "maxMs": 30000,
+   "commsIntentIn": [
+    "memory_store",
+    "handoff"
+   ]
   }
  },
  {

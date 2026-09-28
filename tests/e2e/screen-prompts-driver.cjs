@@ -389,11 +389,26 @@ async function main() {
     if (!task && _wantsComms) {
       const needText = !!(entry.expect.mustContain?.length || entry.expect.mustContainAny?.length || entry.expect.mustNotContain?.length);
       let q = { intent: null, responded: false, resultText: '', latencyMs: null };
-      // Poll comms.log — classify+answer can lag the 12s task-wait window.
-      for (let i = 0; i < 10 && !q.responded; i++) {
+      // Poll comms.log — classify+answer can lag the 12s task-wait window, and
+      // under provider timeouts a handoff task itself only mints at ~26s. Keep
+      // checking for a late-minted task too so we don't declare dispatch-failed
+      // while a real task starts up behind our back.
+      let resubmitted = false;
+      for (let i = 0; i < 20 && !q.responded; i++) {
         q = await _commsQuickOutcome(entry.prompt, t0, false);
-        if (!q.responded) await sleep(3000);
+        if (q.responded) break;
+        task = await _findTask(entry.prompt, t0);
+        if (task) { outcome.taskId = task.id; outcome.commsIntent = 'handoff'; break; }
+        // ~12s in and comms never logged this prompt — the ipcRenderer send was
+        // silently dropped (window mid-reload). Resubmit once.
+        if (!resubmitted && i >= 3 && !_commsSawPrompt(entry.prompt, t0)) {
+          resubmitted = true;
+          console.log('        ↻ no comms Start line — resubmitting (dropped send)');
+          await submit({ prompt: entry.prompt, sessionId: entry.sessionId || entry.session || `s9_${process.pid}` });
+        }
+        await sleep(3000);
       }
+      if (!task) {
       if (q.responded && needText) {
         const qt = await _commsQuickOutcome(entry.prompt, t0, true);
         q.resultText = qt.resultText;
@@ -415,7 +430,8 @@ async function main() {
       outcome.failures.forEach(f => console.log(`        ${f}`));
       outcome.warnings.forEach(w => console.log(`        ⚠ ${w}`));
       if (!outcome.pass) console.log(`        result: ${(outcome.resultText || '').slice(0, 120).replace(/\n/g, ' ⏎ ')}`);
-      continue;
+      }
+      if (!task) continue;
     }
 
     let approved = false;
@@ -446,6 +462,11 @@ async function main() {
       }
       if (task.status === 'auth-required') { await cancel(task.id); break; }
       if (['done', 'failed', 'cancelled'].includes(task.status)) break;
+    }
+    // Don't abandon a live task — it would keep running and pollute later
+    // status checks / _findTask matches. Cancel whatever outlived its budget.
+    if (task && !['done', 'failed', 'cancelled'].includes(task.status)) {
+      try { await cancel(task.id); } catch (_) {}
     }
     outcome.totalMs = Date.now() - t0;
     outcome.status = task?.status || outcome.status;

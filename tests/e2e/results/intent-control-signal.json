@@ -1,0 +1,619 @@
+{
+  "file": "tests/e2e/prompts/intent-control-signal.json",
+  "at": "2026-09-28T15:25:07.556Z",
+  "softRoute": true,
+  "results": [
+    {
+      "id": "cs-01",
+      "prompt": "cancel",
+      "status": "done",
+      "totalMs": 459,
+      "resultText": "",
+      "failures": [],
+      "pass": true,
+      "commsIntent": "control_signal",
+      "wallMs": 12444,
+      "graphIntent": null,
+      "warnings": []
+    },
+    {
+      "id": "cs-02",
+      "prompt": "cancel that",
+      "status": "done",
+      "totalMs": 310,
+      "resultText": "",
+      "failures": [],
+      "pass": true,
+      "commsIntent": "control_signal",
+      "wallMs": 12478,
+      "graphIntent": null,
+      "warnings": []
+    },
+    {
+      "id": "cs-03",
+      "prompt": "cancel my task",
+      "status": "done",
+      "totalMs": 400,
+      "resultText": "",
+      "failures": [],
+      "pass": true,
+      "commsIntent": "control_signal",
+      "wallMs": 12427,
+      "graphIntent": null,
+      "warnings": []
+    },
+    {
+      "id": "cs-04",
+      "prompt": "cancel the task",
+      "status": "done",
+      "totalMs": 2709,
+      "resultText": "",
+      "failures": [],
+      "pass": true,
+      "commsIntent": "control_signal",
+      "wallMs": 12423,
+      "graphIntent": null,
+      "warnings": []
+    },
+    {
+      "id": "cs-05",
+      "prompt": "cancel it",
+      "status": "done",
+      "totalMs": 357,
+      "resultText": "",
+      "failures": [],
+      "pass": true,
+      "commsIntent": "control_signal",
+      "wallMs": 12426,
+      "graphIntent": null,
+      "warnings": []
+    },
+    {
+      "id": "cs-06",
+      "prompt": "stop",
+      "status": "done",
+      "totalMs": 4569,
+      "resultText": "",
+      "failures": [],
+      "pass": true,
+      "commsIntent": "control_signal",
+      "wallMs": 12430,
+      "graphIntent": null,
+      "warnings": []
+    },
+    {
+      "id": "cs-07",
+      "prompt": "stop that",
+      "status": "done",
+      "totalMs": 400,
+      "resultText": "",
+      "failures": [],
+      "pass": true,
+      "commsIntent": "control_signal",
+      "wallMs": 12429,
+      "graphIntent": null,
+      "warnings": []
+    },
+    {
+      "id": "cs-08",
+      "prompt": "stop the task",
+      "status": "done",
+      "totalMs": 5706,
+      "resultText": "",
+      "failures": [],
+      "pass": true,
+      "commsIntent": "control_signal",
+      "wallMs": 12461,
+      "graphIntent": null,
+      "warnings": []
+    },
+    {
+      "id": "cs-09",
+      "prompt": "stop it",
+      "status": "done",
+      "totalMs": 3543,
+      "resultText": "",
+      "failures": [],
+      "pass": true,
+      "commsIntent": "control_signal",
+      "wallMs": 12484,
+      "graphIntent": null,
+      "warnings": []
+    },
+    {
+      "id": "cs-10",
+      "prompt": "halt",
+      "status": "done",
+      "totalMs": 264,
+      "resultText": "",
+      "failures": [],
+      "pass": true,
+      "commsIntent": "control_signal",
+      "wallMs": 12428,
+      "graphIntent": null,
+      "warnings": []
+    },
+    {
+      "id": "cs-11",
+      "prompt": "abort",
+      "status": "done",
+      "totalMs": 342,
+      "resultText": "",
+      "failures": [],
+      "pass": true,
+      "commsIntent": "control_signal",
+      "wallMs": 12425,
+      "graphIntent": null,
+      "warnings": []
+    },
+    {
+      "id": "cs-12",
+      "prompt": "abort the task",
+      "status": "done",
+      "totalMs": 4784,
+      "resultText": "",
+      "failures": [],
+      "pass": true,
+      "commsIntent": "control_signal",
+      "wallMs": 12557,
+      "graphIntent": null,
+      "warnings": []
+    },
+    {
+      "id": "cs-13",
+      "prompt": "kill the task",
+      "status": "done",
+      "totalMs": 349,
+      "resultText": "",
+      "failures": [],
+      "pass": true,
+      "commsIntent": "control_signal",
+      "wallMs": 12445,
+      "graphIntent": null,
+      "warnings": []
+    },
+    {
+      "id": "cs-14",
+      "prompt": "kill it",
+      "status": "done",
+      "totalMs": 312,
+      "resultText": "",
+      "failures": [],
+      "pass": true,
+      "commsIntent": "control_signal",
+      "wallMs": 12443,
+      "graphIntent": null,
+      "warnings": []
+    },
+    {
+      "id": "cs-15",
+      "prompt": "never mind",
+      "status": "done",
+      "totalMs": 1744,
+      "resultText": "",
+      "failures": [],
+      "pass": true,
+      "commsIntent": "general_quick",
+      "wallMs": 12454,
+      "graphIntent": null,
+      "warnings": [
+        "commsIntent: expected \"control_signal\", got \"general_quick\""
+      ]
+    },
+    {
+      "id": "cs-16",
+      "prompt": "nevermind",
+      "status": "done",
+      "totalMs": 1803,
+      "resultText": "",
+      "failures": [],
+      "pass": true,
+      "commsIntent": "general_quick",
+      "wallMs": 12423,
+      "graphIntent": null,
+      "warnings": [
+        "commsIntent: expected \"control_signal\", got \"general_quick\""
+      ]
+    },
+    {
+      "id": "cs-17",
+      "prompt": "forget it",
+      "status": "done",
+      "totalMs": 1925,
+      "resultText": "",
+      "failures": [],
+      "pass": true,
+      "commsIntent": "general_quick",
+      "wallMs": 12467,
+      "graphIntent": null,
+      "warnings": [
+        "commsIntent: expected \"control_signal\", got \"general_quick\""
+      ]
+    },
+    {
+      "id": "cs-18",
+      "prompt": "forget that",
+      "status": "done",
+      "totalMs": 11714,
+      "resultText": "",
+      "failures": [],
+      "pass": true,
+      "commsIntent": "control_signal",
+      "wallMs": 12444,
+      "graphIntent": null,
+      "warnings": []
+    },
+    {
+      "id": "cs-19",
+      "prompt": "stop what youre doing",
+      "status": "done",
+      "totalMs": 271,
+      "resultText": "",
+      "failures": [],
+      "pass": true,
+      "commsIntent": "control_signal",
+      "wallMs": 12859,
+      "graphIntent": null,
+      "warnings": []
+    },
+    {
+      "id": "cs-20",
+      "prompt": "stop doing that",
+      "status": "done",
+      "totalMs": 702,
+      "resultText": "",
+      "failures": [],
+      "pass": true,
+      "commsIntent": "control_signal",
+      "wallMs": 12428,
+      "graphIntent": null,
+      "warnings": []
+    },
+    {
+      "id": "cs-21",
+      "prompt": "quit the task",
+      "status": "done",
+      "totalMs": 239,
+      "resultText": "",
+      "failures": [],
+      "pass": true,
+      "commsIntent": "control_signal",
+      "wallMs": 12443,
+      "graphIntent": null,
+      "warnings": []
+    },
+    {
+      "id": "cs-22",
+      "prompt": "end the task",
+      "status": "done",
+      "totalMs": 416,
+      "resultText": "",
+      "failures": [],
+      "pass": true,
+      "commsIntent": "control_signal",
+      "wallMs": 12440,
+      "graphIntent": null,
+      "warnings": []
+    },
+    {
+      "id": "cs-23",
+      "prompt": "terminate it",
+      "status": "done",
+      "totalMs": 344,
+      "resultText": "",
+      "failures": [],
+      "pass": true,
+      "commsIntent": "control_signal",
+      "wallMs": 12426,
+      "graphIntent": null,
+      "warnings": []
+    },
+    {
+      "id": "cs-24",
+      "prompt": "pause",
+      "status": "done",
+      "totalMs": 14455,
+      "resultText": "",
+      "failures": [],
+      "pass": true,
+      "commsIntent": "control_signal",
+      "wallMs": 15428,
+      "graphIntent": null,
+      "warnings": []
+    },
+    {
+      "id": "cs-25",
+      "prompt": "pause that",
+      "status": "done",
+      "totalMs": 404,
+      "resultText": "",
+      "failures": [],
+      "pass": true,
+      "commsIntent": "control_signal",
+      "wallMs": 12195,
+      "graphIntent": null,
+      "warnings": []
+    },
+    {
+      "id": "cs-26",
+      "prompt": "pause the task",
+      "status": "done",
+      "totalMs": 360,
+      "resultText": "",
+      "failures": [],
+      "pass": true,
+      "commsIntent": "control_signal",
+      "wallMs": 12437,
+      "graphIntent": null,
+      "warnings": []
+    },
+    {
+      "id": "cs-27",
+      "prompt": "pause it",
+      "status": "done",
+      "totalMs": 518,
+      "resultText": "",
+      "failures": [],
+      "pass": true,
+      "commsIntent": "control_signal",
+      "wallMs": 12436,
+      "graphIntent": null,
+      "warnings": []
+    },
+    {
+      "id": "cs-28",
+      "prompt": "hold on",
+      "status": "done",
+      "totalMs": 418,
+      "resultText": "",
+      "failures": [],
+      "pass": true,
+      "commsIntent": "control_signal",
+      "wallMs": 12436,
+      "graphIntent": null,
+      "warnings": []
+    },
+    {
+      "id": "cs-29",
+      "prompt": "wait",
+      "status": "done",
+      "totalMs": 21673,
+      "resultText": "",
+      "failures": [
+        "latency: 21673ms > budget 20000ms"
+      ],
+      "pass": false,
+      "commsIntent": "general_quick",
+      "wallMs": 24452,
+      "graphIntent": null,
+      "warnings": [
+        "commsIntent: expected \"control_signal\", got \"general_quick\""
+      ]
+    },
+    {
+      "id": "cs-30",
+      "prompt": "hold up",
+      "status": "done",
+      "totalMs": 1542,
+      "resultText": "",
+      "failures": [],
+      "pass": true,
+      "commsIntent": "general_quick",
+      "wallMs": 12673,
+      "graphIntent": null,
+      "warnings": [
+        "commsIntent: expected \"control_signal\", got \"general_quick\""
+      ]
+    },
+    {
+      "id": "cs-31",
+      "prompt": "suspend the task",
+      "status": "done",
+      "totalMs": 1533,
+      "resultText": "",
+      "failures": [],
+      "pass": true,
+      "commsIntent": "control_signal",
+      "wallMs": 12534,
+      "graphIntent": null,
+      "warnings": []
+    },
+    {
+      "id": "cs-32",
+      "prompt": "resume",
+      "status": "done",
+      "totalMs": 2808,
+      "resultText": "",
+      "failures": [],
+      "pass": true,
+      "commsIntent": "control_signal",
+      "wallMs": 12441,
+      "graphIntent": null,
+      "warnings": []
+    },
+    {
+      "id": "cs-33",
+      "prompt": "resume the task",
+      "status": "done",
+      "totalMs": 711,
+      "resultText": "",
+      "failures": [],
+      "pass": true,
+      "commsIntent": "control_signal",
+      "wallMs": 12426,
+      "graphIntent": null,
+      "warnings": []
+    },
+    {
+      "id": "cs-34",
+      "prompt": "continue",
+      "status": "done",
+      "totalMs": 7659,
+      "resultText": "",
+      "failures": [],
+      "pass": true,
+      "commsIntent": "general_quick",
+      "wallMs": 12425,
+      "graphIntent": null,
+      "warnings": [
+        "commsIntent: expected \"control_signal\", got \"general_quick\""
+      ]
+    },
+    {
+      "id": "cs-35",
+      "prompt": "continue the task",
+      "status": "done",
+      "totalMs": 18942,
+      "resultText": "I don't have a specific pending task to pick up — the only thing in your task journal right now is **\"continue the task,\"** queued today at **11:22 AM** (essentially this request), so there's no prior job attached to it.\n\nHere's what's actually on record for context:\n\n- **September 25, 8:19 AM** — you asked *\"Did my last task finish?\"* That one was logged as **[queued]**, and the check came back inconclusive: the cancellation request \"ran without confirmation,\" so the status was never verified. The last *completed* task before it was September 16 at 7:57 PM.\n- **Today** — nothing has been queued or run except this \"continue\" entry.\n\nThe most recent action item I do see is a note from **today at 10:51 AM**: *\"the project deadline is next Friday\"* (which would be **October 2**).\n\nSo — which task do you want to continue?\n\n1. **Re-check the September 25 task** and re-attempt the status verification\n2. **Work toward the Friday project deadline** — tell me what needs doing\n3. Something else you had in mind\n\nGive me the number or just describe it and I'll pick it up.",
+      "failures": [],
+      "pass": true,
+      "taskId": "task_19312b60",
+      "commsIntent": "handoff",
+      "itemCount": 0,
+      "graphIntent": {
+        "intent": "memory_retrieve",
+        "parser": "llm-decompose",
+        "subIntents": [
+          "memory_retrieve"
+        ]
+      },
+      "warnings": [
+        "commsIntent: expected \"control_signal\", got \"handoff\""
+      ]
+    },
+    {
+      "id": "cs-36",
+      "prompt": "keep going",
+      "status": "done",
+      "totalMs": 14433,
+      "resultText": "",
+      "failures": [],
+      "pass": true,
+      "commsIntent": "status_check",
+      "wallMs": 15428,
+      "graphIntent": null,
+      "warnings": [
+        "commsIntent: expected \"control_signal\", got \"status_check\""
+      ]
+    },
+    {
+      "id": "cs-37",
+      "prompt": "go ahead and continue",
+      "status": "done",
+      "totalMs": 2209,
+      "resultText": "",
+      "failures": [],
+      "pass": true,
+      "commsIntent": "general_quick",
+      "wallMs": 12841,
+      "graphIntent": null,
+      "warnings": [
+        "commsIntent: expected \"control_signal\", got \"general_quick\""
+      ]
+    },
+    {
+      "id": "cs-38",
+      "prompt": "unpause",
+      "status": "done",
+      "totalMs": 366,
+      "resultText": "",
+      "failures": [],
+      "pass": true,
+      "commsIntent": "control_signal",
+      "wallMs": 12434,
+      "graphIntent": null,
+      "warnings": []
+    },
+    {
+      "id": "cs-39",
+      "prompt": "start it again",
+      "status": "done",
+      "totalMs": 17393,
+      "resultText": "Done.\n\nStep outputs:\n[screen.capture]:\nfie --- 2 4 --- ' ) . --- 4 Cas, - | : --- - 4 --- > --- 3",
+      "failures": [],
+      "pass": true,
+      "taskId": "task_67a1fd6f",
+      "commsIntent": "handoff",
+      "itemCount": 0,
+      "graphIntent": {
+        "intent": "command_automate",
+        "parser": "llm-decompose",
+        "subIntents": [
+          "command_automate"
+        ]
+      },
+      "warnings": [
+        "commsIntent: expected \"control_signal\", got \"handoff\""
+      ]
+    },
+    {
+      "id": "cs-40",
+      "prompt": "pick it back up",
+      "status": "done",
+      "totalMs": 2207,
+      "resultText": "",
+      "failures": [],
+      "pass": true,
+      "commsIntent": "control_signal",
+      "wallMs": 12431,
+      "graphIntent": null,
+      "warnings": []
+    },
+    {
+      "id": "cs-41",
+      "prompt": "resume it",
+      "status": "done",
+      "totalMs": 276,
+      "resultText": "",
+      "failures": [],
+      "pass": true,
+      "commsIntent": "control_signal",
+      "wallMs": 12434,
+      "graphIntent": null,
+      "warnings": []
+    },
+    {
+      "id": "cs-42",
+      "prompt": "carry on",
+      "status": "done",
+      "totalMs": 322,
+      "resultText": "",
+      "failures": [],
+      "pass": true,
+      "commsIntent": "status_check",
+      "wallMs": 12428,
+      "graphIntent": null,
+      "warnings": [
+        "commsIntent: expected \"control_signal\", got \"status_check\""
+      ]
+    },
+    {
+      "id": "cs-43",
+      "prompt": "proceed",
+      "status": "done",
+      "totalMs": 675,
+      "resultText": "",
+      "failures": [],
+      "pass": true,
+      "commsIntent": "status_check",
+      "wallMs": 12430,
+      "graphIntent": null,
+      "warnings": [
+        "commsIntent: expected \"control_signal\", got \"status_check\""
+      ]
+    },
+    {
+      "id": "cs-44",
+      "prompt": "finish it now",
+      "status": "done",
+      "totalMs": 449,
+      "resultText": "",
+      "failures": [],
+      "pass": true,
+      "commsIntent": "control_signal",
+      "wallMs": 12433,
+      "graphIntent": null,
+      "warnings": []
+    }
+  ]
+}

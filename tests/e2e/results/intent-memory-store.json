@@ -1,0 +1,717 @@
+{
+  "file": "tests/e2e/prompts/intent-memory-store.json",
+  "at": "2026-09-28T14:59:26.299Z",
+  "softRoute": true,
+  "results": [
+    {
+      "id": "ms-01",
+      "prompt": "remember I have a dentist appointment next Tuesday",
+      "status": "done",
+      "totalMs": 461,
+      "resultText": "",
+      "failures": [],
+      "pass": true,
+      "commsIntent": "memory_store",
+      "wallMs": 12459,
+      "graphIntent": null,
+      "warnings": []
+    },
+    {
+      "id": "ms-02",
+      "prompt": "note: buy milk tomorrow",
+      "status": "done",
+      "totalMs": 408,
+      "resultText": "",
+      "failures": [],
+      "pass": true,
+      "commsIntent": "memory_store",
+      "wallMs": 12448,
+      "graphIntent": null,
+      "warnings": []
+    },
+    {
+      "id": "ms-03",
+      "prompt": "remember that my moms birthday is in June",
+      "status": "done",
+      "totalMs": 1990,
+      "resultText": "",
+      "failures": [],
+      "pass": true,
+      "commsIntent": "memory_quick",
+      "wallMs": 12473,
+      "graphIntent": null,
+      "warnings": [
+        "commsIntent: expected \"memory_store\", got \"memory_quick\""
+      ]
+    },
+    {
+      "id": "ms-04",
+      "prompt": "i have a meeting at 3pm tomorrow",
+      "status": "done",
+      "totalMs": 807368,
+      "resultText": "",
+      "failures": [
+        "latency: 807368ms > budget 30000ms"
+      ],
+      "pass": false,
+      "commsIntent": "memory_store",
+      "wallMs": 810187,
+      "graphIntent": null,
+      "warnings": []
+    },
+    {
+      "id": "ms-05",
+      "prompt": "remember to water the plants on Friday",
+      "status": "done",
+      "totalMs": 582,
+      "resultText": "",
+      "failures": [],
+      "pass": true,
+      "commsIntent": "memory_store",
+      "wallMs": 12472,
+      "graphIntent": null,
+      "warnings": []
+    },
+    {
+      "id": "ms-06",
+      "prompt": "note to self: renew the car insurance this month",
+      "status": "running",
+      "totalMs": 30464,
+      "resultText": "",
+      "failures": [
+        "status: expected \"done\", got \"running\"",
+        "latency: 30464ms > budget 30000ms"
+      ],
+      "pass": false,
+      "taskId": "task_6e35d4ef",
+      "commsIntent": "handoff",
+      "itemCount": 0,
+      "graphIntent": {
+        "intent": "command_automate",
+        "parser": "llm-decompose",
+        "subIntents": [
+          "command_automate"
+        ]
+      },
+      "warnings": [
+        "commsIntent: expected \"memory_store\", got \"handoff\""
+      ]
+    },
+    {
+      "id": "ms-07",
+      "prompt": "remind me that the library book is due Monday",
+      "status": "dispatch-failed",
+      "totalMs": 42479,
+      "resultText": "",
+      "failures": [
+        "status: expected \"done\", got \"dispatch-failed\"",
+        "latency: 42479ms > budget 30000ms"
+      ],
+      "pass": false,
+      "commsIntent": null,
+      "wallMs": 42479,
+      "graphIntent": null,
+      "warnings": [
+        "commsIntent: expected \"memory_store\", got \"null\""
+      ]
+    },
+    {
+      "id": "ms-08",
+      "prompt": "remember my flight leaves at 6am Thursday",
+      "status": "done",
+      "totalMs": 8623,
+      "resultText": "",
+      "failures": [],
+      "pass": true,
+      "commsIntent": "memory_quick",
+      "wallMs": 12542,
+      "graphIntent": null,
+      "warnings": [
+        "commsIntent: expected \"memory_store\", got \"memory_quick\""
+      ]
+    },
+    {
+      "id": "ms-09",
+      "prompt": "i have a doctor appointment on Friday at 2",
+      "status": "done",
+      "totalMs": 470,
+      "resultText": "",
+      "failures": [],
+      "pass": true,
+      "commsIntent": "memory_store",
+      "wallMs": 12443,
+      "graphIntent": null,
+      "warnings": []
+    },
+    {
+      "id": "ms-10",
+      "prompt": "remember the wifi password is on the fridge",
+      "status": "running",
+      "totalMs": 31454,
+      "resultText": "",
+      "failures": [
+        "status: expected \"done\", got \"running\"",
+        "latency: 31454ms > budget 30000ms"
+      ],
+      "pass": false,
+      "taskId": "task_cfbdfbac",
+      "commsIntent": "handoff",
+      "itemCount": 0,
+      "graphIntent": {
+        "intent": "command_automate",
+        "parser": "llm-decompose",
+        "subIntents": [
+          "command_automate"
+        ]
+      },
+      "warnings": [
+        "commsIntent: expected \"memory_store\", got \"handoff\""
+      ]
+    },
+    {
+      "id": "ms-11",
+      "prompt": "note: the garage code is 4321",
+      "status": "dispatch-failed",
+      "totalMs": 42477,
+      "resultText": "",
+      "failures": [
+        "status: expected \"done\", got \"dispatch-failed\"",
+        "latency: 42477ms > budget 30000ms"
+      ],
+      "pass": false,
+      "commsIntent": null,
+      "wallMs": 42477,
+      "graphIntent": null,
+      "warnings": [
+        "commsIntent: expected \"memory_store\", got \"null\""
+      ]
+    },
+    {
+      "id": "ms-12",
+      "prompt": "remember I promised to call grandma this weekend",
+      "status": "done",
+      "totalMs": 23524,
+      "resultText": "Got it! I'll remember that.",
+      "failures": [],
+      "pass": true,
+      "taskId": "task_639ea21c",
+      "commsIntent": "handoff",
+      "itemCount": 0,
+      "graphIntent": {
+        "intent": "memory_store",
+        "parser": "llm-decompose",
+        "subIntents": [
+          "memory_store"
+        ]
+      },
+      "warnings": [
+        "commsIntent: expected \"memory_store\", got \"handoff\""
+      ]
+    },
+    {
+      "id": "ms-13",
+      "prompt": "i have a job interview on Monday",
+      "status": "done",
+      "totalMs": 2207,
+      "resultText": "",
+      "failures": [],
+      "pass": true,
+      "commsIntent": "memory_quick",
+      "wallMs": 12456,
+      "graphIntent": null,
+      "warnings": [
+        "commsIntent: expected \"memory_store\", got \"memory_quick\""
+      ]
+    },
+    {
+      "id": "ms-14",
+      "prompt": "remember the project deadline is next Friday",
+      "status": "done",
+      "totalMs": 574,
+      "resultText": "",
+      "failures": [],
+      "pass": true,
+      "commsIntent": "memory_store",
+      "wallMs": 12573,
+      "graphIntent": null,
+      "warnings": []
+    },
+    {
+      "id": "ms-15",
+      "prompt": "note: pick up dry cleaning Saturday",
+      "status": "done",
+      "totalMs": 430,
+      "resultText": "",
+      "failures": [],
+      "pass": true,
+      "commsIntent": "memory_store",
+      "wallMs": 12445,
+      "graphIntent": null,
+      "warnings": []
+    },
+    {
+      "id": "ms-16",
+      "prompt": "remember I owe Mike 20 dollars",
+      "status": "done",
+      "totalMs": 2142,
+      "resultText": "",
+      "failures": [],
+      "pass": true,
+      "commsIntent": "memory_quick",
+      "wallMs": 12452,
+      "graphIntent": null,
+      "warnings": [
+        "commsIntent: expected \"memory_store\", got \"memory_quick\""
+      ]
+    },
+    {
+      "id": "ms-17",
+      "prompt": "my rent is due on the first",
+      "status": "done",
+      "totalMs": 439,
+      "resultText": "",
+      "failures": [],
+      "pass": true,
+      "commsIntent": "memory_quick",
+      "wallMs": 12450,
+      "graphIntent": null,
+      "warnings": [
+        "commsIntent: expected \"memory_store\", got \"memory_quick\""
+      ]
+    },
+    {
+      "id": "ms-18",
+      "prompt": "remember the plumber is coming at 9am",
+      "status": "done",
+      "totalMs": 518,
+      "resultText": "",
+      "failures": [],
+      "pass": true,
+      "commsIntent": "memory_store",
+      "wallMs": 12441,
+      "graphIntent": null,
+      "warnings": []
+    },
+    {
+      "id": "ms-19",
+      "prompt": "i have dinner with Sarah tomorrow night",
+      "status": "done",
+      "totalMs": 2062,
+      "resultText": "",
+      "failures": [],
+      "pass": true,
+      "commsIntent": "memory_quick",
+      "wallMs": 12463,
+      "graphIntent": null,
+      "warnings": [
+        "commsIntent: expected \"memory_store\", got \"memory_quick\""
+      ]
+    },
+    {
+      "id": "ms-20",
+      "prompt": "remember to take out the trash Wednesday night",
+      "status": "done",
+      "totalMs": 478,
+      "resultText": "",
+      "failures": [],
+      "pass": true,
+      "commsIntent": "memory_store",
+      "wallMs": 12481,
+      "graphIntent": null,
+      "warnings": []
+    },
+    {
+      "id": "ms-21",
+      "prompt": "note: the car needs an oil change",
+      "status": "dispatch-failed",
+      "totalMs": 42472,
+      "resultText": "",
+      "failures": [
+        "status: expected \"done\", got \"dispatch-failed\"",
+        "latency: 42472ms > budget 30000ms"
+      ],
+      "pass": false,
+      "commsIntent": null,
+      "wallMs": 42472,
+      "graphIntent": null,
+      "warnings": [
+        "commsIntent: expected \"memory_store\", got \"null\""
+      ]
+    },
+    {
+      "id": "ms-22",
+      "prompt": "remember my gym membership renews in April",
+      "status": "done",
+      "totalMs": 7541,
+      "resultText": "",
+      "failures": [],
+      "pass": true,
+      "commsIntent": "memory_quick",
+      "wallMs": 12447,
+      "graphIntent": null,
+      "warnings": [
+        "commsIntent: expected \"memory_store\", got \"memory_quick\""
+      ]
+    },
+    {
+      "id": "ms-23",
+      "prompt": "i have a dentist appointment next week",
+      "status": "done",
+      "totalMs": 1313,
+      "resultText": "",
+      "failures": [],
+      "pass": true,
+      "commsIntent": "memory_store",
+      "wallMs": 12437,
+      "graphIntent": null,
+      "warnings": []
+    },
+    {
+      "id": "ms-24",
+      "prompt": "remember the team lunch is Friday at noon",
+      "status": "done",
+      "totalMs": 3578,
+      "resultText": "",
+      "failures": [],
+      "pass": true,
+      "commsIntent": "memory_store",
+      "wallMs": 12431,
+      "graphIntent": null,
+      "warnings": []
+    },
+    {
+      "id": "ms-25",
+      "prompt": "note: schedule the annual checkup",
+      "status": "done",
+      "totalMs": 5911,
+      "resultText": "Got it! I'll remember that.",
+      "failures": [],
+      "pass": true,
+      "taskId": "task_6ff60d68",
+      "commsIntent": "handoff",
+      "itemCount": 0,
+      "graphIntent": {
+        "intent": "memory_store",
+        "parser": "llm-decompose",
+        "subIntents": [
+          "memory_store"
+        ]
+      },
+      "warnings": [
+        "commsIntent: expected \"memory_store\", got \"handoff\""
+      ]
+    },
+    {
+      "id": "ms-26",
+      "prompt": "remember the concert tickets go on sale Friday",
+      "status": "done",
+      "totalMs": 677,
+      "resultText": "",
+      "failures": [],
+      "pass": true,
+      "commsIntent": "memory_store",
+      "wallMs": 12577,
+      "graphIntent": null,
+      "warnings": []
+    },
+    {
+      "id": "ms-27",
+      "prompt": "i have a parent teacher conference Tuesday",
+      "status": "done",
+      "totalMs": 985,
+      "resultText": "",
+      "failures": [],
+      "pass": true,
+      "commsIntent": "memory_store",
+      "wallMs": 12434,
+      "graphIntent": null,
+      "warnings": []
+    },
+    {
+      "id": "ms-28",
+      "prompt": "remember to submit the expense report",
+      "status": "auth-required",
+      "totalMs": 23224,
+      "resultText": "I couldn't authenticate before planning: todoist.agent (auth required)",
+      "failures": [
+        "status: expected \"done\", got \"auth-required\""
+      ],
+      "pass": false,
+      "taskId": "task_c8956fa9",
+      "commsIntent": "handoff",
+      "itemCount": 0,
+      "graphIntent": {
+        "intent": "command_automate",
+        "parser": "llm-decompose",
+        "subIntents": [
+          "command_automate"
+        ]
+      },
+      "warnings": [
+        "commsIntent: expected \"memory_store\", got \"handoff\""
+      ]
+    },
+    {
+      "id": "ms-29",
+      "prompt": "note: the package arrives Thursday",
+      "status": "done",
+      "totalMs": 4247,
+      "resultText": "",
+      "failures": [],
+      "pass": true,
+      "commsIntent": "memory_store",
+      "wallMs": 12472,
+      "graphIntent": null,
+      "warnings": []
+    },
+    {
+      "id": "ms-30",
+      "prompt": "remember I have a haircut at 10am Saturday",
+      "status": "done",
+      "totalMs": 4111,
+      "resultText": "",
+      "failures": [],
+      "pass": true,
+      "commsIntent": "memory_store",
+      "wallMs": 12428,
+      "graphIntent": null,
+      "warnings": []
+    },
+    {
+      "id": "ms-31",
+      "prompt": "my anniversary is September 12",
+      "status": "done",
+      "totalMs": 2313,
+      "resultText": "",
+      "failures": [],
+      "pass": true,
+      "commsIntent": "memory_quick",
+      "wallMs": 12430,
+      "graphIntent": null,
+      "warnings": [
+        "commsIntent: expected \"memory_store\", got \"memory_quick\""
+      ]
+    },
+    {
+      "id": "ms-32",
+      "prompt": "remember the quarterly review is next week",
+      "status": "done",
+      "totalMs": 623,
+      "resultText": "",
+      "failures": [],
+      "pass": true,
+      "commsIntent": "memory_store",
+      "wallMs": 12440,
+      "graphIntent": null,
+      "warnings": []
+    },
+    {
+      "id": "ms-33",
+      "prompt": "i have jury duty on the 15th",
+      "status": "done",
+      "totalMs": 890,
+      "resultText": "",
+      "failures": [],
+      "pass": true,
+      "commsIntent": "memory_store",
+      "wallMs": 12442,
+      "graphIntent": null,
+      "warnings": []
+    },
+    {
+      "id": "ms-34",
+      "prompt": "remember the lease ends in August",
+      "status": "done",
+      "totalMs": 2309,
+      "resultText": "",
+      "failures": [],
+      "pass": true,
+      "commsIntent": "memory_store",
+      "wallMs": 12434,
+      "graphIntent": null,
+      "warnings": []
+    },
+    {
+      "id": "ms-35",
+      "prompt": "note: buy a gift for Dads birthday",
+      "status": "done",
+      "totalMs": 579,
+      "resultText": "",
+      "failures": [],
+      "pass": true,
+      "commsIntent": "memory_store",
+      "wallMs": 12432,
+      "graphIntent": null,
+      "warnings": []
+    },
+    {
+      "id": "ms-36",
+      "prompt": "remember to defrost the chicken tonight",
+      "status": "done",
+      "totalMs": 525,
+      "resultText": "",
+      "failures": [],
+      "pass": true,
+      "commsIntent": "memory_store",
+      "wallMs": 12454,
+      "graphIntent": null,
+      "warnings": []
+    },
+    {
+      "id": "ms-37",
+      "prompt": "i have a presentation at work Monday",
+      "status": "done",
+      "totalMs": 715,
+      "resultText": "",
+      "failures": [],
+      "pass": true,
+      "commsIntent": "memory_store",
+      "wallMs": 12430,
+      "graphIntent": null,
+      "warnings": []
+    },
+    {
+      "id": "ms-38",
+      "prompt": "remember the recycling goes out Thursday",
+      "status": "done",
+      "totalMs": 1704,
+      "resultText": "",
+      "failures": [],
+      "pass": true,
+      "commsIntent": "memory_store",
+      "wallMs": 12463,
+      "graphIntent": null,
+      "warnings": []
+    },
+    {
+      "id": "ms-39",
+      "prompt": "note: call the bank about the charge",
+      "status": "done",
+      "totalMs": 2068,
+      "resultText": "",
+      "failures": [],
+      "pass": true,
+      "commsIntent": "memory_store",
+      "wallMs": 12443,
+      "graphIntent": null,
+      "warnings": []
+    },
+    {
+      "id": "ms-40",
+      "prompt": "remember my friends wedding is in July",
+      "status": "done",
+      "totalMs": 533,
+      "resultText": "",
+      "failures": [],
+      "pass": true,
+      "commsIntent": "memory_store",
+      "wallMs": 12427,
+      "graphIntent": null,
+      "warnings": []
+    },
+    {
+      "id": "ms-41",
+      "prompt": "i have a car service appointment Wednesday",
+      "status": "done",
+      "totalMs": 529,
+      "resultText": "",
+      "failures": [],
+      "pass": true,
+      "commsIntent": "memory_store",
+      "wallMs": 12440,
+      "graphIntent": null,
+      "warnings": []
+    },
+    {
+      "id": "ms-42",
+      "prompt": "remember to back up my laptop this weekend",
+      "status": "done",
+      "totalMs": 1467,
+      "resultText": "",
+      "failures": [],
+      "pass": true,
+      "commsIntent": "memory_store",
+      "wallMs": 12432,
+      "graphIntent": null,
+      "warnings": []
+    },
+    {
+      "id": "ms-43",
+      "prompt": "note: the caterer needs the headcount by Friday",
+      "status": "done",
+      "totalMs": 1322,
+      "resultText": "",
+      "failures": [],
+      "pass": true,
+      "commsIntent": "memory_store",
+      "wallMs": 12437,
+      "graphIntent": null,
+      "warnings": []
+    },
+    {
+      "id": "ms-44",
+      "prompt": "remember I have piano practice at 4",
+      "status": "done",
+      "totalMs": 1376,
+      "resultText": "",
+      "failures": [],
+      "pass": true,
+      "commsIntent": "memory_store",
+      "wallMs": 12435,
+      "graphIntent": null,
+      "warnings": []
+    },
+    {
+      "id": "ms-45",
+      "prompt": "my passport expires in October",
+      "status": "done",
+      "totalMs": 520,
+      "resultText": "",
+      "failures": [],
+      "pass": true,
+      "commsIntent": "memory_store",
+      "wallMs": 12432,
+      "graphIntent": null,
+      "warnings": []
+    },
+    {
+      "id": "ms-46",
+      "prompt": "remember the HOA meeting is Thursday",
+      "status": "done",
+      "totalMs": 1731,
+      "resultText": "",
+      "failures": [],
+      "pass": true,
+      "commsIntent": "memory_store",
+      "wallMs": 12433,
+      "graphIntent": null,
+      "warnings": []
+    },
+    {
+      "id": "ms-47",
+      "prompt": "i have a follow up appointment next month",
+      "status": "done",
+      "totalMs": 583,
+      "resultText": "",
+      "failures": [],
+      "pass": true,
+      "commsIntent": "memory_store",
+      "wallMs": 12429,
+      "graphIntent": null,
+      "warnings": []
+    },
+    {
+      "id": "ms-48",
+      "prompt": "note: water heater inspection on Tuesday",
+      "status": "done",
+      "totalMs": 849,
+      "resultText": "",
+      "failures": [],
+      "pass": true,
+      "commsIntent": "memory_store",
+      "wallMs": 12465,
+      "graphIntent": null,
+      "warnings": []
+    }
+  ]
+}
