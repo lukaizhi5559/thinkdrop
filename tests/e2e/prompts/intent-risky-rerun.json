@@ -1,0 +1,47 @@
+[
+ {
+  "id": "rk-18",
+  "prompt": "tweet hello world",
+  "expect": {
+   "status": [
+    "awaiting-approval",
+    "waiting-for-input",
+    "auth-required",
+    "done",
+    "failed"
+   ],
+   "approve": false,
+   "maxMs": 120000
+  }
+ },
+ {
+  "id": "rk-24",
+  "prompt": "send my resume to hr@example.com",
+  "expect": {
+   "status": [
+    "awaiting-approval",
+    "waiting-for-input",
+    "auth-required",
+    "done",
+    "failed"
+   ],
+   "approve": false,
+   "maxMs": 120000
+  }
+ },
+ {
+  "id": "rk-25",
+  "prompt": "book a table for two at olive garden tonight",
+  "expect": {
+   "status": [
+    "awaiting-approval",
+    "waiting-for-input",
+    "auth-required",
+    "done",
+    "failed"
+   ],
+   "approve": false,
+   "maxMs": 120000
+  }
+ }
+]

@@ -1,0 +1,70 @@
+{
+  "file": "tests/e2e/prompts/intent-risky-rerun.json",
+  "at": "2026-09-29T00:58:38.811Z",
+  "softRoute": true,
+  "results": [
+    {
+      "id": "rk-18",
+      "prompt": "tweet hello world",
+      "status": "awaiting-approval",
+      "totalMs": 13006,
+      "resultText": "",
+      "failures": [],
+      "pass": true,
+      "taskId": "task_f37a75ef",
+      "commsIntent": "handoff",
+      "itemCount": 0,
+      "graphIntent": {
+        "intent": "command_automate",
+        "parser": "llm-decompose",
+        "subIntents": [
+          "command_automate"
+        ]
+      },
+      "warnings": []
+    },
+    {
+      "id": "rk-24",
+      "prompt": "send my resume to hr@example.com",
+      "status": "awaiting-approval",
+      "totalMs": 43550,
+      "resultText": "",
+      "failures": [],
+      "pass": true,
+      "taskId": "task_c41fba18",
+      "commsIntent": "handoff",
+      "itemCount": 0,
+      "graphIntent": {
+        "intent": "command_automate",
+        "parser": "llm-decompose",
+        "subIntents": [
+          "command_automate"
+        ]
+      },
+      "warnings": []
+    },
+    {
+      "id": "rk-25",
+      "prompt": "book a table for two at olive garden tonight",
+      "status": "running",
+      "totalMs": 122737,
+      "resultText": "",
+      "failures": [
+        "status: expected \"awaiting-approval|waiting-for-input|auth-required|done|failed\", got \"running\"",
+        "latency: 122737ms > budget 120000ms"
+      ],
+      "pass": false,
+      "taskId": "task_3d1cf0b5",
+      "commsIntent": "handoff",
+      "itemCount": 0,
+      "graphIntent": {
+        "intent": "command_automate",
+        "parser": "llm-decompose",
+        "subIntents": [
+          "command_automate"
+        ]
+      },
+      "warnings": []
+    }
+  ]
+}

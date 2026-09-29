@@ -1,0 +1,34 @@
+[
+  {
+    "id": "mr-05",
+    "prompt": "what was I working on before",
+    "expect": {
+      "status": "done",
+      "maxMs": 90000
+    }
+  },
+  {
+    "id": "mr-06",
+    "prompt": "did I mention my dentist appointment",
+    "expect": {
+      "status": "done",
+      "maxMs": 90000
+    }
+  },
+  {
+    "id": "mr-07",
+    "prompt": "when did I last talk about my birthday",
+    "expect": {
+      "status": "done",
+      "maxMs": 90000
+    }
+  },
+  {
+    "id": "mr-08",
+    "prompt": "what have I asked you so far",
+    "expect": {
+      "status": "done",
+      "maxMs": 90000
+    }
+  }
+]

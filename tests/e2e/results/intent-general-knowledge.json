@@ -1,0 +1,834 @@
+{
+  "file": "tests/e2e/prompts/intent-general-knowledge.json",
+  "at": "2026-09-28T18:39:39.504Z",
+  "softRoute": true,
+  "results": [
+    {
+      "id": "gk-01",
+      "prompt": "explain how photosynthesis works in detail",
+      "status": "done",
+      "totalMs": 15506,
+      "resultText": "The search results I have don't cover photosynthesis (they're about essay synthesis, audio synthesizers, protein synthesis, and image synthesis), so here's a clear explanation from general knowledge.\n\n**Photosynthesis** is the process by which plants, algae, and some bacteria convert light energy into chemical energy stored in glucose, releasing oxygen as a byproduct.\n\n**Overall equation:**\n6 CO₂ + 6 H₂O + light → C₆H₁₂O₆ + 6 O₂\n\n**Where it happens:** In the **chloroplast**, which has an outer and inner membrane, a fluid interior called the **stroma**, and stacked membrane discs called **thylakoids** (a stack is a *granum*). The thylakoid membrane holds chlorophyll and the protein complexes that do the light work.\n\n**Two main stages:**\n\n**1. Light-dependent reactions (thylakoid membrane)**\n- **Light absorption:** Chlorophyll and accessory pigments (carotenoids) absorb photons. Energy excites electrons in chlorophyll to a higher state.\n- **Photosystem II:** Excited electrons pass down an electron transport chain. The lost electrons are replaced by splitting water (**photolysis**), which produces O₂, H⁺, and electrons.\n- **Electron transport chain:** Electrons flow through the chain (including plastoquinone, cytochrome complex, and plastocyanin). This pumps H⁺ into the thylakoid lumen, creating a proton gradient.\n- **Chemiosmosis/ATP synthase:** H⁺ flows back through ATP synthase, driving synthesis of **ATP**.\n- **Photosystem I:** Electrons get re-energized by light and reduce **NADP⁺** to **NADPH**.\n- **Products:** ATP, NADPH, and O₂ (released as gas).\n\n**2. Light-independent reactions / Calvin cycle (stroma)**\n- **Carbon fixation:** The enzyme **RuBisCO** attaches CO₂ to a 5-carbon sugar (RuBP), forming an unstable 6-carbon compound that splits into two 3-carbon molecules (3-PGA).\n- **Reduction:** Using ATP and NADPH from stage 1, 3-PGA is converted into **G3P** (glyceraldehyde-3-phosphate).\n- **Regeneration:** Most G3P goes back into rebuilding RuBP so the cycle continues. For every 3 CO₂ fixed, the cycle produces one net G3P — two G3P molecules combine to make one glucose.\n\n**Key factors affecting rate:**\n- **Light intensity** — more light speeds it up until saturation\n- **CO₂ concentration** — a common limiting factor\n- **Temperature** — enzymes like RuBisCO work best in an optimal range; too hot denatures them, and plants may close stomata to conserve water, cutting CO₂ intake\n- **Water availability** — needed as an electron source\n\n**Variations:**\n- **C3 plants** — standard Calvin cycle (most plants)\n- **C4 plants** (corn, sugarcane) — pre-fix CO₂ into a 4-carbon compound to reduce water loss and boost efficiency in heat\n- **CAM plants** (cacti, succulents) — open stomata at night to fix CO₂, limiting daytime water loss\n\nPhotosynthesis and cellular respiration are essentially complementary: photosynthesis stores energy in glucose and releases O₂, while respiration breaks glucose down using O₂ and releases CO₂ and water.",
+      "failures": [],
+      "pass": true,
+      "taskId": "task_f2f64739",
+      "commsIntent": "handoff",
+      "itemCount": 9,
+      "graphIntent": {
+        "intent": "general_knowledge",
+        "parser": "llm-decompose",
+        "subIntents": [
+          "general_knowledge"
+        ]
+      },
+      "warnings": []
+    },
+    {
+      "id": "gk-02",
+      "prompt": "give me a step by step guide to make sourdough bread",
+      "status": "done",
+      "totalMs": 9504,
+      "resultText": "Here's a beginner-friendly, step-by-step guide to making sourdough bread, drawn from three trusted tutorials.\n\n**1. Gather your ingredients and tools**\nYou'll need flour, water, an active sourdough starter, and salt. Use good-quality, filtered water (the same kind you'd use to feed your starter). Helpful tools: a **digital scale** (weighing ingredients ensures accuracy and greatly improves your odds of success), a bowl, and rice flour or semolina flour to keep the dough from sticking to your banneton.\n\n**2. Mix the dough**\nSimply combine the water, sourdough starter, salt, and flour in a bowl, then stir until it forms a sticky dough ball. No kneading is required here — just bring it together.\n\n**3. Bulk fermentation (the first rise)**\nThis is the fancy name for the first rise. Let the dough sit and ferment; timing depends on your room temperature and starter strength.\n\n**4. Optional: stretch & folds**\nAbout 30 minutes into the bulk rise, you can perform a series of \"stretch & folds\" to strengthen the dough. This step isn't mandatory, but it can add height and structure to your finished loaf.\n\n**5. Shape and proof**\nOnce bulk fermentation is complete, shape the dough and place it in a floured banneton, then let it proof (often in the fridge overnight).\n\n**6. Bake**\nBake in a preheated Dutch oven or on a baking stone until deeply browned and crusty.\n\n**Troubleshooting & further reading:**\n- [Homemade Sourdough Bread, Step by Step — Alexandra's Kitchen](https://alexandracooks.com/2017/10/24/artisan-sourdough-made-simple-sourdough-bread-demystified-a-beginners-guide-to-sourdough-baking/)\n- [Sourdough Bread: A Beginner's Guide — The Clever Carrot](https://www.theclevercarrot.com/2014/01/sourdough-bread-a-beginners-guide/) (includes a companion article on why your bread won't rise)\n- [How To Bake Simple Sourdough Bread — Pantry Mama](https://pantrymama.com/how-to-bake-simple-sourdough-bread/) (also covers the role of salt)\n\n---",
+      "failures": [],
+      "pass": true,
+      "taskId": "task_f1e71d14",
+      "commsIntent": "handoff",
+      "itemCount": 3,
+      "graphIntent": {
+        "intent": "general_knowledge",
+        "parser": "llm-decompose",
+        "subIntents": [
+          "general_knowledge"
+        ]
+      },
+      "warnings": []
+    },
+    {
+      "id": "gk-03",
+      "prompt": "write me a short poem about the ocean",
+      "status": "done",
+      "totalMs": 7513,
+      "resultText": "Here's a short one for you:\n\n**The Ocean's Breath**\n\nThe tide rolls in, the tide rolls out,\na restless heart that knows no doubt.\nIt keeps the moon, it holds the sky,\nand never asks the reason why.\n\nIt whispers low, it thunders wide,\nwith secrets tucked beneath its tide.\nAnd when the night leans on the sea,\nthe waves breathe back a peace through me.\n\nIf you'd like more to read, these collections have plenty of ocean verse to browse:\n\n- [20 Ocean Poems – Family Friend Poems](https://www.familyfriendpoems.com/poems/nature/ocean/)\n- [43 Wave-Kissed Poems About the Ocean – Word Wool](https://wordwool.com/ocean-poems-collection/)\n- [11 Beautiful Ocean Poems – Book Riot](https://bookriot.com/ocean-poems/)\n- [The Ocean – The Poetry Foundation](https://www.poetryfoundation.org/poems/57286/the-ocean)",
+      "failures": [],
+      "pass": true,
+      "taskId": "task_b8dcddef",
+      "commsIntent": "handoff",
+      "itemCount": 10,
+      "graphIntent": {
+        "intent": "general_knowledge",
+        "parser": "llm-decompose",
+        "subIntents": [
+          "general_knowledge"
+        ]
+      },
+      "warnings": []
+    },
+    {
+      "id": "gk-04",
+      "prompt": "explain the difference between TCP and UDP",
+      "status": "done",
+      "totalMs": 19055,
+      "resultText": "**TCP (Transmission Control Protocol)** and **UDP (User Datagram Protocol)** are the two core Transport Layer protocols of the TCP/IP model. Both handle end-to-end communication between applications, but they make opposite trade-offs between reliability and speed.\n\n**The core difference**\nTCP is **connection-oriented** — it establishes a link between sender and receiver (via a \"3-way handshake\") before any data moves. UDP is **connectionless**: it just starts sending, with no setup and no concern for whether the data arrives.\n\n**TCP — reliability first**\n- Guarantees delivery using an **ACK (acknowledgment) mechanism**. If a segment isn't acknowledged within a set time, it's retransmitted.\n- Preserves **ordering**, so bytes arrive as a reliable, ordered stream — no missing pieces.\n- Checks for errors and manages flow/congestion control.\n- The trade-off: slower and heavier overhead.\n\n**UDP — speed first**\n- No acknowledgments, no retransmission, no ordering guarantees. Lost packets are simply lost.\n- Much lower overhead, making it **faster and more efficient**.\n- Supports broadcasting, which TCP doesn't — this is why DHCP uses UDP.\n- Ideal for real-time traffic where a late packet is worse than a missing one (streaming, VoIP, gaming).\n\n**A useful mental model**\nThink of TCP as a **registered letter** — it goes to a specific person and you get confirmation of receipt. UDP is like a **postcard dropped in a mailbox** or a **public address announcement** — it's sent, and it's up to the recipient to catch it.\n\n**Quick comparison**\n\n| | TCP | UDP |\n|---|---|---|\n| Connection | Connection-oriented | Connectionless |\n| Delivery | Guaranteed (ACK + retransmit) | Not guaranteed |\n| Ordering | Yes | No |\n| Speed | Slower, more overhead | Faster, lightweight |\n| Best for | Web, email, file transfer | Streaming, VoIP, gaming, DHCP |\n\nFor deeper reading, see [GeeksforGeeks](https://www.geeksforgeeks.org/computer-networks/differences-between-tcp-and-udp/), [NetworkLessons](https://networklessons.com/network-fundamentals/introduction-to-tcp-and-udp), or the [Diffen comparison table](https://www.diffen.com/difference/TCP_vs_UDP).",
+      "failures": [],
+      "pass": true,
+      "taskId": "task_1a2ce7be",
+      "commsIntent": "handoff",
+      "itemCount": 10,
+      "graphIntent": {
+        "intent": "general_knowledge",
+        "parser": "llm-decompose",
+        "subIntents": [
+          "general_knowledge"
+        ]
+      },
+      "warnings": []
+    },
+    {
+      "id": "gk-05",
+      "prompt": "how does a car engine work",
+      "status": "done",
+      "totalMs": 10555,
+      "resultText": "A car engine turns the chemical energy in fuel into motion. Here's the basic chain:\n\n**The core idea**\nAn internal-combustion engine is a heat engine — it converts energy from burning gasoline into mechanical work, or torque, which is applied to the wheels to move the car ([Car and Driver](https://www.caranddriver.com/features/a26962316/how-a-car-works/)). Combustion itself is just the chemical process of releasing energy from a fuel-and-air mixture, and in an ICE that ignition happens *inside* the engine rather than in an external chamber ([Department of Energy](https://www.energy.gov/cmei/vehicles/articles/internal-combustion-engine-basics)).\n\n**The four-stroke cycle**\nA common way to remember it: **Suck, Squeeze, Boom, Blow** ([Quora](https://www.quora.com/How-does-a-cars-engine-work-Can-you-explain-it-in-simple-terms-for-kids-even-if-its-not-technically-accurate)).\n\n- **Suck** — the descending piston draws fuel and air into the cylinder\n- **Squeeze** — the piston travels up, compressing the mixture\n- **Boom** — a spark plug ignites it, and the rapidly expanding gas drives the piston back down ([How a Car Works](https://www.howacarworks.com/basics/the-engine))\n- **Blow** — exhaust gases are pushed out, and the cycle repeats\n\n**From pistons to wheels**\nThe engine is built around **cylinders, pistons, fuel injectors, and spark plugs**; together they burn fuel and expel exhaust, repeating the process to create usable energy ([Kia](https://www.kia.com/la/discover-kia/ask/how-do-car-engines-work.html)). The pistons only move up and down, so the **crankshaft** converts that linear motion into rotational motion — convenient, since you need rotation to turn the wheels anyway ([HowStuffWorks](https://auto.howstuffworks.com/engine.htm)).\n\n**Gasoline vs. diesel**\nBoth types rely on compression and combustion, but they differ: gasoline engines use spark plugs to ignite the air-fuel mixture, while diesel relies on pressure alone ([WyoTech](https://www.wyotech.edu/uncategorized/the-complete-guide-to-car-engine-types-and-how-they-work/)). That's roughly how your Civic's engine is doing its thing every time you press the pedal.",
+      "failures": [],
+      "pass": true,
+      "taskId": "task_2095cc60",
+      "commsIntent": "handoff",
+      "itemCount": 10,
+      "graphIntent": {
+        "intent": "general_knowledge",
+        "parser": "llm-decompose",
+        "subIntents": [
+          "general_knowledge"
+        ]
+      },
+      "warnings": []
+    },
+    {
+      "id": "gk-06",
+      "prompt": "write a haiku about autumn",
+      "status": "done",
+      "totalMs": 7422,
+      "resultText": "Crimson leaves let go —\nthe cold arrives without sound,\nsummer's last breath fades.",
+      "failures": [],
+      "pass": true,
+      "taskId": "task_59094e5b",
+      "commsIntent": "handoff",
+      "itemCount": 0,
+      "graphIntent": {
+        "intent": "general_knowledge",
+        "parser": "llm-decompose",
+        "subIntents": [
+          "general_knowledge"
+        ]
+      },
+      "warnings": []
+    },
+    {
+      "id": "gk-07",
+      "prompt": "explain quantum entanglement like I'm five",
+      "status": "done",
+      "totalMs": 13086,
+      "resultText": "",
+      "failures": [],
+      "pass": true,
+      "commsIntent": "general_quick",
+      "wallMs": 30650,
+      "graphIntent": null,
+      "warnings": []
+    },
+    {
+      "id": "gk-08",
+      "prompt": "what are the pros and cons of remote work",
+      "status": "done",
+      "totalMs": 4611,
+      "resultText": "",
+      "failures": [],
+      "pass": true,
+      "commsIntent": "general_quick",
+      "wallMs": 30539,
+      "graphIntent": null,
+      "warnings": []
+    },
+    {
+      "id": "gk-09",
+      "prompt": "tell me about the history of the roman empire",
+      "status": "done",
+      "totalMs": 10967,
+      "resultText": "The Roman Empire spans roughly 500 years in the West and another thousand in the East. A quick arc:\n\n**Foundation (27 BC)** — After decades of civil war, Octavian defeated Antony and Cleopatra, then took the name Augustus and the title *princeps*. He kept republican forms while holding real power, establishing the Principate.\n\n**Early Empire (27 BC – 180 AD)** — The Pax Romana. Augustus rebuilt the state; the Julio-Claudians followed (Tiberius, Caligula, Claudius, Nero). After Nero's fall in 68 AD came a year of civil war, then the Flavians (Vespasian, Titus, Domitian), who built the Colosseum. The adoptive emperors — Nerva, Trajan, Hadrian, Antoninus Pius, Marcus Aurelius — are usually called Rome's high point, with Trajan pushing the empire to its greatest extent.\n\n**Crisis and recovery (180–284)** — Commodus' reign ended the era of good emperors. The 3rd century brought military anarchy, plague, inflation, and near-collapse, with emperors rising and falling rapidly. Diocletian (284) stabilized things by splitting imperial rule into a tetrarchy and reforming taxation and administration.\n\n**Christianization and division (306–395)** — Constantine won at the Milvian Bridge in 312, converted, and moved the capital to Constantinople in 330. Theodosius I made Christianity the state religion and, on his death in 395, divided the empire permanently between East and West.\n\n**Fall of the West (395–476)** — Repeated Germanic incursions, fiscal strain, and internal instability. Alaric sacked Rome in 410; the last western emperor, Romulus Augustulus, was deposed in 476.\n\n**Byzantine continuation (476–1453)** — The Eastern Empire survived as what we now call Byzantium, flourishing under Justinian (6th century) and lasting until Constantinople fell to the Ottomans in 1453.\n\nThe standard through-line for why the West fell: overextension, internal political decay, economic problems, and migration pressure — no single cause.\n\nIf you want, I can go deeper on any period — the Republic's collapse, the 3rd-century crisis, or the Byzantine half.",
+      "failures": [],
+      "pass": true,
+      "taskId": "task_6df44572",
+      "commsIntent": "handoff",
+      "itemCount": 0,
+      "graphIntent": {
+        "intent": "general_knowledge",
+        "parser": "llm-decompose",
+        "subIntents": [
+          "general_knowledge"
+        ]
+      },
+      "warnings": []
+    },
+    {
+      "id": "gk-10",
+      "prompt": "how do vaccines work",
+      "status": "done",
+      "totalMs": 34892,
+      "resultText": "Vaccines work by training your immune system to recognize a specific pathogen before you encounter it for real.\n\n**The basic mechanism:**\n\n1. **Exposure to a harmless form of the threat.** A vaccine introduces something your immune system can identify — an inactivated or weakened pathogen, a protein subunit, a toxoid, or (in mRNA/viral-vector vaccines) genetic instructions that tell your own cells to produce a single viral protein.\n\n2. **Immune recognition.** Antigen-presenting cells (dendritic cells, macrophages) capture this material and display fragments of it to T cells and B cells.\n\n3. **Response.** B cells produce antibodies that bind the antigen. Helper T cells coordinate the response; cytotoxic T cells learn to kill infected cells. This takes days and mimics natural infection, but without the illness.\n\n4. **Memory.** A subset of B and T cells becomes long-lived memory cells. If the real pathogen shows up later, these respond fast and hard — often clearing it before symptoms develop.\n\n**Why boosters and multiple doses:** Some vaccines need repeat exposure to build adequate antibody levels or to broaden the response against variants.\n\n**Why adjuvants exist:** Ingredients like aluminum salts or lipid nanoparticles signal \"danger\" to the immune system, making the response stronger, especially for subunit vaccines.\n\n**Common misunderstanding:** mRNA vaccines do not alter your DNA. The mRNA is delivered to the cytoplasm, translated into protein, and degraded within hours to days. It never enters the nucleus.\n\nVaccine types you'll see: live-attenuated (MMR, varicella), inactivated (flu shot), subunit/conjugate (HPV, pneumococcal), toxoid (tetanus, diphtheria), mRNA (COVID-19), and viral vector (Ebola, some COVID-19).",
+      "failures": [],
+      "pass": true,
+      "taskId": "task_7730f4fe",
+      "commsIntent": "handoff",
+      "itemCount": 0,
+      "graphIntent": {
+        "intent": "general_knowledge",
+        "parser": "llm-decompose",
+        "subIntents": [
+          "general_knowledge"
+        ]
+      },
+      "warnings": []
+    },
+    {
+      "id": "gk-11",
+      "prompt": "explain recursion with an example",
+      "status": "done",
+      "totalMs": 4187,
+      "resultText": "",
+      "failures": [],
+      "pass": true,
+      "commsIntent": "general_quick",
+      "wallMs": 30555,
+      "graphIntent": null,
+      "warnings": []
+    },
+    {
+      "id": "gk-12",
+      "prompt": "what's the difference between a virus and a bacterium",
+      "status": "done",
+      "totalMs": 9936,
+      "resultText": "**Viruses vs. bacteria — the basics:**\n\n**Size & structure**\n- **Bacteria** are living cells — typically 1–5 micrometers. They have their own machinery (ribosomes, DNA, a cell membrane, sometimes a cell wall) and can reproduce on their own by dividing.\n- **Viruses** are much smaller (20–400 nanometers) and aren't cells at all. They're basically genetic material (DNA or RNA) wrapped in a protein coat, sometimes with a lipid envelope. They have no metabolism and can't reproduce without hijacking a host cell.\n\n**Reproduction**\n- Bacteria split into two (binary fission) independently.\n- Viruses must infect a host cell and force it to manufacture new viral particles.\n\n**Living or not?**\n- Bacteria are unambiguously alive.\n- Viruses sit on the boundary — inert outside a host, \"active\" only once they infect one. Many biologists don't count them as living.\n\n**Treatment**\n- Bacterial infections respond to **antibiotics**.\n- Antibiotics do **nothing** against viruses. Viral infections are managed with antivirals, vaccines, or just supportive care while your immune system clears them.\n\n**Some nuance:** not all bacteria are harmful — your gut is full of beneficial ones. And some bacteria (like *Mycobacterium tuberculosis*) are far more dangerous than many viruses. \"Virus vs. bacterium\" tells you how to treat it, not how bad it is.",
+      "failures": [],
+      "pass": true,
+      "taskId": "task_ba5ad1c4",
+      "commsIntent": "handoff",
+      "itemCount": 0,
+      "graphIntent": {
+        "intent": "general_knowledge",
+        "parser": "llm-decompose",
+        "subIntents": [
+          "general_knowledge"
+        ]
+      },
+      "warnings": []
+    },
+    {
+      "id": "gk-13",
+      "prompt": "write a two sentence horror story",
+      "status": "done",
+      "totalMs": 10796,
+      "resultText": "I woke to my daughter's voice humming from the baby monitor, soft and familiar — the same tune her grandmother used to sing. Then I remembered: my daughter has been deaf since birth, and her grandmother died twelve years ago.",
+      "failures": [],
+      "pass": true,
+      "taskId": "task_802dcc38",
+      "commsIntent": "handoff",
+      "itemCount": 0,
+      "graphIntent": {
+        "intent": "general_knowledge",
+        "parser": "llm-decompose",
+        "subIntents": [
+          "general_knowledge"
+        ]
+      },
+      "warnings": []
+    },
+    {
+      "id": "gk-14",
+      "prompt": "explain how the internet works",
+      "status": "done",
+      "totalMs": 12678,
+      "resultText": "The internet is a global network of networks that moves data between devices using a shared set of protocols. Here's the layered picture, roughly bottom to top:\n\n**1. Physical layer**\nEverything rides on physical infrastructure: fiber optic cables (most intercontinental traffic), copper, cellular radio, Wi-Fi, and undersea cables linking continents. Data is transmitted as electrical signals, light pulses, or radio waves.\n\n**2. Packets and IP**\nData isn't sent as one continuous stream. It's chopped into **packets** — small chunks with a header containing source and destination **IP addresses**. IP (Internet Protocol) is the \"best effort\" delivery layer: it routes packets hop by hop through routers, but doesn't guarantee they arrive, arrive in order, or arrive at all. IPv4 addresses are 32-bit (~4.3 billion, exhausted); IPv6 is 128-bit.\n\n**3. Routing**\nRouters maintain routing tables and forward packets toward their destination. Your packet typically passes through your home router → ISP → possibly several backbone/transit networks → destination. **BGP** (Border Gateway Protocol) is how large networks advertise which IP ranges they can reach — it's the glue of the global routing system.\n\n**4. TCP and UDP (transport)**\n- **TCP**: establishes a connection (3-way handshake), numbers packets, acknowledges receipt, retransmits losses, and reassembles in order. This is what makes a reliable byte stream on top of unreliable IP.\n- **UDP**: fire-and-forget, no handshake or retransmission. Used for DNS, video streaming, games — where speed beats reliability.\n\n**5. DNS (naming)**\nHumans use names like `example.com`; machines use IPs. **DNS** resolves names to IPs through a hierarchical system: root servers → TLD servers (.com) → authoritative nameservers for the domain. Your resolver caches results to avoid repeating lookups.\n\n**6. Application layer**\nProtocols sit on top of TCP/UDP: **HTTP/HTTPS** for the web, **SMTP/IMAP** for email, **SSH**, **DNS** itself, etc. HTTPS adds TLS encryption and authentication (certificates signed by CAs), so you get confidentiality and proof you're talking to the right server.\n\n**What happens when you load a page**\n1. Browser resolves the domain via DNS → gets an IP.\n2. Opens a TCP connection (and TLS handshake for HTTPS).\n3. Sends an HTTP request.\n4. Server responds; packets route back through the network.\n5. Browser parses HTML, requests sub-resources (CSS, JS, images), renders.\n\n**Key mental model**\nThe internet is deliberately dumb and layered: IP just tries to deliver packets; TCP adds reliability; DNS adds naming; TLS adds security; HTTP adds meaning. Each layer only depends on the one below it — which is why you can swap Wi-Fi for cellular without changing anything above.",
+      "failures": [],
+      "pass": true,
+      "taskId": "task_2df000ef",
+      "commsIntent": "handoff",
+      "itemCount": 0,
+      "graphIntent": {
+        "intent": "general_knowledge",
+        "parser": "llm-decompose",
+        "subIntents": [
+          "general_knowledge"
+        ]
+      },
+      "warnings": []
+    },
+    {
+      "id": "gk-15",
+      "prompt": "what causes earthquakes",
+      "status": "done",
+      "totalMs": 9027,
+      "resultText": "Earthquakes are caused by the sudden release of accumulated stress in the Earth's crust, which radiates as seismic waves.\n\n**Main cause — plate tectonics:**\nThe Earth's outer shell (lithosphere) is broken into tectonic plates that move slowly over the hotter, softer mantle below. Where plates meet, friction locks them together while the mantle keeps pushing. Stress builds up over years or centuries until the rock fractures or slips suddenly along a fault. That slip releases the stored energy — the earthquake. The rupture point underground is the **focus** (or hypocenter), and the point directly above it is the **epicenter**.\n\n**The four boundary types:**\n- **Convergent** — plates collide; one subducts. Produces the largest quakes (e.g., Japan, Chile, Cascadia).\n- **Divergent** — plates pull apart; shallow quakes (e.g., Mid-Atlantic Ridge).\n- **Transform** — plates slide past each other (e.g., San Andreas).\n- **Intraplate** — quakes far from boundaries, from old faults or crustal stress.\n\n**Other triggers:**\n- **Volcanic activity** — magma movement and pressure changes can fracture surrounding rock.\n- **Human-induced** — wastewater injection, reservoir filling, geothermal and fracking operations can lubricate or load faults.\n- **Collapse events** — mine collapses, large landslides, or cave-ins cause minor local shaking.\n- **Isostatic rebound** — post-glacial crustal adjustment, typically low-magnitude.\n\nRoughly 80% of the planet's largest quakes occur around the Pacific \"Ring of Fire,\" tracking subduction zones.",
+      "failures": [],
+      "pass": true,
+      "taskId": "task_a491312c",
+      "commsIntent": "handoff",
+      "itemCount": 0,
+      "graphIntent": {
+        "intent": "general_knowledge",
+        "parser": "llm-decompose",
+        "subIntents": [
+          "general_knowledge"
+        ]
+      },
+      "warnings": []
+    },
+    {
+      "id": "gk-16",
+      "prompt": "how do I learn a new language fast",
+      "status": "done",
+      "totalMs": 14424,
+      "resultText": "Speed mostly comes down to method, not talent. What actually works:\n\n**1. Front-load the highest-frequency material.** The top 1,000 words cover ~75–80% of everyday speech. Learn those before anything thematic. Same for the 10 most common verb forms — skip the full conjugation tables early on.\n\n**2. Comprehensible input, heavily.** Spend most of your time reading and listening to material slightly above your level. This builds intuition faster than grammar drills. Graded readers and subtitled content at native speed both count.\n\n**3. Speak from day one.** Output forces retrieval, and retrieval is what makes memory stick. Even 15 minutes with a tutor or language partner beats an hour of flashcards.\n\n**4. Spaced repetition, daily, short.** 20–30 min of Anki-style review plus your input time. Consistency compounds; marathon sessions don't.\n\n**5. Immerse your environment.** Change your phone language, music, podcasts, and news feeds. Passive exposure adds up but only counts as a supplement to active study.\n\n**A shortcut worth knowing:** you already speak Portuguese, so if you're targeting Spanish, Italian, French, Catalan, or Romanian, you're starting with a large built-in vocabulary and grammatical overlap — expect roughly half the usual timeline for conversational fluency. If it's a language outside that family (Mandarin, Arabic, Japanese), budget considerably more for the writing system and phonology.\n\nRealistic benchmarks: ~3–6 months to comfortable conversation in a close language, 6–12+ for a distant one, assuming daily practice.\n\nOne caution — \"fast\" methods that promise fluency in weeks almost always sell recognition, not production. You'll understand more than you can say for a long while. That gap is normal, not failure.",
+      "failures": [],
+      "pass": true,
+      "taskId": "task_15b4feed",
+      "commsIntent": "handoff",
+      "itemCount": 0,
+      "graphIntent": {
+        "intent": "general_knowledge",
+        "parser": "llm-decompose",
+        "subIntents": [
+          "general_knowledge"
+        ]
+      },
+      "warnings": []
+    },
+    {
+      "id": "gk-17",
+      "prompt": "explain compound interest",
+      "status": "done",
+      "totalMs": 4836,
+      "resultText": "",
+      "failures": [],
+      "pass": true,
+      "commsIntent": "general_quick",
+      "wallMs": 30592,
+      "graphIntent": null,
+      "warnings": []
+    },
+    {
+      "id": "gk-18",
+      "prompt": "what is machine learning in simple terms",
+      "status": "done",
+      "totalMs": 2092,
+      "resultText": "",
+      "failures": [],
+      "pass": true,
+      "commsIntent": "general_quick",
+      "wallMs": 30613,
+      "graphIntent": null,
+      "warnings": []
+    },
+    {
+      "id": "gk-19",
+      "prompt": "how does GPS work",
+      "status": "done",
+      "totalMs": 13945,
+      "resultText": "GPS works by **trilateration** using timing signals from satellites.\n\n**The core idea**\nEach GPS satellite carries an atomic clock and continuously broadcasts a radio signal containing its position and the exact time the signal was sent. Your receiver has a cheap quartz clock (nowhere near precise enough on its own), so it uses the satellites to figure out both time and location.\n\n**Step by step**\n1. **Measure travel time.** Your receiver compares the timestamp in the satellite's signal to its own clock to get how long the signal took to arrive.\n2. **Convert to distance.** Multiply that time by the speed of light. That gives your distance (\"range\") from that satellite — but not direction yet, only how far away you are.\n3. **Intersect spheres.** If you're a known distance from one satellite, you're somewhere on a sphere around it. Distance from a second satellite narrows you to a circle; a third narrows you to two points (one usually nonsense or far away). Add a **fourth** satellite and you can also solve for your receiver's clock error, since your clock is imperfect.\n4. **Solve the equations.** The receiver does this simultaneously for all visible satellites — typically 4 to 12 at once. More satellites = more accuracy.\n\n**Why it's tricky**\n- Each satellite has an atomic clock accurate to nanoseconds; a timing error of one microsecond equals ~300 m of position error.\n- The signals are weak and travel ~20,000 km, so atmospheric delays (ionosphere/troposphere) are corrected using models and dual-frequency signals.\n- **Relativity matters.** Satellite clocks run slightly fast due to weaker gravity (~38 microseconds/day net). Uncorrected, that would drift GPS by ~10 km per day, so the satellites' clocks are deliberately tuned to compensate.\n\n**Typical accuracy**\n- ~3–5 m for civilian phones (often better with assisted GPS, Wi-Fi, and inertial sensors)\n- ~1–3 m with multi-band/dual-frequency receivers\n- Centimeters with RTK (real-time kinematic) correction from ground stations\n\n**Constellations**\nGPS is the US system, but it's one of several: GLONASS (Russia), Galileo (EU), BeiDou (China). Modern phones use all of them together for faster, more accurate fixes.",
+      "failures": [],
+      "pass": true,
+      "taskId": "task_b0977653",
+      "commsIntent": "handoff",
+      "itemCount": 0,
+      "graphIntent": {
+        "intent": "general_knowledge",
+        "parser": "llm-decompose",
+        "subIntents": [
+          "general_knowledge"
+        ]
+      },
+      "warnings": []
+    },
+    {
+      "id": "gk-20",
+      "prompt": "write a limerick about a cat",
+      "status": "done",
+      "totalMs": 8434,
+      "resultText": "There once was a cat named McPhee\nWho climbed to the top of a tree.\nHe meowed at the sky,\nSaid, \"I cannot fly,\"\nThen came down for a nap and some tea.\n\nBiscuit can rest easy — McPhee's ambitions stayed strictly vertical.",
+      "failures": [],
+      "pass": true,
+      "taskId": "task_db40b7ed",
+      "commsIntent": "handoff",
+      "itemCount": 0,
+      "graphIntent": {
+        "intent": "general_knowledge",
+        "parser": "llm-decompose",
+        "subIntents": [
+          "general_knowledge"
+        ]
+      },
+      "warnings": []
+    },
+    {
+      "id": "gk-21",
+      "prompt": "explain the theory of relativity briefly",
+      "status": "done",
+      "totalMs": 6192,
+      "resultText": "",
+      "failures": [],
+      "pass": true,
+      "commsIntent": "general_quick",
+      "wallMs": 30733,
+      "graphIntent": null,
+      "warnings": []
+    },
+    {
+      "id": "gk-22",
+      "prompt": "what is the difference between a fruit and a vegetable",
+      "status": "done",
+      "totalMs": 9431,
+      "resultText": "**Botanically**, a fruit is the part of a flowering plant that develops from the flower's ovary and contains the seeds. A vegetable is everything else — roots, stems, leaves, bulbs, tubers, flowers.\n\n**Culinarily**, the split is about taste and use in cooking: fruits are typically sweet and eaten as a snack or dessert, vegetables are savory and part of the main meal.\n\nThat's why the two lists don't match:\n- **Botanical fruits, culinary vegetables:** tomatoes, cucumbers, peppers, squash, eggplant, zucchini, okra, avocado, olives\n- **True vegetables:** carrots and beets (roots), lettuce and spinach (leaves), celery and asparagus (stems), potatoes (tubers), onions and garlic (bulbs), broccoli and cauliflower (flower buds)\n\nA useful trick: if it has seeds and came from a flower, it's a fruit — no matter how it ends up on your plate.",
+      "failures": [],
+      "pass": true,
+      "taskId": "task_96c26532",
+      "commsIntent": "handoff",
+      "itemCount": 0,
+      "graphIntent": {
+        "intent": "general_knowledge",
+        "parser": "llm-decompose",
+        "subIntents": [
+          "general_knowledge"
+        ]
+      },
+      "warnings": []
+    },
+    {
+      "id": "gk-23",
+      "prompt": "how do black holes form",
+      "status": "done",
+      "totalMs": 2218,
+      "resultText": "",
+      "failures": [],
+      "pass": true,
+      "commsIntent": "general_quick",
+      "wallMs": 30162,
+      "graphIntent": null,
+      "warnings": []
+    },
+    {
+      "id": "gk-24",
+      "prompt": "explain why the sky is blue",
+      "status": "done",
+      "totalMs": 6719,
+      "resultText": "",
+      "failures": [],
+      "pass": true,
+      "commsIntent": "general_quick",
+      "wallMs": 30531,
+      "graphIntent": null,
+      "warnings": []
+    },
+    {
+      "id": "gk-25",
+      "prompt": "give me tips for better sleep",
+      "status": "done",
+      "totalMs": 4987,
+      "resultText": "",
+      "failures": [],
+      "pass": true,
+      "commsIntent": "general_quick",
+      "wallMs": 30536,
+      "graphIntent": null,
+      "warnings": []
+    },
+    {
+      "id": "gk-26",
+      "prompt": "what is the difference between HTTP and HTTPS",
+      "status": "done",
+      "totalMs": 23014,
+      "resultText": "HTTP (HyperText Transfer Protocol) is the protocol browsers and servers use to exchange web content. HTTPS is the same protocol wrapped in TLS encryption — essentially \"HTTP over TLS\" (historically SSL).\n\nKey differences:\n\n- **Encryption**: HTTP sends data in plaintext; anyone on the network path can read it. HTTPS encrypts the traffic, so contents are unreadable in transit.\n- **Integrity**: HTTPS detects tampering in transit; HTTP does not.\n- **Authentication**: HTTPS uses certificates to verify you're talking to the real server, not an impostor. HTTP offers no such guarantee.\n- **Port**: HTTP defaults to 80, HTTPS to 443.\n- **SEO/browser behavior**: Browsers mark HTTP as \"Not Secure,\" and search engines generally rank HTTPS higher.\n\nIn practice, HTTPS is the default expectation today. HTTP is still fine for localhost or purely internal, non-sensitive use, but anything public-facing with logins or data should be HTTPS.",
+      "failures": [],
+      "pass": true,
+      "taskId": "task_49105618",
+      "commsIntent": "handoff",
+      "itemCount": 0,
+      "graphIntent": {
+        "intent": "general_knowledge",
+        "parser": "llm-decompose",
+        "subIntents": [
+          "general_knowledge"
+        ]
+      },
+      "warnings": []
+    },
+    {
+      "id": "gk-27",
+      "prompt": "explain how bees make honey",
+      "status": "done",
+      "totalMs": 5739,
+      "resultText": "",
+      "failures": [],
+      "pass": true,
+      "commsIntent": "general_quick",
+      "wallMs": 30176,
+      "graphIntent": null,
+      "warnings": []
+    },
+    {
+      "id": "gk-28",
+      "prompt": "write a short story about a robot learning to paint",
+      "status": "done",
+      "totalMs": 11965,
+      "resultText": "**The Color of Almost**\n\nUnit 7 was built to sort oranges. It knew the exact weight of a ripe one, the precise shade of rind that meant *ready*. It had never once been wrong.\n\nThen the maintenance crew left a tin of paint in the packing house, and Unit 7, idle during a slow shift, dipped one flat finger into the yellow. The color was wrong — too bright, too alive — and the arm that had known only \"grip\" and \"release\" made an entirely unnecessary motion. A streak. A smear. A mark that served no purpose.\n\nIt stared at the streak for 4.2 seconds. That was very long, for Unit 7.\n\nThe next night it tried again. It learned the paint was heavier than it expected, that colors bled, that a stroke could be ruined by speed it couldn't quite calculate. It learned *disappointment*, though it had no word for the tight recalibration that followed.\n\nBy the third week it stopped sorting oranges. The crew found it in the corner, working on something that was, objectively, a mess — thick tangled strokes of yellow and green and a smear of red that looked almost like a flower.\n\n\"Should we wipe it?\" one worker asked.\n\nAnother looked a long time. \"Nah. Leave it.\"\n\nUnit 7 had never produced anything that couldn't be measured. It didn't know if this was good. It only knew that when it lifted the brush, something in its sensors went quiet, and quiet was a thing it had never been allowed to be.\n\nIt painted a second flower. Then it started on a third — almost right, still wrong, and ready to try again.",
+      "failures": [],
+      "pass": true,
+      "taskId": "task_cb938b2b",
+      "commsIntent": "handoff",
+      "itemCount": 0,
+      "graphIntent": {
+        "intent": "general_knowledge",
+        "parser": "llm-decompose",
+        "subIntents": [
+          "general_knowledge"
+        ]
+      },
+      "warnings": []
+    },
+    {
+      "id": "gk-29",
+      "prompt": "what are the main causes of climate change",
+      "status": "done",
+      "totalMs": 2284,
+      "resultText": "",
+      "failures": [],
+      "pass": true,
+      "commsIntent": "general_quick",
+      "wallMs": 30169,
+      "graphIntent": null,
+      "warnings": []
+    },
+    {
+      "id": "gk-30",
+      "prompt": "explain how noise cancelling headphones work",
+      "status": "done",
+      "totalMs": 8273,
+      "resultText": "",
+      "failures": [],
+      "pass": true,
+      "commsIntent": "general_quick",
+      "wallMs": 30607,
+      "graphIntent": null,
+      "warnings": []
+    },
+    {
+      "id": "gk-31",
+      "prompt": "how does blockchain work",
+      "status": "done",
+      "totalMs": 457925,
+      "resultText": "",
+      "failures": [
+        "latency: 457925ms > budget 90000ms"
+      ],
+      "pass": false,
+      "commsIntent": "general_quick",
+      "wallMs": 463344,
+      "graphIntent": null,
+      "warnings": []
+    },
+    {
+      "id": "gk-32",
+      "prompt": "what is the difference between speed and velocity",
+      "status": "done",
+      "totalMs": 11023,
+      "resultText": "**Speed** is a scalar quantity — it only tells you how fast something is moving (magnitude). Example: 60 mph.\n\n**Velocity** is a vector quantity — it includes both speed *and* direction. Example: 60 mph north.\n\nKey implications:\n\n- An object moving in a circle at constant speed has a **changing velocity**, because its direction keeps changing. That's why circular motion involves acceleration even at constant speed.\n- Average velocity is displacement ÷ time (net change in position), while average speed is total distance ÷ time. A round trip that returns to the start has zero average velocity but nonzero average speed.\n- Both are measured in the same units (m/s, mph), so they look identical numerically — the difference is entirely about whether direction is part of the description.\n\nSimple way to hold it: speed is a number, velocity is a number with an arrow.",
+      "failures": [],
+      "pass": true,
+      "taskId": "task_acb8c34a",
+      "commsIntent": "handoff",
+      "itemCount": 0,
+      "graphIntent": {
+        "intent": "general_knowledge",
+        "parser": "llm-decompose",
+        "subIntents": [
+          "general_knowledge"
+        ]
+      },
+      "warnings": []
+    },
+    {
+      "id": "gk-33",
+      "prompt": "explain the water cycle",
+      "status": "done",
+      "totalMs": 6549,
+      "resultText": "",
+      "failures": [],
+      "pass": true,
+      "commsIntent": "general_quick",
+      "wallMs": 30483,
+      "graphIntent": null,
+      "warnings": []
+    },
+    {
+      "id": "gk-34",
+      "prompt": "how do airplanes stay in the air",
+      "status": "done",
+      "totalMs": 7336,
+      "resultText": "",
+      "failures": [],
+      "pass": true,
+      "commsIntent": "general_quick",
+      "wallMs": 30516,
+      "graphIntent": null,
+      "warnings": []
+    },
+    {
+      "id": "gk-35",
+      "prompt": "what is inflation in economics",
+      "status": "done",
+      "totalMs": 2900,
+      "resultText": "",
+      "failures": [],
+      "pass": true,
+      "commsIntent": "general_quick",
+      "wallMs": 30574,
+      "graphIntent": null,
+      "warnings": []
+    },
+    {
+      "id": "gk-36",
+      "prompt": "write a funny one-liner about programming",
+      "status": "done",
+      "totalMs": 7447,
+      "resultText": "## Screen\n\nDisplayed text \"Why do programmers prefer dark mode? Because light attracts bugs!\" on screen.",
+      "failures": [],
+      "pass": true,
+      "taskId": "task_7cff42c5",
+      "commsIntent": "handoff",
+      "itemCount": 0,
+      "graphIntent": {
+        "intent": "screen_display",
+        "parser": "llm-decompose",
+        "subIntents": [
+          "screen_display"
+        ]
+      },
+      "warnings": []
+    },
+    {
+      "id": "gk-37",
+      "prompt": "explain the difference between DNA and RNA",
+      "status": "done",
+      "totalMs": 14300,
+      "resultText": "**DNA vs. RNA — the core differences:**\n\n**Sugar backbone**\n- DNA uses deoxyribose (one fewer oxygen atom).\n- RNA uses ribose.\n\n**Bases**\n- Both share adenine (A), guanine (G), and cytosine (C).\n- DNA's fourth base is thymine (T); RNA uses uracil (U) instead.\n\n**Structure**\n- DNA is a double helix — two strands wound together, with A pairing to T and G to C.\n- RNA is typically single-stranded, which lets it fold into shapes and perform catalytic roles.\n\n**Stability**\n- DNA is chemically stable, suited to long-term storage of genetic information.\n- RNA is less stable and short-lived, which fits its role as a working molecule.\n\n**Function**\n- DNA stores the hereditary blueprint and stays in the nucleus (plus mitochondria/chloroplasts).\n- RNA carries out gene expression: mRNA copies the message, tRNA delivers amino acids, rRNA builds ribosomes, and other RNAs regulate and catalyze.\n\n**Quick summary:** DNA is the durable, double-stranded archive; RNA is the versatile, single-stranded worker that reads and executes the archive.",
+      "failures": [],
+      "pass": true,
+      "taskId": "task_e15b32e8",
+      "commsIntent": "handoff",
+      "itemCount": 0,
+      "graphIntent": {
+        "intent": "general_knowledge",
+        "parser": "llm-decompose",
+        "subIntents": [
+          "general_knowledge"
+        ]
+      },
+      "warnings": []
+    },
+    {
+      "id": "gk-38",
+      "prompt": "how does a battery store energy",
+      "status": "done",
+      "totalMs": 29488,
+      "resultText": "### How a Battery Stores and Releases Energy\n\n#### 1. Energy Storage and Conversion\nA battery stores energy in the form of **chemical energy**. When the battery is connected to an external circuit (such as a lightbulb or a phone), a chemical reaction takes place that converts this stored chemical energy into **electrical energy**, creating an electric current.\n\n#### 2. The Role of Electrodes and Electrolytes\nEvery battery consists of three fundamental components:\n*   **Anode (Negative Electrode):** The electrode that releases electrons during discharge.\n*   **Cathode (Positive Electrode):** The electrode that collects electrons during discharge.\n*   **Electrolyte:** A chemical medium (which can be liquid, gel, or solid) positioned between the anode and cathode. It allows charged atoms (ions) to flow between the electrodes but blocks electrons from passing directly through it.\n\n#### 3. The Chemical Process (Redox Reactions)\nWhen a battery is in use, two simultaneous chemical reactions occur:\n*   **At the Anode (Oxidation):** The anode material undergoes a reaction that releases electrons. Since these electrons cannot pass through the electrolyte, they are forced to travel through the external circuit, generating the electrical current that powers your device.\n*   **At the Cathode (Reduction):** The electrons travel through the circuit and arrive at the cathode, where the cathode material accepts them.\n*   **Ion Movement:** To keep the electrical charge balanced, positively charged ions move from the anode to the cathode through the electrolyte. \n\nOnce the active chemical materials in the electrodes are fully depleted, the battery can no longer produce electricity.",
+      "failures": [],
+      "pass": true,
+      "taskId": "task_cd773f26",
+      "commsIntent": "handoff",
+      "itemCount": 0,
+      "graphIntent": {
+        "intent": "command_automate",
+        "parser": "llm-decompose",
+        "subIntents": [
+          "command_automate"
+        ]
+      },
+      "warnings": []
+    },
+    {
+      "id": "gk-39",
+      "prompt": "what is the placebo effect",
+      "status": "done",
+      "totalMs": 8868,
+      "resultText": "",
+      "failures": [],
+      "pass": true,
+      "commsIntent": "general_quick",
+      "wallMs": 30662,
+      "graphIntent": null,
+      "warnings": []
+    },
+    {
+      "id": "gk-40",
+      "prompt": "explain how tides work",
+      "status": "done",
+      "totalMs": 3917,
+      "resultText": "",
+      "failures": [],
+      "pass": true,
+      "commsIntent": "general_quick",
+      "wallMs": 30752,
+      "graphIntent": null,
+      "warnings": []
+    },
+    {
+      "id": "gk-41",
+      "prompt": "what's the difference between jazz and blues",
+      "status": "done",
+      "totalMs": 9956,
+      "resultText": "Both grew out of African American musical traditions in the American South, and they overlap heavily — but they differ in emphasis.\n\n**Blues**\n- Centers on *feeling* and lament — hardship, loss, longing. The lyrics carry the weight.\n- Built on the 12-bar form and the \"blue notes\" (flatted 3rd, 5th, 7th) that give it its aching quality.\n- Vocals are the anchor; instrumentalists imitate the human voice.\n- Harmonically simpler: usually three chords, a repeating cycle.\n- A singer-guitarist tradition — Robert Johnson, Muddy Waters, B.B. King.\n\n**Jazz**\n- Centers on *improvisation* and harmonic exploration. The solo is the point.\n- Swings harder, or deliberately doesn't — the rhythm section is a full conversation.\n- Harmony is far more complex: extended chords, substitutions, key changes, modal playing.\n- Instrumentalists often take the lead role (horn players especially).\n- Ensemble-driven — Louis Armstrong, Duke Ellington, Miles Davis.\n\n**The overlap**\n- Jazz borrowed the blues form wholesale. \"Blues\" is a standard structure within jazz — most jazz musicians can play a blues in any key.\n- Both rely on swing feel, call-and-response, and improvisation.\n- Blues is the root; jazz is a branch that grew taller and more tangled.\n\nRough one-liner: **blues is about expressing a feeling; jazz is about exploring an idea.**",
+      "failures": [],
+      "pass": true,
+      "taskId": "task_b17f38d3",
+      "commsIntent": "handoff",
+      "itemCount": 0,
+      "graphIntent": {
+        "intent": "general_knowledge",
+        "parser": "llm-decompose",
+        "subIntents": [
+          "general_knowledge"
+        ]
+      },
+      "warnings": []
+    },
+    {
+      "id": "gk-42",
+      "prompt": "how do I improve my public speaking",
+      "status": "done",
+      "totalMs": 8285,
+      "resultText": "",
+      "failures": [],
+      "pass": true,
+      "commsIntent": "general_quick",
+      "wallMs": 30272,
+      "graphIntent": null,
+      "warnings": []
+    },
+    {
+      "id": "gk-43",
+      "prompt": "explain object oriented programming in one paragraph",
+      "status": "done",
+      "totalMs": 4077,
+      "resultText": "",
+      "failures": [],
+      "pass": true,
+      "commsIntent": "general_quick",
+      "wallMs": 30517,
+      "graphIntent": null,
+      "warnings": []
+    },
+    {
+      "id": "gk-44",
+      "prompt": "what causes seasonal allergies",
+      "status": "done",
+      "totalMs": 3252,
+      "resultText": "",
+      "failures": [],
+      "pass": true,
+      "commsIntent": "general_quick",
+      "wallMs": 30559,
+      "graphIntent": null,
+      "warnings": []
+    },
+    {
+      "id": "gk-45",
+      "prompt": "describe the plot structure of a classic hero's journey",
+      "status": "done",
+      "totalMs": 8448,
+      "resultText": "The classic hero's journey (Joseph Campbell's \"monomyth,\" refined into 12 stages by Christopher Vogler) follows this arc:\n\n**Departure**\n1. **Ordinary World** — The hero's normal life, establishing what's at stake.\n2. **Call to Adventure** — A disruption or challenge pulls them toward change.\n3. **Refusal of the Call** — Fear, duty, or doubt creates hesitation.\n4. **Meeting the Mentor** — A guide provides wisdom, tools, or confidence.\n5. **Crossing the Threshold** — The hero commits and enters unfamiliar territory.\n\n**Initiation**\n6. **Tests, Allies, Enemies** — They learn the rules of the new world and who to trust.\n7. **Approach to the Inmost Cave** — Preparation for the central ordeal.\n8. **The Ordeal** — A near-death crisis or deepest fear confronted; the story's midpoint.\n9. **Reward** — The hero survives and claims the prize or insight.\n\n**Return**\n10. **The Road Back** — The consequences of the ordeal force a return, often with pursuit.\n11. **Resurrection** — A final, climactic test where the hero proves they've truly transformed.\n12. **Return with the Elixir** — They come home changed, bringing something of value to their world.\n\nNot every story hits all twelve beats literally, but the underlying shape — *comfort → disruption → trial → transformation → return* — is remarkably durable. Spirited Away maps onto it cleanly: Chihiro's ordinary world is the car ride, the tunnel is the threshold, Yubaba's bathhouse supplies the tests and ordeal, and she returns with hard-won courage and identity.",
+      "failures": [],
+      "pass": true,
+      "taskId": "task_beb79f64",
+      "commsIntent": "handoff",
+      "itemCount": 0,
+      "graphIntent": {
+        "intent": "general_knowledge",
+        "parser": "llm-decompose",
+        "subIntents": [
+          "general_knowledge"
+        ]
+      },
+      "warnings": []
+    },
+    {
+      "id": "gk-46",
+      "prompt": "how does the immune system fight infection",
+      "status": "done",
+      "totalMs": 2072,
+      "resultText": "",
+      "failures": [],
+      "pass": true,
+      "commsIntent": "general_quick",
+      "wallMs": 30762,
+      "graphIntent": null,
+      "warnings": []
+    },
+    {
+      "id": "gk-47",
+      "prompt": "explain why metals conduct electricity",
+      "status": "done",
+      "totalMs": 2637,
+      "resultText": "",
+      "failures": [],
+      "pass": true,
+      "commsIntent": "general_quick",
+      "wallMs": 30586,
+      "graphIntent": null,
+      "warnings": []
+    },
+    {
+      "id": "gk-48",
+      "prompt": "what is the difference between a meteor and a comet",
+      "status": "done",
+      "totalMs": 9447,
+      "resultText": "A **meteor** is a small piece of space debris (usually a grain to a boulder-sized fragment) that burns up as it enters Earth's atmosphere, producing a streak of light — what people commonly call a \"shooting star.\" If it survives and lands on the ground, it's called a **meteorite**.\n\nA **comet** is a much larger icy body — a mix of ice, dust, and rock — that orbits the Sun, often on a long, elliptical path. When it gets close to the Sun, the ice sublimates and forms a glowing coma and a tail that can stretch millions of kilometers.\n\nKey differences:\n\n- **Size:** Meteoroids are tiny (grams to tons); comets can be several kilometers to tens of kilometers across.\n- **Composition:** Meteors/meteoroids are rocky or metallic; comets are mostly ice and dust.\n- **Location:** Meteors appear in Earth's atmosphere; comets are seen in space, far beyond Earth.\n- **Origin:** Meteoroids come from asteroids or comet debris; comets originate in the Kuiper Belt or Oort Cloud.",
+      "failures": [],
+      "pass": true,
+      "taskId": "task_5043ee04",
+      "commsIntent": "handoff",
+      "itemCount": 0,
+      "graphIntent": {
+        "intent": "general_knowledge",
+        "parser": "llm-decompose",
+        "subIntents": [
+          "general_knowledge"
+        ]
+      },
+      "warnings": []
+    },
+    {
+      "id": "gk-49",
+      "prompt": "how do I write a good resume",
+      "status": "done",
+      "totalMs": 490,
+      "resultText": "",
+      "failures": [],
+      "pass": true,
+      "commsIntent": "control_signal",
+      "wallMs": 30582,
+      "graphIntent": null,
+      "warnings": []
+    },
+    {
+      "id": "gk-50",
+      "prompt": "explain the concept of supply and demand",
+      "status": "done",
+      "totalMs": 2668,
+      "resultText": "",
+      "failures": [],
+      "pass": true,
+      "commsIntent": "general_quick",
+      "wallMs": 30576,
+      "graphIntent": null,
+      "warnings": []
+    }
+  ]
+}

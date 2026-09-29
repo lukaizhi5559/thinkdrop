@@ -1,0 +1,964 @@
+{
+  "file": "tests/e2e/prompts/intent-memory-retrieve.json",
+  "at": "2026-09-28T18:06:32.659Z",
+  "softRoute": true,
+  "results": [
+    {
+      "id": "mr-01",
+      "prompt": "what did I say my name was",
+      "status": "done",
+      "totalMs": 31530,
+      "resultText": "Your name is **Ravi** — that's what's in your profile.\n\nI don't see an actual message in our history where you typed it out, though. The related entries are all you *asking* \"what is my name\" / \"what's my name\" (most recently September 28 at 9:34 AM, and going back through September and June). So if it turns out that's not right, tell me and I'll update it.",
+      "failures": [],
+      "pass": true,
+      "taskId": "task_b1628912",
+      "commsIntent": "handoff",
+      "itemCount": 0,
+      "graphIntent": {
+        "intent": "memory_retrieve",
+        "parser": "llm-decompose",
+        "subIntents": [
+          "memory_retrieve"
+        ]
+      },
+      "warnings": []
+    },
+    {
+      "id": "mr-02",
+      "prompt": "what is my favorite color",
+      "status": "done",
+      "totalMs": 11825,
+      "resultText": "",
+      "failures": [],
+      "pass": true,
+      "commsIntent": "memory_quick",
+      "wallMs": 30567,
+      "graphIntent": null,
+      "warnings": []
+    },
+    {
+      "id": "mr-03",
+      "prompt": "remind me what my email is",
+      "status": "done",
+      "totalMs": 9188,
+      "resultText": "",
+      "failures": [],
+      "pass": true,
+      "commsIntent": "memory_quick",
+      "wallMs": 30533,
+      "graphIntent": null,
+      "warnings": []
+    },
+    {
+      "id": "mr-04",
+      "prompt": "what did we talk about earlier",
+      "status": "done",
+      "totalMs": 10427,
+      "resultText": "Most recently — the last few turns before this question — you were asking me to recall things about you: what you'd said your name was, what your favorite color is, and what your email is on file.\n\nBefore that, this afternoon (September 28, 2026) was mostly a run of the same questions repeated several times:\n\n- Who the president of France is\n- iPhone vs Android\n- How to reset your router\n- When the iPhone was released\n- iPhone 16 and PS5 prices\n- When Thanksgiving is this year\n- How far the Moon is from Earth\n\nAnd then a string of one-off facts starting around 1:44 PM:\n\n- The tallest building in the world (Burj Khalifa)\n- The deepest part of the ocean (Challenger Deep)\n- Who invented the telephone (Bell)\n- Who wrote *Pride and Prejudice* (Austen)\n- The chemical symbol for gold (Au) — asked twice\n- San Francisco ZIP codes\n- New York area codes\n- Where the U.S. Capitol building is\n\nOne other thing on record from earlier today: at 7:00 AM you told me something about **basketball**.\n\nWant me to pull up any of those answers again?",
+      "failures": [],
+      "pass": true,
+      "taskId": "task_b8a29bbf",
+      "commsIntent": "handoff",
+      "itemCount": 0,
+      "graphIntent": {
+        "intent": "memory_retrieve",
+        "parser": "llm-decompose",
+        "subIntents": [
+          "memory_retrieve"
+        ]
+      },
+      "warnings": []
+    },
+    {
+      "id": "mr-05",
+      "prompt": "what was I working on before",
+      "status": "running",
+      "totalMs": 46046,
+      "resultText": "",
+      "failures": [
+        "status: expected \"done\", got \"running\"",
+        "latency: 46046ms > budget 45000ms"
+      ],
+      "pass": false,
+      "taskId": "task_a8a808aa",
+      "commsIntent": "handoff",
+      "itemCount": 0,
+      "graphIntent": null,
+      "warnings": []
+    },
+    {
+      "id": "mr-06",
+      "prompt": "did I mention my dentist appointment",
+      "status": "running",
+      "totalMs": 45516,
+      "resultText": "",
+      "failures": [
+        "status: expected \"done\", got \"running\"",
+        "latency: 45516ms > budget 45000ms"
+      ],
+      "pass": false,
+      "taskId": "task_1ec7dda9",
+      "commsIntent": "handoff",
+      "itemCount": 0,
+      "graphIntent": {
+        "intent": "memory_retrieve",
+        "parser": "llm-decompose",
+        "subIntents": [
+          "memory_retrieve"
+        ]
+      },
+      "warnings": []
+    },
+    {
+      "id": "mr-07",
+      "prompt": "when did I last talk about my birthday",
+      "status": "running",
+      "totalMs": 45046,
+      "resultText": "",
+      "failures": [
+        "status: expected \"done\", got \"running\"",
+        "latency: 45046ms > budget 45000ms"
+      ],
+      "pass": false,
+      "taskId": "task_560d63a4",
+      "commsIntent": "handoff",
+      "itemCount": 0,
+      "graphIntent": {
+        "intent": "memory_retrieve",
+        "parser": "llm-decompose",
+        "subIntents": [
+          "memory_retrieve"
+        ]
+      },
+      "warnings": []
+    },
+    {
+      "id": "mr-08",
+      "prompt": "what have I asked you so far",
+      "status": "running",
+      "totalMs": 63650,
+      "resultText": "",
+      "failures": [
+        "status: expected \"done\", got \"running\"",
+        "latency: 63650ms > budget 45000ms"
+      ],
+      "pass": false,
+      "taskId": "task_76617b94",
+      "commsIntent": "handoff",
+      "itemCount": 0,
+      "graphIntent": {
+        "intent": "memory_retrieve",
+        "parser": "llm-decompose",
+        "subIntents": [
+          "memory_retrieve"
+        ]
+      },
+      "warnings": []
+    },
+    {
+      "id": "mr-09",
+      "prompt": "do you remember what I told you about my dog",
+      "status": "done",
+      "totalMs": 11468,
+      "resultText": "Yes — your dog is named Biscuit. You told me that this morning, September 28, 2026, around 9:46 AM, and I confirmed I'd remember it.",
+      "failures": [],
+      "pass": true,
+      "taskId": "task_3f7c62dd",
+      "commsIntent": "handoff",
+      "itemCount": 0,
+      "graphIntent": {
+        "intent": "memory_retrieve",
+        "parser": "llm-decompose",
+        "subIntents": [
+          "memory_retrieve"
+        ]
+      },
+      "warnings": []
+    },
+    {
+      "id": "mr-10",
+      "prompt": "what was the last thing I asked you to remember",
+      "status": "done",
+      "totalMs": 10626,
+      "resultText": "The last thing you asked me to remember was this morning, **September 28, 2026 at 10:57 AM** — you said: *\"remember my friends wedding is in July.\"*\n\nJust before that, in the same minute (10:57 AM), you also told me *\"remember the recycling goes out Thursday.\"* Other things you asked me to remember today:\n\n- **10:55 AM** — \"remember I have a haircut at 10am Saturday\"\n- **10:52 AM** — \"remember to take out the trash Wednesday night\"\n- **10:51 AM** — \"remember I promised to call grandma this weekend\"",
+      "failures": [],
+      "pass": true,
+      "taskId": "task_d26db8b4",
+      "commsIntent": "handoff",
+      "itemCount": 0,
+      "graphIntent": {
+        "intent": "memory_retrieve",
+        "parser": "llm-decompose",
+        "subIntents": [
+          "memory_retrieve"
+        ]
+      },
+      "warnings": []
+    },
+    {
+      "id": "mr-11",
+      "prompt": "have I told you where I live",
+      "status": "done",
+      "totalMs": 10944,
+      "resultText": "Yes. You live in Austin, Texas.\n\nYou've told me several times:\n- September 24, 2026 at 11:07 AM — \"You live in Austin, Texas\"\n- September 25, 2026 at 12:05 AM — \"I live in Austin\"\n- September 28, 2026 at 6:55 AM, 7:14 AM, and 7:28 AM — \"I live in Austin\"\n\nOne related note: you also told me on September 25, 2026 at 3:15 PM that your job location is California — so home is Austin, work is California.",
+      "failures": [],
+      "pass": true,
+      "taskId": "task_14307e1d",
+      "commsIntent": "handoff",
+      "itemCount": 0,
+      "graphIntent": {
+        "intent": "memory_retrieve",
+        "parser": "llm-decompose",
+        "subIntents": [
+          "memory_retrieve"
+        ]
+      },
+      "warnings": []
+    },
+    {
+      "id": "mr-12",
+      "prompt": "what do you know about me",
+      "status": "done",
+      "totalMs": 2203,
+      "resultText": "",
+      "failures": [],
+      "pass": true,
+      "commsIntent": "memory_quick",
+      "wallMs": 30485,
+      "graphIntent": null,
+      "warnings": []
+    },
+    {
+      "id": "mr-13",
+      "prompt": "summarize what Ive told you today",
+      "status": "done",
+      "totalMs": 7428,
+      "resultText": "Here's what you've told me today (September 28, 2026):\n\n**Things you asked me to remember / noted:**\n- **7:00 AM** — Basketball\n- **7:01 AM** — Portuguese\n- **10:33 AM** — Buy milk tomorrow\n- **10:47 AM** — You have a meeting at 3pm tomorrow\n- **10:51 AM** — You promised to call grandma this weekend (repeated at 1:55 PM)\n- **10:56 AM** — You have a presentation at work Monday\n\n**What you were doing on screen:**\n- **9:43–9:45 AM** — Shopping on Apple (reviewing/processing an order; searching for a Mac mini and a new Mac laptop at a good price)\n- **10:25 AM** — Working in Devin on thinkdrop (plan-1ac9d77893d2fc79.md)\n- **12:05 PM** — Watching a boxing HIIT workout on YouTube\n- **12:40 PM** — Apple order confirmation\n- **1:44 PM** — Back in Devin on thinkdrop, plus Chrome\n\nThat's the full picture for today. The most recent thing you flagged was calling grandma this weekend.",
+      "failures": [],
+      "pass": true,
+      "taskId": "task_7a0f36b6",
+      "commsIntent": "handoff",
+      "itemCount": 0,
+      "graphIntent": {
+        "intent": "memory_retrieve",
+        "parser": "llm-decompose",
+        "subIntents": [
+          "memory_retrieve"
+        ]
+      },
+      "warnings": []
+    },
+    {
+      "id": "mr-14",
+      "prompt": "what reminders did I set recently",
+      "status": "done",
+      "totalMs": 10425,
+      "resultText": "Here's what I've got on recent reminders, newest first:\n\n**Today — September 28, 2026**\n- 10:51 AM — project deadline is next Friday\n- 10:54 AM — schedule the annual checkup\n- 10:55 AM — quarterly review is next week\n- 10:57 AM — recycling goes out Thursday (logged again at 1:55 PM)\n- 10:59 AM — follow-up appointment next month\n\nFrom this morning's earlier log (in our chat): basketball at 7:00 AM, Portuguese at 7:01 AM, buy milk tomorrow, a meeting at 3pm tomorrow, and a promise to call grandma this weekend.\n\n**September 27, 2026**\n- 9:26 PM — you opened the Taskade \"AI Break Reminder Generator\" and entered a stretch reminder\n- Earlier that day, reminders around watering plants (5:00 PM) and a stretch prompt\n\n**September 26, 2026**\n- 7:19 AM — \"Stretch reminder\"\n- 6:21 PM — \"stretch\"\n- 7:05 PM — \"stretch\"\n\n**September 25, 2026**\n- 11:05 PM — \"Stretch reminder\"\n- Plus the dentist appointment next Tuesday, which you logged repeatedly that morning (8:30–9:12 AM)\n\nSo the recurring theme is stretch reminders, with the dentist, recycling, and appointment/deadline notes filling in around them. Want me to clear any of these or set something new?",
+      "failures": [],
+      "pass": true,
+      "taskId": "task_6f00232b",
+      "commsIntent": "handoff",
+      "itemCount": 0,
+      "graphIntent": {
+        "intent": "memory_retrieve",
+        "parser": "llm-decompose",
+        "subIntents": [
+          "memory_retrieve"
+        ]
+      },
+      "warnings": []
+    },
+    {
+      "id": "mr-15",
+      "prompt": "did we discuss my job",
+      "status": "done",
+      "totalMs": 7423,
+      "resultText": "Yes — a few times, actually.\n\nThe substantive bits:\n- **September 28, 2026 at 6:55 AM, 7:13 AM, and 7:27 AM** — you told me *\"I work as a product designer\"* (three separate entries).\n- **September 25, 2026 at 1:55 PM** — you mentioned working at **Google**.\n- **September 25, 2026 at 3:15 PM** — you said your **job location is California**.\n- **September 25, 2026 at 8:18 AM** — you asked *\"What's your job title?\"*\n- **September 25, 2026 at 3:15 PM** — you asked *\"When did you start working?\"*\n\nWorth noting: you also asked me *\"what is my job\"* five separate times on September 28 (6:55 AM, 7:14 AM, 7:28 AM, 7:32 AM, and 9:35 AM) — and at 7:28 AM I admitted I didn't have the answer on file yet and asked you to tell me.\n\nTo be straight with you about the state of it: the title is solid — **product designer** is in your profile. But the employer and location entries are thinner — \"you mentioned working at Google\" is phrased as something I noted *you* saying, and California is tied to the same Sept 25 window. If either of those has shifted, tell me the current version and I'll lock it in properly rather than leave you with a half-record.",
+      "failures": [],
+      "pass": true,
+      "taskId": "task_972acf1d",
+      "commsIntent": "handoff",
+      "itemCount": 0,
+      "graphIntent": {
+        "intent": "memory_retrieve",
+        "parser": "llm-decompose",
+        "subIntents": [
+          "memory_retrieve"
+        ]
+      },
+      "warnings": []
+    },
+    {
+      "id": "mr-16",
+      "prompt": "what did I tell you about my favorite food",
+      "status": "done",
+      "totalMs": 9115,
+      "resultText": "You told me your favorite food is **ramen**.\n\nIt's logged at **September 28, 2026 at 6:56 AM** (\"Your favorite food is ramen\"), and confirmed again at **7:33 AM** and **9:37 AM** the same day.",
+      "failures": [],
+      "pass": true,
+      "taskId": "task_3f813e57",
+      "commsIntent": "handoff",
+      "itemCount": 0,
+      "graphIntent": {
+        "intent": "memory_retrieve",
+        "parser": "llm-decompose",
+        "subIntents": [
+          "memory_retrieve"
+        ]
+      },
+      "warnings": []
+    },
+    {
+      "id": "mr-17",
+      "prompt": "look back in our conversation for my phone number",
+      "status": "done",
+      "totalMs": 7471,
+      "resultText": "Your phone number is **555-0134** — that's what's in your profile, and you confirmed it three times this morning (September 28, 2026 at 7:00 AM, 7:18 AM, and 7:36 AM).\n\nOne thing worth flagging: there's an older entry from **August 7, 2026 at 9:43 AM** listing **2227039302**. That's the only place that number appears, and everything since points to 555-0134. So either that was a placeholder/test, or your number changed. Want me to drop the old one?",
+      "failures": [],
+      "pass": true,
+      "taskId": "task_98a68fd8",
+      "commsIntent": "handoff",
+      "itemCount": 0,
+      "graphIntent": {
+        "intent": "memory_retrieve",
+        "parser": "llm-decompose",
+        "subIntents": [
+          "memory_retrieve"
+        ]
+      },
+      "warnings": []
+    },
+    {
+      "id": "mr-18",
+      "prompt": "check your memory for my car",
+      "status": "done",
+      "totalMs": 19947,
+      "resultText": "You drive a **blue Honda Civic** — that's what you've told me.\n\nYou logged it several times this morning (September 28, 2026): at **6:58 AM** (\"I drive a blue Honda Civic,\" twice), at **6:58 AM** and again at **7:16 AM** and **7:17 AM** as a blue Civic. You also asked me \"what car do I drive\" at 6:59 AM, 7:34 AM, and 9:38 AM today, so it's well established.\n\nOne note: I have no older car entries before today — this all comes from this morning.",
+      "failures": [],
+      "pass": true,
+      "taskId": "task_a39c2e8f",
+      "commsIntent": "handoff",
+      "itemCount": 0,
+      "graphIntent": {
+        "intent": "memory_retrieve",
+        "parser": "llm-decompose",
+        "subIntents": [
+          "memory_retrieve"
+        ]
+      },
+      "warnings": []
+    },
+    {
+      "id": "mr-19",
+      "prompt": "what was my first question",
+      "status": "done",
+      "totalMs": 10715,
+      "resultText": "I can only see back so far, so here's what I've got:\n\n**Earliest message in our recent history** — you asked: *\"look back in our conversation for my phone number\"* (this morning, before the car question).\n\n**Oldest trace across all sessions** — the session labeled \"Whats name - 05/23/2026,\" which would place it at **May 23, 2026**. The earliest messages I can surface from it are the recurring *\"what did I just ask you?\"* prompts (e.g., September 2, 2026 at 4:12 PM: \"what did I just ask you\"; 4:25 PM; 7:03 PM), but those are follow-ups, not the original opener — I don't have the actual first question from that session stored.\n\nSo: within our current conversation, your first question was about your phone number. If you mean your very first question ever, the closest I can get is that May 23, 2026 session, but the opening line itself isn't in my records. Want me to dig any further?",
+      "failures": [],
+      "pass": true,
+      "taskId": "task_78829829",
+      "commsIntent": "handoff",
+      "itemCount": 0,
+      "graphIntent": {
+        "intent": "memory_retrieve",
+        "parser": "llm-decompose",
+        "subIntents": [
+          "memory_retrieve"
+        ]
+      },
+      "warnings": []
+    },
+    {
+      "id": "mr-20",
+      "prompt": "when did I mention my wife",
+      "status": "done",
+      "totalMs": 8925,
+      "resultText": "Here's the full trail of when your wife came up:\n\n**Earliest mention**\n- **June 28, 2026 at 1:59 AM** — \"My wife is Sarah\"\n\n**Most recent thread (September 27–28, 2026)**\n- **September 27, 2026 at 10:16 PM** — three related prompts: \"Who is your spouse?\", \"What's your spouse's address?\", \"What's your spouse's job title?\"\n- **September 28, 2026 at 7:06 AM** — \"My wife — named Lena\"\n- **September 28, 2026 at 7:07 AM** — \"Your wife's name is Lena\"\n- **September 28, 2026 at 8:37 AM** — memory logged: \"The user's wife is Lena\"\n- **September 28, 2026 at 9:43 AM** — memory logged: \"The user's wife is Lena\"\n- **September 28, 2026 at 9:46 AM** — \"my wife is named Lena\" (and a confirming note at 9:46 AM)\n\nAlso, in this same session on September 28 you asked **\"what is my wife named\"** several times — at **7:07 AM**, **8:54 AM**, **9:44 AM**, and **9:46 AM**.\n\nOne flag: the name shifted. The **June 28, 2026** entry says **Sarah**, but everything from **September 28, 2026** onward says **Lena**. I've been going with **Lena** as the current answer — let me know if that's wrong.",
+      "failures": [],
+      "pass": true,
+      "taskId": "task_0725322c",
+      "commsIntent": "handoff",
+      "itemCount": 0,
+      "graphIntent": {
+        "intent": "memory_retrieve",
+        "parser": "llm-decompose",
+        "subIntents": [
+          "memory_retrieve"
+        ]
+      },
+      "warnings": []
+    },
+    {
+      "id": "mr-21",
+      "prompt": "what have I told you about my hobbies",
+      "status": "done",
+      "totalMs": 8926,
+      "resultText": "You've told me one hobby, pretty consistently: **rock climbing.**\n\n- **September 28, 2026 at 7:03 AM** — \"My hobby — rock climbing\"\n- **September 28, 2026 at 7:04 AM** — \"Your hobby is rock climbing\"\n- **September 28, 2026 at 7:49 AM** — \"The user's hobby is rock climbing.\"\n- **September 28, 2026 at 9:42 AM** — \"The user's hobby is rock climbing.\"\n\nYou also asked me \"what is my hobby\" four separate times that morning (7:04 AM twice, 8:05 AM, and 9:42 AM).\n\nRelated, though technically a sport rather than a hobby: **basketball** — you told me that at **September 28, 2026 at 7:19 AM**.\n\nOne note: earlier that same day, **September 28, 2026 at 12:29 AM**, the record still said your \"interests and passions have not yet been established due to a lack of recorded activity.\" That got overwritten by the rock climbing entries a few hours later.\n\nSo the short answer: rock climbing, with basketball as your favorite sport.",
+      "failures": [],
+      "pass": true,
+      "taskId": "task_02acf2f9",
+      "commsIntent": "handoff",
+      "itemCount": 0,
+      "graphIntent": {
+        "intent": "memory_retrieve",
+        "parser": "llm-decompose",
+        "subIntents": [
+          "memory_retrieve"
+        ]
+      },
+      "warnings": []
+    },
+    {
+      "id": "mr-22",
+      "prompt": "did I say anything about music",
+      "status": "done",
+      "totalMs": 18457,
+      "resultText": "I don't have any record of you mentioning music.\n\nWhat I can see:\n\n- **Screen (Devin window, `plan-1ac9d77893d2fc79.md`)** — a ThinkDrop plan doc scrolled to a test-corpus checklist (\"Corpora (tests/e2e/prompts/intent*.json)\"). Your music question appears echoed near the bottom as part of the visible text, alongside \"what have I told you about hobbies\" and \"rock climbing.\"\n- **Conversation history** — nothing about music. It's been phone number, wife (Sarah), hobbies (rock climbing), and session traces.\n- **Memory data** — the observation entries are all placeholder `[memory]` tags with no actual content, so nothing to pull from there either.\n\nSo: no music mentions on record. If you said something about it in a session I can't see, it isn't surfacing here.",
+      "failures": [],
+      "pass": true,
+      "taskId": "task_ac4f508c",
+      "commsIntent": "handoff",
+      "itemCount": 0,
+      "graphIntent": {
+        "intent": "screen_intelligence",
+        "parser": "llm-decompose",
+        "subIntents": [
+          "screen_intelligence"
+        ]
+      },
+      "warnings": []
+    },
+    {
+      "id": "mr-23",
+      "prompt": "what was I doing earlier this session",
+      "status": "done",
+      "totalMs": 10437,
+      "resultText": "Here's what I can piece together from earlier today (September 28, 2026):\n\n**Things you asked me to note:**\n- **7:00 AM** — Basketball\n- **7:01 AM** — Portuguese\n- **10:33 AM** — Buy milk tomorrow\n- **10:47 AM** — \"I have a meeting at 3pm tomorrow\" (Sept 29)\n- **10:53 AM** — \"I have a dentist appointment next week\"\n\n**Questions you ran through the session (in roughly this order):**\n- Asked me to look back in our conversation for your **phone number**\n- Some **car** questions\n- **\"Who is your spouse?\"** / who your wife is — I traced that to \"My wife is Sarah\"\n- **\"What have I told you about my hobbies\"** → **rock climbing** (you've stated it several times: 7:03 AM, 7:04 AM, 7:49 AM)\n- **\"Did I say anything about music\"** → I had no record of you mentioning music\n- **\"What was my first question\"** and **\"summarize what I've told you today\"**\n\n**On screen:** you've been in **Devin** on `thinkdrop`, with `plan-1ac9d77893d2fc79.md` open — a test-corpus checklist for the `tests/e2e/prompts/intent*.json` intent corpora (memory-quick, memory-store, memory-retrieve, screen-intelligence, etc.), running the `prompts-driver.cjs` harness against them.\n\nIf you mean a narrower window than \"today,\" tell me which stretch and I'll drill in.",
+      "failures": [],
+      "pass": true,
+      "taskId": "task_66c853a8",
+      "commsIntent": "handoff",
+      "itemCount": 0,
+      "graphIntent": {
+        "intent": "memory_retrieve",
+        "parser": "llm-decompose",
+        "subIntents": [
+          "memory_retrieve"
+        ]
+      },
+      "warnings": []
+    },
+    {
+      "id": "mr-24",
+      "prompt": "recap my activity from today",
+      "status": "done",
+      "totalMs": 10436,
+      "resultText": "Here's your day so far — **Monday, September 28, 2026**:\n\n**Early morning — notes & personal**\n- **6:59 AM** — Logged your birthday (March 14)\n- **7:00–7:04 AM** — Noted basketball and Portuguese, and logged your hobby as rock climbing\n\n**Morning — Apple purchase**\n- **9:43 AM** — In Chrome, walked through an Apple secure checkout: *Review Order*, then *Processing*, then the *Thank You: Order Confirmation*\n- **9:44 AM** — Ran a Google search: \"I look for a mac mini two and a new mac labtop good price\" (plus a general Google tab at 9:45 AM)\n\n**Late morning — work block**\n- **10:25 AM** — Devin open on `thinkdrop — plan-1ac9d77893d2fc79.md`\n- **10:52 AM** — Reminder: take out the trash Wednesday night\n- **10:58 AM** — Reminder: back up your laptop this weekend\n\n**Midday**\n- **12:05 PM** — YouTube: \"30 Minute Boxing HIIT Workout with a Heavy Bag [Round 2]\"\n- **12:40 PM** — Chrome, Apple order confirmation in Gmail\n\n**Afternoon**\n- **1:44 PM** — Chrome New Tab, and Devin still open on `thinkdrop — plan-1ac9d77893d2fc79.md`\n\nRight now (1:59 PM) you've got Devin active on the thinkdrop plan file.\n\nSo it's been a mix: some personal tracking this morning, an Apple hardware order, a Devin/thinkdrop work session running through the day, a boxing workout video at lunch, and a couple of reminders jotted down. Want me to save this as a file?",
+      "failures": [],
+      "pass": true,
+      "taskId": "task_1967a1ea",
+      "commsIntent": "handoff",
+      "itemCount": 0,
+      "graphIntent": {
+        "intent": "memory_retrieve",
+        "parser": "llm-decompose",
+        "subIntents": [
+          "memory_retrieve"
+        ]
+      },
+      "warnings": []
+    },
+    {
+      "id": "mr-25",
+      "prompt": "what tasks have you done for me recently",
+      "status": "done",
+      "totalMs": 10446,
+      "resultText": "Short answer: not much, and I want to be straight with you about that.\n\n**Task journal** — Only one entry exists, and it's this exact request, queued **today at 1:59 PM**: *\"what tasks have you done for me recently.\"* No other jobs or queued tasks are logged.\n\n**Things you had me note or log** — this is where the actual activity is, all from today (September 28, 2026):\n- **12:29 AM** — Updated your interests/projects profile (it came back largely empty).\n- **6:55 AM, 7:13 AM, 7:27 AM** — Logged \"I work as a product designer.\"\n- **7:03–7:04 AM** — Logged rock climbing as a hobby.\n- **10:51 AM** — Saved the note: *pick up dry cleaning Saturday.*\n- Your recent recap also references earlier notes I recorded — birthday (March 14), basketball and Portuguese around 7:00 AM, a 3 PM meeting tomorrow (Sept 29), and a dentist appointment.\n\nSo: no real \"task execution\" history — mostly memory/logging entries, and they're all from today. If you were expecting me to have run something more substantial (a build, a booking, a scrape), I have no record of it. Want me to check a specific agent — say Amazon, Etsy, or the calendar — for recent actions?",
+      "failures": [],
+      "pass": true,
+      "taskId": "task_eb2d9070",
+      "commsIntent": "handoff",
+      "itemCount": 0,
+      "graphIntent": {
+        "intent": "memory_retrieve",
+        "parser": "llm-decompose",
+        "subIntents": [
+          "memory_retrieve"
+        ]
+      },
+      "warnings": []
+    },
+    {
+      "id": "mr-26",
+      "prompt": "what did we discuss about colors",
+      "status": "done",
+      "totalMs": 5925,
+      "resultText": "The colors thread is basically all about one thing: **your favorite color is teal.**\n\nWhere it shows up:\n- **September 25, 2026 at 2:43 PM** — \"your favorite color is teal\"\n- **September 25, 2026 at 7:57 PM** — same, logged again\n- **September 28, 2026 at 7:30 AM** — \"The user's favorite color is teal\"\n- **September 28, 2026 at 9:34 AM** — logged again\n\nThere's also a scattered trail of you *asking* about it — \"what is my favorite color\" and \"have I told you my favorite color before\" — repeated several times on September 25 and again this morning (6:54 AM, 7:12 AM, 7:26 AM, 7:31 AM, 9:35 AM, and 1:50 PM).\n\nOne odd note: on September 25 at 12:15 PM I told you I didn't recall a favorite color yet — but teal was already logged that same day at 2:43 PM, so teal is the consistent answer across the record.\n\nAlso, unrelated to color but flagged alongside it at 7:04 AM today: you take your coffee black.",
+      "failures": [],
+      "pass": true,
+      "taskId": "task_88c6fd36",
+      "commsIntent": "handoff",
+      "itemCount": 0,
+      "graphIntent": {
+        "intent": "memory_retrieve",
+        "parser": "llm-decompose",
+        "subIntents": [
+          "memory_retrieve"
+        ]
+      },
+      "warnings": []
+    },
+    {
+      "id": "mr-27",
+      "prompt": "when was the last time I asked about sports",
+      "status": "done",
+      "totalMs": 8935,
+      "resultText": "The last time was **today, September 28, 2026 at 9:39 AM** — you asked me *\"what sport do I like\"* (session \"12 times 12\"), and I answered that your favorite sport is basketball 🏀.\n\nJust before that, you asked the same thing at **7:36 AM** the same morning.\n\nGoing back further, your sports questions cluster on **September 18, 2026** in a session called \"Ask question sports\":\n- **9:33 AM** — you asked me to ask you a question about sports\n- **3:23 PM** — you asked for a question around running\n\nSo: most recent sports question was today at 9:39 AM.",
+      "failures": [],
+      "pass": true,
+      "taskId": "task_8c9b3ae6",
+      "commsIntent": "handoff",
+      "itemCount": 0,
+      "graphIntent": {
+        "intent": "memory_retrieve",
+        "parser": "llm-decompose",
+        "subIntents": [
+          "memory_retrieve"
+        ]
+      },
+      "warnings": []
+    },
+    {
+      "id": "mr-28",
+      "prompt": "what movies have I mentioned",
+      "status": "done",
+      "totalMs": 10437,
+      "resultText": "Only one movie comes up in your memory log, and it shows up repeatedly:\n\n- **Spirited Away** — logged as your favorite movie three times today (Sept 28, 2026: 7:01 AM, 7:37 AM, and 9:40 AM).\n\nThat's the only title actually attributed to you. No other films appear in your memories or conversation history — nothing about specific movies you've watched or referenced otherwise.\n\nFor context, the web results I pulled are generic movie-reference videos rather than anything tied to you, so I won't pad the list with those. If you were thinking of a different title, tell me roughly when you mentioned it and I'll dig again.",
+      "failures": [],
+      "pass": true,
+      "taskId": "task_4f0d2419",
+      "commsIntent": "handoff",
+      "itemCount": 8,
+      "graphIntent": {
+        "intent": "web_search",
+        "parser": "llm-decompose",
+        "subIntents": [
+          "web_search"
+        ]
+      },
+      "warnings": []
+    },
+    {
+      "id": "mr-29",
+      "prompt": "did I ever tell you my age",
+      "status": "done",
+      "totalMs": 1922,
+      "resultText": "",
+      "failures": [],
+      "pass": true,
+      "commsIntent": "memory_quick",
+      "wallMs": 30592,
+      "graphIntent": null,
+      "warnings": []
+    },
+    {
+      "id": "mr-30",
+      "prompt": "what notes have I left you",
+      "status": "done",
+      "totalMs": 12939,
+      "resultText": "Here's what you've explicitly asked me to note or remember, most recent first:\n\n**Reminders / to-dos**\n- **September 28, 2026 at 10:58 AM** — \"remember I have piano practice at 4\"\n- **September 25, 2026 at 10:43 PM** — a note file (`/tmp/e2e/notes.txt`) with the reminder \"remember milk\" — confirmed written successfully\n\n**Personal / reference notes**\n- **September 24, 2026 at 11:34 PM** — kids-weekly-memory verses, test files, Untitled 3\n- **September 16, 2026 at 4:17 PM** — MyBibleStudyWedNightMeetings\n- **September 7, 2026 at 6:09 PM** — something \"added to it by Lou Akers\"\n- **August 8, 2026 at 5:12 PM** — playlist setup: named it \"Christian Music,\" included songs by Lecrae, KB, and Newsboys\n\nSeparately, the standing facts you've logged about yourself (birthday March 14, basketball, Portuguese, rock climbing, wife Sarah, blue Honda Civic, favorite color teal, favorite movie *Spirited Away*) live in your profile rather than in these notes — say the word if you want those listed too.",
+      "failures": [],
+      "pass": true,
+      "taskId": "task_c894a64c",
+      "commsIntent": "handoff",
+      "itemCount": 0,
+      "graphIntent": {
+        "intent": "memory_retrieve",
+        "parser": "llm-decompose",
+        "subIntents": [
+          "memory_retrieve"
+        ]
+      },
+      "warnings": []
+    },
+    {
+      "id": "mr-31",
+      "prompt": "have we talked about coffee",
+      "status": "done",
+      "totalMs": 5924,
+      "resultText": "Yes — a few times, all today (September 28, 2026):\n\n**How you take it**\n- **7:04 AM** — \"I take my coffee black\"\n- **7:05 AM** — you asked \"how do I take my coffee,\" and I noted back \"you take your coffee black\"\n\n**You asked again later**\n- **8:21 AM** — \"how do I take my coffee\"\n- **9:43 AM** — \"how do I take my coffee\"\n\nOne thing worth flagging: your memory log also has **\"your favorite drink is matcha\"** logged repeatedly today — **7:02 AM, 7:39 AM, 9:33 AM, and 9:41 AM**. So coffee (black) is how you take your coffee, but matcha is filed as your favorite drink. Not a conflict, just two different things — though if one of those is wrong, tell me and I'll clean it up.",
+      "failures": [],
+      "pass": true,
+      "taskId": "task_93a84cf1",
+      "commsIntent": "handoff",
+      "itemCount": 0,
+      "graphIntent": {
+        "intent": "memory_retrieve",
+        "parser": "llm-decompose",
+        "subIntents": [
+          "memory_retrieve"
+        ]
+      },
+      "warnings": []
+    },
+    {
+      "id": "mr-32",
+      "prompt": "what did I say about where I work",
+      "status": "done",
+      "totalMs": 5919,
+      "resultText": "Here's what you've told me about work:\n\n**Your role**\n- **September 25, 2026 at 8:18 AM** — \"I work as a product designer.\"\n- **September 28, 2026 at 6:55 AM** — \"I work as a product designer\"\n- **September 28, 2026 at 7:13 AM** — \"I work as a product designer\"\n- **September 28, 2026 at 7:27 AM** — \"I work as a product designer\"\n\n**Your location**\n- **September 24, 2026 at 11:07 AM** — \"your job location is California\"\n- **September 25, 2026 at 3:15 PM** — \"your job location is California\"\n\n**Your employer**\n- **September 25, 2026 at 1:55 PM** — \"you mentioned working at Google\"\n\nSo the picture is: product designer, California, and at one point Google came up. Note that you also said you *live* in Austin, Texas — so the California reference is specifically about where the job is, not where you are. If that's changed or the Google mention was offhand, let me know and I'll correct the record.",
+      "failures": [],
+      "pass": true,
+      "taskId": "task_78a6e8a6",
+      "commsIntent": "handoff",
+      "itemCount": 0,
+      "graphIntent": {
+        "intent": "memory_retrieve",
+        "parser": "llm-decompose",
+        "subIntents": [
+          "memory_retrieve"
+        ]
+      },
+      "warnings": []
+    },
+    {
+      "id": "mr-33",
+      "prompt": "do you recall my allergy",
+      "status": "done",
+      "totalMs": 18543,
+      "resultText": "Yes — you're allergic to **peanuts**. You told me that today, September 28, 2026 at 7:08 AM, and I've got it noted.",
+      "failures": [],
+      "pass": true,
+      "taskId": "task_fe6cdfe6",
+      "commsIntent": "handoff",
+      "itemCount": 0,
+      "graphIntent": {
+        "intent": "memory_retrieve",
+        "parser": "llm-decompose",
+        "subIntents": [
+          "memory_retrieve"
+        ]
+      },
+      "warnings": []
+    },
+    {
+      "id": "mr-34",
+      "prompt": "what languages did I say I speak",
+      "status": "done",
+      "totalMs": 14947,
+      "resultText": "I don't have that noted. Looking back through what you've told me, I only have your role (product designer) and your peanut allergy on record — no mention of languages.\n\nOne thing I do see: on your screen, in the Devin window, there's a test corpus prompt that reads `\"start it again what languages did I say I speak\"` — that's part of the e2e intent test suite (intent-memory-retrieve, item 7), not something you actually told me. So it looks like that phrasing came from the test fixtures rather than a real memory.\n\nIf you have told me your languages at some point, it didn't get stored — want to tell me now so I can note it?",
+      "failures": [],
+      "pass": true,
+      "taskId": "task_01373308",
+      "commsIntent": "handoff",
+      "itemCount": 0,
+      "graphIntent": {
+        "intent": "screen_intelligence",
+        "parser": "llm-decompose",
+        "subIntents": [
+          "screen_intelligence"
+        ]
+      },
+      "warnings": []
+    },
+    {
+      "id": "mr-35",
+      "prompt": "what did I tell you about my studies",
+      "status": "done",
+      "totalMs": 9189,
+      "resultText": "You told me your field of study is **computer science**. That's noted twice — on September 28, 2026 at 8:54 AM and again at 9:44 AM.\n\nThere's also a separate note, \"MyBibleStudyWedNightMeetings,\" from September 16, 2026 at 4:17 PM — but that looks like a weekly Bible study meeting, not academic coursework.\n\nI don't have anything beyond that — no specific major, courses, or degree program on record.",
+      "failures": [],
+      "pass": true,
+      "taskId": "task_b3051dda",
+      "commsIntent": "handoff",
+      "itemCount": 0,
+      "graphIntent": {
+        "intent": "memory_retrieve",
+        "parser": "llm-decompose",
+        "subIntents": [
+          "memory_retrieve"
+        ]
+      },
+      "warnings": []
+    },
+    {
+      "id": "mr-36",
+      "prompt": "whats the last personal fact I gave you",
+      "status": "done",
+      "totalMs": 4231,
+      "resultText": "",
+      "failures": [],
+      "pass": true,
+      "commsIntent": "general_quick",
+      "wallMs": 30502,
+      "graphIntent": null,
+      "warnings": []
+    },
+    {
+      "id": "mr-37",
+      "prompt": "search your memory for anything about travel",
+      "status": "done",
+      "totalMs": 11469,
+      "resultText": "Here's what I have on travel:\n\n**Flights you've looked into**\n\n- **New York (JFK) → Hong Kong** — you dug into this around **September 10, 2026**, and on **September 14, 2026 at 5:16 PM** you told me specifically to use **Cathay Pacific** for the search, for a trip spanning roughly **end of September to mid-October**.\n- **Philadelphia (PHL) → Milwaukee (MKE)** — you were checking round-trip options on Expedia on **August 20, 2026 at 6:35 AM**.\n\n**Related**\n- There's also a passing note in my Sept 21 summary about you managing travel-type events in Google Calendar, plus general Amazon/Amazon Business activity — but nothing else specifically tagged as travel.\n\nSo the two concrete travel threads are the **JFK↔Hong Kong Cathay Pacific search** and the **PHL→MKE flights**. Want me to pull up either one in more detail?",
+      "failures": [],
+      "pass": true,
+      "taskId": "task_11030bde",
+      "commsIntent": "handoff",
+      "itemCount": 0,
+      "graphIntent": {
+        "intent": "memory_retrieve",
+        "parser": "llm-decompose",
+        "subIntents": [
+          "memory_retrieve"
+        ]
+      },
+      "warnings": []
+    },
+    {
+      "id": "mr-38",
+      "prompt": "what did we cover about drinks",
+      "status": "done",
+      "totalMs": 7428,
+      "resultText": "Here's what we've covered on drinks — all from today, **September 28, 2026**:\n\n**Your favorite drink**\n- **7:02 AM** — \"your favorite drink is matcha\"\n- **7:39 AM** — favorite drink is matcha\n- **9:33 AM** — favorite drink is matcha\n- **9:41 AM** — favorite drink is matcha\n\n**How you take your coffee**\n- **7:04 AM** — \"I take my coffee black\"\n- **2:01 PM** — \"I take my coffee black\" (reconfirmed)\n\nSo the short version: **matcha is your favorite drink**, and when it comes to coffee, you take it **black** — no cream, no sugar. You asked about the coffee point twice today (9:34 AM and 9:41 AM), and there was also a \"have we talked about coffee\" check at 2:01 PM that confirmed the same.",
+      "failures": [],
+      "pass": true,
+      "taskId": "task_0547260e",
+      "commsIntent": "handoff",
+      "itemCount": 0,
+      "graphIntent": {
+        "intent": "memory_retrieve",
+        "parser": "llm-decompose",
+        "subIntents": [
+          "memory_retrieve"
+        ]
+      },
+      "warnings": []
+    },
+    {
+      "id": "mr-39",
+      "prompt": "did I mention any appointments",
+      "status": "done",
+      "totalMs": 15951,
+      "resultText": "Yes — quite a few, most of them today (September 28, 2026):\n\n**Today's mentions**\n- **10:33 AM** — dentist appointment next Tuesday\n- **10:49 AM** — doctor appointment on Friday at 2\n- **10:53 AM** — dentist appointment next week\n- **10:57 AM** — car service appointment Wednesday\n- **10:59 AM** — follow-up appointment next month\n- **1:56 PM** — \"a dentist appointment\" (no date attached)\n\n**Earlier**\n- **September 25, 2026 at 7:09 PM** — dentist appointment next week Friday\n- **September 25, 2026 at 7:49 PM** — dentist appointment next week Friday\n\n**One thing worth flagging:** your dentist appointment dates don't line up. On September 25 you said it was **next week Friday**, but today at 10:33 AM you said **next Tuesday**. You've also mentioned it twice more today just as \"next week\" and with no date at all. You may want to pin down the actual day.",
+      "failures": [],
+      "pass": true,
+      "taskId": "task_3eb42ef9",
+      "commsIntent": "handoff",
+      "itemCount": 0,
+      "graphIntent": {
+        "intent": "memory_retrieve",
+        "parser": "llm-decompose",
+        "subIntents": [
+          "memory_retrieve"
+        ]
+      },
+      "warnings": []
+    },
+    {
+      "id": "mr-40",
+      "prompt": "what do you remember about my pets",
+      "status": "done",
+      "totalMs": 2149,
+      "resultText": "",
+      "failures": [],
+      "pass": true,
+      "commsIntent": "memory_quick",
+      "wallMs": 30524,
+      "graphIntent": null,
+      "warnings": []
+    },
+    {
+      "id": "mr-41",
+      "prompt": "what were we talking about 10 minutes ago",
+      "status": "done",
+      "totalMs": 8945,
+      "resultText": "Around 10 minutes ago — roughly **1:54–1:55 PM** — you were asking me **\"what was the last thing I asked you to remember.\"**\n\nI answered that it was this morning, September 28 at 10:57 AM: *\"remember my friends wedding is in July.\"* Just before that, in the same minute, the \"haircut at 10am Saturday\" and \"take out the trash Wednesday night\" reminders came up.\n\nSince then you've moved through a rapid-fire recall run (all just now, 2:00–2:03 PM): movies, your age, your notes, coffee, work, allergies, languages, studies, last personal fact, travel, drinks, appointments, and pets.",
+      "failures": [],
+      "pass": true,
+      "taskId": "task_c8b4737c",
+      "commsIntent": "handoff",
+      "itemCount": 0,
+      "graphIntent": {
+        "intent": "memory_retrieve",
+        "parser": "llm-decompose",
+        "subIntents": [
+          "memory_retrieve"
+        ]
+      },
+      "warnings": []
+    },
+    {
+      "id": "mr-42",
+      "prompt": "tell me everything you know about my preferences",
+      "status": "done",
+      "totalMs": 17071,
+      "resultText": "Here's what I have on your preferences — split into confirmed and inferred.\n\n**Confirmed preferences (from memory)**\n- **Favorite food: ramen** — recorded today, September 28, 2026 at 6:56 AM\n- **Favorite color: teal** — recorded September 25, 2026 at 7:57 PM\n\nThat's the only pair of explicit preferences in my records. (Worth noting: you asked me to re-confirm your favorite color five times this morning between 6:54 and 9:35 AM — teal is still the answer.)\n\n**Inferred from your activity (not stated outright, so treat as soft)**\n\n*Fitness — this is the strongest pattern.*\n- Home-gym adjustable dumbbells: viewed Lifepro Powerup Plus 5–25 lb (June 13), FEIERDUN 70 lb 4-in-1 (June 12), BYZOOM FITNESS Pure Series (June 13)\n- Cardio/bodyweight video preferences: HIIT and shadow boxing — \"60 MIN INTENSE EMOM HIIT\" (June 8), Sylvia Nasser shadow boxing workouts (June 9, June 26), \"million dollar hoy core\" cardio series (July 13, July 21, July 26), 30-minute full-body plyometric HIIT (August 17)\n- Standing/all-equipment-free formats recur repeatedly\n\n*Faith / reading.*\n- Children's Bible storybook searches (September 9, 5:36 AM), The Jesus Storybook Bible (September 9), ESV hardback Bible (September 14, 8:25 PM)\n\n*Tech and dev tooling.*\n- Comparing Docling vs. LlamaIndex LiteParse for document parsing speed (June 11), later switching your thinkdrop project to Docling (June 11)\n- Researching the best voice API to add to your app (June 25)\n\n*Productivity.*\n- Notion for task and goal tracking — \"/todo | Notion\" (August 28) and \"Weekly Goals | Notion\" (August 29)\n\n**One thing I'd flag:** your mood profile right now reads neutral with no confident read on your interests, which is odd given how consistent the fitness pattern is across three months. If the dumbbell and HIIT activity is genuinely you, I can lock that in as a stated preference rather than an inference — just say the word.",
+      "failures": [],
+      "pass": true,
+      "taskId": "task_2e19d38a",
+      "commsIntent": "handoff",
+      "itemCount": 0,
+      "graphIntent": {
+        "intent": "memory_retrieve",
+        "parser": "llm-decompose",
+        "subIntents": [
+          "memory_retrieve"
+        ]
+      },
+      "warnings": []
+    },
+    {
+      "id": "mr-43",
+      "prompt": "what did I ask about programming",
+      "status": "done",
+      "totalMs": 5948,
+      "resultText": "I don't see a programming question in your recent prompts — nothing in this session has been about programming specifically. The closest thing is a queued task from just now (2:04 PM): *\"what did I ask about programming,\"* which is this question itself.\n\nWhat I do have that touches on programming/technical topics:\n\n- **September 24, 2026 at 11:05 AM** — you asked about \"the coding project we were chatting about.\"\n- **September 28, 2026 at 7:03 AM** — noted that your code editor is **VS Code**.\n- **September 28, 2026 at 8:54 AM** and **9:44 AM** — your field of study is **computer science**.\n- **September 25, 2026 at 1:55 PM** — a note that \"Sarah works as a Software Engineer.\"\n\nSo the only genuine programming-related question on record is the September 24 one about the coding project. If you meant a different one, tell me roughly when and I'll dig further.",
+      "failures": [],
+      "pass": true,
+      "taskId": "task_41c2d0e4",
+      "commsIntent": "handoff",
+      "itemCount": 0,
+      "graphIntent": {
+        "intent": "memory_retrieve",
+        "parser": "llm-decompose",
+        "subIntents": [
+          "memory_retrieve"
+        ]
+      },
+      "warnings": []
+    },
+    {
+      "id": "mr-44",
+      "prompt": "have I asked you any math questions today",
+      "status": "done",
+      "totalMs": 7422,
+      "resultText": "No — nothing I can see today (September 28, 2026) is an actual math question.\n\nThe closest things:\n\n- **9:39 AM** — a session titled **\"12 times 12\"** where you asked *\"what sport do I like\"* (I answered basketball). The session name implies arithmetic, but the question itself wasn't math.\n- **9:43–9:45 AM** — you were going through an Apple checkout (Review Order → Processing → Order Confirmation) and searching *\"I look for a mac mini two and a new mac laptop good price\"*, which involved prices but no calculation you asked me to do.\n- **10:33 AM** — \"buy milk tomorrow,\" not math.\n- **10:47 AM / 10:49 AM / 10:55 AM** — meeting at 3pm tomorrow, doctor appointment Friday at 2, haircut at 10am Saturday. Times, not math.\n\nSo: no math questions today. If you meant the \"12 times 12\" session, that was about sports, not multiplication — want me to pull up what you actually asked in it?",
+      "failures": [],
+      "pass": true,
+      "taskId": "task_d1efa157",
+      "commsIntent": "handoff",
+      "itemCount": 0,
+      "graphIntent": {
+        "intent": "memory_retrieve",
+        "parser": "llm-decompose",
+        "subIntents": [
+          "memory_retrieve"
+        ]
+      },
+      "warnings": []
+    },
+    {
+      "id": "mr-45",
+      "prompt": "what was the first thing we discussed",
+      "status": "done",
+      "totalMs": 12962,
+      "resultText": "The earliest thing I have in this session's log is at **1:51 PM today**: you asked me to **\"remind me what my email is\"** — and in the same minute, **\"what did we talk about earlier.\"**\n\nWorth noting: that's just where my visible log starts, so it may not be the true beginning. There's also a task in my journal from **1:41 PM** — *\"who is the president of France\"* — which is a bit earlier, so that may actually have been the first thing we touched on.",
+      "failures": [],
+      "pass": true,
+      "taskId": "task_79c19e59",
+      "commsIntent": "handoff",
+      "itemCount": 0,
+      "graphIntent": {
+        "intent": "memory_retrieve",
+        "parser": "llm-decompose",
+        "subIntents": [
+          "memory_retrieve"
+        ]
+      },
+      "warnings": []
+    },
+    {
+      "id": "mr-46",
+      "prompt": "list the facts Ive given you about myself",
+      "status": "done",
+      "totalMs": 12443,
+      "resultText": "Here's what I have logged as facts you've told me about yourself:\n\n- **Birthday: March 14** — recorded today, September 28, 2026 at 6:59 AM\n- **Favorite food: ramen** — September 28, 2026 at 6:56 AM\n- **Favorite movie: *Spirited Away*** — logged three times today (Sept 28, 2026 at 7:01 AM, 7:37 AM, and 9:40 AM)\n- **Favorite sport: basketball** — you mentioned it in the \"12 times 12\" session this morning\n- **Language: Portuguese** — noted September 28, 2026 at 7:01 AM\n- **Email on file** — you asked me to remind you of it around 1:51 PM today\n\nBeyond that, everything else in your memory log is screen activity rather than stated facts about you — mostly Amazon browsing (adjustable dumbbells, Bibles and children's Bible storybooks, shopping carts) and workout videos (HIIT, shadow boxing, \"million dollar hoy\" cardio).\n\nWant me to pull the exact wording or timestamps for any of these?",
+      "failures": [],
+      "pass": true,
+      "taskId": "task_5551840a",
+      "commsIntent": "handoff",
+      "itemCount": 0,
+      "graphIntent": {
+        "intent": "memory_retrieve",
+        "parser": "llm-decompose",
+        "subIntents": [
+          "memory_retrieve"
+        ]
+      },
+      "warnings": []
+    },
+    {
+      "id": "mr-47",
+      "prompt": "when did I tell you my name",
+      "status": "done",
+      "totalMs": 4384,
+      "resultText": "",
+      "failures": [],
+      "pass": true,
+      "commsIntent": "memory_quick",
+      "wallMs": 30577,
+      "graphIntent": null,
+      "warnings": []
+    },
+    {
+      "id": "mr-48",
+      "prompt": "what did I say about my family",
+      "status": "done",
+      "totalMs": 7440,
+      "resultText": "Here's what's on record about your family:\n\n**Your wife**\n- **September 28, 2026 at 7:06 AM** — \"My wife — named Lena\"\n- **June 28, 2026 at 1:59 AM** — \"My wife is Sarah\"\n\nThat's a conflict, and it's worth flagging: two different names for your wife. The September 28 entry is the most recent, so **Lena** is likely the correct one — but if the older note was actually about a different person or you got remarried, tell me and I'll clean it up.\n\n**Your grandma**\n- **September 28, 2026 at 10:51 AM** — \"remember I promised to call grandma this weekend\"\n- **September 28, 2026 at 1:55 PM** — the same reminder, repeated\n\nSo the only family commitment you've logged is that call to your grandma this weekend.\n\nOne other note: there's a queued task from **September 28, 2026 at 2:05 PM** — \"what did I say about my family\" — which is this question, so it looks like two versions of it landed in the queue.",
+      "failures": [],
+      "pass": true,
+      "taskId": "task_399b77f3",
+      "commsIntent": "handoff",
+      "itemCount": 0,
+      "graphIntent": {
+        "intent": "memory_retrieve",
+        "parser": "llm-decompose",
+        "subIntents": [
+          "memory_retrieve"
+        ]
+      },
+      "warnings": []
+    },
+    {
+      "id": "mr-49",
+      "prompt": "did we talk about editors",
+      "status": "done",
+      "totalMs": 5927,
+      "resultText": "Yes — editors have come up a few times.\n\n**You asking which editor you use** (session \"12 times 12,\" September 28, 2026):\n- 7:03 AM — \"what editor do I use\"\n- 7:49 AM — \"what editor do I use\"\n- 9:42 AM — \"what editor do I use\"\n\n**An actual editor discussion** — on September 25, 2026 at 9:11 AM in the \"Mike Christ show\" session, I gave you a rundown comparing **Vim vs. Emacs**, framed as a long-running debate among editors.\n\n**Older, tangential mentions** — June 10, 2026 (session \"Whats name\") you twice said \"go there for me and open an editor.\"\n\nAlso worth noting: there's a queued task from just now (2:06 PM) with this exact question, so this is the second time it's come up in the last few minutes. Your workspace does include a **Visual Studio Code** agent, for whatever that's worth.",
+      "failures": [],
+      "pass": true,
+      "taskId": "task_a2ac4ea2",
+      "commsIntent": "handoff",
+      "itemCount": 0,
+      "graphIntent": {
+        "intent": "memory_retrieve",
+        "parser": "llm-decompose",
+        "subIntents": [
+          "memory_retrieve"
+        ]
+      },
+      "warnings": []
+    },
+    {
+      "id": "mr-50",
+      "prompt": "what personal details have I shared with you",
+      "status": "done",
+      "totalMs": 14598,
+      "resultText": "Here's the personal information I have on record for you:\n\n**Clear / consistent**\n- **Birthday** — March 14 (logged this morning, September 28, 2026 at 6:59 AM)\n- **Phone number** — 555-0134 (recorded three times today: 7:00 AM, 7:18 AM, and 7:36 AM)\n- **Interests** — basketball and Portuguese (noted today, September 28)\n- **Piano practice** — you asked me to remember it's at 4 (September 28, 2026 at 10:58 AM)\n\n**Conflicting — your wife's name**\n- **September 28, 2026 at 7:06 AM** — \"My wife — named Lena\"\n- **September 28, 2026 at 7:07 AM** — \"My wife is Sarah\"\n- **June 28, 2026 at 1:59 AM** — \"My wife is Sarah\"\n\nYou gave me two different names within a minute of each other today, so I can't tell you which is correct. The June entry agrees with \"Sarah,\" but the most recent entries contradict each other.\n\n**Also worth noting**\n- On **September 27, 2026 at 10:16 PM**, you asked me a series of questions about your spouse — address, email, phone number, and who they are. Those were your questions, not facts you gave me, so I don't have answers stored.\n\nI'd flag that your name isn't clearly settled either — it's come through as \"Ravi\" in recent chat, but older entries show \"Mike\" and \"lukaizhi.\" If any of the above is wrong, tell me and I'll correct it.",
+      "failures": [],
+      "pass": true,
+      "taskId": "task_037c9fe5",
+      "commsIntent": "handoff",
+      "itemCount": 0,
+      "graphIntent": {
+        "intent": "memory_retrieve",
+        "parser": "llm-decompose",
+        "subIntents": [
+          "memory_retrieve"
+        ]
+      },
+      "warnings": []
+    }
+  ]
+}

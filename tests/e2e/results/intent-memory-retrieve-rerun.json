@@ -1,0 +1,87 @@
+{
+  "file": "tests/e2e/prompts/intent-memory-retrieve-rerun.json",
+  "at": "2026-09-28T18:10:32.447Z",
+  "softRoute": true,
+  "results": [
+    {
+      "id": "mr-05",
+      "prompt": "what was I working on before",
+      "status": "done",
+      "totalMs": 19038,
+      "resultText": "Before this, you were working in **Devin on the \"thinkdrop\" project** — the active screen 8 minutes ago was a plan file: `thinkdrop — plan-1ac9d77893d2fc79.md`.\n\nThat fits a longer pattern of thinkdrop work in Devin and Warp:\n- **September 16, 2026 at 8:57 AM** — Devin: `thinkdrop — plan-17b05d7429b172aa.md`\n- **September 16, 2026 at 8:41 AM** — Devin: `thinkdrop — command.log`\n- **September 16, 2026 at 4:41 AM** — Devin: `thinkdrop — command.log`\n- **September 16, 2026 at 12:06 PM** — Warp: `..top/projects/thinkdrop`\n- **September 14, 2026 at 9:43 PM** — Devin: `thinkdrop — plan-0a77f535ce38b252.md`\n- **September 12, 2026 at 8:03 PM** — Devin: `thinkdrop — browser.agent.cjs` (with `browser-agent-test-prompts` and `checklist-prompts`)\n- **September 12, 2026 at 8:00 PM** — Devin: `thinkdrop — browser-agent-test-prompts-1b9047.md`\n- **September 6, 2026 at 8:48 PM** — Devin: `thinkdrop — main.log`, plus `plan-6bf92d1b4155af57.md` at 3:54 AM\n\nSo the recurring thread is **thinkdrop development** — writing and running plans, a `browser.agent.cjs` browser agent, and test/checklist prompts — mostly in Devin and Warp.\n\nIf you meant the last *non-thinkdrop* thing, the screen history also shows a lot of Chrome activity (Google Calendar, Notion, Amazon, Etsy, Gmail, Linear). Let me know which thread you want me to trace.",
+      "failures": [],
+      "pass": true,
+      "taskId": "task_845aa0c6",
+      "commsIntent": "handoff",
+      "itemCount": 0,
+      "graphIntent": {
+        "intent": "memory_retrieve",
+        "parser": "llm-decompose",
+        "subIntents": [
+          "memory_retrieve"
+        ]
+      },
+      "warnings": []
+    },
+    {
+      "id": "mr-06",
+      "prompt": "did I mention my dentist appointment",
+      "status": "done",
+      "totalMs": 12452,
+      "resultText": "Yes — you've brought it up several times, and there's one wrinkle worth flagging: the day keeps shifting.\n\n**Today (September 28, 2026)**\n- **10:33 AM** — \"remember I have a dentist appointment next Tuesday\"\n- **10:53 AM** — \"i have a dentist appointment next week\"\n- **1:56 PM** — \"a dentist appointment\"\n\n**Friday, September 25, 2026**\n- **8:49 AM** — \"remember I have a dentist appointment next Tuesday\"\n- **8:55 AM** — same thing\n- **8:59 AM** — same thing\n- **9:03 AM** — same thing (you repeated this one four times in about 15 minutes)\n- **4:51 PM** — \"i have a dentist appt next week friday\"\n- **7:09 PM** — \"having a dentist appointment next week Friday\"\n- **7:49 PM** — \"having a dentist appointment next week Friday\"\n\nThe inconsistency: on the mornings of Sept 25 and this morning you said **next Tuesday**, but on the afternoon/evening of Sept 25 you said **next week Friday**. So I have two different days on record — Tuesday and Friday. Might be worth nailing down which one it actually is.",
+      "failures": [],
+      "pass": true,
+      "taskId": "task_4ca9b731",
+      "commsIntent": "handoff",
+      "itemCount": 0,
+      "graphIntent": {
+        "intent": "memory_retrieve",
+        "parser": "llm-decompose",
+        "subIntents": [
+          "memory_retrieve"
+        ]
+      },
+      "warnings": []
+    },
+    {
+      "id": "mr-07",
+      "prompt": "when did I last talk about my birthday",
+      "status": "done",
+      "totalMs": 11954,
+      "resultText": "You last talked about your birthday **this morning, September 28, 2026 at 6:59 AM** — that's when \"My birthday — March 14\" was logged.\n\nYou actually circled back to it several times this morning in session \"12 times 12\":\n- 6:59 AM — \"when is my birthday\"\n- 7:18 AM — same question\n- 7:35 AM — same question\n- 9:39 AM — same question\n\nBefore that, the prior entry was **September 25, 2026 at 3:15 PM** (\"Birthday — March 14\").\n\nOne flag: your personal profile has **March 14** as ground truth, but an older session from September 15, 2026 had you saying *\"Remember my birthday is May 5th.\"* If March 14 is correct, that earlier one is stale.",
+      "failures": [],
+      "pass": true,
+      "taskId": "task_7761df36",
+      "commsIntent": "handoff",
+      "itemCount": 0,
+      "graphIntent": {
+        "intent": "memory_retrieve",
+        "parser": "llm-decompose",
+        "subIntents": [
+          "memory_retrieve"
+        ]
+      },
+      "warnings": []
+    },
+    {
+      "id": "mr-08",
+      "prompt": "what have I asked you so far",
+      "status": "done",
+      "totalMs": 16514,
+      "resultText": "Here's the full sweep of what you've asked in this run — all of it today, September 28, from **1:57 PM to 2:10 PM**, and almost all of it memory-recall questions about yourself.\n\n**Personal facts you asked me to dig up**\n- Your favorite food (1:57 PM)\n- Your phone number (1:57 PM)\n- Your car (1:57 PM)\n- Your wife (1:58 PM)\n- Your hobbies (1:58 PM)\n- Music — whether you'd said anything (1:58 PM)\n- Colors (1:59 PM)\n- Movies (2:00 PM)\n- Your age (2:00 PM)\n- Coffee (2:01 PM)\n- Where you work (2:01 PM)\n- Your allergy (2:01 PM, asked twice)\n- Languages you speak (2:01 PM)\n- Your studies (2:02 PM)\n- Travel (2:02 PM)\n- Drinks (2:03 PM)\n- Appointments (2:03 PM)\n- Pets (2:03 PM)\n- Editors (2:06 PM)\n- Family (2:06 PM)\n- Personal details broadly (2:06 PM)\n- The last personal fact you gave me (2:02 PM)\n- All the facts you've given me about yourself (2:05 PM)\n- Everything I know about your preferences (2:04 PM)\n\n**Session and activity questions**\n- What you were doing earlier this session (1:59 PM)\n- A recap of your activity today (1:59 PM)\n- What tasks I've done for you recently (1:59 PM)\n- What you were working on before (2:09 PM)\n\n**Conversation-history questions**\n- What your first question was (1:58 PM)\n- What you'd left me as notes (2:00 PM)\n- What we were talking about 10 minutes ago (2:04 PM)\n- What the first thing we discussed was (2:04 PM, asked twice)\n- When you told me your name (2:05 PM)\n- When you last talked about your birthday (2:10 PM)\n- When you last asked about sports (1:59 PM)\n\n**Misc / negative confirmations**\n- Whether you'd asked any math questions today (2:04 PM)\n- Whether you'd asked about programming (2:04 PM)\n- Whether you mentioned your dentist appointment (2:09 PM)\n\nThat's 40 prompts total, stacked back-to-back with no other topic between them. Only one earlier item shows up in my memory from before today: on **September 2, 2026 at 4:51 PM** you asked me to email you some addresses.",
+      "failures": [],
+      "pass": true,
+      "taskId": "task_61aec51d",
+      "commsIntent": "handoff",
+      "itemCount": 0,
+      "graphIntent": {
+        "intent": "memory_retrieve",
+        "parser": "llm-decompose",
+        "subIntents": [
+          "memory_retrieve"
+        ]
+      },
+      "warnings": []
+    }
+  ]
+}

@@ -1,0 +1,510 @@
+{
+  "file": "tests/e2e/prompts/intent-screen-intel.json",
+  "at": "2026-09-28T18:50:51.074Z",
+  "softRoute": true,
+  "results": [
+    {
+      "id": "si-01",
+      "prompt": "what is on my screen right now",
+      "status": "done",
+      "totalMs": 14982,
+      "resultText": "Based on the provided screen content, the visible elements on the screen include:\n\n1. A command prompt with the following text: \"thinkdrop - main* 04 3%\"\n2. A list of conversation messages, with the most recent message mentioning \"Execute the following commands: 'tail -40 /tmp/si-run.log' and 'Execute the following commands: 'tail -40 /tmp/si-run.log'\"\n3. A list of conversation messages, with the most recent message mentioning \"Execute the following commands: 'tail -40 /tmp/si-run.log'\"\n4. A list of conversation messages, with the most recent message mentioning \"Execute the following commands: 'tail -40 /tmp/si-run.log'\"\n5. A list of conversation messages, with the most recent message mentioning \"Execute the following commands: 'tail -40 /tmp/si-run.log'\"\n6. A list of conversation messages, with the most recent message mentioning \"Execute the following commands: 'tail -40 /tmp/si-run.log'\"\n7. A list of conversation messages, with the most recent message mentioning \"Execute the following commands: 'tail -40 /tmp/si-run.log'\"\n8. A list of conversation messages, with the most recent message mentioning \"Execute the following commands: 'tail -40 /tmp/si-run.log'\"\n9. A list of conversation messages, with the most recent message mentioning \"Execute the following commands: 'tail -40 /tmp/si-run.log'\"\n10. A list of conversation messages, with the most recent message mentioning \"Execute the following commands: 'tail -40 /tmp/si-run.log'\"\n\nThe current screen content appears to be focused on executing commands related to tailing a log file named /tmp/si-run.log, with a total of 40 lines. \n\nPlease note that the context provided does not include specific video URLs or any content related to ThinkDrop, but rather focuses on command execution and log file analysis.",
+      "failures": [],
+      "pass": true,
+      "taskId": "task_2001e9c6",
+      "commsIntent": "handoff",
+      "itemCount": 0,
+      "graphIntent": {
+        "intent": "screen_intelligence",
+        "parser": "llm-decompose",
+        "subIntents": [
+          "screen_intelligence"
+        ]
+      },
+      "warnings": []
+    },
+    {
+      "id": "si-02",
+      "prompt": "what app am I looking at",
+      "status": "done",
+      "totalMs": 12041,
+      "resultText": "You're currently in **Devin** — a **editor** app. Window: \"thinkdrop — plan-1ac9d77893d2fc79.md\".",
+      "failures": [],
+      "pass": true,
+      "taskId": "task_25559028",
+      "commsIntent": "handoff",
+      "itemCount": 0,
+      "graphIntent": {
+        "intent": "screen_intelligence",
+        "parser": "llm-decompose",
+        "subIntents": [
+          "screen_intelligence"
+        ]
+      },
+      "warnings": []
+    },
+    {
+      "id": "si-03",
+      "prompt": "describe whats on my screen",
+      "status": "done",
+      "totalMs": 13338,
+      "resultText": "Based on the provided screen content, the visible elements on your screen include:\n\n1. A command prompt with the text: \"thinkdrop - main* 04 3%\"\n2. A list of conversation messages, with the most recent message mentioning \"Launchpad 0\"\n3. A list of search results or memories, possibly related to the topic of the conversation, but without specific URLs\n\n4. A list of search results or memories, possibly related to the topic of the conversation, but without specific URLs\n\nPlease note that the provided search results or memories should be genuine and not fabricated, as per the critical rules mentioned earlier.",
+      "failures": [],
+      "pass": true,
+      "taskId": "task_54303d28",
+      "commsIntent": "handoff",
+      "itemCount": 0,
+      "graphIntent": {
+        "intent": "screen_intelligence",
+        "parser": "llm-decompose",
+        "subIntents": [
+          "screen_intelligence"
+        ]
+      },
+      "warnings": []
+    },
+    {
+      "id": "si-04",
+      "prompt": "read the text on my screen",
+      "status": "done",
+      "totalMs": 15827,
+      "resultText": "You're in Devin, with the window **\"thinkdrop — plan-1ac9d77893d2fc79.md\"** open. The OCR confidence is only 73%, so a fair amount of this is garbled. Here's what's legible:\n\n**Left side — a plan/spec document (Plans > plan-1ac9d77893d2fc79.md):**\n- References to test corpora: `tests/e2e/prompts/intent*.json` (~50–100 each)\n- A numbered list of intent test categories:\n  1. `intent-general-quick` — greetings, chitchat, opinions, simple facts/math (~50)\n  2. `intent-memory-quick` — profile store+recall pairs via shared sessionId (~50)\n  3. `intent-statuscheck` — running/finished task queries (~50)\n  4. `intent-control-signal` — cancel/pause/resume phrasings (~50)\n  5. Presumably memory notes/appointments/reminders (~50)\n  6. `intent-web-search` — facts, news, weather, image listing, video listing (~75)\n  7. `intent-memory-retrieve` — stored-fact + conversation recall, cross-session (~50)\n  8. `intent-screen-intelligence` — screen/window questions (~50)\n  9. `intent-screendisplay` — stage10: all 9 kinds + arrows/ESC/badge asserts (~75)\n  10–13. More `intent-*` entries, heavily corrupted in OCR (open/focus ~75, and several ~50)\n\n**Commands visible in the doc:**\n- `sleep 120; tail -15 /tmp/gkrun.log`\n- `python3 ... d=json.load(open('tests/e2e/prompts/intent-screen-intel.json')); print(len(d))`\n- `NODE_PATH=mcp-services/command-service/node_modules node tests/e2e/screen-prompts-driver.cjs ... so-route > /tmp/si-run.log 2>&1 &`\n- `sleep 285; tail -40 /tmp/si-run.log`\n\n**Some log/metric text:**\n- `gk-31: latency: 457925ms > budget 90000ms`\n- Something about \"Comms fast lane (no task minted, commsIntent + maxMs asserted)\"\n- \"Risky intents ... before execution\"\n- \"1 file +8 ... Quick review / Reject all / Accept all\"\n\n**Bottom / UI chrome:**\n- \"Type @ conversation to bring in context from another chat\"\n- \"Bypass Permissions\", \"SWE-2 Medium\", \"Aap\"\n- Status bars: `thinkdrop — usadvanc`, `thinkdrop — main* 04 3%`, `Launchpad 0`, `Pro Quokka`\n\nHeads-up: the OCR mangled a lot of the middle section (lines llike \"ELECT STON YaSITORE\", \"frie\", \"Regefing fie\"), so treat those as unreadable rather than accurate. Want me to try to pick out any specific part more carefully?",
+      "failures": [],
+      "pass": true,
+      "taskId": "task_7c5cb707",
+      "commsIntent": "handoff",
+      "itemCount": 0,
+      "graphIntent": {
+        "intent": "screen_intelligence",
+        "parser": "llm-decompose",
+        "subIntents": [
+          "screen_intelligence"
+        ]
+      },
+      "warnings": []
+    },
+    {
+      "id": "si-05",
+      "prompt": "what window is focused",
+      "status": "done",
+      "totalMs": 14516,
+      "resultText": "Based on the provided screen content, the visible elements on your screen include:\n\n1. A command prompt with the text: \"thinkdrop - main* 04 3%\"\n2. A list of conversation messages, with the most recent message mentioning \"Launchpad 0\"\n3. A list of search results or memories, possibly related to the search term \"Launchpad 0\"\n\nThe window that is currently focused is the command prompt window.",
+      "failures": [],
+      "pass": true,
+      "taskId": "task_2f5bc6f9",
+      "commsIntent": "handoff",
+      "itemCount": 0,
+      "graphIntent": {
+        "intent": "screen_intelligence",
+        "parser": "llm-decompose",
+        "subIntents": [
+          "screen_intelligence"
+        ]
+      },
+      "warnings": []
+    },
+    {
+      "id": "si-06",
+      "prompt": "what am I looking at",
+      "status": "done",
+      "totalMs": 12573,
+      "resultText": "Based on the provided screen content, the visible elements on your screen include:\n\n1. A command prompt with the text: \"thinkdrop - main* 04 3%\"\n2. A list of conversation messages, with the most recent message mentioning \"Launchpad 0\"\n3. A list of search results or memories, possibly related to the search term \"Launchpad 0\"\n\nAt the moment, the OCR confidence is 73%, which means some text is not yet legible. Please provide more context or clarify your question, and I will try my best to assist you.",
+      "failures": [],
+      "pass": true,
+      "taskId": "task_068e6462",
+      "commsIntent": "handoff",
+      "itemCount": 0,
+      "graphIntent": {
+        "intent": "screen_intelligence",
+        "parser": "llm-decompose",
+        "subIntents": [
+          "screen_intelligence"
+        ]
+      },
+      "warnings": []
+    },
+    {
+      "id": "si-07",
+      "prompt": "is there an error on my screen",
+      "status": "done",
+      "totalMs": 14064,
+      "resultText": "There's one thing that reads like an actual error, plus a lot of noise:\n\n**Likely a real failure:**\n- `gk-31: latency: 457925ms > budget 90000ns` — a latency budget violation (took ~458s against a 90,000ms/ns budget). That's the closest thing to an \"error\" on screen.\n\n**Ambiguous / possibly error-ish:**\n- `soTT route misses` — probably \"soft route misses,\" which may just be a test metric, not a failure.\n- `1 message queued` — could be normal.\n\n**Caveats:** OCR confidence is only 74%, so \"457925ms > budget 90000ns\" could be misread, and units are inconsistent in the capture (ms vs ns). Almost everything else on the left is garbled plan text, not errors.\n\nWant me to focus on the terminal/log pane? If you can paste the `/tmp/gkrun.log` or `/tmp/si-run.log` tail directly, I can tell you definitively whether that latency line is a failure or just a log statement.",
+      "failures": [],
+      "pass": true,
+      "taskId": "task_3fb7a097",
+      "commsIntent": "handoff",
+      "itemCount": 0,
+      "graphIntent": {
+        "intent": "screen_intelligence",
+        "parser": "llm-decompose",
+        "subIntents": [
+          "screen_intelligence"
+        ]
+      },
+      "warnings": []
+    },
+    {
+      "id": "si-08",
+      "prompt": "whats on my monitor",
+      "status": "done",
+      "totalMs": 15284,
+      "resultText": "Based on the provided screen content, the visible elements on your screen include:\n\n1. A command prompt with the text: \"thinkdrop - main* 04 3%\"\n2. A list of conversation messages, with the most recent message mentioning \"Launchpad 0\"\n3. A list of search results or memories, possibly related to the search terms\n4. A list of tasks or reminders, if any\n5. A list of open windows or applications, if any\n\nIt seems that you are currently focused on a screen with a command prompt, conversation messages, and a list of search results or memories. If you can provide more information about what you are looking at, I can better assist you.",
+      "failures": [],
+      "pass": true,
+      "taskId": "task_90782e93",
+      "commsIntent": "handoff",
+      "itemCount": 0,
+      "graphIntent": {
+        "intent": "screen_intelligence",
+        "parser": "llm-decompose",
+        "subIntents": [
+          "screen_intelligence"
+        ]
+      },
+      "warnings": []
+    },
+    {
+      "id": "si-09",
+      "prompt": "tell me what my screen shows",
+      "status": "done",
+      "totalMs": 18058,
+      "resultText": "Here's what's on your screen right now — note it's the Electron \"Copilot Screen Assistant\" window itself, and OCR confidence is only **73%**, so some of this is garbled.\n\n**Main view: a Devin session working on ThinkDrop**\n- Plan file open: `thinkdrop — plan-1ac9d77893d2fc79.md` (under Plans)\n- Panes visible: Agent | Editor\n\n**A plan/spec for an intent test suite** — a numbered list of intents, roughly ~50–75 prompts each:\n1. intent-general-quick (greetings, chitchat, simple facts/math)\n2. intent-memory-quick (profile store + recall via shared sessionId)\n3. intent-statuscheck (running/finished task queries)\n4. intent-control-signal (cancel/pause/resume)\n5. (garbled) notes/appointments/reminders\n6. intent-web-search (facts, news, weather, image/video listing; asserts `hasItems`)\n7. intent-memory-retrieve (stored fact + conversation recall, cross-session)\n8. intent-screen-intelligence (screen/window questions)\n9. intent-screendisplay (expand stage10: all 9 kinds + arrows/ESC/badge)\n10. intent- (…)\n11. intent- (…)\n12. intent- (…)\n13. (cut off)\n\nIt also mentions a **\"Comms fast lane\"** (no task minted; commsIntent + maxMs asserted) and **Risky intents** reviewed before execution.\n\n**Terminal commands running**\n- `sleep 120; tail -15 /tmp/gkrun.log`\n- `sleep 285; tail -40 /tmp/si-run.log`\n- A python3 one-liner loading `tests/e2e/prompts/intent-screen-intel.json` and printing `len(d)`\n- `NODE_PATH=... node tests/e2e/screen-prompts-driver.cjs ... --soft-route > /tmp/si-run.log 2>&1 & echo launched`\n\n**One error line stands out:**\n- `gk-31: latency: 457925ms > budget 90000ns` — a latency-budget violation.\n\n**Bottom / chrome**\n- Shell prompt: `thinkdrop main* 04 3%`, plus `Launchpad 0`\n- A diff review bar with **Reject all / Accept all** buttons, \"1 file +8\", and a note about \"1 message queued\"\n- Buttons/labels: \"Start it again\", \"Run corpus\", \"Bypass Permissions\", \"SWE-2 Medium\"\n- Tag at the bottom: **Devin - Settings** and \"Pro Quokka\"\n\nWant me to zoom in on any one part — the plan list, the running commands, or that latency error?",
+      "failures": [],
+      "pass": true,
+      "taskId": "task_267d1708",
+      "commsIntent": "handoff",
+      "itemCount": 0,
+      "graphIntent": {
+        "intent": "memory_retrieve",
+        "parser": "llm-decompose",
+        "subIntents": [
+          "memory_retrieve"
+        ]
+      },
+      "warnings": [
+        "graphIntent: expected \"screen_intelligence|screen_analysis\", got \"memory_retrieve\" (subs: memory_retrieve)"
+      ]
+    },
+    {
+      "id": "si-10",
+      "prompt": "summarize what is visible on my screen",
+      "status": "done",
+      "totalMs": 13295,
+      "resultText": "Based on the provided context, the screen content appears to be focused on a workspace with multiple tabs open. The main tab seems to be displaying the ThinkDrop application, where the user is currently in the \"main\" tab. The screen also shows the \"Settings\" tab, and the \"Launchpad\" tab. There are no visible video links on the screen, as per the critical rules mentioned. The user is currently searching for information and appears to be in the process of reviewing search results or memories.",
+      "failures": [],
+      "pass": true,
+      "taskId": "task_6d0fd41c",
+      "commsIntent": "handoff",
+      "itemCount": 0,
+      "graphIntent": {
+        "intent": "screen_intelligence",
+        "parser": "llm-decompose",
+        "subIntents": [
+          "screen_intelligence"
+        ]
+      },
+      "warnings": []
+    },
+    {
+      "id": "si-11",
+      "prompt": "what website am I on",
+      "status": "done",
+      "totalMs": 27279,
+      "resultText": "Based on the provided screen content, it appears that the user is currently on the \"Launchpad\" tab. The screen shows the \"Settings\" tab and the \"ThinkDrop\" tab with the message \"04 3%\". There are no visible video links on the screen, following the critical rules mentioned.",
+      "failures": [],
+      "pass": true,
+      "taskId": "task_ea55e9c2",
+      "commsIntent": "handoff",
+      "itemCount": 0,
+      "graphIntent": {
+        "intent": "screen_intelligence",
+        "parser": "llm-decompose",
+        "subIntents": [
+          "screen_intelligence"
+        ]
+      },
+      "warnings": []
+    },
+    {
+      "id": "si-12",
+      "prompt": "what did I just open",
+      "status": "done",
+      "totalMs": 12231,
+      "resultText": "Based on your screen right now, you've most recently opened a **Devin session** titled:\n\n**`thinkdrop — plan-1ac9d77893d2fc79.md`**\n\nIt's the active editor tab, showing a plan/spec document for the ThinkDrop project. The visible content is a test plan covering intent classification — things like:\n\n- **Intent spec categories** (~50-100 prompts each): `intent-general-quick` (greetings, chitchat, simple facts/math), `intent-screen-intel`, memory recall, open/focus, summarize-screen, etc.\n- **Risky intents** (danger, purchasing, external services) that get reviewed before execution\n- **Latency budget notes** — one entry shows `gk-31: latency: 457925ms > budget 90000ms`\n- Shell commands in the terminal pane using `python3` and `node` to run the prompt corpus, e.g. loading `tests/e2e/prompts/intent-screen-intel.json`\n\nAlso on screen: a **Browser / web agent** pane, and the command bar in the bottom shows the `thinkdrop` repo on branch `main*`.\n\nOne caveat — the OCR confidence on this capture is only ~72%, so some of the text (especially the code blocks and shell commands) is garbled. Want me to try reading just the plan file more closely, or pull the terminal output?",
+      "failures": [],
+      "pass": true,
+      "taskId": "task_e1deece3",
+      "commsIntent": "handoff",
+      "itemCount": 0,
+      "graphIntent": {
+        "intent": "memory_retrieve",
+        "parser": "llm-decompose",
+        "subIntents": [
+          "memory_retrieve"
+        ]
+      },
+      "warnings": []
+    },
+    {
+      "id": "si-13",
+      "prompt": "is my screen showing a browser",
+      "status": "done",
+      "totalMs": 17817,
+      "resultText": "Based on the provided context, it appears that the screen content currently shows a browser window. The visible elements include the following:\n\n1. A search bar with the text \"DuckDuckGo\"\n2. A search result for \"1330 Powel Street, Norristown, PA 19401\"\n3. A search result for \"1330 Powel Street, Norristown, PA 19401\"\n4. A search result for \"1330 Powel Street, Norristown, PA 19401\"\n5. A search result for \"1330 Powel Street, Norristown, PA 19401\"\n6. A search result for \"1330 Powel Street, Norristown, PA 19401\"\n7. A search result for \"1330 Powel Street, Norristown, PA 19401\"\n8. A search result for \"1330 Powel Street, Norristown, PA 19401\"\n9. A search result for \"1330 Powel Street, Norristown, PA 19401\"\n10. A search result for \"1330 Powel Street, Norristown, PA 19401\"\n\nBased on the current screen content, the screen content appears to be focused on a search results page for a location search, showing addresses and related information for 1330 Powel Street in Norristown, PA 19401.",
+      "failures": [],
+      "pass": true,
+      "taskId": "task_980e4dab",
+      "commsIntent": "handoff",
+      "itemCount": 0,
+      "graphIntent": {
+        "intent": "screen_intelligence",
+        "parser": "llm-decompose",
+        "subIntents": [
+          "screen_intelligence"
+        ]
+      },
+      "warnings": []
+    },
+    {
+      "id": "si-14",
+      "prompt": "what app is in the foreground",
+      "status": "done",
+      "totalMs": 14759,
+      "resultText": "Based on the provided context, the screen content appears to be focused on a terminal session within the ThinkDrop application. The user is currently working on a project folder named \"thinkdrop\" and has opened a file named \"plan-1ac9d77893d2fc79.md. The user is not currently interacting with any video or YouTube-related content, as per the critical rules mentioned. The user is asking about the app currently in the foreground.",
+      "failures": [],
+      "pass": true,
+      "taskId": "task_5b6d9f4e",
+      "commsIntent": "handoff",
+      "itemCount": 0,
+      "graphIntent": {
+        "intent": "screen_intelligence",
+        "parser": "llm-decompose",
+        "subIntents": [
+          "screen_intelligence"
+        ]
+      },
+      "warnings": []
+    },
+    {
+      "id": "si-15",
+      "prompt": "look at my screen and tell me what you see",
+      "status": "done",
+      "totalMs": 30434,
+      "resultText": "Here's what I can make out on your screen:\n\n**Foreground app:** an Electron window titled **\"Copilot Screen Assistant.\"**\n\n**Main view** — a split editor/terminal layout in a project at `/Users/lukaizhi/Desktop/projects/thinkdrop`:\n- Editor pane with `plan-1ac9d77893d2fc79.md` open, under **ThinkDrop → 100-Pr → Plans**\n- Referenced files: `intent-risky.json`, `intent-screen-intel.json` (one filename truncated)\n- Terminal on branch `main*` in `thinkdrop`, running things like `sleep 120; tail -15 /tmp/gkrun.log` and `sleep 285; tail -40 /tmp/si-run.log`, plus a `node tests/e2e/screen-prompts-driver.cjs` run with output to `/tmp/si-run.log`\n- A log line reading: `gk-31: latency: 457925ms > budget 90000ns`\n\n**A numbered test/prompt corpus list (items 1–13)**, including `intent-general-quick`, `intent-memory-quick`, `intent-statuscheck`, `intent-control-signal`, `intent-web-search`, `intent-memory-retrieve`, `intent-screen-intelligence`, `intent-screendisplay`, `intent-command-automate`, `intent-general-knowledge`, and `intent-multi-intent` — a few trailing entries were cut off in the read.\n\n**UI controls visible:** Quick review, Reject all, Accept all, Run corpus, Bypass Permissions. There's also a chat composer containing text like \"look at … screen and tell me what you see\" and \"start it again.\"\n\nOne caveat: a second screen read came back with a noticeably different picture — a ThinkDrop app with DuckDuckGo results for \"1330 powell street norristown pa 19401,\" a Warp terminal, and ThinkDrop Launchpad/Settings tabs (timestamped 9/28/2026 2:46:56 PM). That read explicitly said it was working \"based on provided context,\" so it looks less grounded in what's actually rendered. Treat the first description as the reliable one, and the second as possibly stale or misread.",
+      "failures": [],
+      "pass": true,
+      "taskId": "task_4849384d",
+      "commsIntent": "handoff",
+      "itemCount": 0,
+      "graphIntent": {
+        "intent": "screen_intelligence",
+        "parser": "multi-intent-pipeline",
+        "subIntents": [
+          "screen_intelligence",
+          "screen_intelligence"
+        ]
+      },
+      "warnings": []
+    },
+    {
+      "id": "si-16",
+      "prompt": "can you see my screen",
+      "status": "done",
+      "totalMs": 17253,
+      "resultText": "Yes, I can see it. Here's what's on screen:\n\n**Foreground:** An Electron window titled \"Copilot Screen Assistant\" (likely this chat), with a terminal/editor mixed in.\n\n**Terminal work (ThinkDrop project at `/Users/lukaizhi/Desktop/projects/thinkdrop`):**\n- You're running Python and Node commands against a test corpus at `tests/e2e/prompts/intent-*.json`\n- One command is loading `intent-screen-intel.json` and printing its length\n- Another is invoking `NODE_PATH=mcp-services/command-service/node_modules node tests/e2e/screen-prompts-driver.cjs`\n- Log output is being piped to `/tmp/si-run.log` with `sleep`/`tail` combos (4, 285, 280 seconds)\n\n**Test plan visible** — a numbered list of intent categories being tested:\n1. intent-general-quick (~50)\n2. intent-memory-quick (~50)\n3. intent-statuscheck (~50)\n4. intent-control-signal (~50)\n5. intent-memory-store (~50)\n6. intent-web-search (~75)\n7. intent-memory-retrieve (~50)\n8. intent-screen-intelligence (~50)\n9. intent-screen-display (~78)\n10. intent-open/focus (~75)\n...through 13 (+8 file additions)\n\n**Risky intents** section flagged, with \"Quick review / Reject all / Accept all\" buttons and a message queued (\"can you see screen — start it again\").\n\n**Other tabs/files:** `Editor → intent-risky.json`, a Browser pane, GhostLayer Visual, ThinkDrop 100-Pr, Quokka, Devin, Settings.\n\n**Bottom:** git status showing `thinkdrop` on branch `main*` with uncommitted changes.\n\nWant me to pull the tail of `/tmp/si-run.log` or check the state of the risky-intent review?",
+      "failures": [],
+      "pass": true,
+      "taskId": "task_065a2e01",
+      "commsIntent": "handoff",
+      "itemCount": 0,
+      "graphIntent": {
+        "intent": "screen_intelligence",
+        "parser": "llm-decompose",
+        "subIntents": [
+          "screen_intelligence"
+        ]
+      },
+      "warnings": []
+    },
+    {
+      "id": "si-17",
+      "prompt": "what is displayed on my screen",
+      "status": "done",
+      "totalMs": 19011,
+      "resultText": "You're in **Devin** with the file `plan-1ac9d77893d2fc79.md` open — it's the ThinkDrop intent-testing plan. Here's what's visible:\n\n**Left sidebar / header**\n- \"Agent Editor\" title, file path `~/.devin/plans/plan-1ac9d77893d2fc79.md`\n- A GhostLayer toggle (pointing at `localhost:5173/index.html`) with a \"Visual\" option\n\n**Main content — test plan**\n- A numbered list of intent corpora with rough counts:\n  1. intent-general-quick (~50)\n  2. intent-memory-quick (~50)\n  3. intent-statuscheck (~50)\n  4. intent-control-signal (~50)\n  5. intent-memory-store (~50)\n  6. intent-web-search (~75)\n  7. intent-memory-retrieve (~50)\n  8. intent-screen-intelligence (~50)\n  9. intent-screen-display (~75)\n  - plus several more rows that are cut off (intent-… with counts around ~50)\n- Notes on \"Comms fast lane (no task minted)\" and a \"Stategraph (handoff — graphintent asserted)\" section\n- A log tail command: `tail -35 /tmp/si-run.log`\n\n**Right side — test run results**\n- Entries `si-01` through `si-15`, each `status=done` with timings (e.g. si-01 14982ms, si-11 27279ms)\n- Prompts like \"what is on screen right now\", \"what app am I looking at\", \"read the text on screen\", \"summarize what is visible on screen\"\n- One failure flagged: `graphIntent: expected \"screen_intelligence|screen_analysis\", got \"memory_retrieve\" (subs: memory_retrieve)`\n\n**Footer / controls**\n- \"1 message queued\"\n- A review panel with **Reject all** and **Accept all** buttons, and a \"Quick review\" / \"1 file +8\" indicator\n- Input bar reading \"Execution | what is displayed on screen\", with \"Run corpus\" and a prompt box\n- \"Bypass Permissions\" toggle, model shown as \"SWE-2 Medium\"\n- Bottom branch info: `thinkdrop` on `main*`",
+      "failures": [],
+      "pass": true,
+      "taskId": "task_bea8bec2",
+      "commsIntent": "handoff",
+      "itemCount": 0,
+      "graphIntent": {
+        "intent": "screen_intelligence",
+        "parser": "llm-decompose",
+        "subIntents": [
+          "screen_intelligence"
+        ]
+      },
+      "warnings": []
+    },
+    {
+      "id": "si-18",
+      "prompt": "check my screen for anything important",
+      "status": "done",
+      "totalMs": 19413,
+      "resultText": "Here's what's on your screen right now:\n\n**App:** Devin, with `plan-1ac9d77893d2fc79.md` open — your ThinkDrop end-to-end intent-testing plan.\n\n**Most notable things:**\n\n1. **A test mismatch in the log** — under the Comms/test section it shows:\n   `graphIntent: expected \"screen_intelligence|screen_analysis\", got \"memory_retrieve\"`\n   That's a failing assertion worth looking at — the intent router is classifying a screen query as memory retrieval.\n\n2. **A queued action** — bottom area shows `1 message queued` and what looks like a pending prompt: *\"check screen for anything important {start it again…}\"* with a **Reject all / Accept all** pair. That's the Risky intents section (flagged for review before execution), so nothing auto-ran.\n\n3. **Test progress** — the run is through the si-01 → si-15 series, all `status=done`, timings ranging ~12s to ~27s (si-11 at 27279ms being the slowest, si-12 at 12231ms the fastest).\n\n4. **Terminal activity** — Warp is running shell commands: `sleep 280; tail -35 /tmp/si-run.log`, so a log tail is pending after a 280s sleep.\n\n5. **Servers/mode** — GhostLayer visual is served at `http://localhost:5173/index.html`, running in `mode=ghostlayer`.\n\n**Bottom line:** Nothing urgent or destructive. The one item worth your attention is the **graphIntent mismatch** — a screen-intent query falling back to `memory_retrieve` — and the **queued message** waiting on your Accept/Reject.",
+      "failures": [],
+      "pass": true,
+      "taskId": "task_267e4bd0",
+      "commsIntent": "handoff",
+      "itemCount": 0,
+      "graphIntent": {
+        "intent": "screen_intelligence",
+        "parser": "llm-decompose",
+        "subIntents": [
+          "screen_intelligence"
+        ]
+      },
+      "warnings": []
+    },
+    {
+      "id": "si-19",
+      "prompt": "what tabs do I have open",
+      "status": "done",
+      "totalMs": 21983,
+      "resultText": "I can't tell you that from here — the screen I'm looking at is the **Devin** window showing `thinkdrop — plan-1ac9d77893d2fc79.md`, not a browser. There's no tab bar visible in the captured content, just the plan file and its test-run logs (si-01 through si-15, the `graphIntent` mismatch noted under the Comms/test section, the 280s shell sleep, and the Quick review / Accept all / Reject all bar at the bottom).\n\nIf you want a real answer, bring the browser forward and I'll read the tab strip off it.",
+      "failures": [],
+      "pass": true,
+      "taskId": "task_a8e331cb",
+      "commsIntent": "handoff",
+      "itemCount": 0,
+      "graphIntent": {
+        "intent": "screen_intelligence",
+        "parser": "llm-decompose",
+        "subIntents": [
+          "screen_intelligence"
+        ]
+      },
+      "warnings": []
+    },
+    {
+      "id": "si-20",
+      "prompt": "read the headline on my screen",
+      "status": "done",
+      "totalMs": 19761,
+      "resultText": "There's no news-style headline on your screen right now. The active window is Devin showing `thinkdrop — plan-1ac9d77893d2fc79.md`.\n\nThe closest thing to a \"headline\" is the file/tab title at the top:\n\n**thinkdrop — plan-1ac9d77893d2fc79.md**\n\nBelow it, the visible content is a test-plan document: sections labeled \"Plans >\", a walkthrough of intent tests (si-01 through si-15, with prompts like `\"what is on screen right now\"`, `\"what app am I looking at\"`, `\"tell me what my screen shows\"` and their `status=done` timings). It also lists corpus categories — intent-general-quick, intent-memory-quick, intent-statuscheck, intent-control-signal, intent-memory-store, intent-web-search, intent-memory-retrieve, intent-screen-intelligence, intent-screen-display, plus intent- variants for open/focus and others.\n\nOne notable line: a graphIntent assertion failure — `expected \"screen_intelligence|screen_analysis\", got \"memory_retrieve\"`.\n\nIf you meant a headline from a page or article, that isn't on screen — only this plan file and its test log output.",
+      "failures": [],
+      "pass": true,
+      "taskId": "task_e21517c8",
+      "commsIntent": "handoff",
+      "itemCount": 0,
+      "graphIntent": {
+        "intent": "screen_intelligence",
+        "parser": "llm-decompose",
+        "subIntents": [
+          "screen_intelligence"
+        ]
+      },
+      "warnings": []
+    },
+    {
+      "id": "si-21",
+      "prompt": "what color is the app on my screen",
+      "status": "done",
+      "totalMs": 26778,
+      "resultText": "The screen I'm reading is Devin with `plan-1ac9d77893d2fc79.md` open, but I'm only getting the OCR'd text of that window — no color/pixel data. So I can't tell you the app's theme color from what I have.\n\nWorth noting: the text \"what color is the app on --- screen\" appears inside the plan file itself, as one of the prompt-corpus entries. If that's what you're actually asking about, it looks like a test case in your intent corpus rather than a real question.\n\nIf you want, I can grab a visual snapshot so I can actually answer the color question.",
+      "failures": [],
+      "pass": true,
+      "taskId": "task_dbf1c9dd",
+      "commsIntent": "handoff",
+      "itemCount": 0,
+      "graphIntent": {
+        "intent": "screen_intelligence",
+        "parser": "llm-decompose",
+        "subIntents": [
+          "screen_intelligence"
+        ]
+      },
+      "warnings": []
+    },
+    {
+      "id": "si-22",
+      "prompt": "is there a dialog box open on my screen",
+      "status": "done",
+      "totalMs": 15958,
+      "resultText": "No — there's no dialog box open. Your screen is showing the Devin editor with `plan-1ac9d77893d2fc79.md` (the ThinkDrop test plan), plus a browser pane.\n\nThe phrase \"is there a dialog box open on your screen\" that appears on screen is just text inside your test plan — it's one of the SIE (screen intelligence eval) prompts being listed, not an actual modal on your display.\n\nWhat is visible: the plan doc, a ghostlayer preview URL (`localhost:5173`), a run of `si-01` through `si-15` screen-intelligence cases with status/timings, a corpus breakdown (intent-general-quick, intent-memory-quick, etc.), a `graphIntent` mismatch note (`expected \"screen_intelligence|screen_analysis\", got \"memory_retrieve\"`), and the bottom bar with \"Quick review / Reject all / Accept all.\"\n\nOne real prompt did fire, though — near the bottom there's \"1 message queued\" with a \"start it again\" control, which looks like a queued agent action rather than a dialog.",
+      "failures": [],
+      "pass": true,
+      "taskId": "task_1ccdbedc",
+      "commsIntent": "handoff",
+      "itemCount": 0,
+      "graphIntent": {
+        "intent": "screen_intelligence",
+        "parser": "llm-decompose",
+        "subIntents": [
+          "screen_intelligence"
+        ]
+      },
+      "warnings": []
+    },
+    {
+      "id": "si-23",
+      "prompt": "what is the main thing on my display",
+      "status": "done",
+      "totalMs": 19020,
+      "resultText": "Your main focus is the **Devin** editor, showing the ThinkDrop plan file `plan-1ac9d77893d2fc79.md`. Here's what's on it:\n\n**The plan document** — a test plan for end-to-end screen-intelligence (SIE) intent testing. It lists a corpus of quick-answer prompts with their run status:\n\n- **si-01 through si-15** — all `status=done`, ranging from ~12s to ~27s each. Examples: \"what is on my screen right now\" (14982ms), \"what app am I looking at\" (12041ms), \"read the text on my screen\" (15827ms), \"what website am I on\" (27279ms), \"what app is in the foreground\" (14759ms).\n\n**Notable failure** — a graphIntent error: expected `\"screen_intelligence|screen_analysis\"`, got `\"memory_retrieve\"`.\n\n**Other visible items:**\n- A **browser pane** pointed at `http://localhost:5173/index.html` (ghostlayer/visual mode)\n- Warp terminal running a log tail: `sleep 280; tail -35 /tmp/si-run.log`\n- A **Risky intents** section with a diff showing `1 file +8` — Quick review / Reject all / Accept all buttons\n- \"1 message queued\" and \"Bypass Permissions\" toggles\n- Left rail showing the `thinkdrop` project on branch **main**, 3% tracked\n\nThere's also a note in the panel clarifying that \"is there a dialog box open on your screen\" is just text appearing *inside* the test plan session, not an actual modal on your display.",
+      "failures": [],
+      "pass": true,
+      "taskId": "task_020e70ee",
+      "commsIntent": "handoff",
+      "itemCount": 0,
+      "graphIntent": {
+        "intent": "screen_intelligence",
+        "parser": "llm-decompose",
+        "subIntents": [
+          "screen_intelligence"
+        ]
+      },
+      "warnings": []
+    },
+    {
+      "id": "si-24",
+      "prompt": "scan my screen",
+      "status": "done",
+      "totalMs": 17005,
+      "resultText": "Based on the provided conversation history and the current time, it appears that the user is currently using the Devin app. The app is displaying a ThinkDrop plan file named \"plan-1ac9d77893d2fc79.md\" in the foreground. The user is asking for a summary of what is visible on the screen.",
+      "failures": [],
+      "pass": true,
+      "taskId": "task_0083e4a7",
+      "commsIntent": "handoff",
+      "itemCount": 0,
+      "graphIntent": {
+        "intent": "screen_intelligence",
+        "parser": "llm-decompose",
+        "subIntents": [
+          "screen_intelligence"
+        ]
+      },
+      "warnings": []
+    },
+    {
+      "id": "si-25",
+      "prompt": "analyze whats on my screen",
+      "status": "done",
+      "totalMs": 16391,
+      "resultText": "Based on the provided conversation history and the current time, it appears that the user is currently using the Devin app. The screen content shows the ThinkDrop app with a file named \"plan-1ac9d77893d2fc79.md\" open in the foreground. The user is asking for a summary of what is visible on the screen.",
+      "failures": [],
+      "pass": true,
+      "taskId": "task_1e3af0eb",
+      "commsIntent": "handoff",
+      "itemCount": 0,
+      "graphIntent": {
+        "intent": "screen_intelligence",
+        "parser": "llm-decompose",
+        "subIntents": [
+          "screen_intelligence"
+        ]
+      },
+      "warnings": []
+    }
+  ]
+}
