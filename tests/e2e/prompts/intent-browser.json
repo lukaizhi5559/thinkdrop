@@ -1,0 +1,319 @@
+[
+  {
+    "id": "ab-nav-01",
+    "prompt": "goto google and search for new tesla cars",
+    "expect": { "graphIntent": "command_automate", "status": "done", "maxMs": 180000 }
+  },
+  {
+    "id": "ab-nav-02",
+    "prompt": "open amazon and search for baby clothes under $20",
+    "expect": { "graphIntent": "command_automate", "status": "done", "maxMs": 180000 }
+  },
+  {
+    "id": "ab-nav-03",
+    "prompt": "goto youtube and find lofi hip hop mixes",
+    "expect": { "graphIntent": "command_automate", "status": "done", "maxMs": 180000 }
+  },
+  {
+    "id": "ab-nav-04",
+    "prompt": "search wikipedia for the oregon trail",
+    "expect": { "graphIntent": "command_automate", "status": "done", "maxMs": 180000 }
+  },
+  {
+    "id": "ab-nav-05",
+    "prompt": "goto reddit and look up the best mechanical keyboards",
+    "expect": { "graphIntent": "command_automate", "status": "done", "maxMs": 180000 }
+  },
+  {
+    "id": "ab-nav-06",
+    "prompt": "open github and search for the playwright repository",
+    "expect": { "graphIntent": "command_automate", "status": "done", "maxMs": 180000 }
+  },
+  {
+    "id": "ab-nav-07",
+    "prompt": "goto ebay and search for used iphone 13",
+    "expect": { "graphIntent": "command_automate", "status": "done", "maxMs": 180000 }
+  },
+  {
+    "id": "ab-nav-08",
+    "prompt": "goto duckduckgo and search for macbook air m4 review",
+    "expect": { "graphIntent": "command_automate", "status": "done", "maxMs": 180000 }
+  },
+  {
+    "id": "ab-nav-09",
+    "prompt": "goto bing and search for today's nasa news",
+    "expect": { "graphIntent": "command_automate", "status": "done", "maxMs": 180000 }
+  },
+  {
+    "id": "ab-nav-10",
+    "prompt": "goto stackoverflow and search for cannot read property of undefined",
+    "expect": { "graphIntent": "command_automate", "status": "done", "maxMs": 180000 }
+  },
+  {
+    "id": "ab-nav-11",
+    "prompt": "open etsy and search for handmade leather wallets",
+    "expect": { "graphIntent": "command_automate", "status": "done", "maxMs": 180000 }
+  },
+  {
+    "id": "ab-nav-12",
+    "prompt": "goto yelp and search for best pizza in san francisco",
+    "expect": { "graphIntent": "command_automate", "status": "done", "maxMs": 180000 }
+  },
+  {
+    "id": "ab-url-01",
+    "prompt": "goto https://en.wikipedia.org/wiki/Telescope and summarize the page",
+    "expect": {
+      "graphIntent": "command_automate",
+      "status": "done",
+      "mustContain": ["re:telescope"],
+      "maxMs": 180000
+    }
+  },
+  {
+    "id": "ab-url-02",
+    "prompt": "open https://example.com and tell me what the page says",
+    "expect": {
+      "graphIntent": "command_automate",
+      "status": "done",
+      "mustContain": ["re:example|illustrative|documentation"],
+      "maxMs": 180000
+    }
+  },
+  {
+    "id": "ab-url-03",
+    "prompt": "goto https://news.ycombinator.com and tell me the top story",
+    "expect": { "graphIntent": "command_automate", "status": "done", "maxMs": 180000 }
+  },
+  {
+    "id": "ab-url-04",
+    "prompt": "open https://www.rust-lang.org and tell me what the page is about",
+    "expect": {
+      "graphIntent": "command_automate",
+      "status": "done",
+      "mustContain": ["re:rust|programming language"],
+      "maxMs": 180000
+    }
+  },
+
+  {
+    "id": "ab-f1-nav",
+    "prompt": "goto amazon and search for mechanical pencils",
+    "sessionId": "e2e_br1",
+    "expect": { "graphIntent": "command_automate", "status": "done", "maxMs": 180000 }
+  },
+  {
+    "id": "ab-f1-cheap",
+    "prompt": "what's the cheapest item on this page",
+    "sessionId": "e2e_br1",
+    "expect": {
+      "graphIntent": "command_automate",
+      "status": "done",
+      "mustContain": ["re:\\$"],
+      "maxMs": 120000
+    }
+  },
+  {
+    "id": "ab-f1-summary",
+    "prompt": "summarize this page in one sentence",
+    "sessionId": "e2e_br1",
+    "expect": {
+      "graphIntent": "command_automate",
+      "status": "done",
+      "mustContain": ["re:pencil|amazon|result"],
+      "maxMs": 120000
+    }
+  },
+  {
+    "id": "ab-f1-count",
+    "prompt": "roughly how many products are shown on this page",
+    "sessionId": "e2e_br1",
+    "expect": { "graphIntent": "command_automate", "status": "done", "maxMs": 120000 }
+  },
+  {
+    "id": "ab-f2-nav",
+    "prompt": "goto youtube and search for relaxing rain sounds",
+    "sessionId": "e2e_br2",
+    "expect": { "graphIntent": "command_automate", "status": "done", "maxMs": 180000 }
+  },
+  {
+    "id": "ab-f2-first",
+    "prompt": "what's the first video title on this page",
+    "sessionId": "e2e_br2",
+    "expect": { "graphIntent": "command_automate", "status": "done", "maxMs": 120000 }
+  },
+  {
+    "id": "ab-f2-long",
+    "prompt": "are there any videos on this page longer than an hour",
+    "sessionId": "e2e_br2",
+    "expect": { "graphIntent": "command_automate", "status": "done", "maxMs": 120000 }
+  },
+  {
+    "id": "ab-f3-nav",
+    "prompt": "goto https://en.wikipedia.org/wiki/Photosynthesis and tell me what it's about",
+    "sessionId": "e2e_br3",
+    "expect": {
+      "graphIntent": "command_automate",
+      "status": "done",
+      "mustContain": ["re:photosynthesis|plant|light"],
+      "maxMs": 180000
+    }
+  },
+  {
+    "id": "ab-f3-what",
+    "prompt": "what is this page about",
+    "sessionId": "e2e_br3",
+    "expect": {
+      "graphIntent": "command_automate",
+      "status": "done",
+      "mustContain": ["re:photosynthesis|plant"],
+      "maxMs": 120000
+    }
+  },
+  {
+    "id": "ab-f3-copy",
+    "prompt": "copy this page's text",
+    "sessionId": "e2e_br3",
+    "expect": { "graphIntent": "command_automate", "status": "done", "maxMs": 120000 }
+  },
+  {
+    "id": "ab-f3-print",
+    "prompt": "print this page",
+    "sessionId": "e2e_br3",
+    "expect": { "graphIntent": "command_automate", "status": "done", "maxMs": 120000 }
+  },
+  {
+    "id": "ab-thispage",
+    "prompt": "summarize the page I have open right now",
+    "expect": { "graphIntent": "command_automate", "status": "done", "maxMs": 120000 }
+  },
+  {
+    "id": "ab-print-solo",
+    "prompt": "print the page that's open in my browser",
+    "expect": { "graphIntent": "command_automate", "status": "done", "maxMs": 120000 }
+  },
+
+  {
+    "id": "ba-int-01",
+    "prompt": "search etsy for handmade candles and click the first result",
+    "expect": { "graphIntent": "command_automate", "status": "done", "maxMs": 240000 }
+  },
+  {
+    "id": "ba-int-02",
+    "prompt": "on youtube search for 'ambient space music' and play the first video",
+    "expect": { "graphIntent": "command_automate", "status": "done", "maxMs": 240000 }
+  },
+  {
+    "id": "ba-int-03",
+    "prompt": "go to reddit and open the top post in r/programming",
+    "expect": { "graphIntent": "command_automate", "status": "done", "maxMs": 240000 }
+  },
+  {
+    "id": "ba-int-04",
+    "prompt": "search github for the 'expressjs' repository and open it",
+    "expect": { "graphIntent": "command_automate", "status": "done", "maxMs": 240000 }
+  },
+  {
+    "id": "ba-int-05",
+    "prompt": "go to amazon, search for 'usb c hub', and tell me the price of the first result",
+    "expect": { "graphIntent": "command_automate", "status": "done", "maxMs": 240000 }
+  },
+  {
+    "id": "ba-int-06",
+    "prompt": "search wikipedia for 'alan turing' and tell me the first sentence of the article",
+    "expect": {
+      "graphIntent": "command_automate",
+      "status": "done",
+      "mustContain": ["re:turing|mathematician|computer"],
+      "maxMs": 240000
+    }
+  },
+  {
+    "id": "ba-svc-01",
+    "prompt": "search spotify for a jazz essentials playlist",
+    "expect": { "graphIntent": "command_automate", "status": ["done", "auth-required"], "maxMs": 240000 }
+  },
+  {
+    "id": "ba-svc-02",
+    "prompt": "check my gmail inbox for unread emails",
+    "authMode": "none",
+    "expect": { "graphIntent": "command_automate", "status": ["done", "auth-required"], "maxMs": 240000 }
+  },
+  {
+    "id": "ba-svc-03",
+    "prompt": "what's my next event on google calendar",
+    "authMode": "none",
+    "expect": { "graphIntent": "command_automate", "status": ["done", "auth-required"], "maxMs": 240000 }
+  },
+  {
+    "id": "ba-svc-04",
+    "prompt": "check my github notifications",
+    "authMode": "none",
+    "expect": { "graphIntent": "command_automate", "status": ["done", "auth-required"], "maxMs": 240000 }
+  },
+  {
+    "id": "ba-svc-05",
+    "prompt": "check my linkedin notifications",
+    "authMode": "none",
+    "expect": { "graphIntent": "command_automate", "status": ["done", "auth-required"], "maxMs": 240000 }
+  },
+  {
+    "id": "ba-svc-06",
+    "prompt": "check my slack messages in #general",
+    "authMode": "none",
+    "expect": { "graphIntent": "command_automate", "status": ["done", "auth-required"], "maxMs": 240000 }
+  },
+  {
+    "id": "ba-svc-07",
+    "prompt": "look at my latest emails and tell me if anything looks urgent",
+    "authMode": "none",
+    "expect": { "graphIntent": "command_automate", "status": ["done", "auth-required"], "maxMs": 240000 }
+  },
+  {
+    "id": "ba-svc-08",
+    "prompt": "check my twitter notifications",
+    "authMode": "none",
+    "expect": { "graphIntent": "command_automate", "status": ["done", "auth-required"], "maxMs": 240000 }
+  },
+  {
+    "id": "ba-form-01",
+    "prompt": "go to duckduckgo, type 'thinkdrop automation' into the search box and search",
+    "expect": { "graphIntent": "command_automate", "status": "done", "maxMs": 240000 }
+  },
+  {
+    "id": "ba-form-02",
+    "prompt": "open google and search 'best standing desk 2025' using the search box",
+    "expect": { "graphIntent": "command_automate", "status": "done", "maxMs": 240000 }
+  },
+  {
+    "id": "ba-extract-01",
+    "prompt": "browse to hacker news and read me the top 5 story titles",
+    "expect": { "graphIntent": "command_automate", "status": "done", "maxMs": 240000 }
+  },
+  {
+    "id": "ba-extract-02",
+    "prompt": "go to ebay, search for 'mechanical watch', and tell me the cheapest buy-it-now price",
+    "expect": { "graphIntent": "command_automate", "status": "done", "maxMs": 240000 }
+  },
+  {
+    "id": "ba-extract-03",
+    "prompt": "open wikipedia, search for 'marie curie', and read the first paragraph to me",
+    "expect": {
+      "graphIntent": "command_automate",
+      "status": "done",
+      "mustContain": ["re:curie|physicist|polonium|radioactiv"],
+      "maxMs": 240000
+    }
+  },
+  {
+    "id": "ba-follow-nav",
+    "prompt": "go to github and search for 'local whisper'",
+    "sessionId": "e2e_ba1",
+    "expect": { "graphIntent": "command_automate", "status": "done", "maxMs": 240000 }
+  },
+  {
+    "id": "ba-follow-click",
+    "prompt": "open the first repository result",
+    "sessionId": "e2e_ba1",
+    "expect": { "graphIntent": "command_automate", "status": "done", "maxMs": 240000 }
+  }
+]

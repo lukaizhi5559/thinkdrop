@@ -106,8 +106,8 @@ function _notifyProgress(taskId, agentId, progress) {
   return _postToComms('/comms.progress', { taskId, agentId, progress });
 }
 
-function _notifyComplete(taskId, agentId, status, result, items, sessionId = null, planFile = null) {
-  return _postToComms('/comms.complete', { taskId, agentId, status, result, items: items || null, sessionId, planFile });
+function _notifyComplete(taskId, agentId, status, result, items, sessionId = null, planFile = null, trace = null) {
+  return _postToComms('/comms.complete', { taskId, agentId, status, result, items: items || null, sessionId, planFile, trace });
 }
 
 // ── Create a fresh stategraph instance for a handoff task ──────────────────────
@@ -552,7 +552,12 @@ async function execute({ taskId, prompt, agentId, source, originalPrompt, sessio
       // intent) — without it, the "Breaking down your request..." spinner stays
       // forever because all_done never fires.
       progressCallback({ type: 'pipeline:done', contract: finalState._contract });
-      _notifyComplete(taskId, agentId, 'done', answer, items, finalState.resolvedSessionId || sessionId);
+      // Per-node timing trace — slim {node,duration} only (input/output
+      // snapshots are huge). Lets the e2e driver report per-node latency.
+      const _trace = Array.isArray(finalState.trace)
+        ? finalState.trace.map(t => ({ node: t.node, duration: t.duration }))
+        : null;
+      _notifyComplete(taskId, agentId, 'done', answer, items, finalState.resolvedSessionId || sessionId, null, _trace);
       if (_ipcBroadcast) {
         _ipcBroadcast('task:complete', {
           taskId,
@@ -575,7 +580,12 @@ async function execute({ taskId, prompt, agentId, source, originalPrompt, sessio
     console.error(`[HandoffRunner] Task ${taskId} failed:`, err.message);
 
     const status = (abortController.signal.aborted && !err._stalled) ? 'cancelled' : 'failed';
-    _notifyComplete(taskId, agentId, status, err.message, null, sessionId);
+    // Partial trace survives failures — state.trace accumulated on the live
+    // initialState object (_runEntry.state) before the throw.
+    const _failTrace = Array.isArray(_runEntry?.state?.trace)
+      ? _runEntry.state.trace.map(t => ({ node: t.node, duration: t.duration }))
+      : null;
+    _notifyComplete(taskId, agentId, status, err.message, null, sessionId, null, _failTrace);
 
     if (_ipcBroadcast) {
       _ipcBroadcast('task:complete', {
@@ -731,6 +741,11 @@ async function answerQuestion(taskId, answer) {
   const _AGENT_SKILLS = new Set(['browser.agent', 'cli.agent', 'app.agent', 'video.agent', 'web.agent']);
   const _buildResumeStep = (taskText) => {
     const _origStep = paused.skillPlan?.[_stepIdx] || {};
+    // app.agent is an ACTION skill (navigate_url/scan_page/print_page/…), not a
+    // goal-driven agent — 'run' doesn't exist there. Reuse the original args.
+    if (_resumeSkill === 'app.agent' && _origStep.args?.action) {
+      return { skill: _resumeSkill, args: _origStep.args, description: _description };
+    }
     if (_AGENT_SKILLS.has(_resumeSkill)) {
       // Agent skill — synthesize the standard run shape
       return { skill: _resumeSkill, args: { action: 'run', agentId: _agentId, task: taskText }, description: _description };

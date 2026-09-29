@@ -244,6 +244,7 @@ async function runPrompt(entry, opts) {
 
     if (TERMINAL.has(task.status)) {
       outcome.resultText = task.result || '';
+      outcome.trace = Array.isArray(task.trace) ? task.trace : null;
       break;
     }
     if (task.status === 'awaiting-approval') {
@@ -293,6 +294,7 @@ async function runPrompt(entry, opts) {
     if (last && TERMINAL.has(last.status)) {
       outcome.status = last.status;
       outcome.resultText = last.result || '';
+      outcome.trace = Array.isArray(last.trace) ? last.trace : null;
     } else {
       if (last) outcome.status = last.status;
       outcome.status = outcome.status === 'dispatched' ? 'timeout' : outcome.status + '+timeout';

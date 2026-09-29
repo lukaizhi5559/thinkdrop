@@ -48,8 +48,10 @@ function statusClass(status) {
 const argv = process.argv.slice(2);
 let budgetsFile = null;
 const files = [];
+let nodesMode = false;
 for (let i = 0; i < argv.length; i++) {
   if (argv[i] === '--budgets') { budgetsFile = argv[++i]; continue; }
+  if (argv[i] === '--nodes') { nodesMode = true; continue; }
   files.push(argv[i]);
 }
 if (!files.length) {
@@ -57,8 +59,10 @@ if (!files.length) {
   process.exit(2);
 }
 const budgets = budgetsFile ? JSON.parse(fs.readFileSync(budgetsFile, 'utf8')) : DEFAULT_BUDGETS;
+const fmt = (ms) => ms == null ? '  -  ' : `${(ms / 1000).toFixed(1)}s`;
 
 const buckets = new Map(); // key -> { lat: [], comms: [], ids: [] }
+const nodeBuckets = new Map(); // node name -> [durations] (--nodes mode)
 const failedEntries = [];
 let totalPass = 0, totalEntries = 0;
 
@@ -77,10 +81,33 @@ for (const f of files) {
     b.lat.push(r.totalMs);
     if (typeof r.commsLatencyMs === 'number') b.comms.push(r.commsLatencyMs);
     b.ids.push(r.id);
+    // --nodes: per-node timing breakdown (requires trace plumbed from
+    // StateGraph.execute via handoffRunner → journal → driver).
+    if (nodesMode && Array.isArray(r.trace)) {
+      for (const t of r.trace) {
+        if (!t || typeof t.node !== 'string' || typeof t.duration !== 'number') continue;
+        let nb = nodeBuckets.get(t.node);
+        if (!nb) { nb = []; nodeBuckets.set(t.node, nb); }
+        nb.push(t.duration);
+      }
+    }
   }
 }
 
-const fmt = (ms) => ms == null ? '  -  ' : `${(ms / 1000).toFixed(1)}s`;
+if (nodesMode) {
+  // Per-node report — surfaces which graph nodes dominate end-to-end time.
+  const rows = [...nodeBuckets.entries()].map(([node, lat]) => {
+    lat.sort((a, c) => a - c);
+    return { node, n: lat.length, p50: pct(lat, 50), p95: pct(lat, 95), max: lat[lat.length - 1], sum: lat.reduce((a, b) => a + b, 0) };
+  }).sort((a, b) => b.sum - a.sum);
+  console.log(`\n${'═'.repeat(78)}\n  PER-NODE LATENCY — ${files.length} run(s) (sorted by total time)\n${'═'.repeat(78)}`);
+  console.log(`  ${'node'.padEnd(36)} ${'n'.padStart(3)} ${'p50'.padStart(8)} ${'p95'.padStart(8)} ${'max'.padStart(8)} ${'sum'.padStart(9)}`);
+  for (const r of rows) {
+    console.log(`  ${r.node.padEnd(36)} ${String(r.n).padStart(3)} ${fmt(r.p50).padStart(8)} ${fmt(r.p95).padStart(8)} ${fmt(r.max).padStart(8)} ${fmt(r.sum).padStart(9)}`);
+  }
+  process.exit(0);
+}
+
 let breaches = [];
 
 console.log(`\n${'═'.repeat(78)}\n  LATENCY REPORT — ${files.length} run(s), ${totalPass}/${totalEntries} passing\n${'═'.repeat(78)}`);
