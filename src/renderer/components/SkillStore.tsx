@@ -149,13 +149,52 @@ export default function SkillStore({ onBuildSkill, initialSearch = '' }: SkillSt
     ipcRenderer?.send('skill:build-start', skill);
   }, [onBuildSkill]);
 
-  const handleInstallFromUrl = useCallback(() => {
+  const [pendingPreview, setPendingPreview] = useState<any | null>(null);
+  const [inspectError, setInspectError] = useState<string | null>(null);
+
+  // URL install → inspect → review sheet → install (approved previews only)
+  const handleInstallFromUrl = useCallback(async () => {
     const url = installUrl.trim();
-    if (!url) return;
+    if (!url || !ipcRenderer) return;
     setInstalling(true);
     setInstallMsg(null);
-    ipcRenderer?.send('skill:install-from-url', { url });
+    setInspectError(null);
+    try {
+      const res = await ipcRenderer.invoke('skill:inspect-url', { url });
+      if (res?.ok && res.preview) {
+        setPendingPreview(res.preview);
+      } else {
+        setInspectError(res?.error || 'Could not inspect that source');
+      }
+    } catch (e: any) {
+      setInspectError(e?.message || 'Inspect failed');
+    } finally {
+      setInstalling(false);
+    }
   }, [installUrl]);
+
+  const handleApproveInstall = useCallback(async () => {
+    if (!pendingPreview || !ipcRenderer) return;
+    setInstalling(true);
+    try {
+      const res = await ipcRenderer.invoke('skill:install-url', { preview: pendingPreview });
+      setPendingPreview(null);
+      setInstallUrl('');
+      if (res?.ok) {
+        const agents = (res.agents || []).filter((a: any) => a.agentId);
+        const setup = res.needsSetup ? ' — setup needed (see Agents tab)' : '';
+        setInstallMsg({ ok: true, text: `Installed "${res.name}"${agents.length ? ` + agent ${agents.map((a: any) => a.agentId).join(', ')}` : ''}${setup}` });
+        if (view === 'installed') refreshInstalled();
+      } else {
+        setInstallMsg({ ok: false, text: res?.error || 'Installation failed' });
+      }
+    } catch (e: any) {
+      setInstallMsg({ ok: false, text: e?.message || 'Installation failed' });
+    } finally {
+      setInstalling(false);
+      setTimeout(() => setInstallMsg(null), 8000);
+    }
+  }, [pendingPreview, view, refreshInstalled]);
 
   const handleInstallFromFile = useCallback(() => {
     setInstalling(true);
@@ -227,7 +266,7 @@ export default function SkillStore({ onBuildSkill, initialSearch = '' }: SkillSt
             </div>
             <div style={{ display: 'flex', gap: 5 }}>
               <input type="text"
-                placeholder="https://example.com/skills/SKILL.md"
+                placeholder="github.com/owner/repo, skill page URL, or SKILL.md URL"
                 value={installUrl} onChange={e => setInstallUrl(e.target.value)}
                 onKeyDown={e => { if (e.key === 'Enter') handleInstallFromUrl(); }}
                 disabled={installing}
@@ -268,6 +307,87 @@ export default function SkillStore({ onBuildSkill, initialSearch = '' }: SkillSt
                 background: installMsg.ok ? 'rgba(34,197,94,0.08)' : 'rgba(239,68,68,0.08)',
               }}>
                 {installMsg.ok ? '✓ ' : '✗ '}{installMsg.text}
+              </div>
+            )}
+            {inspectError && (
+              <div style={{ fontSize: '0.65rem', padding: '3px 7px', borderRadius: 4, color: '#fca5a5', background: 'rgba(239,68,68,0.08)' }}>
+                ✗ {inspectError}
+              </div>
+            )}
+
+            {/* ── Review sheet: shown after inspect, before install ── */}
+            {pendingPreview && (
+              <div style={{
+                marginTop: 2, padding: '8px 9px', borderRadius: 7,
+                background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(139,92,246,0.25)',
+                display: 'flex', flexDirection: 'column', gap: 6, fontSize: '0.66rem',
+              }}>
+                <div style={{ color: '#e5e7eb', fontWeight: 600 }}>
+                  Review: <code style={{ color: '#c4b5fd' }}>{pendingPreview.suggestedName}</code>
+                  {pendingPreview.license ? <span style={{ color: '#6b7280' }}> · {pendingPreview.license}</span> : null}
+                </div>
+                {pendingPreview.description && (
+                  <div style={{ color: '#abafb8', lineHeight: 1.4 }}>{pendingPreview.description}</div>
+                )}
+
+                {pendingPreview.requiredBins?.length > 0 && (
+                  <div>
+                    <div style={{ color: '#9ca3af', fontWeight: 600, marginBottom: 2 }}>Required tools</div>
+                    {pendingPreview.binProbes?.map((b: any) => (
+                      <div key={b.bin} style={{ color: b.installed ? '#86efac' : '#fbbf24', paddingLeft: 6 }}>
+                        {b.installed ? '✓' : '○'} <code>{b.bin}</code>{b.installed ? ' installed' : ' — will be installed on demand'}
+                      </div>
+                    ))}
+                    {pendingPreview.installCmds?.map((c: string) => (
+                      <div key={c} style={{ color: '#6b7280', paddingLeft: 6 }}>↳ <code>{c}</code></div>
+                    ))}
+                  </div>
+                )}
+
+                {pendingPreview.requiredSecrets?.length > 0 && (
+                  <div>
+                    <div style={{ color: '#9ca3af', fontWeight: 600, marginBottom: 2 }}>Credentials needed (set on the Agents tab after install)</div>
+                    <div style={{ color: '#fbbf24', paddingLeft: 6 }}>{pendingPreview.requiredSecrets.map((s: string) => <code key={s} style={{ marginRight: 6 }}>{s}</code>)}</div>
+                  </div>
+                )}
+
+                {pendingPreview.needsCliAgent && (
+                  <div style={{ color: '#818cf8' }}>→ Will create a CLI agent for the declared tool{pendingPreview.requiredBins.length > 1 ? 's' : ''}.</div>
+                )}
+
+                {pendingPreview.files?.length > 0 && (
+                  <div style={{ color: '#6b7280' }}>
+                    {pendingPreview.files.length} file{pendingPreview.files.length > 1 ? 's' : ''}: {pendingPreview.files.slice(0, 5).map((f: any) => f.rel).join(', ')}{pendingPreview.files.length > 5 ? '…' : ''}
+                  </div>
+                )}
+
+                {pendingPreview.risks?.length > 0 && (
+                  <div style={{ padding: '4px 6px', borderRadius: 5, background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.25)' }}>
+                    <div style={{ color: '#fca5a5', fontWeight: 600, marginBottom: 2 }}>⚠ Review flags</div>
+                    {pendingPreview.risks.map((r: any, i: number) => (
+                      <div key={i} style={{ color: '#fca5a5', paddingLeft: 4 }}>• {r.label} <span style={{ color: '#9ca3af' }}>({r.file})</span></div>
+                    ))}
+                  </div>
+                )}
+
+                <div style={{ display: 'flex', gap: 5, marginTop: 2 }}>
+                  <button onClick={handleApproveInstall} disabled={installing}
+                    style={{
+                      flex: 1, padding: '4px 10px', borderRadius: 5, fontSize: '0.67rem', fontWeight: 600,
+                      cursor: 'pointer', border: '1px solid rgba(139,92,246,0.5)',
+                      background: 'rgba(139,92,246,0.2)', color: '#ddd6fe', opacity: installing ? 0.5 : 1,
+                    }}>
+                    {installing ? 'Installing…' : `Install ${pendingPreview.needsCliAgent ? 'Skill + Agent' : 'Skill'}`}
+                  </button>
+                  <button onClick={() => setPendingPreview(null)}
+                    style={{
+                      padding: '4px 10px', borderRadius: 5, fontSize: '0.67rem', fontWeight: 600,
+                      cursor: 'pointer', border: '1px solid rgba(255,255,255,0.12)',
+                      background: 'transparent', color: '#9ca3af',
+                    }}>
+                    Cancel
+                  </button>
+                </div>
               </div>
             )}
           </div>

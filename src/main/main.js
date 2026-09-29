@@ -7980,6 +7980,32 @@ app.whenReady().then(async () => {
     }
   });
 
+  // ─── Skill Store: inspect a skill-pack source (URL, github repo, owner/repo) ──
+  // Returns a preview (declared bins/secrets/install cmds, vetted risks, files)
+  // for the review sheet. Nothing is installed at this stage.
+  ipcMain.handle('skill:inspect-url', async (_event, { url }) => {
+    try {
+      if (!url || typeof url !== 'string') return { ok: false, error: 'url required' };
+      const result = await _cmdHttp('/skill.import.inspect', { url: url.trim() });
+      return result && result.ok !== undefined ? result : { ok: false, error: 'No response from command service' };
+    } catch (e) {
+      console.error('[SkillImport] inspect failed:', e.message);
+      return { ok: false, error: e.message };
+    }
+  });
+
+  // ─── Skill Store: install a reviewed/approved skill-pack preview ──────────
+  ipcMain.handle('skill:install-url', async (_event, { preview, nameOverride, descriptionOverride }) => {
+    try {
+      if (!preview?.skillMd) return { ok: false, error: 'preview required — inspect first' };
+      const result = await _cmdHttp('/skill.import.install', { preview, nameOverride, descriptionOverride });
+      return result && result.ok !== undefined ? result : { ok: false, error: 'No response from command service' };
+    } catch (e) {
+      console.error('[SkillImport] install failed:', e.message);
+      return { ok: false, error: e.message };
+    }
+  });
+
   /**
    * Shared helper: normalize downloaded/picked content into a ThinkDrop
    * instruction skill and install it into ~/.thinkdrop/skills/ + user-memory.
@@ -11117,11 +11143,20 @@ app.whenReady().then(async () => {
     }
   });
 
-  ipcMain.handle('cli-agents:rebuild', async (_event, { service }) => {
+  ipcMain.handle('cli-agents:rebuild', async (_event, { service, cliTool }) => {
     try {
-      return await _cmdHttp('/agent.cli-build', { service, force: true });
+      return await _cmdHttp('/agent.cli-build', { service, cliTool, force: true });
     } catch (e) {
       console.error('[CLI-Agents] cli-agents:rebuild failed:', e.message);
+      return { ok: false, error: e.message };
+    }
+  });
+
+  ipcMain.handle('cli-agents:install', async (_event, { agentId }) => {
+    try {
+      return await _cmdHttp('/agent.cli-install', { agentId });
+    } catch (e) {
+      console.error('[CLI-Agents] cli-agents:install failed:', e.message);
       return { ok: false, error: e.message };
     }
   });

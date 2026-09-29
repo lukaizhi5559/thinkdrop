@@ -94,7 +94,7 @@ export interface AgentItem {
   name: string;           // display name
   domain: string;         // e.g., open.spotify.com
   category: string;       // Entertainment & Media, etc.
-  status: 'pending' | 'learning' | 'learned' | 'needs_training';
+  status: 'pending' | 'learning' | 'learned' | 'needs_training' | 'not_installed' | 'healthy' | 'needs_update' | 'broken' | 'needs_validation' | string;
   type?: 'browser' | 'api' | 'cli' | 'api_key' | 'app'; // agent type for filtering
   created?: string;       // ISO timestamp
   lastLearned?: string;   // ISO timestamp

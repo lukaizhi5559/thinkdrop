@@ -1379,10 +1379,10 @@ function _AgentsTab({ items, onRefresh, onContentResize, modalCardRef }: AgentsT
     }
   };
 
-  const handleCliRebuild = async (id: string, service: string) => {
+  const handleCliRebuild = async (id: string, service: string, cliTool?: string) => {
     setCliRebuilding(prev => ({ ...prev, [id]: true }));
     try {
-      await ipcRenderer?.invoke('cli-agents:rebuild', { service });
+      await ipcRenderer?.invoke('cli-agents:rebuild', { service, cliTool });
       onRefresh?.(); // Refresh parent to get updated agents list
     } finally {
       setCliRebuilding(prev => { const n = { ...prev }; delete n[id]; return n; });
@@ -2064,6 +2064,23 @@ function _AgentsTab({ items, onRefresh, onContentResize, modalCardRef }: AgentsT
                   </div>
                   {/* Action buttons */}
                   <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }} onClick={e => e.stopPropagation()}>
+                    {agent.status === 'not_installed' && agent.cliTool && (
+                      <button
+                        onClick={async () => {
+                          setCliRebuilding(prev => ({ ...prev, [agent.id]: true }));
+                          try {
+                            await ipcRenderer?.invoke('cli-agents:install', { agentId: agent.id });
+                            onRefresh?.();
+                          } finally {
+                            setCliRebuilding(prev => ({ ...prev, [agent.id]: false }));
+                          }
+                        }}
+                        disabled={!!cliRebuilding[agent.id]}
+                        style={{ padding: '3px 8px', borderRadius: 5, border: '1px solid rgba(239,68,68,0.35)', background: 'rgba(239,68,68,0.1)', color: '#fca5a5', fontSize: '0.63rem', cursor: 'pointer', opacity: cliRebuilding[agent.id] ? 0.5 : 1, fontWeight: 600 }}
+                      >
+                        {cliRebuilding[agent.id] ? 'Installing…' : `⬇ Install ${agent.cliTool}`}
+                      </button>
+                    )}
                     {agent.authStatus === 'not_authenticated' && (
                       <button
                         onClick={() => handleCliAuth(agent.id, agent.cliTool!)}
@@ -2081,7 +2098,7 @@ function _AgentsTab({ items, onRefresh, onContentResize, modalCardRef }: AgentsT
                       {cliValidating[agent.id] ? 'Validating...' : 'Validate'}
                     </button>
                     <button
-                      onClick={() => handleCliRebuild(agent.id, agent.service!)}
+                      onClick={() => handleCliRebuild(agent.id, agent.service!, agent.cliTool)}
                       disabled={!!cliRebuilding[agent.id]}
                       style={{ padding: '3px 8px', borderRadius: 5, border: '1px solid rgba(99,102,241,0.25)', background: 'rgba(99,102,241,0.08)', color: '#818cf8', fontSize: '0.63rem', cursor: 'pointer', opacity: cliRebuilding[agent.id] ? 0.5 : 1 }}
                     >
