@@ -1,0 +1,4687 @@
+{
+  "file": "prompts/intent-browser.json",
+  "run": 1,
+  "at": "2026-09-29T12:55:56.141Z",
+  "results": [
+    {
+      "id": "ab-nav-01",
+      "prompt": "goto google and search for new tesla cars",
+      "at": "2026-09-29T12:21:08.979Z",
+      "commsIntent": "handoff",
+      "commsLatencyMs": 817,
+      "taskId": "task_8b2424d4",
+      "status": "done",
+      "resultText": "Done.\n\nStep outputs:\n[app.agent/navigate_url]: completed\n\n[app.agent/scan_page]: completed\n\n[synthesize]:\nSucceeded: the page shows Google search results for the query “new tesla cars,” with an AI Overview and Tesla-related results visible.",
+      "graphIntent": {
+        "intent": "command_automate",
+        "parser": "llm-decompose",
+        "subPrompts": 1,
+        "subIntents": [
+          "command_automate"
+        ]
+      },
+      "screens": [],
+      "events": 161,
+      "approvals": 0,
+      "questions": 0,
+      "authResumes": 0,
+      "totalMs": 18929,
+      "error": null,
+      "trace": [
+        {
+          "node": "resolveReferences",
+          "duration": 4534
+        },
+        {
+          "node": "clarify",
+          "duration": 0
+        },
+        {
+          "node": "decomposePrompt",
+          "duration": 1
+        },
+        {
+          "node": "parseIntent",
+          "duration": 0
+        },
+        {
+          "node": "checkPlanCache",
+          "duration": 2
+        },
+        {
+          "node": "parseSkill",
+          "duration": 0
+        },
+        {
+          "node": "enrichIntent",
+          "duration": 0
+        },
+        {
+          "node": "routeIntent",
+          "duration": 0
+        },
+        {
+          "node": "resolveUserContext",
+          "duration": 0
+        },
+        {
+          "node": "resolveAgent",
+          "duration": 0
+        },
+        {
+          "node": "preflightAgents",
+          "duration": 1
+        },
+        {
+          "node": "gatherPlanContext",
+          "duration": 0
+        },
+        {
+          "node": "planSkills",
+          "duration": 2
+        },
+        {
+          "node": "executeCommand",
+          "duration": 2150
+        },
+        {
+          "node": "executeCommand",
+          "duration": 7113
+        },
+        {
+          "node": "executeCommand",
+          "duration": 3381
+        },
+        {
+          "node": "reviewExecution",
+          "duration": 0
+        },
+        {
+          "node": "evaluateSkills",
+          "duration": 0
+        },
+        {
+          "node": "logConversation",
+          "duration": 25
+        },
+        {
+          "node": "advanceQueue",
+          "duration": 0
+        }
+      ],
+      "failures": [],
+      "pass": true
+    },
+    {
+      "id": "ab-nav-02",
+      "prompt": "open amazon and search for baby clothes under $20",
+      "at": "2026-09-29T12:21:27.911Z",
+      "commsIntent": "handoff",
+      "commsLatencyMs": 2086,
+      "taskId": "task_88ceaa5d",
+      "status": "done",
+      "resultText": "Done.\n\nStep outputs:\n[app.agent/navigate_url]: completed\n\n[app.agent/scan_page]: completed\n\n[synthesize]:\nSucceeded: the page shows Amazon search results for “baby clothes under $20,” with the heading “1-48 of over 100,000 results for ‘baby clothes under $20,’” confirming the search was run.",
+      "graphIntent": {
+        "intent": "command_automate",
+        "parser": "llm-decompose",
+        "subPrompts": 1,
+        "subIntents": [
+          "command_automate"
+        ]
+      },
+      "screens": [],
+      "events": 197,
+      "approvals": 0,
+      "questions": 0,
+      "authResumes": 0,
+      "totalMs": 23245,
+      "error": null,
+      "trace": [
+        {
+          "node": "resolveReferences",
+          "duration": 4426
+        },
+        {
+          "node": "clarify",
+          "duration": 0
+        },
+        {
+          "node": "decomposePrompt",
+          "duration": 1
+        },
+        {
+          "node": "parseIntent",
+          "duration": 1
+        },
+        {
+          "node": "checkPlanCache",
+          "duration": 0
+        },
+        {
+          "node": "parseSkill",
+          "duration": 0
+        },
+        {
+          "node": "enrichIntent",
+          "duration": 0
+        },
+        {
+          "node": "routeIntent",
+          "duration": 1
+        },
+        {
+          "node": "resolveUserContext",
+          "duration": 0
+        },
+        {
+          "node": "resolveAgent",
+          "duration": 0
+        },
+        {
+          "node": "preflightAgents",
+          "duration": 1
+        },
+        {
+          "node": "gatherPlanContext",
+          "duration": 0
+        },
+        {
+          "node": "planSkills",
+          "duration": 2
+        },
+        {
+          "node": "executeCommand",
+          "duration": 3254
+        },
+        {
+          "node": "executeCommand",
+          "duration": 7038
+        },
+        {
+          "node": "executeCommand",
+          "duration": 6404
+        },
+        {
+          "node": "reviewExecution",
+          "duration": 0
+        },
+        {
+          "node": "evaluateSkills",
+          "duration": 0
+        },
+        {
+          "node": "logConversation",
+          "duration": 29
+        },
+        {
+          "node": "advanceQueue",
+          "duration": 0
+        }
+      ],
+      "failures": [],
+      "pass": true
+    },
+    {
+      "id": "ab-nav-03",
+      "prompt": "goto youtube and find lofi hip hop mixes",
+      "at": "2026-09-29T12:21:51.158Z",
+      "commsIntent": "handoff",
+      "commsLatencyMs": 610,
+      "taskId": "task_a4d6310a",
+      "status": "done",
+      "resultText": "Done.\n\nStep outputs:\n[app.agent/navigate_url]: completed\n\n[app.agent/scan_page]: completed\n\n[synthesize]:\nSucceeded. The scan shows YouTube with the search query “lofi hip hop mixes” and loaded results, including Lofi Girl’s “Best of lofi hip hop 2021 [beats to relax/study to]” and a live “lofi hip hop radio” stream.",
+      "graphIntent": {
+        "intent": "command_automate",
+        "parser": "llm-decompose",
+        "subPrompts": 1,
+        "subIntents": [
+          "command_automate"
+        ]
+      },
+      "screens": [],
+      "events": 233,
+      "approvals": 0,
+      "questions": 0,
+      "authResumes": 0,
+      "totalMs": 20270,
+      "error": null,
+      "trace": [
+        {
+          "node": "resolveReferences",
+          "duration": 4090
+        },
+        {
+          "node": "clarify",
+          "duration": 0
+        },
+        {
+          "node": "decomposePrompt",
+          "duration": 1
+        },
+        {
+          "node": "parseIntent",
+          "duration": 0
+        },
+        {
+          "node": "checkPlanCache",
+          "duration": 2
+        },
+        {
+          "node": "parseSkill",
+          "duration": 0
+        },
+        {
+          "node": "enrichIntent",
+          "duration": 0
+        },
+        {
+          "node": "routeIntent",
+          "duration": 0
+        },
+        {
+          "node": "resolveUserContext",
+          "duration": 0
+        },
+        {
+          "node": "resolveAgent",
+          "duration": 0
+        },
+        {
+          "node": "preflightAgents",
+          "duration": 0
+        },
+        {
+          "node": "gatherPlanContext",
+          "duration": 0
+        },
+        {
+          "node": "planSkills",
+          "duration": 4
+        },
+        {
+          "node": "executeCommand",
+          "duration": 3361
+        },
+        {
+          "node": "executeCommand",
+          "duration": 7379
+        },
+        {
+          "node": "executeCommand",
+          "duration": 4225
+        },
+        {
+          "node": "reviewExecution",
+          "duration": 0
+        },
+        {
+          "node": "evaluateSkills",
+          "duration": 0
+        },
+        {
+          "node": "logConversation",
+          "duration": 56
+        },
+        {
+          "node": "advanceQueue",
+          "duration": 0
+        }
+      ],
+      "failures": [],
+      "pass": true
+    },
+    {
+      "id": "ab-nav-04",
+      "prompt": "search wikipedia for the oregon trail",
+      "at": "2026-09-29T12:22:11.429Z",
+      "commsIntent": "handoff",
+      "commsLatencyMs": 593,
+      "taskId": "task_859f66f5",
+      "status": "done",
+      "resultText": "Done.\n\nStep outputs:\n[app.agent/navigate_url]: completed\n\n[app.agent/scan_page]: completed\n\n[synthesize]:\nYes, the search succeeded. The scanned content shows the Wikipedia article titled “Oregon Trail,” including “(Redirected from The Oregon Trail)” and the article’s introductory text.",
+      "graphIntent": {
+        "intent": "command_automate",
+        "parser": "llm-decompose",
+        "subPrompts": 1,
+        "subIntents": [
+          "command_automate"
+        ]
+      },
+      "screens": [],
+      "events": 269,
+      "approvals": 0,
+      "questions": 0,
+      "authResumes": 0,
+      "totalMs": 20150,
+      "error": null,
+      "trace": [
+        {
+          "node": "resolveReferences",
+          "duration": 3827
+        },
+        {
+          "node": "clarify",
+          "duration": 0
+        },
+        {
+          "node": "decomposePrompt",
+          "duration": 714
+        },
+        {
+          "node": "parseIntent",
+          "duration": 0
+        },
+        {
+          "node": "checkPlanCache",
+          "duration": 1
+        },
+        {
+          "node": "parseSkill",
+          "duration": 0
+        },
+        {
+          "node": "enrichIntent",
+          "duration": 0
+        },
+        {
+          "node": "routeIntent",
+          "duration": 0
+        },
+        {
+          "node": "resolveUserContext",
+          "duration": 0
+        },
+        {
+          "node": "resolveAgent",
+          "duration": 0
+        },
+        {
+          "node": "preflightAgents",
+          "duration": 0
+        },
+        {
+          "node": "gatherPlanContext",
+          "duration": 0
+        },
+        {
+          "node": "planSkills",
+          "duration": 2
+        },
+        {
+          "node": "executeCommand",
+          "duration": 2186
+        },
+        {
+          "node": "executeCommand",
+          "duration": 6780
+        },
+        {
+          "node": "executeCommand",
+          "duration": 4531
+        },
+        {
+          "node": "reviewExecution",
+          "duration": 0
+        },
+        {
+          "node": "evaluateSkills",
+          "duration": 0
+        },
+        {
+          "node": "logConversation",
+          "duration": 14
+        },
+        {
+          "node": "advanceQueue",
+          "duration": 0
+        }
+      ],
+      "failures": [],
+      "pass": true
+    },
+    {
+      "id": "ab-nav-05",
+      "prompt": "goto reddit and look up the best mechanical keyboards",
+      "at": "2026-09-29T12:22:31.579Z",
+      "commsIntent": "handoff",
+      "commsLatencyMs": 721,
+      "taskId": "task_586e962a",
+      "status": "done",
+      "resultText": "Done.\n\nStep outputs:\n[app.agent/navigate_url]: completed\n\n[app.agent/scan_page]: completed\n\n[synthesize]:\nSucceeded. The page shows Reddit’s search results for “best mechanical keyboards,” headed “best mechanical keyboards - Reddit Search!” with recommendations including Keychron hotswap prebuilts, Corsair K70, Logitech MX Keys, and Wooting 60HE V2.",
+      "graphIntent": {
+        "intent": "command_automate",
+        "parser": "llm-decompose",
+        "subPrompts": 1,
+        "subIntents": [
+          "command_automate"
+        ]
+      },
+      "screens": [],
+      "events": 305,
+      "approvals": 0,
+      "questions": 0,
+      "authResumes": 0,
+      "totalMs": 21785,
+      "error": null,
+      "trace": [
+        {
+          "node": "resolveReferences",
+          "duration": 4134
+        },
+        {
+          "node": "clarify",
+          "duration": 0
+        },
+        {
+          "node": "decomposePrompt",
+          "duration": 1
+        },
+        {
+          "node": "parseIntent",
+          "duration": 0
+        },
+        {
+          "node": "checkPlanCache",
+          "duration": 2
+        },
+        {
+          "node": "parseSkill",
+          "duration": 0
+        },
+        {
+          "node": "enrichIntent",
+          "duration": 0
+        },
+        {
+          "node": "routeIntent",
+          "duration": 0
+        },
+        {
+          "node": "resolveUserContext",
+          "duration": 0
+        },
+        {
+          "node": "resolveAgent",
+          "duration": 0
+        },
+        {
+          "node": "preflightAgents",
+          "duration": 0
+        },
+        {
+          "node": "gatherPlanContext",
+          "duration": 0
+        },
+        {
+          "node": "planSkills",
+          "duration": 2
+        },
+        {
+          "node": "executeCommand",
+          "duration": 3162
+        },
+        {
+          "node": "executeCommand",
+          "duration": 6996
+        },
+        {
+          "node": "executeCommand",
+          "duration": 6058
+        },
+        {
+          "node": "reviewExecution",
+          "duration": 1
+        },
+        {
+          "node": "evaluateSkills",
+          "duration": 1
+        },
+        {
+          "node": "logConversation",
+          "duration": 97
+        },
+        {
+          "node": "advanceQueue",
+          "duration": 0
+        }
+      ],
+      "failures": [],
+      "pass": true
+    },
+    {
+      "id": "ab-nav-06",
+      "prompt": "open github and search for the playwright repository",
+      "at": "2026-09-29T12:22:53.367Z",
+      "commsIntent": "handoff",
+      "commsLatencyMs": 1386,
+      "taskId": "task_e44863bb",
+      "status": "done",
+      "resultText": "Done.\n\nStep outputs:\n[app.agent/navigate_url]: completed\n\n[app.agent/scan_page]: completed\n\n[synthesize]:\nThe action succeeded: GitHub was opened and a search was run for “playwright repository.” The scanned page shows the GitHub search results heading “repositories Search Results — playwright repository.” Note that the visible results do not clearly show the official microsoft/playwright repository.",
+      "graphIntent": {
+        "intent": "command_automate",
+        "parser": "llm-decompose",
+        "subPrompts": 1,
+        "subIntents": [
+          "command_automate"
+        ]
+      },
+      "screens": [],
+      "events": 342,
+      "approvals": 0,
+      "questions": 0,
+      "authResumes": 0,
+      "totalMs": 31486,
+      "error": null,
+      "trace": [
+        {
+          "node": "resolveReferences",
+          "duration": 4979
+        },
+        {
+          "node": "clarify",
+          "duration": 0
+        },
+        {
+          "node": "decomposePrompt",
+          "duration": 0
+        },
+        {
+          "node": "parseIntent",
+          "duration": 0
+        },
+        {
+          "node": "checkPlanCache",
+          "duration": 1
+        },
+        {
+          "node": "parseSkill",
+          "duration": 0
+        },
+        {
+          "node": "enrichIntent",
+          "duration": 0
+        },
+        {
+          "node": "routeIntent",
+          "duration": 0
+        },
+        {
+          "node": "resolveUserContext",
+          "duration": 0
+        },
+        {
+          "node": "resolveAgent",
+          "duration": 0
+        },
+        {
+          "node": "preflightAgents",
+          "duration": 0
+        },
+        {
+          "node": "gatherPlanContext",
+          "duration": 0
+        },
+        {
+          "node": "planSkills",
+          "duration": 1
+        },
+        {
+          "node": "executeCommand",
+          "duration": 2178
+        },
+        {
+          "node": "executeCommand",
+          "duration": 7539
+        },
+        {
+          "node": "executeCommand",
+          "duration": 16094
+        },
+        {
+          "node": "reviewExecution",
+          "duration": 1
+        },
+        {
+          "node": "evaluateSkills",
+          "duration": 0
+        },
+        {
+          "node": "logConversation",
+          "duration": 25
+        },
+        {
+          "node": "advanceQueue",
+          "duration": 1
+        }
+      ],
+      "failures": [],
+      "pass": true
+    },
+    {
+      "id": "ab-nav-07",
+      "prompt": "goto ebay and search for used iphone 13",
+      "at": "2026-09-29T12:23:24.855Z",
+      "commsIntent": "handoff",
+      "commsLatencyMs": 706,
+      "taskId": "task_90512810",
+      "status": "done",
+      "resultText": "Done.\n\nStep outputs:\n[app.agent/navigate_url]: completed\n\n[app.agent/scan_page]: completed\n\n[synthesize]:\nSucceeded: the automation navigated to eBay and ran the search for “used iphone 13.” The page shows the search query “used iphone 13” in the search bar/Category field and displays “19,000+ results for used iphone 13,” with Apple iPhone 13 listings visible in the results.",
+      "graphIntent": {
+        "intent": "command_automate",
+        "parser": "llm-decompose",
+        "subPrompts": 1,
+        "subIntents": [
+          "command_automate"
+        ]
+      },
+      "screens": [],
+      "events": 378,
+      "approvals": 0,
+      "questions": 0,
+      "authResumes": 0,
+      "totalMs": 20276,
+      "error": null,
+      "trace": [
+        {
+          "node": "resolveReferences",
+          "duration": 3595
+        },
+        {
+          "node": "clarify",
+          "duration": 0
+        },
+        {
+          "node": "decomposePrompt",
+          "duration": 0
+        },
+        {
+          "node": "parseIntent",
+          "duration": 0
+        },
+        {
+          "node": "checkPlanCache",
+          "duration": 1
+        },
+        {
+          "node": "parseSkill",
+          "duration": 0
+        },
+        {
+          "node": "enrichIntent",
+          "duration": 0
+        },
+        {
+          "node": "routeIntent",
+          "duration": 0
+        },
+        {
+          "node": "resolveUserContext",
+          "duration": 0
+        },
+        {
+          "node": "resolveAgent",
+          "duration": 0
+        },
+        {
+          "node": "preflightAgents",
+          "duration": 0
+        },
+        {
+          "node": "gatherPlanContext",
+          "duration": 0
+        },
+        {
+          "node": "planSkills",
+          "duration": 2
+        },
+        {
+          "node": "executeCommand",
+          "duration": 3180
+        },
+        {
+          "node": "executeCommand",
+          "duration": 6980
+        },
+        {
+          "node": "executeCommand",
+          "duration": 4809
+        },
+        {
+          "node": "reviewExecution",
+          "duration": 0
+        },
+        {
+          "node": "evaluateSkills",
+          "duration": 0
+        },
+        {
+          "node": "logConversation",
+          "duration": 21
+        },
+        {
+          "node": "advanceQueue",
+          "duration": 0
+        }
+      ],
+      "failures": [],
+      "pass": true
+    },
+    {
+      "id": "ab-nav-08",
+      "prompt": "goto duckduckgo and search for macbook air m4 review",
+      "at": "2026-09-29T12:23:45.132Z",
+      "commsIntent": "handoff",
+      "commsLatencyMs": 528,
+      "taskId": "task_abddcdeb",
+      "status": "waiting-for-input+timeout",
+      "resultText": "One sec while I search for that.",
+      "graphIntent": {
+        "intent": "command_automate",
+        "parser": "llm-decompose",
+        "subPrompts": 1,
+        "subIntents": [
+          "command_automate"
+        ]
+      },
+      "screens": [],
+      "events": 482,
+      "approvals": 0,
+      "questions": 8,
+      "authResumes": 0,
+      "totalMs": 241124,
+      "error": "timed out after 240000ms (last status: waiting-for-input+timeout)",
+      "failures": [
+        "status: expected \"done\", got \"waiting-for-input+timeout\"",
+        "latency: 241124ms > budget 180000ms"
+      ],
+      "pass": false
+    },
+    {
+      "id": "ab-nav-09",
+      "prompt": "goto bing and search for today's nasa news",
+      "at": "2026-09-29T12:27:46.257Z",
+      "commsIntent": "handoff",
+      "commsLatencyMs": 900,
+      "taskId": "task_d7232160",
+      "status": "done",
+      "resultText": "Done.\n\nStep outputs:\n[app.agent/navigate_url]: completed\n\n[app.agent/scan_page]: completed\n\n[synthesize]:\nSucceeded. The scanned page shows Bing with the query “today’s nasa news” and a news results section (“News about Today S NASA”), confirming the search was performed.",
+      "graphIntent": {
+        "intent": "command_automate",
+        "parser": "llm-decompose",
+        "subPrompts": 1,
+        "subIntents": [
+          "command_automate"
+        ]
+      },
+      "screens": [],
+      "events": 518,
+      "approvals": 0,
+      "questions": 0,
+      "authResumes": 0,
+      "totalMs": 17494,
+      "error": null,
+      "trace": [
+        {
+          "node": "resolveReferences",
+          "duration": 4025
+        },
+        {
+          "node": "clarify",
+          "duration": 0
+        },
+        {
+          "node": "decomposePrompt",
+          "duration": 1
+        },
+        {
+          "node": "parseIntent",
+          "duration": 1
+        },
+        {
+          "node": "checkPlanCache",
+          "duration": 3
+        },
+        {
+          "node": "parseSkill",
+          "duration": 0
+        },
+        {
+          "node": "enrichIntent",
+          "duration": 0
+        },
+        {
+          "node": "routeIntent",
+          "duration": 0
+        },
+        {
+          "node": "resolveUserContext",
+          "duration": 0
+        },
+        {
+          "node": "resolveAgent",
+          "duration": 0
+        },
+        {
+          "node": "preflightAgents",
+          "duration": 0
+        },
+        {
+          "node": "gatherPlanContext",
+          "duration": 0
+        },
+        {
+          "node": "planSkills",
+          "duration": 2
+        },
+        {
+          "node": "executeCommand",
+          "duration": 2209
+        },
+        {
+          "node": "executeCommand",
+          "duration": 6913
+        },
+        {
+          "node": "executeCommand",
+          "duration": 3283
+        },
+        {
+          "node": "reviewExecution",
+          "duration": 1
+        },
+        {
+          "node": "evaluateSkills",
+          "duration": 0
+        },
+        {
+          "node": "logConversation",
+          "duration": 46
+        },
+        {
+          "node": "advanceQueue",
+          "duration": 0
+        }
+      ],
+      "failures": [],
+      "pass": true
+    },
+    {
+      "id": "ab-nav-10",
+      "prompt": "goto stackoverflow and search for cannot read property of undefined",
+      "at": "2026-09-29T12:28:03.753Z",
+      "commsIntent": "handoff",
+      "commsLatencyMs": 747,
+      "taskId": "task_7e00b8cf",
+      "status": "waiting-for-input+timeout",
+      "resultText": "Searching the web for you now.",
+      "graphIntent": {
+        "intent": "command_automate",
+        "parser": "llm-decompose",
+        "subPrompts": 1,
+        "subIntents": [
+          "command_automate"
+        ]
+      },
+      "screens": [],
+      "events": 674,
+      "approvals": 0,
+      "questions": 8,
+      "authResumes": 0,
+      "totalMs": 240074,
+      "error": "timed out after 240000ms (last status: waiting-for-input+timeout)",
+      "failures": [
+        "status: expected \"done\", got \"waiting-for-input+timeout\"",
+        "latency: 240074ms > budget 180000ms"
+      ],
+      "pass": false
+    },
+    {
+      "id": "ab-nav-11",
+      "prompt": "open etsy and search for handmade leather wallets",
+      "at": "2026-09-29T12:32:03.834Z",
+      "commsIntent": "handoff",
+      "commsLatencyMs": 906,
+      "taskId": "task_fcb4a6fd",
+      "status": "done",
+      "resultText": "Done.\n\nStep outputs:\n[app.agent/navigate_url]: completed\n\n[app.agent/scan_page]: completed\n\n[synthesize]:\nSucceeded. Etsy is open with “handmade leather wallets” entered in the search box, and the page is showing search results—for example, “Leather Bifold Wallet, Handmade Full Grain Leather, Personalized, Made in USA” by AmishLeatherWorks.",
+      "graphIntent": {
+        "intent": "command_automate",
+        "parser": "llm-decompose",
+        "subPrompts": 1,
+        "subIntents": [
+          "command_automate"
+        ]
+      },
+      "screens": [],
+      "events": 710,
+      "approvals": 0,
+      "questions": 0,
+      "authResumes": 0,
+      "totalMs": 19078,
+      "error": null,
+      "trace": [
+        {
+          "node": "resolveReferences",
+          "duration": 3637
+        },
+        {
+          "node": "clarify",
+          "duration": 0
+        },
+        {
+          "node": "decomposePrompt",
+          "duration": 0
+        },
+        {
+          "node": "parseIntent",
+          "duration": 0
+        },
+        {
+          "node": "checkPlanCache",
+          "duration": 3
+        },
+        {
+          "node": "parseSkill",
+          "duration": 0
+        },
+        {
+          "node": "enrichIntent",
+          "duration": 0
+        },
+        {
+          "node": "routeIntent",
+          "duration": 0
+        },
+        {
+          "node": "resolveUserContext",
+          "duration": 1
+        },
+        {
+          "node": "resolveAgent",
+          "duration": 0
+        },
+        {
+          "node": "preflightAgents",
+          "duration": 0
+        },
+        {
+          "node": "gatherPlanContext",
+          "duration": 0
+        },
+        {
+          "node": "planSkills",
+          "duration": 3
+        },
+        {
+          "node": "executeCommand",
+          "duration": 3104
+        },
+        {
+          "node": "executeCommand",
+          "duration": 7029
+        },
+        {
+          "node": "executeCommand",
+          "duration": 4019
+        },
+        {
+          "node": "reviewExecution",
+          "duration": 0
+        },
+        {
+          "node": "evaluateSkills",
+          "duration": 0
+        },
+        {
+          "node": "logConversation",
+          "duration": 37
+        },
+        {
+          "node": "advanceQueue",
+          "duration": 0
+        }
+      ],
+      "failures": [],
+      "pass": true
+    },
+    {
+      "id": "ab-nav-12",
+      "prompt": "goto yelp and search for best pizza in san francisco",
+      "at": "2026-09-29T12:32:22.913Z",
+      "commsIntent": "handoff",
+      "commsLatencyMs": 1384,
+      "taskId": "task_ebc4dba1",
+      "status": "done",
+      "resultText": "Done.\n\nStep outputs:\n[app.agent/navigate_url]: completed\n\n[app.agent/scan_page]: completed\n\n[synthesize]:\nYes, it succeeded. The scanned page is Yelp with the search query “best pizza in san francisco” applied and “San Francisco, CA” as the location, showing the “All ‘best pizza in san francisco’ results near me in San Francisco, California” section.",
+      "graphIntent": {
+        "intent": "command_automate",
+        "parser": "llm-decompose",
+        "subPrompts": 1,
+        "subIntents": [
+          "command_automate"
+        ]
+      },
+      "screens": [],
+      "events": 746,
+      "approvals": 0,
+      "questions": 0,
+      "authResumes": 0,
+      "totalMs": 19511,
+      "error": null,
+      "trace": [
+        {
+          "node": "resolveReferences",
+          "duration": 3658
+        },
+        {
+          "node": "clarify",
+          "duration": 0
+        },
+        {
+          "node": "decomposePrompt",
+          "duration": 1
+        },
+        {
+          "node": "parseIntent",
+          "duration": 1
+        },
+        {
+          "node": "checkPlanCache",
+          "duration": 0
+        },
+        {
+          "node": "parseSkill",
+          "duration": 0
+        },
+        {
+          "node": "enrichIntent",
+          "duration": 0
+        },
+        {
+          "node": "routeIntent",
+          "duration": 1
+        },
+        {
+          "node": "resolveUserContext",
+          "duration": 0
+        },
+        {
+          "node": "resolveAgent",
+          "duration": 0
+        },
+        {
+          "node": "preflightAgents",
+          "duration": 0
+        },
+        {
+          "node": "gatherPlanContext",
+          "duration": 0
+        },
+        {
+          "node": "planSkills",
+          "duration": 1
+        },
+        {
+          "node": "executeCommand",
+          "duration": 2205
+        },
+        {
+          "node": "executeCommand",
+          "duration": 6826
+        },
+        {
+          "node": "executeCommand",
+          "duration": 4447
+        },
+        {
+          "node": "reviewExecution",
+          "duration": 0
+        },
+        {
+          "node": "evaluateSkills",
+          "duration": 0
+        },
+        {
+          "node": "logConversation",
+          "duration": 14
+        },
+        {
+          "node": "advanceQueue",
+          "duration": 0
+        }
+      ],
+      "failures": [],
+      "pass": true
+    },
+    {
+      "id": "ab-url-01",
+      "prompt": "goto https://en.wikipedia.org/wiki/Telescope and summarize the page",
+      "at": "2026-09-29T12:32:42.424Z",
+      "commsIntent": "handoff",
+      "commsLatencyMs": 539,
+      "taskId": "task_b8402b73",
+      "status": "done",
+      "resultText": "Done.\n\nStep outputs:\n[app.agent/navigate_url]: completed\n\n[app.agent/scan_page]: completed\n\n[synthesize]:\nSucceeded: the agent navigated to the requested URL and captured the Wikipedia “Telescope” article content. The scanned evidence shows the page title “Telescope” and the lead sentence “A telescope is a device used to observe distant objects by their emission, absorption, or reflection of electromagnetic radiation.” The page is the English Wikipedia article at https://en.wikipedia.org/wiki/Telescope.",
+      "graphIntent": {
+        "intent": "command_automate",
+        "parser": "llm-decompose",
+        "subPrompts": 1,
+        "subIntents": [
+          "command_automate"
+        ]
+      },
+      "screens": [],
+      "events": 782,
+      "approvals": 0,
+      "questions": 0,
+      "authResumes": 0,
+      "totalMs": 21619,
+      "error": null,
+      "trace": [
+        {
+          "node": "resolveReferences",
+          "duration": 4082
+        },
+        {
+          "node": "clarify",
+          "duration": 0
+        },
+        {
+          "node": "decomposePrompt",
+          "duration": 0
+        },
+        {
+          "node": "parseIntent",
+          "duration": 0
+        },
+        {
+          "node": "checkPlanCache",
+          "duration": 3
+        },
+        {
+          "node": "parseSkill",
+          "duration": 0
+        },
+        {
+          "node": "enrichIntent",
+          "duration": 0
+        },
+        {
+          "node": "routeIntent",
+          "duration": 0
+        },
+        {
+          "node": "resolveUserContext",
+          "duration": 0
+        },
+        {
+          "node": "resolveAgent",
+          "duration": 1
+        },
+        {
+          "node": "preflightAgents",
+          "duration": 0
+        },
+        {
+          "node": "gatherPlanContext",
+          "duration": 0
+        },
+        {
+          "node": "planSkills",
+          "duration": 2
+        },
+        {
+          "node": "executeCommand",
+          "duration": 2204
+        },
+        {
+          "node": "executeCommand",
+          "duration": 6813
+        },
+        {
+          "node": "executeCommand",
+          "duration": 7043
+        },
+        {
+          "node": "reviewExecution",
+          "duration": 1
+        },
+        {
+          "node": "evaluateSkills",
+          "duration": 0
+        },
+        {
+          "node": "logConversation",
+          "duration": 22
+        },
+        {
+          "node": "advanceQueue",
+          "duration": 0
+        }
+      ],
+      "failures": [],
+      "pass": true
+    },
+    {
+      "id": "ab-url-02",
+      "prompt": "open https://example.com and tell me what the page says",
+      "at": "2026-09-29T12:33:04.044Z",
+      "commsIntent": "handoff",
+      "commsLatencyMs": 1457,
+      "taskId": "task_48fa2d2b",
+      "status": "done",
+      "resultText": "Done.\n\nStep outputs:\n[shell.run]: completed\n\n[app.agent/scan_page]: completed\n\n[synthesize]:\nThe scan succeeded. The page contains a notice stating that this domain is for use in documentation examples without needing permission, is not a service, and should not be relied on for testing or monitoring; the message appears in multiple languages and includes a “Learn more” link.",
+      "graphIntent": {
+        "intent": "command_automate",
+        "parser": "llm-decompose",
+        "subPrompts": 1,
+        "subIntents": [
+          "command_automate"
+        ]
+      },
+      "screens": [],
+      "events": 819,
+      "approvals": 0,
+      "questions": 0,
+      "authResumes": 0,
+      "totalMs": 21040,
+      "error": null,
+      "trace": [
+        {
+          "node": "resolveReferences",
+          "duration": 6472
+        },
+        {
+          "node": "clarify",
+          "duration": 0
+        },
+        {
+          "node": "decomposePrompt",
+          "duration": 676
+        },
+        {
+          "node": "parseIntent",
+          "duration": 1172
+        },
+        {
+          "node": "checkPlanCache",
+          "duration": 1
+        },
+        {
+          "node": "parseSkill",
+          "duration": 0
+        },
+        {
+          "node": "enrichIntent",
+          "duration": 0
+        },
+        {
+          "node": "routeIntent",
+          "duration": 0
+        },
+        {
+          "node": "resolveUserContext",
+          "duration": 0
+        },
+        {
+          "node": "resolveAgent",
+          "duration": 0
+        },
+        {
+          "node": "preflightAgents",
+          "duration": 0
+        },
+        {
+          "node": "gatherPlanContext",
+          "duration": 0
+        },
+        {
+          "node": "planSkills",
+          "duration": 2
+        },
+        {
+          "node": "executeCommand",
+          "duration": 360
+        },
+        {
+          "node": "executeCommand",
+          "duration": 6977
+        },
+        {
+          "node": "executeCommand",
+          "duration": 3526
+        },
+        {
+          "node": "reviewExecution",
+          "duration": 1
+        },
+        {
+          "node": "evaluateSkills",
+          "duration": 0
+        },
+        {
+          "node": "logConversation",
+          "duration": 32
+        },
+        {
+          "node": "advanceQueue",
+          "duration": 1
+        }
+      ],
+      "failures": [],
+      "pass": true
+    },
+    {
+      "id": "ab-url-03",
+      "prompt": "goto https://news.ycombinator.com and tell me the top story",
+      "at": "2026-09-29T12:33:25.085Z",
+      "commsIntent": "handoff",
+      "commsLatencyMs": 676,
+      "taskId": "task_621a90b8",
+      "status": "done",
+      "resultText": "Done.\n\nStep outputs:\n[app.agent/navigate_url]: completed\n\n[app.agent/scan_page]: completed\n\n[synthesize]:\nSucceeded: the scanned Hacker News page shows the #1 story as “You Are No Longer Invited to Dinner” from derekthompson.org, with 129 points.",
+      "graphIntent": {
+        "intent": "command_automate",
+        "parser": "llm-decompose",
+        "subPrompts": 1,
+        "subIntents": [
+          "command_automate"
+        ]
+      },
+      "screens": [],
+      "events": 855,
+      "approvals": 0,
+      "questions": 0,
+      "authResumes": 0,
+      "totalMs": 17275,
+      "error": null,
+      "trace": [
+        {
+          "node": "resolveReferences",
+          "duration": 3766
+        },
+        {
+          "node": "clarify",
+          "duration": 0
+        },
+        {
+          "node": "decomposePrompt",
+          "duration": 1
+        },
+        {
+          "node": "parseIntent",
+          "duration": 1
+        },
+        {
+          "node": "checkPlanCache",
+          "duration": 3
+        },
+        {
+          "node": "parseSkill",
+          "duration": 0
+        },
+        {
+          "node": "enrichIntent",
+          "duration": 0
+        },
+        {
+          "node": "routeIntent",
+          "duration": 0
+        },
+        {
+          "node": "resolveUserContext",
+          "duration": 0
+        },
+        {
+          "node": "resolveAgent",
+          "duration": 0
+        },
+        {
+          "node": "preflightAgents",
+          "duration": 0
+        },
+        {
+          "node": "gatherPlanContext",
+          "duration": 0
+        },
+        {
+          "node": "planSkills",
+          "duration": 2
+        },
+        {
+          "node": "executeCommand",
+          "duration": 2239
+        },
+        {
+          "node": "executeCommand",
+          "duration": 6753
+        },
+        {
+          "node": "executeCommand",
+          "duration": 2995
+        },
+        {
+          "node": "reviewExecution",
+          "duration": 0
+        },
+        {
+          "node": "evaluateSkills",
+          "duration": 0
+        },
+        {
+          "node": "logConversation",
+          "duration": 11
+        },
+        {
+          "node": "advanceQueue",
+          "duration": 1
+        }
+      ],
+      "failures": [],
+      "pass": true
+    },
+    {
+      "id": "ab-url-04",
+      "prompt": "open https://www.rust-lang.org and tell me what the page is about",
+      "at": "2026-09-29T12:33:42.361Z",
+      "commsIntent": "handoff",
+      "commsLatencyMs": 1626,
+      "taskId": "task_49063389",
+      "status": "done",
+      "resultText": "Done.\n\nStep outputs:\n[shell.run]: completed\n\n[app.agent/scan_page]: completed\n\n[synthesize]:\nSucceeded. The scanned page is the official Rust programming language homepage (rust-lang.org); the headline reads “Rust: A language empowering everyone to build reliable and efficient software” and lists version 1.98.1. It describes Rust’s performance, reliability, and productivity, plus areas like CLI, WebAssembly, networking, and embedded systems, along with community and contribution links.",
+      "graphIntent": {
+        "intent": "command_automate",
+        "parser": "llm-decompose",
+        "subPrompts": 1,
+        "subIntents": [
+          "command_automate"
+        ]
+      },
+      "screens": [],
+      "events": 892,
+      "approvals": 0,
+      "questions": 0,
+      "authResumes": 0,
+      "totalMs": 19731,
+      "error": null,
+      "trace": [
+        {
+          "node": "resolveReferences",
+          "duration": 5976
+        },
+        {
+          "node": "clarify",
+          "duration": 0
+        },
+        {
+          "node": "decomposePrompt",
+          "duration": 627
+        },
+        {
+          "node": "parseIntent",
+          "duration": 1157
+        },
+        {
+          "node": "checkPlanCache",
+          "duration": 1
+        },
+        {
+          "node": "parseSkill",
+          "duration": 0
+        },
+        {
+          "node": "enrichIntent",
+          "duration": 0
+        },
+        {
+          "node": "routeIntent",
+          "duration": 0
+        },
+        {
+          "node": "resolveUserContext",
+          "duration": 1
+        },
+        {
+          "node": "resolveAgent",
+          "duration": 0
+        },
+        {
+          "node": "preflightAgents",
+          "duration": 0
+        },
+        {
+          "node": "gatherPlanContext",
+          "duration": 0
+        },
+        {
+          "node": "planSkills",
+          "duration": 1
+        },
+        {
+          "node": "executeCommand",
+          "duration": 202
+        },
+        {
+          "node": "executeCommand",
+          "duration": 7010
+        },
+        {
+          "node": "executeCommand",
+          "duration": 2796
+        },
+        {
+          "node": "reviewExecution",
+          "duration": 0
+        },
+        {
+          "node": "evaluateSkills",
+          "duration": 0
+        },
+        {
+          "node": "logConversation",
+          "duration": 12
+        },
+        {
+          "node": "advanceQueue",
+          "duration": 0
+        }
+      ],
+      "failures": [],
+      "pass": true
+    },
+    {
+      "id": "ab-f1-nav",
+      "prompt": "goto amazon and search for mechanical pencils",
+      "at": "2026-09-29T12:34:02.093Z",
+      "commsIntent": "handoff",
+      "commsLatencyMs": 529,
+      "taskId": "task_1611a37e",
+      "status": "done",
+      "resultText": "Done.\n\nStep outputs:\n[app.agent/navigate_url]: completed\n\n[app.agent/scan_page]: completed\n\n[synthesize]:\nSucceeded. The scanned page shows Amazon’s search results page with “1-48 of over 8,000 results for ‘mechanical pencils’” and mechanical-pencil products listed, confirming the search was performed.",
+      "graphIntent": {
+        "intent": "command_automate",
+        "parser": "llm-decompose",
+        "subPrompts": 1,
+        "subIntents": [
+          "command_automate"
+        ]
+      },
+      "screens": [],
+      "events": 928,
+      "approvals": 0,
+      "questions": 0,
+      "authResumes": 0,
+      "totalMs": 20110,
+      "error": null,
+      "trace": [
+        {
+          "node": "resolveReferences",
+          "duration": 3593
+        },
+        {
+          "node": "clarify",
+          "duration": 0
+        },
+        {
+          "node": "decomposePrompt",
+          "duration": 0
+        },
+        {
+          "node": "parseIntent",
+          "duration": 0
+        },
+        {
+          "node": "checkPlanCache",
+          "duration": 1
+        },
+        {
+          "node": "parseSkill",
+          "duration": 1
+        },
+        {
+          "node": "enrichIntent",
+          "duration": 0
+        },
+        {
+          "node": "routeIntent",
+          "duration": 0
+        },
+        {
+          "node": "resolveUserContext",
+          "duration": 0
+        },
+        {
+          "node": "resolveAgent",
+          "duration": 0
+        },
+        {
+          "node": "preflightAgents",
+          "duration": 0
+        },
+        {
+          "node": "gatherPlanContext",
+          "duration": 0
+        },
+        {
+          "node": "planSkills",
+          "duration": 1
+        },
+        {
+          "node": "executeCommand",
+          "duration": 3170
+        },
+        {
+          "node": "executeCommand",
+          "duration": 6900
+        },
+        {
+          "node": "executeCommand",
+          "duration": 5333
+        },
+        {
+          "node": "reviewExecution",
+          "duration": 0
+        },
+        {
+          "node": "evaluateSkills",
+          "duration": 0
+        },
+        {
+          "node": "logConversation",
+          "duration": 84
+        },
+        {
+          "node": "advanceQueue",
+          "duration": 0
+        }
+      ],
+      "failures": [],
+      "pass": true
+    },
+    {
+      "id": "ab-f1-cheap",
+      "prompt": "what's the cheapest item on this page",
+      "at": "2026-09-29T12:34:22.203Z",
+      "commsIntent": "handoff",
+      "commsLatencyMs": 566,
+      "taskId": "task_2a9993c7",
+      "status": "done",
+      "resultText": "Done.\n\nStep outputs:\n[app.agent/scan_page]: completed\n\n[synthesize]:\nSucceeded — the scanned Amazon page shows the lowest visible product price as $2.74 for the BIC Xtra-Smooth Mechanical Pencils, Medium Point, 0.7mm, 10-Count Pack (list price $4.99). That is the cheapest item on the scanned page.",
+      "graphIntent": {
+        "intent": "command_automate",
+        "parser": "llm-decompose",
+        "subPrompts": 1,
+        "subIntents": [
+          "command_automate"
+        ]
+      },
+      "screens": [],
+      "events": 958,
+      "approvals": 0,
+      "questions": 0,
+      "authResumes": 0,
+      "totalMs": 29175,
+      "error": null,
+      "trace": [
+        {
+          "node": "resolveReferences",
+          "duration": 6645
+        },
+        {
+          "node": "clarify",
+          "duration": 0
+        },
+        {
+          "node": "decomposePrompt",
+          "duration": 544
+        },
+        {
+          "node": "parseIntent",
+          "duration": 0
+        },
+        {
+          "node": "checkPlanCache",
+          "duration": 0
+        },
+        {
+          "node": "parseSkill",
+          "duration": 1
+        },
+        {
+          "node": "enrichIntent",
+          "duration": 63
+        },
+        {
+          "node": "routeIntent",
+          "duration": 1
+        },
+        {
+          "node": "resolveUserContext",
+          "duration": 0
+        },
+        {
+          "node": "resolveAgent",
+          "duration": 0
+        },
+        {
+          "node": "preflightAgents",
+          "duration": 0
+        },
+        {
+          "node": "gatherPlanContext",
+          "duration": 0
+        },
+        {
+          "node": "planSkills",
+          "duration": 2
+        },
+        {
+          "node": "executeCommand",
+          "duration": 673
+        },
+        {
+          "node": "executeCommand",
+          "duration": 19130
+        },
+        {
+          "node": "reviewExecution",
+          "duration": 0
+        },
+        {
+          "node": "evaluateSkills",
+          "duration": 0
+        },
+        {
+          "node": "logConversation",
+          "duration": 25
+        },
+        {
+          "node": "advanceQueue",
+          "duration": 0
+        }
+      ],
+      "failures": [],
+      "pass": true
+    },
+    {
+      "id": "ab-f1-summary",
+      "prompt": "summarize this page in one sentence",
+      "at": "2026-09-29T12:34:51.379Z",
+      "commsIntent": "handoff",
+      "commsLatencyMs": 635,
+      "taskId": "task_024e9760",
+      "status": "done",
+      "resultText": "Done.\n\nStep outputs:\n[app.agent/scan_page]: completed\n\n[synthesize]:\nYes — the scan succeeded and the page is an Amazon search results page for **mechanical pencils** (the header shows the search query and delivery location “Collegeville 19426”), displaying a grid of mechanical pencil listings with prices, ratings, and Prime delivery options.",
+      "graphIntent": {
+        "intent": "command_automate",
+        "parser": "llm-decompose",
+        "subPrompts": 1,
+        "subIntents": [
+          "command_automate"
+        ]
+      },
+      "screens": [],
+      "events": 988,
+      "approvals": 0,
+      "questions": 0,
+      "authResumes": 0,
+      "totalMs": 18717,
+      "error": null,
+      "trace": [
+        {
+          "node": "resolveReferences",
+          "duration": 4701
+        },
+        {
+          "node": "clarify",
+          "duration": 0
+        },
+        {
+          "node": "decomposePrompt",
+          "duration": 0
+        },
+        {
+          "node": "parseIntent",
+          "duration": 0
+        },
+        {
+          "node": "checkPlanCache",
+          "duration": 2
+        },
+        {
+          "node": "parseSkill",
+          "duration": 0
+        },
+        {
+          "node": "enrichIntent",
+          "duration": 0
+        },
+        {
+          "node": "routeIntent",
+          "duration": 0
+        },
+        {
+          "node": "resolveUserContext",
+          "duration": 0
+        },
+        {
+          "node": "resolveAgent",
+          "duration": 0
+        },
+        {
+          "node": "preflightAgents",
+          "duration": 0
+        },
+        {
+          "node": "gatherPlanContext",
+          "duration": 0
+        },
+        {
+          "node": "planSkills",
+          "duration": 2
+        },
+        {
+          "node": "executeCommand",
+          "duration": 564
+        },
+        {
+          "node": "executeCommand",
+          "duration": 12608
+        },
+        {
+          "node": "reviewExecution",
+          "duration": 0
+        },
+        {
+          "node": "evaluateSkills",
+          "duration": 0
+        },
+        {
+          "node": "logConversation",
+          "duration": 14
+        },
+        {
+          "node": "advanceQueue",
+          "duration": 0
+        }
+      ],
+      "failures": [],
+      "pass": true
+    },
+    {
+      "id": "ab-f1-count",
+      "prompt": "roughly how many products are shown on this page",
+      "at": "2026-09-29T12:35:10.097Z",
+      "commsIntent": "handoff",
+      "commsLatencyMs": 577,
+      "taskId": "task_6c6b6add",
+      "status": "done",
+      "resultText": "Done.\n\nStep outputs:\n[app.agent/scan_page]: completed\n\n[synthesize]:\nIt succeeded. The scanned page shows Amazon search results for \"mechanical pencils\" with the text “1-48 of over 8,000 results,” meaning roughly 48 products are displayed on this page.",
+      "graphIntent": {
+        "intent": "command_automate",
+        "parser": "llm-decompose",
+        "subPrompts": 1,
+        "subIntents": [
+          "command_automate"
+        ]
+      },
+      "screens": [],
+      "events": 1017,
+      "approvals": 0,
+      "questions": 0,
+      "authResumes": 0,
+      "totalMs": 14163,
+      "error": null,
+      "trace": [
+        {
+          "node": "resolveReferences",
+          "duration": 3922
+        },
+        {
+          "node": "clarify",
+          "duration": 0
+        },
+        {
+          "node": "decomposePrompt",
+          "duration": 0
+        },
+        {
+          "node": "parseIntent",
+          "duration": 1
+        },
+        {
+          "node": "checkPlanCache",
+          "duration": 1
+        },
+        {
+          "node": "parseSkill",
+          "duration": 0
+        },
+        {
+          "node": "enrichIntent",
+          "duration": 17
+        },
+        {
+          "node": "routeIntent",
+          "duration": 0
+        },
+        {
+          "node": "resolveUserContext",
+          "duration": 1
+        },
+        {
+          "node": "resolveAgent",
+          "duration": 0
+        },
+        {
+          "node": "preflightAgents",
+          "duration": 0
+        },
+        {
+          "node": "gatherPlanContext",
+          "duration": 0
+        },
+        {
+          "node": "planSkills",
+          "duration": 3
+        },
+        {
+          "node": "executeCommand",
+          "duration": 692
+        },
+        {
+          "node": "executeCommand",
+          "duration": 8774
+        },
+        {
+          "node": "reviewExecution",
+          "duration": 0
+        },
+        {
+          "node": "evaluateSkills",
+          "duration": 0
+        },
+        {
+          "node": "logConversation",
+          "duration": 13
+        },
+        {
+          "node": "advanceQueue",
+          "duration": 0
+        }
+      ],
+      "failures": [],
+      "pass": true
+    },
+    {
+      "id": "ab-f2-nav",
+      "prompt": "goto youtube and search for relaxing rain sounds",
+      "at": "2026-09-29T12:35:24.260Z",
+      "commsIntent": "handoff",
+      "commsLatencyMs": 643,
+      "taskId": "task_3de56fed",
+      "status": "done",
+      "resultText": "Done.\n\nStep outputs:\n[app.agent/navigate_url]: completed\n\n[app.agent/scan_page]: completed\n\n[synthesize]:\nYes, the request succeeded. The scanned YouTube page shows the search query “relaxing rain sounds” and displays rain-sound video results, confirming the search was performed.",
+      "graphIntent": {
+        "intent": "command_automate",
+        "parser": "llm-decompose",
+        "subPrompts": 1,
+        "subIntents": [
+          "command_automate"
+        ]
+      },
+      "screens": [],
+      "events": 1053,
+      "approvals": 0,
+      "questions": 0,
+      "authResumes": 0,
+      "totalMs": 20389,
+      "error": null,
+      "trace": [
+        {
+          "node": "resolveReferences",
+          "duration": 4667
+        },
+        {
+          "node": "clarify",
+          "duration": 0
+        },
+        {
+          "node": "decomposePrompt",
+          "duration": 1
+        },
+        {
+          "node": "parseIntent",
+          "duration": 0
+        },
+        {
+          "node": "checkPlanCache",
+          "duration": 1
+        },
+        {
+          "node": "parseSkill",
+          "duration": 0
+        },
+        {
+          "node": "enrichIntent",
+          "duration": 0
+        },
+        {
+          "node": "routeIntent",
+          "duration": 0
+        },
+        {
+          "node": "resolveUserContext",
+          "duration": 0
+        },
+        {
+          "node": "resolveAgent",
+          "duration": 0
+        },
+        {
+          "node": "preflightAgents",
+          "duration": 0
+        },
+        {
+          "node": "gatherPlanContext",
+          "duration": 0
+        },
+        {
+          "node": "planSkills",
+          "duration": 2
+        },
+        {
+          "node": "executeCommand",
+          "duration": 3294
+        },
+        {
+          "node": "executeCommand",
+          "duration": 7053
+        },
+        {
+          "node": "executeCommand",
+          "duration": 4446
+        },
+        {
+          "node": "reviewExecution",
+          "duration": 1
+        },
+        {
+          "node": "evaluateSkills",
+          "duration": 0
+        },
+        {
+          "node": "logConversation",
+          "duration": 17
+        },
+        {
+          "node": "advanceQueue",
+          "duration": 0
+        }
+      ],
+      "failures": [],
+      "pass": true
+    },
+    {
+      "id": "ab-f2-first",
+      "prompt": "what's the first video title on this page",
+      "at": "2026-09-29T12:35:44.649Z",
+      "commsIntent": "handoff",
+      "commsLatencyMs": 590,
+      "taskId": "task_b7f0b200",
+      "status": "done",
+      "resultText": "Done.\n\nStep outputs:\n[app.agent/scan_page]: completed\n\n[synthesize]:\nSucceeded. The first video title on the page is “Deep Sleep Thunderstorm: 12 Hours of Rain & Thunder Sounds at Night by the Lake | RELAX | STUDY,” which appears as the first “Now playing” result in the scanned content.",
+      "graphIntent": {
+        "intent": "command_automate",
+        "parser": "llm-decompose",
+        "subPrompts": 1,
+        "subIntents": [
+          "command_automate"
+        ]
+      },
+      "screens": [],
+      "events": 1082,
+      "approvals": 0,
+      "questions": 0,
+      "authResumes": 0,
+      "totalMs": 15655,
+      "error": null,
+      "trace": [
+        {
+          "node": "resolveReferences",
+          "duration": 6303
+        },
+        {
+          "node": "clarify",
+          "duration": 0
+        },
+        {
+          "node": "decomposePrompt",
+          "duration": 561
+        },
+        {
+          "node": "parseIntent",
+          "duration": 0
+        },
+        {
+          "node": "checkPlanCache",
+          "duration": 2
+        },
+        {
+          "node": "parseSkill",
+          "duration": 0
+        },
+        {
+          "node": "enrichIntent",
+          "duration": 17
+        },
+        {
+          "node": "routeIntent",
+          "duration": 1
+        },
+        {
+          "node": "resolveUserContext",
+          "duration": 0
+        },
+        {
+          "node": "resolveAgent",
+          "duration": 0
+        },
+        {
+          "node": "preflightAgents",
+          "duration": 0
+        },
+        {
+          "node": "gatherPlanContext",
+          "duration": 1
+        },
+        {
+          "node": "planSkills",
+          "duration": 5
+        },
+        {
+          "node": "executeCommand",
+          "duration": 542
+        },
+        {
+          "node": "executeCommand",
+          "duration": 6216
+        },
+        {
+          "node": "reviewExecution",
+          "duration": 1
+        },
+        {
+          "node": "evaluateSkills",
+          "duration": 0
+        },
+        {
+          "node": "logConversation",
+          "duration": 95
+        },
+        {
+          "node": "advanceQueue",
+          "duration": 0
+        }
+      ],
+      "failures": [],
+      "pass": true
+    },
+    {
+      "id": "ab-f2-long",
+      "prompt": "are there any videos on this page longer than an hour",
+      "at": "2026-09-29T12:36:00.305Z",
+      "commsIntent": "handoff",
+      "commsLatencyMs": 712,
+      "taskId": "task_c1ce738a",
+      "status": "done",
+      "resultText": "Done.\n\nStep outputs:\n[app.agent/scan_page]: completed\n\n[synthesize]:\nYes. The scanned page contains multiple videos longer than an hour, such as “Deep Sleep Thunderstorm: 12 Hours of Rain & Thunder Sounds at Night by the Lake” (duration 12:12:00) and “10 Hour | Rain Sounds for Sleep | Meditation | Study | Focus | Spa | Calming Background Ambience” (duration 10:00:01).",
+      "graphIntent": {
+        "intent": "command_automate",
+        "parser": "llm-decompose",
+        "subPrompts": 1,
+        "subIntents": [
+          "command_automate"
+        ]
+      },
+      "screens": [],
+      "events": 1111,
+      "approvals": 0,
+      "questions": 0,
+      "authResumes": 0,
+      "totalMs": 14279,
+      "error": null,
+      "trace": [
+        {
+          "node": "resolveReferences",
+          "duration": 4159
+        },
+        {
+          "node": "clarify",
+          "duration": 0
+        },
+        {
+          "node": "decomposePrompt",
+          "duration": 635
+        },
+        {
+          "node": "parseIntent",
+          "duration": 0
+        },
+        {
+          "node": "checkPlanCache",
+          "duration": 1
+        },
+        {
+          "node": "parseSkill",
+          "duration": 0
+        },
+        {
+          "node": "enrichIntent",
+          "duration": 13
+        },
+        {
+          "node": "routeIntent",
+          "duration": 0
+        },
+        {
+          "node": "resolveUserContext",
+          "duration": 0
+        },
+        {
+          "node": "resolveAgent",
+          "duration": 0
+        },
+        {
+          "node": "preflightAgents",
+          "duration": 0
+        },
+        {
+          "node": "gatherPlanContext",
+          "duration": 0
+        },
+        {
+          "node": "planSkills",
+          "duration": 5
+        },
+        {
+          "node": "executeCommand",
+          "duration": 592
+        },
+        {
+          "node": "executeCommand",
+          "duration": 7676
+        },
+        {
+          "node": "reviewExecution",
+          "duration": 0
+        },
+        {
+          "node": "evaluateSkills",
+          "duration": 0
+        },
+        {
+          "node": "logConversation",
+          "duration": 12
+        },
+        {
+          "node": "advanceQueue",
+          "duration": 0
+        }
+      ],
+      "failures": [],
+      "pass": true
+    },
+    {
+      "id": "ab-f3-nav",
+      "prompt": "goto https://en.wikipedia.org/wiki/Photosynthesis and tell me what it's about",
+      "at": "2026-09-29T12:36:14.584Z",
+      "commsIntent": "handoff",
+      "commsLatencyMs": 848,
+      "taskId": "task_42a2b3f6",
+      "status": "done",
+      "resultText": "Done.\n\nStep outputs:\n[app.agent/navigate_url]: completed\n\n[app.agent/scan_page]: completed\n\n[synthesize]:\nSucceeded. The scanned page is the Wikipedia article “Photosynthesis,” and the collected text directly answers the question: it describes photosynthesis as a set of biological processes by which plants, algae, and cyanobacteria convert light energy from sunlight into chemical energy, typically releasing oxygen.",
+      "graphIntent": {
+        "intent": "command_automate",
+        "parser": "llm-decompose",
+        "subPrompts": 1,
+        "subIntents": [
+          "command_automate"
+        ]
+      },
+      "screens": [],
+      "events": 1147,
+      "approvals": 0,
+      "questions": 0,
+      "authResumes": 0,
+      "totalMs": 18928,
+      "error": null,
+      "trace": [
+        {
+          "node": "resolveReferences",
+          "duration": 3774
+        },
+        {
+          "node": "clarify",
+          "duration": 0
+        },
+        {
+          "node": "decomposePrompt",
+          "duration": 1
+        },
+        {
+          "node": "parseIntent",
+          "duration": 0
+        },
+        {
+          "node": "checkPlanCache",
+          "duration": 1
+        },
+        {
+          "node": "parseSkill",
+          "duration": 0
+        },
+        {
+          "node": "enrichIntent",
+          "duration": 0
+        },
+        {
+          "node": "routeIntent",
+          "duration": 0
+        },
+        {
+          "node": "resolveUserContext",
+          "duration": 0
+        },
+        {
+          "node": "resolveAgent",
+          "duration": 0
+        },
+        {
+          "node": "preflightAgents",
+          "duration": 0
+        },
+        {
+          "node": "gatherPlanContext",
+          "duration": 0
+        },
+        {
+          "node": "planSkills",
+          "duration": 2
+        },
+        {
+          "node": "executeCommand",
+          "duration": 2188
+        },
+        {
+          "node": "executeCommand",
+          "duration": 6758
+        },
+        {
+          "node": "executeCommand",
+          "duration": 4668
+        },
+        {
+          "node": "reviewExecution",
+          "duration": 1
+        },
+        {
+          "node": "evaluateSkills",
+          "duration": 0
+        },
+        {
+          "node": "logConversation",
+          "duration": 12
+        },
+        {
+          "node": "advanceQueue",
+          "duration": 0
+        }
+      ],
+      "failures": [],
+      "pass": true
+    },
+    {
+      "id": "ab-f3-what",
+      "prompt": "what is this page about",
+      "at": "2026-09-29T12:36:33.512Z",
+      "commsIntent": "handoff",
+      "commsLatencyMs": 21,
+      "taskId": "task_b50ba817",
+      "status": "done",
+      "resultText": "Done.\n\nStep outputs:\n[app.agent/scan_page]: completed\n\n[synthesize]:\nThe page was successfully scanned. It is the Wikipedia article on “Photosynthesis,” which explains the biological process by which plants, algae, and cyanobacteria convert light energy into chemical energy. The scanned text includes the article title “Photosynthesis” and the lead definition describing the process.",
+      "graphIntent": {
+        "intent": "command_automate",
+        "parser": "llm-decompose",
+        "subPrompts": 1,
+        "subIntents": [
+          "command_automate"
+        ]
+      },
+      "screens": [],
+      "events": 1176,
+      "approvals": 0,
+      "questions": 0,
+      "authResumes": 0,
+      "totalMs": 12090,
+      "error": null,
+      "trace": [
+        {
+          "node": "resolveReferences",
+          "duration": 6545
+        },
+        {
+          "node": "clarify",
+          "duration": 0
+        },
+        {
+          "node": "decomposePrompt",
+          "duration": 643
+        },
+        {
+          "node": "parseIntent",
+          "duration": 0
+        },
+        {
+          "node": "checkPlanCache",
+          "duration": 2
+        },
+        {
+          "node": "parseSkill",
+          "duration": 0
+        },
+        {
+          "node": "enrichIntent",
+          "duration": 6
+        },
+        {
+          "node": "routeIntent",
+          "duration": 0
+        },
+        {
+          "node": "resolveUserContext",
+          "duration": 1
+        },
+        {
+          "node": "resolveAgent",
+          "duration": 0
+        },
+        {
+          "node": "preflightAgents",
+          "duration": 0
+        },
+        {
+          "node": "gatherPlanContext",
+          "duration": 0
+        },
+        {
+          "node": "planSkills",
+          "duration": 5
+        },
+        {
+          "node": "executeCommand",
+          "duration": 582
+        },
+        {
+          "node": "executeCommand",
+          "duration": 3664
+        },
+        {
+          "node": "reviewExecution",
+          "duration": 0
+        },
+        {
+          "node": "evaluateSkills",
+          "duration": 0
+        },
+        {
+          "node": "logConversation",
+          "duration": 12
+        },
+        {
+          "node": "advanceQueue",
+          "duration": 0
+        }
+      ],
+      "failures": [],
+      "pass": true
+    },
+    {
+      "id": "ab-f3-copy",
+      "prompt": "copy this page's text",
+      "at": "2026-09-29T12:36:45.602Z",
+      "commsIntent": "handoff",
+      "commsLatencyMs": 1475,
+      "taskId": "task_2f62a104",
+      "status": "done",
+      "resultText": "Done.\n\nStep outputs:\n[app.agent/scan_page]: completed\n\n[synthesize]:\nSucceeded — the scan captured the page text from the Wikipedia article “Photosynthesis,” including the title, body sections, and references/external links as shown in the collected screen text. No file was created; the copied text is available in the scan output above.",
+      "graphIntent": {
+        "intent": "command_automate",
+        "parser": "llm-decompose",
+        "subPrompts": 1,
+        "subIntents": [
+          "command_automate"
+        ]
+      },
+      "screens": [],
+      "events": 1205,
+      "approvals": 0,
+      "questions": 0,
+      "authResumes": 0,
+      "totalMs": 13547,
+      "error": null,
+      "trace": [
+        {
+          "node": "resolveReferences",
+          "duration": 6126
+        },
+        {
+          "node": "clarify",
+          "duration": 0
+        },
+        {
+          "node": "decomposePrompt",
+          "duration": 621
+        },
+        {
+          "node": "parseIntent",
+          "duration": 1
+        },
+        {
+          "node": "checkPlanCache",
+          "duration": 0
+        },
+        {
+          "node": "parseSkill",
+          "duration": 0
+        },
+        {
+          "node": "enrichIntent",
+          "duration": 6
+        },
+        {
+          "node": "routeIntent",
+          "duration": 0
+        },
+        {
+          "node": "resolveUserContext",
+          "duration": 0
+        },
+        {
+          "node": "resolveAgent",
+          "duration": 0
+        },
+        {
+          "node": "preflightAgents",
+          "duration": 0
+        },
+        {
+          "node": "gatherPlanContext",
+          "duration": 0
+        },
+        {
+          "node": "planSkills",
+          "duration": 7
+        },
+        {
+          "node": "executeCommand",
+          "duration": 557
+        },
+        {
+          "node": "executeCommand",
+          "duration": 4642
+        },
+        {
+          "node": "reviewExecution",
+          "duration": 0
+        },
+        {
+          "node": "evaluateSkills",
+          "duration": 0
+        },
+        {
+          "node": "logConversation",
+          "duration": 12
+        },
+        {
+          "node": "advanceQueue",
+          "duration": 0
+        }
+      ],
+      "failures": [],
+      "pass": true
+    },
+    {
+      "id": "ab-f3-print",
+      "prompt": "print this page",
+      "at": "2026-09-29T12:36:59.150Z",
+      "commsIntent": "handoff",
+      "commsLatencyMs": 812,
+      "taskId": "task_2b1e93fe",
+      "status": "done",
+      "resultText": "Done.\n\nStep outputs:\n[app.agent/print_page]: completed",
+      "graphIntent": {
+        "intent": "command_automate",
+        "parser": "llm-decompose",
+        "subPrompts": 1,
+        "subIntents": [
+          "command_automate"
+        ]
+      },
+      "screens": [],
+      "events": 1228,
+      "approvals": 0,
+      "questions": 0,
+      "authResumes": 0,
+      "totalMs": 11414,
+      "error": null,
+      "trace": [
+        {
+          "node": "resolveReferences",
+          "duration": 6149
+        },
+        {
+          "node": "clarify",
+          "duration": 0
+        },
+        {
+          "node": "decomposePrompt",
+          "duration": 601
+        },
+        {
+          "node": "parseIntent",
+          "duration": 0
+        },
+        {
+          "node": "checkPlanCache",
+          "duration": 0
+        },
+        {
+          "node": "parseSkill",
+          "duration": 0
+        },
+        {
+          "node": "enrichIntent",
+          "duration": 6
+        },
+        {
+          "node": "routeIntent",
+          "duration": 0
+        },
+        {
+          "node": "resolveUserContext",
+          "duration": 0
+        },
+        {
+          "node": "resolveAgent",
+          "duration": 0
+        },
+        {
+          "node": "preflightAgents",
+          "duration": 0
+        },
+        {
+          "node": "gatherPlanContext",
+          "duration": 0
+        },
+        {
+          "node": "planSkills",
+          "duration": 3
+        },
+        {
+          "node": "executeCommand",
+          "duration": 2846
+        },
+        {
+          "node": "reviewExecution",
+          "duration": 0
+        },
+        {
+          "node": "evaluateSkills",
+          "duration": 1
+        },
+        {
+          "node": "logConversation",
+          "duration": 114
+        },
+        {
+          "node": "advanceQueue",
+          "duration": 0
+        }
+      ],
+      "failures": [],
+      "pass": true
+    },
+    {
+      "id": "ab-thispage",
+      "prompt": "summarize the page I have open right now",
+      "at": "2026-09-29T12:37:10.565Z",
+      "commsIntent": "handoff",
+      "commsLatencyMs": 587,
+      "taskId": "task_a923670b",
+      "status": "done",
+      "resultText": "Done.\n\nStep outputs:\n[app.agent/scan_page]: completed\n\n[synthesize]:\nThe automation succeeded: it scanned the open page and identified it as the Wikipedia article “Photosynthesis.” The article summarizes photosynthesis as the biological process by which plants, algae, and cyanobacteria convert light energy into chemical energy, covering topics such as light-dependent reactions, the Calvin cycle, efficiency, evolution, and ecological significance.",
+      "graphIntent": {
+        "intent": "command_automate",
+        "parser": "llm-decompose",
+        "subPrompts": 1,
+        "subIntents": [
+          "command_automate"
+        ]
+      },
+      "screens": [],
+      "events": 1257,
+      "approvals": 0,
+      "questions": 0,
+      "authResumes": 0,
+      "totalMs": 12675,
+      "error": null,
+      "trace": [
+        {
+          "node": "resolveReferences",
+          "duration": 3245
+        },
+        {
+          "node": "clarify",
+          "duration": 0
+        },
+        {
+          "node": "decomposePrompt",
+          "duration": 1
+        },
+        {
+          "node": "parseIntent",
+          "duration": 1
+        },
+        {
+          "node": "checkPlanCache",
+          "duration": 1
+        },
+        {
+          "node": "parseSkill",
+          "duration": 0
+        },
+        {
+          "node": "enrichIntent",
+          "duration": 15
+        },
+        {
+          "node": "routeIntent",
+          "duration": 0
+        },
+        {
+          "node": "resolveUserContext",
+          "duration": 0
+        },
+        {
+          "node": "resolveAgent",
+          "duration": 1
+        },
+        {
+          "node": "preflightAgents",
+          "duration": 0
+        },
+        {
+          "node": "gatherPlanContext",
+          "duration": 0
+        },
+        {
+          "node": "planSkills",
+          "duration": 3
+        },
+        {
+          "node": "executeCommand",
+          "duration": 594
+        },
+        {
+          "node": "executeCommand",
+          "duration": 8021
+        },
+        {
+          "node": "reviewExecution",
+          "duration": 0
+        },
+        {
+          "node": "evaluateSkills",
+          "duration": 0
+        },
+        {
+          "node": "logConversation",
+          "duration": 31
+        },
+        {
+          "node": "advanceQueue",
+          "duration": 0
+        }
+      ],
+      "failures": [],
+      "pass": true
+    },
+    {
+      "id": "ab-print-solo",
+      "prompt": "print the page that's open in my browser",
+      "at": "2026-09-29T12:37:23.241Z",
+      "commsIntent": "handoff",
+      "commsLatencyMs": 1287,
+      "taskId": "task_12e7da84",
+      "status": "done",
+      "resultText": "Done.\n\nStep outputs:\n[app.agent/print_page]: completed",
+      "graphIntent": {
+        "intent": "command_automate",
+        "parser": "llm-decompose",
+        "subPrompts": 1,
+        "subIntents": [
+          "command_automate"
+        ]
+      },
+      "screens": [],
+      "events": 1280,
+      "approvals": 0,
+      "questions": 0,
+      "authResumes": 0,
+      "totalMs": 10385,
+      "error": null,
+      "trace": [
+        {
+          "node": "resolveReferences",
+          "duration": 6317
+        },
+        {
+          "node": "clarify",
+          "duration": 0
+        },
+        {
+          "node": "decomposePrompt",
+          "duration": 701
+        },
+        {
+          "node": "parseIntent",
+          "duration": 0
+        },
+        {
+          "node": "checkPlanCache",
+          "duration": 3
+        },
+        {
+          "node": "parseSkill",
+          "duration": 0
+        },
+        {
+          "node": "enrichIntent",
+          "duration": 32
+        },
+        {
+          "node": "routeIntent",
+          "duration": 1
+        },
+        {
+          "node": "resolveUserContext",
+          "duration": 0
+        },
+        {
+          "node": "resolveAgent",
+          "duration": 0
+        },
+        {
+          "node": "preflightAgents",
+          "duration": 1
+        },
+        {
+          "node": "gatherPlanContext",
+          "duration": 1
+        },
+        {
+          "node": "planSkills",
+          "duration": 9
+        },
+        {
+          "node": "executeCommand",
+          "duration": 2553
+        },
+        {
+          "node": "reviewExecution",
+          "duration": 0
+        },
+        {
+          "node": "evaluateSkills",
+          "duration": 1
+        },
+        {
+          "node": "logConversation",
+          "duration": 46
+        },
+        {
+          "node": "advanceQueue",
+          "duration": 0
+        }
+      ],
+      "failures": [],
+      "pass": true
+    },
+    {
+      "id": "ba-int-01",
+      "prompt": "search etsy for handmade candles and click the first result",
+      "at": "2026-09-29T12:37:33.627Z",
+      "commsIntent": "handoff",
+      "commsLatencyMs": 1392,
+      "taskId": "task_747e97d4",
+      "status": "done",
+      "resultText": "## First Etsy Result for “Handmade Candles”\n\nThe first result shown is a promoted/ad listing.\n\n- **Product title:** Fall Soy Candle | Cozy Autumn Scents Pumpkin, Apple & Bourbon | Non-Toxic Handmade Gift for Her or Host  \n- **Price:** Sale price **$12.90** (original price $21.50 — 40% off)  \n- **Shop:** VivaWorkshop  \n- **Badge:** Etsy’s Pick  \n\n**Brief description based on the listing content:**  \nA handmade fall soy candle with cozy autumn scents described as pumpkin, apple, and bourbon. It is marketed as non-toxic and positioned as a gift for her or a host.\n\nNote: The provided content includes only the search-results listing, not the full product page, so this summary is based on the search listing snippet rather than the complete product-page description.",
+      "graphIntent": {
+        "intent": "command_automate",
+        "parser": "llm-decompose",
+        "subPrompts": 1,
+        "subIntents": [
+          "command_automate"
+        ]
+      },
+      "screens": [],
+      "events": 1348,
+      "approvals": 0,
+      "questions": 0,
+      "authResumes": 0,
+      "totalMs": 138275,
+      "error": null,
+      "trace": [
+        {
+          "node": "resolveReferences",
+          "duration": 3636
+        },
+        {
+          "node": "clarify",
+          "duration": 0
+        },
+        {
+          "node": "decomposePrompt",
+          "duration": 1852
+        },
+        {
+          "node": "parseIntent",
+          "duration": 0
+        },
+        {
+          "node": "checkPlanCache",
+          "duration": 1
+        },
+        {
+          "node": "parseSkill",
+          "duration": 500
+        },
+        {
+          "node": "enrichIntent",
+          "duration": 0
+        },
+        {
+          "node": "routeIntent",
+          "duration": 0
+        },
+        {
+          "node": "resolveUserContext",
+          "duration": 4
+        },
+        {
+          "node": "resolveAgent",
+          "duration": 0
+        },
+        {
+          "node": "preflightAgents",
+          "duration": 528
+        },
+        {
+          "node": "gatherPlanContext",
+          "duration": 500
+        },
+        {
+          "node": "planSkills",
+          "duration": 15153
+        },
+        {
+          "node": "executeCommand",
+          "duration": 4
+        },
+        {
+          "node": "executeCommand",
+          "duration": 27351
+        },
+        {
+          "node": "executeCommand",
+          "duration": 50015
+        },
+        {
+          "node": "executeCommand",
+          "duration": 24042
+        },
+        {
+          "node": "executeCommand",
+          "duration": 12920
+        },
+        {
+          "node": "reviewExecution",
+          "duration": 4
+        },
+        {
+          "node": "evaluateSkills",
+          "duration": 0
+        },
+        {
+          "node": "logConversation",
+          "duration": 100
+        },
+        {
+          "node": "advanceQueue",
+          "duration": 0
+        }
+      ],
+      "failures": [],
+      "pass": true
+    },
+    {
+      "id": "ba-int-02",
+      "prompt": "on youtube search for 'ambient space music' and play the first video",
+      "at": "2026-09-29T12:39:51.903Z",
+      "commsIntent": "handoff",
+      "commsLatencyMs": 1624,
+      "taskId": "task_542511f2",
+      "status": "done",
+      "resultText": "Done.\n\nStep outputs:\n[app.agent/navigate_url]: completed\n\n[app.agent/scan_page]: completed\n\n[synthesize]:\nYes, this succeeded. The YouTube search page for “ambient space music” is loaded, and the first result, “Space Ambient Music – Pure Cosmic Relaxation – Mind Relaxation” by Relaxation Ambient Music, shows a “Now playing” indicator.",
+      "graphIntent": {
+        "intent": "command_automate",
+        "parser": "llm-decompose",
+        "subPrompts": 1,
+        "subIntents": [
+          "command_automate"
+        ]
+      },
+      "screens": [],
+      "events": 1385,
+      "approvals": 0,
+      "questions": 0,
+      "authResumes": 0,
+      "totalMs": 27324,
+      "error": null,
+      "trace": [
+        {
+          "node": "resolveReferences",
+          "duration": 3506
+        },
+        {
+          "node": "clarify",
+          "duration": 0
+        },
+        {
+          "node": "decomposePrompt",
+          "duration": 1337
+        },
+        {
+          "node": "parseIntent",
+          "duration": 1
+        },
+        {
+          "node": "checkPlanCache",
+          "duration": 1
+        },
+        {
+          "node": "parseSkill",
+          "duration": 0
+        },
+        {
+          "node": "enrichIntent",
+          "duration": 1
+        },
+        {
+          "node": "routeIntent",
+          "duration": 0
+        },
+        {
+          "node": "resolveUserContext",
+          "duration": 0
+        },
+        {
+          "node": "resolveAgent",
+          "duration": 0
+        },
+        {
+          "node": "preflightAgents",
+          "duration": 0
+        },
+        {
+          "node": "gatherPlanContext",
+          "duration": 0
+        },
+        {
+          "node": "planSkills",
+          "duration": 3
+        },
+        {
+          "node": "executeCommand",
+          "duration": 3193
+        },
+        {
+          "node": "executeCommand",
+          "duration": 3264
+        },
+        {
+          "node": "executeCommand",
+          "duration": 13993
+        },
+        {
+          "node": "reviewExecution",
+          "duration": 0
+        },
+        {
+          "node": "evaluateSkills",
+          "duration": 1
+        },
+        {
+          "node": "logConversation",
+          "duration": 40
+        },
+        {
+          "node": "advanceQueue",
+          "duration": 0
+        }
+      ],
+      "failures": [],
+      "pass": true
+    },
+    {
+      "id": "ba-int-03",
+      "prompt": "go to reddit and open the top post in r/programming",
+      "at": "2026-09-29T12:40:19.227Z",
+      "commsIntent": "handoff",
+      "commsLatencyMs": 1322,
+      "taskId": "task_7f432002",
+      "status": "running+timeout",
+      "resultText": "I'll handle that in the background and let you know when it's done. What else can I help you with?",
+      "graphIntent": {
+        "intent": "command_automate",
+        "parser": "llm-decompose",
+        "subPrompts": 1,
+        "subIntents": [
+          "command_automate"
+        ]
+      },
+      "screens": [],
+      "events": 1473,
+      "approvals": 0,
+      "questions": 0,
+      "authResumes": 0,
+      "totalMs": 240443,
+      "error": "timed out after 240000ms (last status: running+timeout)",
+      "failures": [
+        "status: expected \"done\", got \"running+timeout\"",
+        "latency: 240443ms > budget 240000ms"
+      ],
+      "pass": false
+    },
+    {
+      "id": "ba-int-04",
+      "prompt": "search github for the 'expressjs' repository and open it",
+      "at": "2026-09-29T12:44:19.672Z",
+      "commsIntent": "handoff",
+      "commsLatencyMs": 1789,
+      "taskId": "task_45faeb7b",
+      "status": "done",
+      "resultText": "Done.\n\nStep outputs:\n[app.agent/navigate_url]: completed\n\n[app.agent/scan_page]: completed\n\n[synthesize]:\nThe search succeeded, but the repository was not opened: the captured page is still the GitHub search results for “expressjs” (134k results), with the top visible result being expressjs/expressjs.com rather than an opened expressjs/express repository page.",
+      "graphIntent": {
+        "intent": "command_automate",
+        "parser": "llm-decompose",
+        "subPrompts": 1,
+        "subIntents": [
+          "command_automate"
+        ]
+      },
+      "screens": [],
+      "events": 1511,
+      "approvals": 0,
+      "questions": 0,
+      "authResumes": 0,
+      "totalMs": 25956,
+      "error": null,
+      "trace": [
+        {
+          "node": "resolveReferences",
+          "duration": 6519
+        },
+        {
+          "node": "clarify",
+          "duration": 0
+        },
+        {
+          "node": "decomposePrompt",
+          "duration": 2
+        },
+        {
+          "node": "parseIntent",
+          "duration": 1601
+        },
+        {
+          "node": "checkPlanCache",
+          "duration": 3
+        },
+        {
+          "node": "parseSkill",
+          "duration": 0
+        },
+        {
+          "node": "enrichIntent",
+          "duration": 0
+        },
+        {
+          "node": "routeIntent",
+          "duration": 0
+        },
+        {
+          "node": "resolveUserContext",
+          "duration": 1
+        },
+        {
+          "node": "resolveAgent",
+          "duration": 0
+        },
+        {
+          "node": "preflightAgents",
+          "duration": 1
+        },
+        {
+          "node": "gatherPlanContext",
+          "duration": 0
+        },
+        {
+          "node": "planSkills",
+          "duration": 3
+        },
+        {
+          "node": "executeCommand",
+          "duration": 2331
+        },
+        {
+          "node": "executeCommand",
+          "duration": 3370
+        },
+        {
+          "node": "executeCommand",
+          "duration": 10135
+        },
+        {
+          "node": "reviewExecution",
+          "duration": 0
+        },
+        {
+          "node": "evaluateSkills",
+          "duration": 0
+        },
+        {
+          "node": "logConversation",
+          "duration": 73
+        },
+        {
+          "node": "advanceQueue",
+          "duration": 1
+        }
+      ],
+      "failures": [],
+      "pass": true
+    },
+    {
+      "id": "ba-int-05",
+      "prompt": "go to amazon, search for 'usb c hub', and tell me the price of the first result",
+      "at": "2026-09-29T12:44:45.629Z",
+      "commsIntent": "handoff",
+      "commsLatencyMs": 1731,
+      "taskId": "task_1611b7f8",
+      "status": "done",
+      "resultText": "Done.\n\nStep outputs:\n[app.agent/navigate_url]: completed\n\n[app.agent/scan_page]: completed\n\n[synthesize]:\nSucceeded. The Amazon search results page for “usb c hub” is visible, and the first result is the Anker USB C Hub, 7-in-1 Multi-Port USB Adapter, priced at $21.99 (list price $25.99).",
+      "graphIntent": {
+        "intent": "command_automate",
+        "parser": "llm-decompose",
+        "subPrompts": 1,
+        "subIntents": [
+          "command_automate"
+        ]
+      },
+      "screens": [],
+      "events": 1548,
+      "approvals": 0,
+      "questions": 0,
+      "authResumes": 0,
+      "totalMs": 18364,
+      "error": null,
+      "trace": [
+        {
+          "node": "resolveReferences",
+          "duration": 3663
+        },
+        {
+          "node": "clarify",
+          "duration": 0
+        },
+        {
+          "node": "decomposePrompt",
+          "duration": 1
+        },
+        {
+          "node": "parseIntent",
+          "duration": 2939
+        },
+        {
+          "node": "checkPlanCache",
+          "duration": 0
+        },
+        {
+          "node": "parseSkill",
+          "duration": 0
+        },
+        {
+          "node": "enrichIntent",
+          "duration": 0
+        },
+        {
+          "node": "routeIntent",
+          "duration": 0
+        },
+        {
+          "node": "resolveUserContext",
+          "duration": 0
+        },
+        {
+          "node": "resolveAgent",
+          "duration": 0
+        },
+        {
+          "node": "preflightAgents",
+          "duration": 1
+        },
+        {
+          "node": "gatherPlanContext",
+          "duration": 0
+        },
+        {
+          "node": "planSkills",
+          "duration": 1
+        },
+        {
+          "node": "executeCommand",
+          "duration": 3198
+        },
+        {
+          "node": "executeCommand",
+          "duration": 2894
+        },
+        {
+          "node": "executeCommand",
+          "duration": 3816
+        },
+        {
+          "node": "reviewExecution",
+          "duration": 3
+        },
+        {
+          "node": "evaluateSkills",
+          "duration": 0
+        },
+        {
+          "node": "logConversation",
+          "duration": 51
+        },
+        {
+          "node": "advanceQueue",
+          "duration": 0
+        }
+      ],
+      "failures": [],
+      "pass": true
+    },
+    {
+      "id": "ba-int-06",
+      "prompt": "search wikipedia for 'alan turing' and tell me the first sentence of the article",
+      "at": "2026-09-29T12:45:03.994Z",
+      "commsIntent": "handoff",
+      "commsLatencyMs": 634,
+      "taskId": "task_f901612d",
+      "status": "done",
+      "resultText": "I found the Wikipedia article for Alan Turing. The first sentence of the article is:\n\n**\"Alan Mathison Turing (23 June 1912 – 7 June 1954) was an English mathematician and logician widely regarded as the father of theoretical computer science.\"**",
+      "graphIntent": {
+        "intent": "command_automate",
+        "parser": "multi-intent-pipeline",
+        "subPrompts": 2,
+        "subIntents": [
+          "command_automate",
+          "screen_intelligence"
+        ]
+      },
+      "screens": [],
+      "events": 1597,
+      "approvals": 0,
+      "questions": 0,
+      "authResumes": 0,
+      "totalMs": 54857,
+      "error": null,
+      "trace": [
+        {
+          "node": "resolveReferences",
+          "duration": 7012
+        },
+        {
+          "node": "clarify",
+          "duration": 0
+        },
+        {
+          "node": "decomposePrompt",
+          "duration": 1820
+        },
+        {
+          "node": "parseIntent",
+          "duration": 0
+        },
+        {
+          "node": "checkPlanCache",
+          "duration": 1
+        },
+        {
+          "node": "parseSkill",
+          "duration": 11
+        },
+        {
+          "node": "enrichIntent",
+          "duration": 0
+        },
+        {
+          "node": "routeIntent",
+          "duration": 0
+        },
+        {
+          "node": "resolveUserContext",
+          "duration": 5
+        },
+        {
+          "node": "resolveAgent",
+          "duration": 0
+        },
+        {
+          "node": "preflightAgents",
+          "duration": 565
+        },
+        {
+          "node": "gatherPlanContext",
+          "duration": 540
+        },
+        {
+          "node": "planSkills",
+          "duration": 14219
+        },
+        {
+          "node": "executeCommand",
+          "duration": 2235
+        },
+        {
+          "node": "executeCommand",
+          "duration": 2684
+        },
+        {
+          "node": "executeCommand",
+          "duration": 17263
+        },
+        {
+          "node": "reviewExecution",
+          "duration": 0
+        },
+        {
+          "node": "evaluateSkills",
+          "duration": 0
+        },
+        {
+          "node": "logConversation",
+          "duration": 46
+        },
+        {
+          "node": "advanceQueue",
+          "duration": 3
+        },
+        {
+          "node": "enrichIntent",
+          "duration": 0
+        },
+        {
+          "node": "routeIntent",
+          "duration": 1
+        },
+        {
+          "node": "screenIntelligence",
+          "duration": 4820
+        },
+        {
+          "node": "answer",
+          "duration": 1242
+        },
+        {
+          "node": "logConversation",
+          "duration": 17
+        },
+        {
+          "node": "advanceQueue",
+          "duration": 0
+        },
+        {
+          "node": "summarizeMultiIntent",
+          "duration": 1011
+        },
+        {
+          "node": "logConversation",
+          "duration": 14
+        },
+        {
+          "node": "advanceQueue",
+          "duration": 0
+        }
+      ],
+      "failures": [],
+      "pass": true
+    },
+    {
+      "id": "ba-svc-01",
+      "prompt": "search spotify for a jazz essentials playlist",
+      "at": "2026-09-29T12:45:58.853Z",
+      "commsIntent": "handoff",
+      "commsLatencyMs": 777,
+      "taskId": "task_4a44dddf",
+      "status": "done",
+      "resultText": "The requested Spotify search for “jazz essentials” completed successfully—the search results page loaded showing a “Jazz Essentials” playlist by quant.",
+      "graphIntent": {
+        "intent": "command_automate",
+        "parser": "llm-decompose",
+        "subPrompts": 1,
+        "subIntents": [
+          "command_automate"
+        ]
+      },
+      "screens": [],
+      "events": 1670,
+      "approvals": 0,
+      "questions": 0,
+      "authResumes": 0,
+      "totalMs": 76155,
+      "error": null,
+      "trace": [
+        {
+          "node": "resolveReferences",
+          "duration": 3660
+        },
+        {
+          "node": "clarify",
+          "duration": 0
+        },
+        {
+          "node": "decomposePrompt",
+          "duration": 777
+        },
+        {
+          "node": "parseIntent",
+          "duration": 0
+        },
+        {
+          "node": "checkPlanCache",
+          "duration": 3
+        },
+        {
+          "node": "parseSkill",
+          "duration": 0
+        },
+        {
+          "node": "enrichIntent",
+          "duration": 0
+        },
+        {
+          "node": "routeIntent",
+          "duration": 0
+        },
+        {
+          "node": "resolveUserContext",
+          "duration": 0
+        },
+        {
+          "node": "resolveAgent",
+          "duration": 0
+        },
+        {
+          "node": "preflightAgents",
+          "duration": 5007
+        },
+        {
+          "node": "gatherPlanContext",
+          "duration": 0
+        },
+        {
+          "node": "planSkills",
+          "duration": 2
+        },
+        {
+          "node": "executeCommand",
+          "duration": 60582
+        },
+        {
+          "node": "executeCommand",
+          "duration": 4894
+        },
+        {
+          "node": "reviewExecution",
+          "duration": 1
+        },
+        {
+          "node": "evaluateSkills",
+          "duration": 0
+        },
+        {
+          "node": "logConversation",
+          "duration": 78
+        },
+        {
+          "node": "advanceQueue",
+          "duration": 0
+        }
+      ],
+      "failures": [],
+      "pass": true
+    },
+    {
+      "id": "ba-svc-02",
+      "prompt": "check my gmail inbox for unread emails",
+      "at": "2026-09-29T12:47:15.008Z",
+      "commsIntent": "handoff",
+      "commsLatencyMs": 1571,
+      "taskId": "task_d3500c3f",
+      "status": "done",
+      "resultText": "The requested action completed successfully; automation checks with OCR goal verification confirmed completion via tab-map.",
+      "graphIntent": {
+        "intent": "command_automate",
+        "parser": "llm-decompose",
+        "subPrompts": 1,
+        "subIntents": [
+          "command_automate"
+        ]
+      },
+      "screens": [],
+      "events": 1751,
+      "approvals": 0,
+      "questions": 0,
+      "authResumes": 0,
+      "totalMs": 84370,
+      "error": null,
+      "trace": [
+        {
+          "node": "resolveReferences",
+          "duration": 3956
+        },
+        {
+          "node": "clarify",
+          "duration": 0
+        },
+        {
+          "node": "decomposePrompt",
+          "duration": 741
+        },
+        {
+          "node": "parseIntent",
+          "duration": 0
+        },
+        {
+          "node": "checkPlanCache",
+          "duration": 2
+        },
+        {
+          "node": "parseSkill",
+          "duration": 0
+        },
+        {
+          "node": "enrichIntent",
+          "duration": 0
+        },
+        {
+          "node": "routeIntent",
+          "duration": 0
+        },
+        {
+          "node": "resolveUserContext",
+          "duration": 0
+        },
+        {
+          "node": "resolveAgent",
+          "duration": 0
+        },
+        {
+          "node": "preflightAgents",
+          "duration": 2552
+        },
+        {
+          "node": "gatherPlanContext",
+          "duration": 0
+        },
+        {
+          "node": "planSkills",
+          "duration": 1
+        },
+        {
+          "node": "executeCommand",
+          "duration": 70008
+        },
+        {
+          "node": "executeCommand",
+          "duration": 5370
+        },
+        {
+          "node": "reviewExecution",
+          "duration": 0
+        },
+        {
+          "node": "evaluateSkills",
+          "duration": 1
+        },
+        {
+          "node": "logConversation",
+          "duration": 53
+        },
+        {
+          "node": "advanceQueue",
+          "duration": 0
+        }
+      ],
+      "failures": [],
+      "pass": true
+    },
+    {
+      "id": "ba-svc-03",
+      "prompt": "what's my next event on google calendar",
+      "at": "2026-09-29T12:48:39.379Z",
+      "commsIntent": "handoff",
+      "commsLatencyMs": 672,
+      "taskId": "task_df5bbe42",
+      "status": "auth-required",
+      "resultText": "Let me look that up online.",
+      "graphIntent": {
+        "intent": "command_automate",
+        "parser": "llm-decompose",
+        "subPrompts": 1,
+        "subIntents": [
+          "command_automate"
+        ]
+      },
+      "screens": [],
+      "events": 1769,
+      "approvals": 0,
+      "questions": 0,
+      "authResumes": 0,
+      "totalMs": 18784,
+      "error": null,
+      "failures": [],
+      "pass": true
+    },
+    {
+      "id": "ba-svc-04",
+      "prompt": "check my github notifications",
+      "at": "2026-09-29T12:48:58.163Z",
+      "commsIntent": "handoff",
+      "commsLatencyMs": 605,
+      "taskId": "task_0937f21b",
+      "status": "auth-required",
+      "resultText": "One moment.",
+      "graphIntent": {
+        "intent": "command_automate",
+        "parser": "llm-decompose",
+        "subPrompts": 1,
+        "subIntents": [
+          "command_automate"
+        ]
+      },
+      "screens": [],
+      "events": 1786,
+      "approvals": 0,
+      "questions": 0,
+      "authResumes": 0,
+      "totalMs": 14213,
+      "error": null,
+      "failures": [],
+      "pass": true
+    },
+    {
+      "id": "ba-svc-05",
+      "prompt": "check my linkedin notifications",
+      "at": "2026-09-29T12:49:12.376Z",
+      "commsIntent": "handoff",
+      "commsLatencyMs": 577,
+      "taskId": "task_7783907e",
+      "status": "done",
+      "resultText": "The action completed successfully—the LinkedIn Notifications page opened (title \"(9) Notifications | LinkedIn\"), though it now shows 0 notifications.",
+      "graphIntent": {
+        "intent": "command_automate",
+        "parser": "llm-decompose",
+        "subPrompts": 1,
+        "subIntents": [
+          "command_automate"
+        ]
+      },
+      "screens": [],
+      "events": 1848,
+      "approvals": 0,
+      "questions": 0,
+      "authResumes": 0,
+      "totalMs": 62640,
+      "error": null,
+      "trace": [
+        {
+          "node": "resolveReferences",
+          "duration": 4066
+        },
+        {
+          "node": "clarify",
+          "duration": 0
+        },
+        {
+          "node": "decomposePrompt",
+          "duration": 625
+        },
+        {
+          "node": "parseIntent",
+          "duration": 0
+        },
+        {
+          "node": "checkPlanCache",
+          "duration": 2
+        },
+        {
+          "node": "parseSkill",
+          "duration": 0
+        },
+        {
+          "node": "enrichIntent",
+          "duration": 0
+        },
+        {
+          "node": "routeIntent",
+          "duration": 0
+        },
+        {
+          "node": "resolveUserContext",
+          "duration": 0
+        },
+        {
+          "node": "resolveAgent",
+          "duration": 0
+        },
+        {
+          "node": "preflightAgents",
+          "duration": 1775
+        },
+        {
+          "node": "gatherPlanContext",
+          "duration": 0
+        },
+        {
+          "node": "planSkills",
+          "duration": 3
+        },
+        {
+          "node": "executeCommand",
+          "duration": 50451
+        },
+        {
+          "node": "executeCommand",
+          "duration": 4009
+        },
+        {
+          "node": "reviewExecution",
+          "duration": 1
+        },
+        {
+          "node": "evaluateSkills",
+          "duration": 0
+        },
+        {
+          "node": "logConversation",
+          "duration": 44
+        },
+        {
+          "node": "advanceQueue",
+          "duration": 0
+        }
+      ],
+      "failures": [],
+      "pass": true
+    },
+    {
+      "id": "ba-svc-06",
+      "prompt": "check my slack messages in #general",
+      "at": "2026-09-29T12:50:15.016Z",
+      "commsIntent": "handoff",
+      "commsLatencyMs": 1473,
+      "taskId": "task_f0bb90cf",
+      "status": "auth-required",
+      "resultText": "I'll check your Slack #general messages and let you know what you've got waiting there—anything else I can help with?",
+      "graphIntent": {
+        "intent": "command_automate",
+        "parser": "llm-decompose",
+        "subPrompts": 1,
+        "subIntents": [
+          "command_automate"
+        ]
+      },
+      "screens": [],
+      "events": 1865,
+      "approvals": 0,
+      "questions": 0,
+      "authResumes": 0,
+      "totalMs": 19751,
+      "error": null,
+      "failures": [],
+      "pass": true
+    },
+    {
+      "id": "ba-svc-07",
+      "prompt": "look at my latest emails and tell me if anything looks urgent",
+      "at": "2026-09-29T12:50:34.770Z",
+      "commsIntent": "handoff",
+      "commsLatencyMs": 1048,
+      "taskId": "task_b3e077b0",
+      "status": "done",
+      "resultText": "Yes — a few items look urgent or need timely action:\n\n1. **Cluely — “$100.00 payment to Cluely was unsuccessful again”**  \n   Why urgent: Repeated failed payment attempts on Sep 26 and Sep 27. Your card couldn’t be charged, so service may be at risk. Update payment info if you want it to continue.\n\n2. **Anthropic — “[Action required] Your requests to Claude Sonnet 4 are failing” / “Claude Haiku 3.5 are failing”**  \n   Why urgent: Requests are failing because those models are retired. Upgrade to Claude Sonnet 5 / Claude Haiku 4.5 to restore service.\n\n3. **SambaNova — “Important Reminder: MiniMax M2.7 Deprecation”**  \n   Why urgent: MiniMax M2.7 will be deprecated on October 1, so migration to MiniMax M3 is time-sensitive.\n\n4. **me, Mail — “Reminder: Pottstown Outreach Tomorrow”**  \n   Why urgent: The message couldn’t be delivered to april.peacock6@gmail.com because the recipient’s inbox is full. With the outreach tomorrow, the person may not have received the reminder.\n\n5. **Real Property Management Varanasi — Online Payment Confirmation**  \n   Why worth checking: A $3,865.00 automatic payment was made on 09/29/2026. If that amount/date was expected, no action needed; if not, verify immediately.\n\nThe rest of the inbox is mostly newsletters, promotions, receipts, school updates, and job/recruiter emails — not urgent.",
+      "graphIntent": {
+        "intent": "command_automate",
+        "parser": "llm-decompose",
+        "subPrompts": 1,
+        "subIntents": [
+          "command_automate"
+        ]
+      },
+      "screens": [],
+      "events": 1921,
+      "approvals": 0,
+      "questions": 0,
+      "authResumes": 0,
+      "totalMs": 81343,
+      "error": null,
+      "trace": [
+        {
+          "node": "resolveReferences",
+          "duration": 4196
+        },
+        {
+          "node": "clarify",
+          "duration": 0
+        },
+        {
+          "node": "decomposePrompt",
+          "duration": 5232
+        },
+        {
+          "node": "parseIntent",
+          "duration": 589
+        },
+        {
+          "node": "checkPlanCache",
+          "duration": 0
+        },
+        {
+          "node": "parseSkill",
+          "duration": 1552
+        },
+        {
+          "node": "enrichIntent",
+          "duration": 2
+        },
+        {
+          "node": "routeIntent",
+          "duration": 0
+        },
+        {
+          "node": "screenIntelligence",
+          "duration": 4635
+        },
+        {
+          "node": "preparePostScreen",
+          "duration": 0
+        },
+        {
+          "node": "resolveUserContext",
+          "duration": 4
+        },
+        {
+          "node": "resolveAgent",
+          "duration": 2176
+        },
+        {
+          "node": "preflightAgents",
+          "duration": 3709
+        },
+        {
+          "node": "gatherPlanContext",
+          "duration": 410
+        },
+        {
+          "node": "planSkills",
+          "duration": 17076
+        },
+        {
+          "node": "executeCommand",
+          "duration": 10250
+        },
+        {
+          "node": "executeCommand",
+          "duration": 29384
+        },
+        {
+          "node": "reviewExecution",
+          "duration": 0
+        },
+        {
+          "node": "evaluateSkills",
+          "duration": 0
+        },
+        {
+          "node": "logConversation",
+          "duration": 74
+        },
+        {
+          "node": "advanceQueue",
+          "duration": 0
+        }
+      ],
+      "failures": [],
+      "pass": true
+    },
+    {
+      "id": "ba-svc-08",
+      "prompt": "check my twitter notifications",
+      "at": "2026-09-29T12:51:56.114Z",
+      "commsIntent": "handoff",
+      "commsLatencyMs": 653,
+      "taskId": "task_ebc90429",
+      "status": "done",
+      "resultText": "The requested action completed — the page title “Notifications / X” confirms the Notifications page is loaded.",
+      "graphIntent": {
+        "intent": "command_automate",
+        "parser": "llm-decompose",
+        "subPrompts": 1,
+        "subIntents": [
+          "command_automate"
+        ]
+      },
+      "screens": [],
+      "events": 2002,
+      "approvals": 0,
+      "questions": 0,
+      "authResumes": 0,
+      "totalMs": 85240,
+      "error": null,
+      "trace": [
+        {
+          "node": "resolveReferences",
+          "duration": 4475
+        },
+        {
+          "node": "clarify",
+          "duration": 0
+        },
+        {
+          "node": "decomposePrompt",
+          "duration": 577
+        },
+        {
+          "node": "parseIntent",
+          "duration": 1
+        },
+        {
+          "node": "checkPlanCache",
+          "duration": 4
+        },
+        {
+          "node": "parseSkill",
+          "duration": 0
+        },
+        {
+          "node": "enrichIntent",
+          "duration": 0
+        },
+        {
+          "node": "routeIntent",
+          "duration": 0
+        },
+        {
+          "node": "resolveUserContext",
+          "duration": 0
+        },
+        {
+          "node": "resolveAgent",
+          "duration": 0
+        },
+        {
+          "node": "preflightAgents",
+          "duration": 1889
+        },
+        {
+          "node": "gatherPlanContext",
+          "duration": 0
+        },
+        {
+          "node": "planSkills",
+          "duration": 2
+        },
+        {
+          "node": "executeCommand",
+          "duration": 72785
+        },
+        {
+          "node": "executeCommand",
+          "duration": 3853
+        },
+        {
+          "node": "reviewExecution",
+          "duration": 2
+        },
+        {
+          "node": "evaluateSkills",
+          "duration": 0
+        },
+        {
+          "node": "logConversation",
+          "duration": 227
+        },
+        {
+          "node": "advanceQueue",
+          "duration": 1
+        }
+      ],
+      "failures": [],
+      "pass": true
+    },
+    {
+      "id": "ba-form-01",
+      "prompt": "go to duckduckgo, type 'thinkdrop automation' into the search box and search",
+      "at": "2026-09-29T12:53:21.355Z",
+      "commsIntent": "handoff",
+      "commsLatencyMs": 904,
+      "taskId": "task_9fe9c62c",
+      "status": "done",
+      "resultText": "Done.\n\nStep outputs:\n[app.agent/navigate_url]: completed\n\n[app.agent/scan_page]: completed\n\n[synthesize]:\nIt does not appear to have succeeded. The scanned content shows a terminal prompt and the error `command not found: compdef`, not DuckDuckGo or any search results for “thinkdrop automation.” There is no evidence the requested navigation or search was performed.",
+      "graphIntent": {
+        "intent": "command_automate",
+        "parser": "llm-decompose",
+        "subPrompts": 1,
+        "subIntents": [
+          "command_automate"
+        ]
+      },
+      "screens": [],
+      "events": 2038,
+      "approvals": 0,
+      "questions": 0,
+      "authResumes": 0,
+      "totalMs": 30350,
+      "error": null,
+      "trace": [
+        {
+          "node": "resolveReferences",
+          "duration": 4335
+        },
+        {
+          "node": "clarify",
+          "duration": 0
+        },
+        {
+          "node": "decomposePrompt",
+          "duration": 3
+        },
+        {
+          "node": "parseIntent",
+          "duration": 1
+        },
+        {
+          "node": "checkPlanCache",
+          "duration": 4
+        },
+        {
+          "node": "parseSkill",
+          "duration": 1
+        },
+        {
+          "node": "enrichIntent",
+          "duration": 0
+        },
+        {
+          "node": "routeIntent",
+          "duration": 0
+        },
+        {
+          "node": "resolveUserContext",
+          "duration": 4
+        },
+        {
+          "node": "resolveAgent",
+          "duration": 3
+        },
+        {
+          "node": "preflightAgents",
+          "duration": 2
+        },
+        {
+          "node": "gatherPlanContext",
+          "duration": 0
+        },
+        {
+          "node": "planSkills",
+          "duration": 6
+        },
+        {
+          "node": "executeCommand",
+          "duration": 3646
+        },
+        {
+          "node": "executeCommand",
+          "duration": 13256
+        },
+        {
+          "node": "executeCommand",
+          "duration": 5548
+        },
+        {
+          "node": "reviewExecution",
+          "duration": 8
+        },
+        {
+          "node": "evaluateSkills",
+          "duration": 1
+        },
+        {
+          "node": "logConversation",
+          "duration": 741
+        },
+        {
+          "node": "advanceQueue",
+          "duration": 0
+        }
+      ],
+      "failures": [],
+      "pass": true
+    },
+    {
+      "id": "ba-form-02",
+      "prompt": "open google and search 'best standing desk 2025' using the search box",
+      "at": "2026-09-29T12:53:52.462Z",
+      "commsIntent": "handoff",
+      "commsLatencyMs": 2873,
+      "taskId": "task_b8f7f5aa",
+      "status": "done",
+      "resultText": "Done.\n\nStep outputs:\n[app.agent/navigate_url]: completed\n\n[app.agent/scan_page]: completed\n\n[synthesize]:\nThe automation did not succeed. The only visible content is a terminal prompt showing `/dev/fd/13:18: command not found: compdef` and `lukaizhi@MacBookAir thinkdrop %`, with no Google page or search results for “best standing desk 2025” present.",
+      "graphIntent": {
+        "intent": "command_automate",
+        "parser": "llm-decompose",
+        "subPrompts": 1,
+        "subIntents": [
+          "command_automate"
+        ]
+      },
+      "screens": [],
+      "events": 2074,
+      "approvals": 0,
+      "questions": 0,
+      "authResumes": 0,
+      "totalMs": 26963,
+      "error": null,
+      "trace": [
+        {
+          "node": "resolveReferences",
+          "duration": 4238
+        },
+        {
+          "node": "clarify",
+          "duration": 3
+        },
+        {
+          "node": "decomposePrompt",
+          "duration": 23
+        },
+        {
+          "node": "parseIntent",
+          "duration": 1
+        },
+        {
+          "node": "checkPlanCache",
+          "duration": 44
+        },
+        {
+          "node": "parseSkill",
+          "duration": 0
+        },
+        {
+          "node": "enrichIntent",
+          "duration": 0
+        },
+        {
+          "node": "routeIntent",
+          "duration": 0
+        },
+        {
+          "node": "resolveUserContext",
+          "duration": 2
+        },
+        {
+          "node": "resolveAgent",
+          "duration": 0
+        },
+        {
+          "node": "preflightAgents",
+          "duration": 3
+        },
+        {
+          "node": "gatherPlanContext",
+          "duration": 1
+        },
+        {
+          "node": "planSkills",
+          "duration": 51
+        },
+        {
+          "node": "executeCommand",
+          "duration": 3824
+        },
+        {
+          "node": "executeCommand",
+          "duration": 5832
+        },
+        {
+          "node": "executeCommand",
+          "duration": 7549
+        },
+        {
+          "node": "reviewExecution",
+          "duration": 1
+        },
+        {
+          "node": "evaluateSkills",
+          "duration": 0
+        },
+        {
+          "node": "logConversation",
+          "duration": 1021
+        },
+        {
+          "node": "advanceQueue",
+          "duration": 4
+        }
+      ],
+      "failures": [],
+      "pass": true
+    },
+    {
+      "id": "ba-extract-01",
+      "prompt": "browse to hacker news and read me the top 5 story titles",
+      "at": "2026-09-29T12:54:19.753Z",
+      "commsIntent": "handoff",
+      "commsLatencyMs": 3077,
+      "taskId": "task_b3d1e4a3",
+      "status": "done",
+      "resultText": "Done.\n\nStep outputs:\n[app.agent/navigate_url]: completed\n\n[app.agent/scan_page]: completed\n\n[synthesize]:\nThe run did not succeed: the captured screen shows only a terminal with `command not found: compdef` and a shell prompt, with no Hacker News page or story titles loaded.",
+      "graphIntent": {
+        "intent": "command_automate",
+        "parser": "llm-decompose",
+        "subPrompts": 1,
+        "subIntents": [
+          "command_automate"
+        ]
+      },
+      "screens": [],
+      "events": 2110,
+      "approvals": 0,
+      "questions": 0,
+      "authResumes": 0,
+      "totalMs": 37899,
+      "error": null,
+      "trace": [
+        {
+          "node": "resolveReferences",
+          "duration": 11049
+        },
+        {
+          "node": "clarify",
+          "duration": 1
+        },
+        {
+          "node": "decomposePrompt",
+          "duration": 29
+        },
+        {
+          "node": "parseIntent",
+          "duration": 4
+        },
+        {
+          "node": "checkPlanCache",
+          "duration": 7
+        },
+        {
+          "node": "parseSkill",
+          "duration": 1
+        },
+        {
+          "node": "enrichIntent",
+          "duration": 2
+        },
+        {
+          "node": "routeIntent",
+          "duration": 16
+        },
+        {
+          "node": "resolveUserContext",
+          "duration": 1
+        },
+        {
+          "node": "resolveAgent",
+          "duration": 0
+        },
+        {
+          "node": "preflightAgents",
+          "duration": 2
+        },
+        {
+          "node": "gatherPlanContext",
+          "duration": 2
+        },
+        {
+          "node": "planSkills",
+          "duration": 29
+        },
+        {
+          "node": "executeCommand",
+          "duration": 3583
+        },
+        {
+          "node": "executeCommand",
+          "duration": 6191
+        },
+        {
+          "node": "executeCommand",
+          "duration": 9530
+        },
+        {
+          "node": "reviewExecution",
+          "duration": 34
+        },
+        {
+          "node": "evaluateSkills",
+          "duration": 0
+        },
+        {
+          "node": "logConversation",
+          "duration": 2344
+        },
+        {
+          "node": "advanceQueue",
+          "duration": 3
+        }
+      ],
+      "failures": [],
+      "pass": true
+    },
+    {
+      "id": "ba-extract-02",
+      "prompt": "go to ebay, search for 'mechanical watch', and tell me the cheapest buy-it-now price",
+      "at": "2026-09-29T12:54:57.654Z",
+      "commsIntent": "handoff",
+      "commsLatencyMs": 3626,
+      "taskId": "task_127e5208",
+      "status": "failed",
+      "resultText": "Failed to parse skill plan from LLM output: I apologize, but I was unable to generate a response.",
+      "graphIntent": {
+        "intent": "command_automate",
+        "parser": "llm-decompose",
+        "subPrompts": 1,
+        "subIntents": [
+          "command_automate"
+        ]
+      },
+      "screens": [],
+      "events": 2137,
+      "approvals": 0,
+      "questions": 0,
+      "authResumes": 0,
+      "totalMs": 44056,
+      "error": null,
+      "trace": null,
+      "failures": [
+        "status: expected \"done\", got \"failed\""
+      ],
+      "pass": false
+    },
+    {
+      "id": "ba-extract-03",
+      "prompt": "open wikipedia, search for 'marie curie', and read the first paragraph to me",
+      "at": "2026-09-29T12:55:41.712Z",
+      "commsIntent": "handoff",
+      "commsLatencyMs": 2224,
+      "taskId": "task_4a225d90",
+      "status": "done",
+      "resultText": "[ThinkDrop WebSocket LLM is not available]",
+      "graphIntent": {
+        "intent": "web_search",
+        "parser": "llm-decompose",
+        "subPrompts": 1,
+        "subIntents": [
+          "web_search"
+        ]
+      },
+      "screens": [],
+      "events": 2148,
+      "approvals": 0,
+      "questions": 0,
+      "authResumes": 0,
+      "totalMs": 7253,
+      "error": null,
+      "trace": [
+        {
+          "node": "resolveReferences",
+          "duration": 56
+        },
+        {
+          "node": "clarify",
+          "duration": 0
+        },
+        {
+          "node": "decomposePrompt",
+          "duration": 28
+        },
+        {
+          "node": "parseIntent",
+          "duration": 4
+        },
+        {
+          "node": "checkPlanCache",
+          "duration": 1
+        },
+        {
+          "node": "parseSkill",
+          "duration": 3089
+        },
+        {
+          "node": "enrichIntent",
+          "duration": 1
+        },
+        {
+          "node": "routeIntent",
+          "duration": 1
+        },
+        {
+          "node": "webSearch",
+          "duration": 32
+        },
+        {
+          "node": "retrieveMemory",
+          "duration": 76
+        },
+        {
+          "node": "answer",
+          "duration": 9
+        },
+        {
+          "node": "logConversation",
+          "duration": 1
+        },
+        {
+          "node": "advanceQueue",
+          "duration": 0
+        }
+      ],
+      "failures": [
+        "graphIntent: expected \"command_automate\", got \"web_search\" (subs: web_search)",
+        "mustContain \"re:curie|physicist|polonium|radioactiv\" not found in result (42 chars)"
+      ],
+      "pass": false
+    },
+    {
+      "id": "ba-follow-nav",
+      "prompt": "go to github and search for 'local whisper'",
+      "at": "2026-09-29T12:55:48.967Z",
+      "commsIntent": "handoff",
+      "commsLatencyMs": 4056,
+      "taskId": "task_32724c7a",
+      "status": "failed",
+      "resultText": "LLM planning failed: ",
+      "graphIntent": {
+        "intent": "command_automate",
+        "parser": "rule-fallback",
+        "subIntents": []
+      },
+      "screens": [],
+      "events": 2180,
+      "approvals": 0,
+      "questions": 0,
+      "authResumes": 0,
+      "totalMs": 5844,
+      "error": null,
+      "trace": null,
+      "failures": [
+        "status: expected \"done\", got \"failed\""
+      ],
+      "pass": false
+    },
+    {
+      "id": "ba-follow-click",
+      "prompt": "open the first repository result",
+      "at": "2026-09-29T12:55:54.812Z",
+      "commsIntent": null,
+      "commsLatencyMs": null,
+      "taskId": null,
+      "status": "comms-error",
+      "resultText": "",
+      "graphIntent": null,
+      "screens": [],
+      "events": 0,
+      "approvals": 0,
+      "questions": 0,
+      "authResumes": 0,
+      "totalMs": 1326,
+      "error": "comms.process HTTP 0: socket hang up",
+      "failures": [
+        "status: expected \"done\", got \"comms-error\"",
+        "graphIntent: expected \"command_automate\", got \"undefined\" (subs: none)"
+      ],
+      "pass": false
+    }
+  ]
+}

@@ -75,6 +75,17 @@ function setGatherAnswerCallback(cb) {
   _gatherAnswerCallback = cb;
 }
 
+// Tag batch questions with the owning taskId so the feed's QueueTaskCard
+// (task-scoped AutomationProgress) renders the QuestionCard inline instead of
+// the untagged global instance, which is hidden while a live run card exists.
+// Legacy string-mode questions pass through untouched.
+function _taskGatherCallback(taskId) {
+  if (typeof _gatherAnswerCallback !== 'function') return null;
+  return (q) => _gatherAnswerCallback(
+    q && typeof q === 'object' && q.batch ? { ...q, taskId } : q
+  );
+}
+
 // ── HTTP helpers (notify comms-graph) ──────────────────────────────────────────
 function _postToComms(path, body) {
   return new Promise((resolve) => {
@@ -235,7 +246,7 @@ async function execute({ taskId, prompt, agentId, source, originalPrompt, sessio
           mcpAdapter: _mcpAdapter,
           llmBackend: _llmBackend,
           progressCallback,
-          gatherAnswerCallback: _gatherAnswerCallback,
+          gatherAnswerCallback: _taskGatherCallback(taskId),
           _handoffTaskId: taskId,
           _handoffSource: source,
         }
@@ -259,7 +270,7 @@ async function execute({ taskId, prompt, agentId, source, originalPrompt, sessio
           // Clarification surface — the clarify gate and grill/batch questions
           // emit gather:question_batch cards and await answers, same as the
           // serial path in main.js.
-          gatherAnswerCallback: _gatherAnswerCallback,
+          gatherAnswerCallback: _taskGatherCallback(taskId),
           // If resuming with an approved plan, set _planFile so planExecutor runs it
           ...(planFile ? { _planFile: planFile } : {}),
           // Deterministic fast-path metadata survives the approval round-trip —

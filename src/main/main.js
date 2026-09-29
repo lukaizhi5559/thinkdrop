@@ -5620,15 +5620,20 @@ app.whenReady().then(async () => {
       // ── Batch mode (Grill-Me Phase C) ──────────────────────────────────────
       if (questionOrBatch && typeof questionOrBatch === 'object' && questionOrBatch.batch) {
         const { batchId, questions, routeConfirmation } = questionOrBatch;
+        const batchTaskId = questionOrBatch.taskId || null;
         return new Promise((resolve) => {
           pendingGatherBatchResolve = resolve;
-          pendingGatherBatchData = { batchId, questions, routeConfirmation: routeConfirmation || null };
+          pendingGatherBatchData = { batchId, questions, routeConfirmation: routeConfirmation || null, taskId: batchTaskId };
           console.log(`[GatherContext] Waiting for batch answers (batchId=${batchId}, ${questions?.length || 0} questions)…`);
           safeSendUnified('gather:question_batch', {
             active: true,
             batchId,
             questions: questions || [],
             routeConfirmation: routeConfirmation || null,
+            // Task-scoped batches render inside the feed's QueueTaskCard
+            // (its AutomationProgress only accepts batches tagged with its
+            // taskId). Untagged batches render in the global instance.
+            taskId: batchTaskId,
           });
           _notifyQuestion(
             questions?.[0]?.question || questions?.[0]?.text || 'I have a few questions before I start',
@@ -7447,6 +7452,7 @@ app.whenReady().then(async () => {
             batchId: pendingGatherBatchData.batchId,
             questions: pendingGatherBatchData.questions,
             routeConfirmation: pendingGatherBatchData.routeConfirmation || null,
+            taskId: pendingGatherBatchData.taskId || null,
           });
           console.log('[GatherContext] Re-sent gather:question_batch on window re-activation');
         }

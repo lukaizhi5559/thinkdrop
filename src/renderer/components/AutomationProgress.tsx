@@ -3096,7 +3096,10 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
 
     // Grill-Me Phase D: batched question card handler
     const handleQuestionBatch = (data: any) => {
-      if (taskId) return; // Question batch is global; task questions come via automation:progress ask_user
+      // Batches tagged with a taskId render inside that task's feed card;
+      // untagged batches render in the global (untagged) instance only.
+      // Untagged clears ({active:false}) are broadcast — all instances reset.
+      if (data?.active && (taskId ? data?.taskId !== taskId : !!data?.taskId)) return;
       if (data?.active && data?.questions) {
         setGrillProcessing(false);
         // Switch to gathering so the planning/gathering spinner header is hidden
@@ -3125,6 +3128,9 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
       // subscribing to the global channels would be dead work per event.
       ipcOn('automation:progress', AP_TOKEN, handleProgress);
       ipcOn('plan:approved', AP_TOKEN, handlePlanApproved);
+      // Task-scoped cards also consume gather:question_batch — the handler
+      // filters by data.taskId so only this task's batch renders inline.
+      ipcOn('gather:question_batch', AP_TOKEN, handleQuestionBatch);
     } else {
       ipcOn('unified:set-prompt', AP_TOKEN, handleNewPrompt);
       ipcOn('queue:enqueued', AP_TOKEN, handleNewPrompt);
@@ -3139,6 +3145,9 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
       active = false;
       ipcOff('automation:progress', AP_TOKEN);
       ipcOff('plan:approved', AP_TOKEN);
+      if (taskId) {
+        ipcOff('gather:question_batch', AP_TOKEN);
+      }
       if (!taskId) {
         ipcOff('unified:set-prompt', AP_TOKEN);
         ipcOff('queue:enqueued', AP_TOKEN);

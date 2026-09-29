@@ -209,6 +209,18 @@ const SCREEN_OBSERVATION_RE = new RegExp([
   // locative — any wh-question about a thing "on (my|the) screen" observes it:
   // "what is that on my screen", "what is running on my screen"
   '\\bwhat\\s+(?:is|are)\\s+[^.]{0,25}\\bon\\s+(?:my\\s+|the\\s+)?screen\\b',
+  // second-person sight — "what do you see", "what are you seeing", "what are
+  // you looking at", "can you see my screen". The first arm keys on explicit
+  // screen/looking-at object forms and missed these (observed: "what do you
+  // see now" → keyword general_quick vetoed the LLM's handoff → canned
+  // non-answer). No screen noun required — sight of the user's display is the
+  // only thing the system could "see"; handoff fails open anyway.
+  '\\bwhat\\s+(?:do|did|are)\\s+you\\s+(?:see|seeing|look(?:ing)?\\s+at)\\b',
+  '\\b(?:can|could)\\s+you\\s+see\\s+(?:my|the|this)\\s+screen\\b',
+  // STT/ungrammatical locatives missing the copula — "what this about on the
+  // screen", "whats all this on my screen", "what's it doing on my screen".
+  // Anchored on the on-screen tail so off-screen phrasing can't match.
+  '\\bwhat\'?s?\\s+(?:is\\s+|are\\s+)?(?:this|that|it|everything|all\\s+this)\\b[^.]{0,15}\\bon\\s+(?:my\\s+|the\\s+)?screen\\b',
 ].join('|'), 'i');
 
 /** Artifact nouns that can name a live ambient referent — an open file, the
@@ -369,7 +381,13 @@ function inferScreenOutput(message) {
   // the fetch+text path.
   else {
     const cs = msg.match(SCREEN_CONCRETE_SUBJECT_RE);
-    if (cs) { out.kind = 'image'; out.content = cs[1].trim(); }
+    // The regex's lookahead only excludes abstract nouns in FIRST position —
+    // "the whole chapter" captures 'whole chapter' as a concrete subject and
+    // would infer an image fetch for what is actually a text referent. Reject
+    // subjects that END in an abstract noun too.
+    if (cs && !/\b(?:verse|chapter|quote|summary|list|results?|chart|text|message|lyrics|stats?|answer|report|graph|table|data|plot|words?|sentence|notification|alert|warning|count|number|price|status|map)\s*$/i.test(cs[1].trim())) {
+      out.kind = 'image'; out.content = cs[1].trim();
+    }
   }
 
   // Alert copy: "...that says X" → X is the alert text. The screenOutput
