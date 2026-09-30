@@ -93,10 +93,36 @@ export function installFeedIpc(store: FeedStore, ui: FeedIpcUi): () => void {
       } else if (msgText.startsWith('\x00REPLACE\x00')) {
         const newText = msgText.slice('\x00REPLACE\x00'.length);
         dbg('🔄 [UNIFIED] Replacing text, new length:', newText.length);
-        s.streamReplace(newText);
+        const _repEntryId = message.taskId ? s.internal.taskStreamEntry.get(message.taskId) : undefined;
+        if (_repEntryId) {
+          if (message.taskId) s.internal.taskStreamAcc.set(message.taskId, newText);
+          s.queueEntryPatch(_repEntryId, newText);
+        } else {
+          s.streamReplace(newText);
+        }
       } else {
         dbg('➕ [UNIFIED] Appending text, length:', msgText.length);
         if (message.isPlaceholder) s.internal.placeholderStream = true;
+        // Task-scoped synthesize stream → write the answer directly into the
+        // pending assistant entry (its final home) so task:complete is a
+        // same-spot finalize instead of a teleport from the live region.
+        // Gated on synthTasks (set by a synthesize step_start) so plan-gen or
+        // other task-scoped streams keep the live-region path.
+        const _taskId = message.taskId;
+        if (_taskId && s.getState().isAutomationMode && s.internal.synthTasks.has(_taskId)) {
+          const _entry = s.internal.taskStreamEntry.get(_taskId)
+            ? null // already resolved
+            : [...s.getState().entries].reverse().find(e =>
+                e.kind === 'assistant' && (e.taskId === _taskId || e.pending));
+          const _entryId = s.internal.taskStreamEntry.get(_taskId) || _entry?.id;
+          if (_entryId) {
+            if (_entry) s.internal.taskStreamEntry.set(_taskId, _entryId);
+            const _acc = (s.internal.taskStreamAcc.get(_taskId) || '') + msgText;
+            s.internal.taskStreamAcc.set(_taskId, _acc);
+            s.queueEntryPatch(_entryId, _acc);
+            return;
+          }
+        }
         // streamAcc is the synchronous source of truth — a 'done' arriving in
         // the same IPC batch must read the fresh accumulator, not last frame's
         // published streamText.
@@ -363,14 +389,33 @@ export function installFeedIpc(store: FeedStore, ui: FeedIpcUi): () => void {
         }
       }
       if (status === 'done' && data.answer) {
+        // The answer was already streamed live — either into streamText (live
+        // region) or directly into the pending entry for synth-diverted tasks
+        // — committing it as an entry without clearing the live region
+        // renders it twice.
+        s.internal.streamAcc = '';
+        s.internal.streamSegment = '';
+        s.internal.placeholderStream = false;
+        s.internal.streamCompleted = true;
+        s.internal.taskStreamAcc.delete(data.taskId);
+        s.internal.taskStreamEntry.delete(data.taskId);
+        s.internal.synthTasks.delete(data.taskId);
+        s.clearStream();
+        s.set({ streamText: '', isStreaming: false });
         settlePendingAssistant(data.answer, Array.isArray(data.items) ? data.items : undefined);
       } else if (status === 'failed' || status === 'cancelled') {
+        s.internal.taskStreamAcc.delete(data.taskId);
+        s.internal.taskStreamEntry.delete(data.taskId);
+        s.internal.synthTasks.delete(data.taskId);
         settleError();
       }
       // Water-drip used to live on TaskCompleteBanner — moved here.
       if (status === 'done' || status === 'failed' || status === 'cancelled') playDropSound();
     } else if (status === 'done' && data.answer) {
       // ── Non-command_automate: settle the placeholder into the real answer ──
+      s.internal.taskStreamAcc.delete(data.taskId);
+      s.internal.taskStreamEntry.delete(data.taskId);
+      s.internal.synthTasks.delete(data.taskId);
       settlePendingAssistant(data.answer, Array.isArray(data.items) ? data.items : undefined);
       s.internal.streamAcc = '';
       s.internal.placeholderStream = false;
@@ -378,6 +423,9 @@ export function installFeedIpc(store: FeedStore, ui: FeedIpcUi): () => void {
       s.set({ streamText: '', resultItems: [], isStreaming: false, isTaskWorking: false });
       playDropSound();
     } else if (status === 'failed' || status === 'cancelled') {
+      s.internal.taskStreamAcc.delete(data.taskId);
+      s.internal.taskStreamEntry.delete(data.taskId);
+      s.internal.synthTasks.delete(data.taskId);
       if (!settleError()) {
         const raw = data.error || `Task ${status}`;
         s.appendEntry({
@@ -399,6 +447,21 @@ export function installFeedIpc(store: FeedStore, ui: FeedIpcUi): () => void {
     }
   };
 
+  // Track which taskIds are inside a synthesize step so task-scoped stream
+  // chunks can be diverted into the pending assistant entry (answer writes
+  // itself in place instead of teleporting from the live region at commit).
+  const handleAutomationProgress = (evt: any) => {
+    if (!evt || typeof evt !== 'object' || !evt.taskId) return;
+    const t = evt.type;
+    if (t === 'step_start' || t === 'plan:step_start') {
+      if (evt.skill === 'synthesize') s.internal.synthTasks.add(evt.taskId);
+    } else if (t === 'step_done' || t === 'step_failed'
+      || t === 'all_done' || t === 'failed' || t === 'error' || t === 'plan:complete') {
+      // Synth step ended or the run terminated — stop diverting.
+      s.internal.synthTasks.delete(evt.taskId);
+    }
+  };
+
   // ── Registration (token dedupes in preload) ─────────────────────────────
   ipcRenderer.on('ws-bridge:message', handleWsMessage, token);
   ipcRenderer.on('search:sources', handleSearchSources, token);
@@ -407,6 +470,7 @@ export function installFeedIpc(store: FeedStore, ui: FeedIpcUi): () => void {
   ipcRenderer.on('task:progress', handleTaskProgress, token);
   ipcRenderer.on('task:complete', handleTaskComplete, token);
   ipcRenderer.on('task:removed', handleTaskRemoved, token);
+  ipcRenderer.on('automation:progress', handleAutomationProgress, token);
 
   return () => {
     ipcRenderer.removeListenerByToken('ws-bridge:message', token);
@@ -416,5 +480,6 @@ export function installFeedIpc(store: FeedStore, ui: FeedIpcUi): () => void {
     ipcRenderer.removeListenerByToken('task:progress', token);
     ipcRenderer.removeListenerByToken('task:complete', token);
     ipcRenderer.removeListenerByToken('task:removed', token);
+    ipcRenderer.removeListenerByToken('automation:progress', token);
   };
 }

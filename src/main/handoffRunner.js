@@ -986,6 +986,28 @@ async function answerQuestion(taskId, answer) {
     });
   }
 
+  // ── Free text on a verbatim deterministic step — treat as a new instruction ──
+  // shell.run/fs.* steps carry fixed cmd/argv args — the answer can't be
+  // injected (only `goal`-based steps absorb text), so the old path replayed
+  // the identical failing command in a loop. Route the answer through normal
+  // classification instead: "goto gmail in browser" re-plans as url_open.
+  const _origStepArgs = paused.skillPlan?.[_stepIdx]?.args || {};
+  if (!_AGENT_SKILLS.has(_resumeSkill) && (_origStepArgs.cmd || _origStepArgs.argv) && !_origStepArgs.goal) {
+    _emitResuming();
+    return _reExecute({
+      ..._baseResume,
+      message: chosen,
+      resolvedMessage: chosen,
+      _skillPlan: null,
+      _skillPlanIsResume: false,
+      skillPlan: null, skillCursor: 0,
+      skillResults: paused.skillResults || [],
+      _deterministicPlan: null, _deterministicTemplate: null,
+      _deterministicLowRisk: null, _deterministicExternal: null,
+      _deterministicServiceAgent: null,
+    });
+  }
+
   // ── Free text (incl. "Correct and retry" follow-ups) — re-run the same ─────
   // agent step with the answer injected as [Resume context: Q&A], accumulating
   // Q&A history across resume turns.

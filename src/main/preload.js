@@ -158,6 +158,7 @@ contextBridge.exposeInMainWorld('electron', {
         'results-window:show',
         'prompt-capture:add-highlight',
         'unified:set-prompt',
+        'unified:user-resize',
         'unified:clear',
         'results-window:display-error',
         'ws-bridge:connected',
@@ -329,6 +330,7 @@ contextBridge.exposeInMainWorld('electron', {
       const validChannels = [
         'ws-bridge:message',
         'unified:set-prompt',
+        'unified:user-resize',
         'unified:clear',
         'automation:progress',
         'is-streaming',

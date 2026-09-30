@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback, useMemo, startTransition, useDeferredValue } from 'react';
-import { useDynamicHeight, MAX_HEIGHT } from './utils/useDynamicHeight';
+import { useDynamicHeight, MAX_HEIGHT, COLLAPSED_HEIGHT } from './utils/useDynamicHeight';
 const ipcRenderer = (window as any).electron?.ipcRenderer;
 import { playThinkDropSound } from '../utils/thinkDropSound';
 
@@ -267,21 +267,35 @@ export function UnifiedOverlay() {
   // Epoch ms of the last mouseup — keeps resize suppressed briefly after a
   // drag ends so a queued/debounced set-content-height can't snap the window.
   const dragEndedAtRef = useRef(0);
+  // >0 = user owns the window height (set via main's will-resize →
+  // 'unified:user-resize' IPC, which only fires for manual edge drags).
+  // While pinned, all content-driven resizes are suppressed — the feed
+  // scrolls inside the user's chosen height. Released by dragging back to
+  // ~collapsed or by the expand/collapse width toggle.
+  const userPinnedHeightRef = useRef(0);
+  // Epoch ms of the last isSubmitting falling edge — extends the shrink floor
+  // ~800ms past task end so the response-commit reflow (feed entry commit,
+  // live-run card hiding) can't shrink the window right as the answer lands.
+  const taskEndedAtRef = useRef(0);
   const dragRafRef = useRef<number | null>(null);
   const pendingMoveRef = useRef<{ x: number; y: number } | null>(null);
 
   // Suppress all resize IPC while user is dragging, using the native resize handle,
   // within the brief hold window after a manual collapse via the width toggle, or
   // just after a drag ends (a queued animated setBounds mid/post-drag = visible snap).
-  // Also: while a task runs, block resizes that would SHRINK the window — the
-  // current height is what the user had at submit (possibly manually dragged).
-  // Growth is still allowed so a collapsed submit expands for the response.
-  // Releases automatically when isSubmitting flips false at all_done/cancel.
+  // Also: while a task runs (and briefly after), block resizes that would
+  // SHRINK the window — the current height is what the user had at submit
+  // (possibly manually dragged). Growth is still allowed so a collapsed
+  // submit expands for the response. And once the user has edge-dragged the
+  // window (userPinnedHeightRef), all content-driven resizes are suppressed —
+  // the height stays exactly where they put it.
   const shouldSuppressResize = (targetHeight?: number) =>
     isDraggingRef.current || isResizingRef.current ||
     Date.now() < manualCollapseUntilRef.current ||
     Date.now() - dragEndedAtRef.current < 180 ||
-    (feedStore.getState().isSubmitting &&
+    userPinnedHeightRef.current > 0 ||
+    ((feedStore.getState().isSubmitting ||
+      Date.now() - taskEndedAtRef.current < 800) &&
       targetHeight != null && targetHeight < window.innerHeight);
 
   // --- Dynamic Height Management ---
@@ -339,6 +353,8 @@ export function UnifiedOverlay() {
     const newExpanded = !isExpanded;
     console.log('[Width Toggle] Toggling to:', newExpanded ? 'expanded (900xMAX)' : 'compact (restore+measure)');
     setIsExpanded(newExpanded);
+    // Explicit width gesture = hand sizing back to the content-fit pipeline.
+    userPinnedHeightRef.current = 0;
     if (newExpanded) {
       // Save current bounds so collapse can return to this exact spot.
       ipcRenderer?.send('unified:set-content-height', { width: 900, height: MAX_HEIGHT, animate: true, saveBounds: true });
@@ -973,6 +989,11 @@ export function UnifiedOverlay() {
       if (resizeDebounceRef.current) clearTimeout(resizeDebounceRef.current);
       resizeDebounceRef.current = setTimeout(() => {
         isResizingRef.current = false;
+        // After any resize settles (programmatic or user), re-stick the feed to
+        // the bottom while in auto-scroll mode — the rAF scroll fires before the
+        // animated setBounds finishes and can leave the view short of the bottom.
+        const c = scrollContainerRef.current;
+        if (c && !isScrolledUpRef.current) c.scrollTop = c.scrollHeight;
       }, 300);
     };
     window.addEventListener('resize', handleWindowResize);
@@ -2025,6 +2046,13 @@ export function UnifiedOverlay() {
       },
     });
     ipcRenderer.on('unified:set-prompt', handleSetPrompt, token);
+    // User edge-dragged the window (main's will-resize — never fires for
+    // programmatic setBounds). Pin the window at their height; dragging back
+    // to ~collapsed releases the pin so content-fit resumes.
+    ipcRenderer.on('unified:user-resize', (data: { height?: number } = {}) => {
+      const h = Math.round(data?.height || 0);
+      userPinnedHeightRef.current = h > COLLAPSED_HEIGHT + 4 ? h : 0;
+    }, token);
     ipcRenderer.on('voice:session', handleVoiceSession, token);
     ipcRenderer.on('voice:state', handleVoiceState, token);
     ipcRenderer.on('voice:interim', handleVoiceInterim, token);
@@ -2181,6 +2209,7 @@ export function UnifiedOverlay() {
       const token = listenerToken.current;
       detachFeedIpc();
       ipcRenderer.removeListenerByToken('unified:set-prompt', token);
+      ipcRenderer.removeListenerByToken('unified:user-resize', token);
       ipcRenderer.removeListenerByToken('unified:clear', token);
       ipcRenderer.removeListenerByToken('automation:progress', token);
       ipcRenderer.removeListenerByToken('is-streaming', token);
@@ -2242,6 +2271,18 @@ export function UnifiedOverlay() {
       // Defer past React's commit — notify() fires inside setEntries, before the
       // new entry is in the DOM; scrolling now would land above the appended row.
       requestAnimationFrame(() => { container.scrollTop = container.scrollHeight; });
+    });
+  }, []);
+
+  // Task-end stamp: extends the shrink floor ~800ms past isSubmitting so the
+  // response-commit reflow (feed entry commit + live-run card hiding, which
+  // land AFTER all_done sets isSubmitting=false) can't shrink the window.
+  useEffect(() => {
+    let prev = feedStore.getState().isSubmitting;
+    return feedStore.subscribe(() => {
+      const cur = feedStore.getState().isSubmitting;
+      if (prev && !cur) taskEndedAtRef.current = Date.now();
+      prev = cur;
     });
   }, []);
 

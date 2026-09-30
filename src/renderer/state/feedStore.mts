@@ -61,6 +61,15 @@ interface FeedInternal {
   taskPrompts: Map<string, string>;
   hasDropped: boolean;             // drop-sound already played this stream
   playedIntentSound: Set<string>;  // dedup intent sounds per taskId
+  // Task-scoped synth streaming — during a synthesize step the tokens are
+  // diverted into the pending assistant entry (its final home) so the answer
+  // writes itself in place instead of teleporting from the live region at
+  // task:complete. taskStreamAcc/taskStreamEntry key on taskId; synthTasks
+  // tracks which taskIds are in a synthesize step (gated by step_start).
+  taskStreamAcc: Map<string, string>;
+  taskStreamEntry: Map<string, string>;
+  synthTasks: Set<string>;
+  pendingEntryPatches: Map<string, string>; // entryId → text, flushed on rAF
 }
 
 export interface FeedStore {
@@ -85,6 +94,9 @@ export interface FeedStore {
   flushStream: () => void;
   clearStream: () => void;
   commitInFlightStream: () => void;
+  // Task-scoped synth streaming — patch an entry's text on the shared rAF
+  // flush so token bursts coalesce to one render per frame.
+  queueEntryPatch: (entryId: string, text: string) => void;
   // misc published fields
   set: (patch: Partial<FeedState>) => void;
   setCommsTasks: (fn: (prev: CommsTask[]) => CommsTask[]) => void;
@@ -309,6 +321,10 @@ export function createFeedStore(now: () => number = () => Date.now()): FeedStore
     taskPrompts: new Map(),
     hasDropped: false,
     playedIntentSound: new Set(),
+    taskStreamAcc: new Map(),
+    taskStreamEntry: new Map(),
+    synthTasks: new Set(),
+    pendingEntryPatches: new Map(),
   };
   const listeners = new Set<() => void>();
   let flushScheduled = false;
@@ -329,6 +345,20 @@ export function createFeedStore(now: () => number = () => Date.now()): FeedStore
   const flushStream = () => {
     flushScheduled = false;
     if (state.streamText !== internal.streamAcc) set({ streamText: internal.streamAcc });
+    // Coalesced task-stream entry patches — same display-rate cap so a token
+    // burst produces at most one entries-array rebuild per frame.
+    if (internal.pendingEntryPatches.size) {
+      const patches = internal.pendingEntryPatches;
+      internal.pendingEntryPatches = new Map();
+      setEntries(prev => prev.map(e => {
+        const text = patches.get(e.id);
+        return text !== undefined ? ({ ...e, text } as FeedEntry) : e;
+      }));
+    }
+  };
+  const queueEntryPatch = (entryId: string, text: string) => {
+    internal.pendingEntryPatches.set(entryId, text);
+    queueFlush();
   };
   const queueFlush = () => {
     if (!flushScheduled) { flushScheduled = true; scheduleFlush(flushStream); }
@@ -520,6 +550,7 @@ export function createFeedStore(now: () => number = () => Date.now()): FeedStore
       if (state.streamText) set({ streamText: '' });
     },
     commitInFlightStream,
+    queueEntryPatch,
     set,
     setCommsTasks: (fn) => {
       const next = fn(state.commsTasks);

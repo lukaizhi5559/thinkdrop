@@ -24,7 +24,7 @@ interface HighlightElement {
 interface HighlightData {
   type: 'highlight' | 'clear' | 'scanning_start' | 'scanning_complete' | 'highlight_update'
     | 'progress_drop' | 'capture_begin' | 'capture_end' | 'progress_clear'
-    | 'boundary_set' | 'boundary_clear';
+    | 'boundary_set' | 'boundary_clear' | 'control_lock' | 'control_unlock';
   elements?: HighlightElement[];
   duration?: number;
   cx?: number;
@@ -34,6 +34,8 @@ interface HighlightData {
   label?: string;
   stepNum?: number | null;
   totalSteps?: number | null;
+  // control_lock fields
+  taskId?: string | null;
   // boundary_set fields (persistent app-window border for the whole plan)
   element?: HighlightElement;
 }
@@ -78,6 +80,12 @@ function GhostLayer() {
   // the entire plan and only dims during each screenshot (capture_begin) so it
   // never taints OCR, then restores (capture_end). Cleared on the terminal event.
   const [boundary, setBoundary] = useState<HighlightElement | null>(null);
+
+  // "AI in Control" lock — glowing fullscreen border + cancel pill shown while
+  // an input-driving step runs (main.js arms it via control_lock). lockVisible
+  // follows the capture_begin/end fade like the boundary so it never taints OCR.
+  const [controlLock, setControlLock] = useState<{ taskId: string | null; label: string } | null>(null);
+  const [lockVisible, setLockVisible] = useState(false);
 
   // Camera-flash overlay — briefly brightens the screen during screenshots.
   // Triggered by /overlay/flash (main.js) before a screen capture, cleared by
@@ -171,12 +179,19 @@ function GhostLayer() {
           totalSteps: data.totalSteps ?? null,
         });
         setDropVisible(true);
+      } else if (data.type === 'control_lock') {
+        setControlLock({ taskId: data.taskId ?? null, label: data.label || 'AI in Control' });
+        setLockVisible(true);
+      } else if (data.type === 'control_unlock') {
+        setControlLock(null);
+        setLockVisible(false);
       } else if (data.type === 'capture_begin') {
         // Fade the drop out, then signal the main process that the screenshot
         // can fire (the drop is now invisible → clean OCR). The opacity
         // transition is 0.4s; we send ready just after it completes. The main
         // process also has its own timeout fallback.
         setDropVisible(false);
+        setLockVisible(false);
         if (captureReadyTimer.current) clearTimeout(captureReadyTimer.current);
         captureReadyTimer.current = setTimeout(() => {
           ipcRenderer?.send('ghostlayer:capture-ready');
@@ -188,6 +203,7 @@ function GhostLayer() {
           captureReadyTimer.current = null;
         }
         setDropVisible(true);
+        setLockVisible(true); // harmless if no lock — it only renders when set
       } else if (data.type === 'boundary_set' && data.element) {
         // Persistent app-window border for the whole plan (drop-session owned).
         setBoundary(data.element);
@@ -202,6 +218,8 @@ function GhostLayer() {
         setDrop(null);
         setDropVisible(false);
         setBoundary(null);
+        setControlLock(null);
+        setLockVisible(false);
       } else if (data.type === 'clear') {
         setHighlights([]);
         setIsVisible(false);
@@ -271,7 +289,7 @@ function GhostLayer() {
   // Tell main when the window goes fully idle — highlights gone, not scanning,
   // no drop/boundary, and no screen-output displays. Main then hides the
   // window + clears its display tracking (restores click-through).
-  const ghostOccupied = screenOccupied || isVisible || isScanning || !!drop || !!boundary;
+  const ghostOccupied = screenOccupied || isVisible || isScanning || !!drop || !!boundary || !!controlLock;
   const prevOccupied = useRef(ghostOccupied);
   useEffect(() => {
     if (prevOccupied.current && !ghostOccupied) {
@@ -285,9 +303,22 @@ function GhostLayer() {
   // with zero highlights and alerts can preempt the scan UI.
   const stageNode = <ScreenStage onOccupancyChange={setScreenOccupied} />;
 
+  // "AI in Control" lock — renders in every path (independent of highlights).
+  const lockNode = controlLock ? (
+    <ControlLock
+      label={controlLock.label}
+      visible={lockVisible}
+      onCancel={() => {
+        ipcRenderer?.send('ghostlayer:control-cancel', { taskId: controlLock.taskId });
+        setControlLock(null);
+        setLockVisible(false);
+      }}
+    />
+  ) : null;
+
   // Show scanning overlay with dark background
   if (isScanning) {
-    return <>{stageNode}<ScanningOverlay timer={scanTimer} /></>;
+    return <>{stageNode}{lockNode}<ScanningOverlay timer={scanTimer} /></>;
   }
 
   // The progress drop renders independently of bounding-box highlights — it is
@@ -299,7 +330,7 @@ function GhostLayer() {
   const boundaryNode = boundary ? <PersistentBoundary element={boundary} visible={dropVisible} /> : null;
 
   if (!isVisible || highlights.length === 0) {
-    return <>{stageNode}{boundaryNode}{dropNode}</>;
+    return <>{stageNode}{boundaryNode}{dropNode}{lockNode}</>;
   }
 
   return (
@@ -336,6 +367,7 @@ function GhostLayer() {
       )}
       {boundaryNode}
       {dropNode}
+      {lockNode}
       {highlights.map((element, index) => (
         <BoundingBox
           key={element.id ?? index}
@@ -600,6 +632,109 @@ function PersistentBoundary({ element, visible }: { element: HighlightElement; v
 }
 
 /**
+ * ControlLock — fullscreen glowing border + "AI in Control" pill shown while an
+ * input-driving step runs. NOT a dim: the user still watches the automation.
+ * The border region is non-interactive; clicks are captured at the window level
+ * (main.js lifts click-through while the lock is up). Only the X is clickable —
+ * it sends ghostlayer:control-cancel which cancels the owning task.
+ */
+function ControlLock({ label, visible, onCancel }: { label: string; visible: boolean; onCancel: () => void }) {
+  return (
+    <div
+      style={{
+        position: 'fixed',
+        top: 0,
+        left: 0,
+        width: '100vw',
+        height: '100vh',
+        zIndex: 100001,
+        pointerEvents: 'none',
+        opacity: visible ? 1 : 0,
+        transition: 'opacity 0.4s ease',
+      }}
+    >
+      {/* Animated glowing frame — inset 3px so the glow hugs the screen edge */}
+      <div
+        style={{
+          position: 'absolute',
+          top: 3, left: 3, right: 3, bottom: 3,
+          border: '2px solid rgba(96,165,250,0.9)',
+          borderRadius: '6px',
+          boxShadow: '0 0 14px rgba(96,165,250,0.55), inset 0 0 14px rgba(96,165,250,0.25)',
+          animation: 'td-lock-glow 2.2s ease-in-out infinite',
+          pointerEvents: 'none',
+        }}
+      />
+      {/* Top-center pill: label + cancel */}
+      <div
+        style={{
+          position: 'absolute',
+          top: 24,
+          left: '50%',
+          transform: 'translateX(-50%)',
+          display: 'flex',
+          alignItems: 'center',
+          gap: 10,
+          padding: '8px 10px 8px 16px',
+          borderRadius: 9999,
+          background: 'rgba(10,14,22,0.88)',
+          backdropFilter: 'blur(8px)',
+          WebkitBackdropFilter: 'blur(8px)',
+          border: '1px solid rgba(96,165,250,0.45)',
+          boxShadow: '0 6px 24px rgba(0,0,0,0.35), 0 0 18px rgba(96,165,250,0.3)',
+          color: '#e5e7eb',
+          fontFamily: 'system-ui, -apple-system, sans-serif',
+          pointerEvents: 'auto',
+        }}
+      >
+        <span style={{ display: 'flex', animation: 'td-drop-bob 2.4s ease-in-out infinite' }}>
+          <ThinkDropLogo size={18} />
+        </span>
+        <span style={{ fontSize: 12, fontWeight: 700, letterSpacing: '0.08em', color: '#93c5fd' }}>
+          AI IN CONTROL
+        </span>
+        <span
+          style={{
+            fontSize: 12,
+            fontWeight: 600,
+            maxWidth: 260,
+            whiteSpace: 'nowrap',
+            overflow: 'hidden',
+            textOverflow: 'ellipsis',
+            opacity: 0.85,
+          }}
+        >
+          {label}
+        </span>
+        <button
+          onClick={onCancel}
+          title="Cancel automation (Esc)"
+          style={{
+            width: 22,
+            height: 22,
+            borderRadius: '50%',
+            border: '1px solid rgba(255,255,255,0.25)',
+            background: 'rgba(255,255,255,0.08)',
+            color: '#e5e7eb',
+            fontSize: 12,
+            fontWeight: 700,
+            lineHeight: '20px',
+            cursor: 'pointer',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            padding: 0,
+            flexShrink: 0,
+          }}
+        >
+          ✕
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/**
  * Scanning overlay with wave animation and timer
  */
 function ScanningOverlay({ timer }: { timer: number }) {
@@ -756,6 +891,17 @@ if (!document.getElementById('ghostlayer-styles')) {
     @keyframes td-drop-bob {
       0%, 100% { transform: translateY(0); }
       50%       { transform: translateY(-2px); }
+    }
+
+    @keyframes td-lock-glow {
+      0%, 100% {
+        border-color: rgba(96,165,250,0.9);
+        box-shadow: 0 0 14px rgba(96,165,250,0.55), inset 0 0 14px rgba(96,165,250,0.25);
+      }
+      50% {
+        border-color: rgba(147,197,253,1);
+        box-shadow: 0 0 26px rgba(96,165,250,0.9), inset 0 0 26px rgba(96,165,250,0.45);
+      }
     }
   `;
   document.head.appendChild(style);

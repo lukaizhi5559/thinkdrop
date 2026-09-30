@@ -98,6 +98,35 @@ let pendingCaptureReady = null;
 // panel or tear down the drop, or screenshots get tainted (app:"Electron").
 let dropSessionActive = false;
 
+// ── "AI in Control" input lock ───────────────────────────────────────────────
+// While an input-driving app.agent step runs (keyboard/clipboard actions only),
+// the GhostLayer shows a glowing border + "AI in Control" pill, captures clicks
+// so the user can't click into a tab mid-copy, and offers X/Esc to cancel.
+// Mouse-targeting actions (search_and_click, teleport) are excluded — a locking
+// overlay would swallow the automation's own synthetic clicks.
+let controlLock = null; // { taskId, label }
+const CONTROL_LOCK_ACTIONS = new Set([
+  'read_url', 'scan_page', 'navigate_url', 'print_page',
+  'execute_shortcut', 'type_text',
+  'clipboard_backup', 'clipboard_restore', 'extract_content_via_clipboard',
+]);
+
+function _armControlLock(taskId, label) {
+  controlLock = { taskId: taskId || null, label: label || 'AI in Control' };
+  try { if (typeof showGhostLayer === 'function') showGhostLayer(); } catch (_) {}
+  _sendGhost({ type: 'control_lock', taskId: controlLock.taskId, label: controlLock.label });
+  _applyScreenClickThrough();
+  _updateEscShortcut();
+}
+
+function _releaseControlLock(reason) {
+  if (!controlLock) return;
+  controlLock = null;
+  _sendGhost({ type: 'control_unlock' });
+  _applyScreenClickThrough();
+  _updateEscShortcut();
+}
+
 // Monotonic token — each new drop session bumps it so a late get_active_bounds
 // response from a prior session can't draw a stale boundary into a new one.
 let _dropBoundaryToken = 0;
@@ -122,7 +151,7 @@ function _applyScreenClickThrough() {
   if (!ghostLayerWindow || ghostLayerWindow.isDestroyed()) return;
   const blocking = [...screenDisplays.values()].some(d => d && d.blocking);
   try {
-    if (blocking || _hoverInteractive) {
+    if (blocking || _hoverInteractive || controlLock) {
       ghostLayerWindow.setIgnoreMouseEvents(false);
     } else {
       ghostLayerWindow.setIgnoreMouseEvents(true, { forward: true });
@@ -139,13 +168,30 @@ function _applyScreenClickThrough() {
 let _escRegistered = false;
 
 function _onEscClear() {
+  // Control lock → Esc cancels the running task (same affordance as the X).
+  if (controlLock) {
+    const taskId = controlLock.taskId;
+    console.log(`[Screen] Esc pressed during AI-control lock — cancelling task ${taskId || '(none)'}`);
+    _cancelLockedTask();
+    return;
+  }
   if (screenDisplays.size === 0) { _updateEscShortcut(); return; }
   console.log('[Screen] Esc pressed — clearing all displays');
   clearScreenDisplays(null);
 }
 
+function _cancelLockedTask() {
+  const taskId = controlLock?.taskId;
+  _releaseControlLock('cancelled');
+  if (taskId) {
+    try { require('./handoffRunner').cancel(taskId); } catch (_) {}
+    _commsHttp('/comms.cancel', { taskId }).catch(() => {});
+    safeSendUnified('task:complete', { taskId, status: 'cancelled', error: 'cancelled by user' });
+  }
+}
+
 function _updateEscShortcut() {
-  const want = screenDisplays.size > 0;
+  const want = screenDisplays.size > 0 || !!controlLock;
   if (want && !_escRegistered) {
     try {
       _escRegistered = globalShortcut.register('Escape', _onEscClear);
@@ -296,6 +342,16 @@ async function driveProgressDrop(evt) {
   if (!evt || typeof evt !== 'object') return;
   const t = evt.type;
   if (t === 'plan:step_start' || t === 'step_start') {
+    // "AI in Control" lock — arm while a keyboard/clipboard-driving app.agent
+    // step runs so the user can't click into the page mid-copy and so the
+    // visible browser/tab activity reads as intentional automation.
+    if (evt.skill === 'app.agent' && CONTROL_LOCK_ACTIONS.has(evt.args?.action)) {
+      _armControlLock(evt.taskId || null, evt.description || 'AI in Control');
+    } else if (controlLock) {
+      // Non-lockable step started (different skill or a mouse-driving action)
+      // — release so the automation's own clicks can reach the target app.
+      _releaseControlLock('next-step');
+    }
     if (evt.skill === 'app.agent') {
       // Capture-heavy desktop-automation step → arm the session, show the drop,
       // hide the panel. The session keeps the panel hidden until a terminal event.
@@ -333,8 +389,13 @@ async function driveProgressDrop(evt) {
       // A non-app.agent step is running — restore the normal panel.
       _restorePanelFromDrop();
     }
+  } else if (t === 'step_done' || t === 'step_failed') {
+    // The input-driving step finished — release the lock. If the next step is
+    // also lockable, its step_start re-arms immediately.
+    _releaseControlLock('step-end');
   } else if (t === 'all_done' || t === 'failed' || t === 'ask_user' || t === 'plan:complete' || t === 'error') {
     // Any terminal / user-input event → clear the drop and bring the panel back.
+    _releaseControlLock('terminal');
     _restorePanelFromDrop();
   }
 }
@@ -2059,6 +2120,11 @@ const UNIFIED_ABSOLUTE_MAX_HEIGHT = 900; // never taller than this, even on huge
 // panel to exactly where it was instead of re-anchoring by quadrant.
 let _preExpandBounds = null;
 
+// Throttle state for the unified:user-resize reports (will-resize fires per
+// mouse step during a drag).
+let _lastUserResizeSentAt = 0;
+let _userResizeSendTimer = null;
+
 // Apply size + position to the unified overlay using quadrant-aware anchoring.
 //   contentHeight: desired total window height (renderer-measured). Falls back to collapsed.
 //   width:         desired window width. Falls back to current width, then UNIFIED_MIN_WIDTH.
@@ -2901,6 +2967,23 @@ function createUnifiedWindow() {
     unifiedWindow.setAlwaysOnTop(true, 'floating', 5);
   }
 
+  // will-resize fires ONLY for user edge-drags — programmatic setBounds does
+  // not emit it. It's the authoritative signal that the user took over the
+  // window height; the renderer pins it and suppresses content-driven resizes
+  // until the user collapses or toggles width. Throttled + a trailing send so
+  // the pin lands on the final drag height.
+  unifiedWindow.on('will-resize', (_e, newBounds) => {
+    const send = () => safeSendUnified('unified:user-resize', { height: Math.round(newBounds.height) });
+    const now = Date.now();
+    if (now - _lastUserResizeSentAt >= 100) {
+      _lastUserResizeSentAt = now;
+      send();
+    } else {
+      if (_userResizeSendTimer) clearTimeout(_userResizeSendTimer);
+      _userResizeSendTimer = setTimeout(send, 110);
+    }
+  });
+
   const isDev = process.env.NODE_ENV === 'development';
   if (isDev) {
     unifiedWindow.loadURL('http://localhost:5173/index.html?mode=unified&cacheBust=' + Date.now());
@@ -3201,6 +3284,13 @@ ipcMain.on('ghostlayer:display-capabilities', (_e, data) => {
   entry.keys = new Set(Array.isArray(data.keys) ? data.keys.map(String) : []);
   screenDisplays.set(id, entry);
   _updateNavShortcut();
+});
+
+// "AI in Control" X button — cancel the task the lock belongs to.
+ipcMain.on('ghostlayer:control-cancel', (_e, data) => {
+  const taskId = (data && typeof data.taskId === 'string') ? data.taskId : controlLock?.taskId;
+  console.log(`[Screen] Control-lock cancel requested — task ${taskId || '(none)'}`);
+  _cancelLockedTask();
 });
 
 // Renderer-initiated dismiss (e.g. click on a blocking alert curtain).
