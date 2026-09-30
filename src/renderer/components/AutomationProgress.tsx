@@ -1560,6 +1560,46 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
           break;
         }
 
+        case 'node': {
+          // Pipeline-stage events ({type:'node', node:<name>}) — show which
+          // graph stage is running in the header so the card isn't blank
+          // between the ack phrase and the first plan/step event.
+          const NODE_LABELS: Record<string, string> = {
+            resolveReferences: 'Reading your request…',
+            clarify: 'Checking requirements…',
+            decomposePrompt: 'Breaking down the request…',
+            parseIntent: 'Understanding intent…',
+            checkPlanCache: 'Checking saved plans…',
+            fastLanePlan: 'Checking fast path…',
+            parseSkill: 'Matching skills…',
+            enrichIntent: 'Enriching context…',
+            routeIntent: 'Routing…',
+            resolveUserContext: 'Loading your context…',
+            resolveAgent: 'Selecting agents…',
+            preflightAgents: 'Checking agent readiness…',
+            gatherPlanContext: 'Gathering requirements…',
+            planSkills: 'Planning steps…',
+            executeCommand: 'Executing steps…',
+            reviewExecution: 'Reviewing results…',
+            evaluateSkills: 'Evaluating…',
+            retrieveMemory: 'Recalling context…',
+            synthesize: 'Writing answer…',
+            logConversation: 'Wrapping up…',
+          };
+          const label = (data.label as string) || NODE_LABELS[data.node as string] || null;
+          if (!label) break;
+          // During executing/done phases the step list is the source of truth —
+          // node events only drive the pre-execution header.
+          if (phaseRef.current === 'executing' || phaseRef.current === 'done') break;
+          // Never stomp an active prompt/question surface.
+          if (phaseRef.current === 'ask_user' || phaseRef.current === 'gathering' || phaseRef.current === 'plan_review') break;
+          if (phaseRef.current === 'idle' || phaseRef.current === 'planning' || phaseRef.current === 'preflight') {
+            setPhase('planning');
+            setPlanMessage(label);
+          }
+          break;
+        }
+
         case 'planning':
           // During an ask_user resume we already have the step list and offset; the
           // backend's 'planning' event is just the resolver warming up. Don't reset.
@@ -3072,13 +3112,21 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
       }
     };
 
-    // Capture streaming synthesis answer chunks
+    // Capture streaming synthesis answer chunks. Task-scoped cards accept only
+    // chunks tagged with their taskId; the global instance accepts untagged
+    // chunks (task-tagged tokens belong to the queue card, not the Results tab).
     const handleBridgeMessage = (message: any) => {
-      if (taskId) return; // Bridge messages are global; queue cards get answer via task:complete
       if (!message) return;
+      if (taskId ? message.taskId !== taskId : !!message.taskId) return;
       if (message.type === 'chunk' || message.type === 'llm_stream_chunk') {
         const text = message?.text || message.payload?.text || '';
-        if (text) setSynthesisAnswer(prev => prev + text);
+        if (text) {
+          if (text.startsWith('\x00REPLACE\x00')) {
+            setSynthesisAnswer(text.slice('\x00REPLACE\x00'.length));
+          } else {
+            setSynthesisAnswer(prev => prev + text);
+          }
+        }
       }
     };
 
@@ -3126,8 +3174,11 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
       // Task-scoped queue cards only consume task-tagged automation:progress and
       // plan:approved events — every other handler early-returns on taskId, so
       // subscribing to the global channels would be dead work per event.
+      // ws-bridge:message is included: handoff synthesis tokens are tagged with
+      // taskId so the queue card streams its answer live.
       ipcOn('automation:progress', AP_TOKEN, handleProgress);
       ipcOn('plan:approved', AP_TOKEN, handlePlanApproved);
+      ipcOn('ws-bridge:message', AP_TOKEN, handleBridgeMessage);
       // Task-scoped cards also consume gather:question_batch — the handler
       // filters by data.taskId so only this task's batch renders inline.
       ipcOn('gather:question_batch', AP_TOKEN, handleQuestionBatch);
@@ -3147,6 +3198,7 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
       ipcOff('plan:approved', AP_TOKEN);
       if (taskId) {
         ipcOff('gather:question_batch', AP_TOKEN);
+        ipcOff('ws-bridge:message', AP_TOKEN);
       }
       if (!taskId) {
         ipcOff('unified:set-prompt', AP_TOKEN);

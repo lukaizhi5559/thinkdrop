@@ -190,8 +190,14 @@ function PromptInputBarImpl(
       setPromptText('');
     });
 
-    // Delegate the rest (parent state reset, IPC send) to the parent.
-    onSubmit(text, currentHighlights, gatherPending);
+    // Delegate the rest (parent state reset, IPC send) to the parent — deferred
+    // ~10ms so the browser can paint the cleared textarea first. The parent's
+    // submit work (feedStore mutations → sync subscriber re-render of the whole
+    // overlay, prompt assembly, IPC) runs in the same task and would otherwise
+    // delay that paint, leaving the text visibly lingering after Enter.
+    setTimeout(() => {
+      onSubmit(text, currentHighlights, gatherPending);
+    }, 10);
   }, [promptText, highlights, isSubmitting, gatherPending, onSubmit]);
 
   // --- Keydown ---

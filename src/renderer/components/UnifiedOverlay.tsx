@@ -273,10 +273,16 @@ export function UnifiedOverlay() {
   // Suppress all resize IPC while user is dragging, using the native resize handle,
   // within the brief hold window after a manual collapse via the width toggle, or
   // just after a drag ends (a queued animated setBounds mid/post-drag = visible snap).
-  const shouldSuppressResize = () =>
+  // Also: while a task runs, block resizes that would SHRINK the window — the
+  // current height is what the user had at submit (possibly manually dragged).
+  // Growth is still allowed so a collapsed submit expands for the response.
+  // Releases automatically when isSubmitting flips false at all_done/cancel.
+  const shouldSuppressResize = (targetHeight?: number) =>
     isDraggingRef.current || isResizingRef.current ||
     Date.now() < manualCollapseUntilRef.current ||
-    Date.now() - dragEndedAtRef.current < 180;
+    Date.now() - dragEndedAtRef.current < 180 ||
+    (feedStore.getState().isSubmitting &&
+      targetHeight != null && targetHeight < window.innerHeight);
 
   // --- Dynamic Height Management ---
   // Single consolidated pipeline: measures fixed sections (header + input bar)

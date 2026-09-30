@@ -44,8 +44,10 @@ interface UseDynamicHeightOptions {
   /** When set, all measurements report this height (used to pin MAX_HEIGHT while expanded). */
   forceHeight?: number | null;
   debounceMs?: number;
-  /** When true, all resize IPC is suppressed (e.g. while the user drags/resizes the window). */
-  suppress?: () => boolean;
+  /** When it returns true, resize IPC is suppressed (e.g. while the user
+   *  drags/resizes the window). Receives the computed target height so the
+   *  caller can suppress only shrinks (e.g. hold window height during a task). */
+  suppress?: (targetHeight?: number) => boolean;
   onResize?: (height: number) => void;
 }
 
@@ -113,7 +115,7 @@ export function useDynamicHeight({
   }, [activeTab, headerRef, inputBarRef, contentRefs, forceHeight, overlayEl]);
 
   const sendResize = useCallback((height: number) => {
-    if (suppress && suppress()) return;
+    if (suppress && suppress(height)) return;
     const ipcRenderer = (window as any).electron?.ipcRenderer;
     if (!ipcRenderer) return;
 
@@ -132,8 +134,8 @@ export function useDynamicHeight({
   }, [suppress, getWidth, onResize]);
 
   const measureAndResize = useCallback(() => {
-    if (suppress && suppress()) return;
     const target = computeTargetHeight();
+    if (suppress && suppress(target)) return;
 
     if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current);
     debounceTimerRef.current = setTimeout(() => {

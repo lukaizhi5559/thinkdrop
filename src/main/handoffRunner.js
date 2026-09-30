@@ -130,6 +130,35 @@ function _createStateGraph() {
   });
 }
 
+// ── Friendly labels for graph-node progress events ────────────────────────────
+// Emitted by StateGraphBuilder's node wrapper ({type:'node'}) and shown on the
+// queue card's status line so the user sees which pipeline stage is running.
+const _NODE_LABELS = {
+  resolveReferences: 'Reading your request…',
+  clarify: 'Checking requirements…',
+  decomposePrompt: 'Breaking down the request…',
+  parseIntent: 'Understanding intent…',
+  checkPlanCache: 'Checking saved plans…',
+  fastLanePlan: 'Checking fast path…',
+  parseSkill: 'Matching skills…',
+  enrichIntent: 'Enriching context…',
+  routeIntent: 'Routing…',
+  resolveUserContext: 'Loading your context…',
+  resolveAgent: 'Selecting agents…',
+  preflightAgents: 'Checking agent readiness…',
+  gatherPlanContext: 'Gathering requirements…',
+  planSkills: 'Planning steps…',
+  executeCommand: 'Executing steps…',
+  reviewExecution: 'Reviewing results…',
+  evaluateSkills: 'Evaluating…',
+  retrieveMemory: 'Recalling context…',
+  synthesize: 'Writing answer…',
+  summarizeMultiIntent: 'Summarizing…',
+  advanceQueue: 'Next item…',
+  planExecutor: 'Running saved plan…',
+  logConversation: 'Wrapping up…',
+};
+
 // ── Build a progressCallback that forwards events to renderer + comms-graph ──
 function _makeProgressCallback(taskId, agentId) {
   return (event) => {
@@ -171,6 +200,14 @@ function _makeProgressCallback(taskId, agentId) {
         totalSteps: 0,
         currentStep: event.message || 'Preparing agents…',
       });
+    } else if (event.type === 'node') {
+      // Per-node stage indicator — renderer-only status line (no comms POST;
+      // a full run fires ~10 of these and comms doesn't consume them).
+      if (_ipcBroadcast) {
+        _ipcBroadcast('task:progress', {
+          taskId, node: event.label || _NODE_LABELS[event.node] || event.node,
+        });
+      }
     } else if (event.type === 'all_done') {
       _notifyProgress(taskId, agentId, {
         step: event.completedCount || 0,
@@ -240,12 +277,23 @@ async function execute({ taskId, prompt, agentId, source, originalPrompt, sessio
     // _resumeState: a paused finalState from answerQuestion() — spread it as the
     // base so skillPlan/_skillPlan/cursor/history carry over, then re-apply the
     // live run wiring (callbacks, adapters) that can't be serialized.
+    // Stream callback: forward each synthesis token to the renderer as a
+    // ws-bridge chunk tagged with this taskId, so the live answer bubble /
+    // AutomationProgress card streams the answer as it's generated — same
+    // shape main.js's serial streamCallback already uses.
+    const streamCallback = (token) => {
+      if (token && _ipcBroadcast) {
+        _ipcBroadcast('ws-bridge:message', { type: 'chunk', text: token, taskId });
+      }
+    };
+
     const initialState = _resumeState
       ? {
           ..._resumeState,
           mcpAdapter: _mcpAdapter,
           llmBackend: _llmBackend,
           progressCallback,
+          streamCallback,
           gatherAnswerCallback: _taskGatherCallback(taskId),
           _handoffTaskId: taskId,
           _handoffSource: source,
@@ -267,6 +315,9 @@ async function execute({ taskId, prompt, agentId, source, originalPrompt, sessio
           _handoffSource: source,
           // CRITICAL: set progressCallback so rich events reach the renderer
           progressCallback,
+          // Token streaming for the synthesize step (and any node that pushes
+          // partial output) — previously only the serial path had this wired.
+          streamCallback,
           // Clarification surface — the clarify gate and grill/batch questions
           // emit gather:question_batch cards and await answers, same as the
           // serial path in main.js.
