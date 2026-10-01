@@ -348,6 +348,15 @@ const SCREEN_CAPTURE_RE = /\b(?:take|capture|snap|grab|shoot|record)\s+(?:a\s+|a
 
 const DEVICE_STATE_RE = /\b(?:battery|disk\s+(?:space|usage)|storage|free\s+space|uptime|wifi|wi-?fi|bluetooth|volume|brightness|cpu|gpu|memory\s+(?:usage|pressure|ram)|ram\s+usage|charging|charger|(?:cpu|gpu|system|device|laptop|mac|pc|internal|my|computer)\s+temperature|temperature\s+(?:of|inside)\s+(?:my|the|this)\s+(?:computer|mac|pc|laptop|system)|fan(?:s)?\s+speed|network\s+(?:status|interfaces?)|ip\s+address|hostname|os\s+version|macos\s+version|kernel)\b|\bhow\s+much\s+(?:ram|memory|storage|disk|battery)\b|\b(?:ram|memory|disk|storage|battery)\s+(?:do\s+i\s+have|left|available|free|remaining|full)\b|\bhow\s+long\s+has\s+(?:my|the|this)\s+(?:computer|mac|pc|laptop|machine|system|phone)\s+been\s+(?:running|on|up)\b|\b(?:processes?|apps?|programs?)\s+(?:using|consuming|hogging|eating)\s+(?:the\s+)?(?:most\s+)?(?:memory|cpu|ram|resources?)\b|\btop\s+\d*\s*(?:processes?|apps?|programs?)\s+(?:by|using|consuming|sorted)\b|\b(?:running|open|active)\s+(?:apps?|applications|programs?|processes?)\b|\b(?:apps?|applications|programs?|processes?)\s+(?:\w+\s+){0,3}(?:running|open)\b/i;
 
+/** Local filesystem/git/system probes — questions or ops whose ONLY answer
+ *  path is a shell command on the user's machine: file/folder counts and
+ *  contents, git state, clipboard, ports. Companion to DEVICE_STATE_RE
+ *  (telemetry family); this covers the local-artifacts family. The phrasing
+ *  is question-shaped, so a general_knowledge hint often claims them —
+ *  decomposePromptV2 uses this both as the hint-veto ground-truth override
+ *  (like FILE_PATH_RE) and as a deterministic guard. */
+const LOCAL_FS_PROBE_RE = /\bhow\s+many\s+(?:files?|folders?|items|things|directories)\b|\b(?:count|list|show|display|tell\s+me|check|look\s+at|find)\b[^.?]{0,40}\b(?:files?|folders?|directories|items)\b[^.?]{0,40}\b(?:on|in|inside|within)\s+(?:(?:my|the|this|your|the\s+user'?s|user'?s)\s+)?(?:desktop|downloads|documents|home|folder|directory|drive|disk)\b|\bwhat(?:'s|\s+is|\s+are)?\s+(?:in|inside|on)\s+(?:my|the|this|your|the\s+user'?s|user'?s)\s+(?:desktop|downloads|documents|folder|directory|drive|clipboard)\b|\bgit\s+(?:status|diff|log|commit|push|pull|branch|stash|add|checkout|merge|rebase|init|clone)\b|\b(?:commit|push|pull|stash|rebase|merge|checkout|diff)\s+(?:my|the|this|all\s+(?:my|the|of)?)?\s*(?:work|changes|code|repo(?:sitory)?|branch|files?)\b|\bwhat(?:'s|\s+is)\s+on\s+(?:my|the)\s+clipboard\b|\blistening\s+on\s+port\b|\bport\s+\d{2,5}\b/i;
+
 function inferScreenOutput(message) {
   const msg = String(message || '');
   const out = { kind: null, content: null };
@@ -455,6 +464,7 @@ module.exports = {
   SCREEN_IMG_PATH_RE,
   LOCAL_DATA_SUBJECT_RE,
   DEVICE_STATE_RE,
+  LOCAL_FS_PROBE_RE,
   FILE_PATH_RE,
   SCREEN_CAPTURE_RE,
   SCRIPTURE_REF_RE,

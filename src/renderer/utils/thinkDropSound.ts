@@ -139,29 +139,75 @@ function _playWebSearchSound(ctx: AudioContext): void {
   _playNote(ctx, 1319, t + 0.56, 0.08, 0.14, 'sine', 0.01, 0.04);
 }
 
+// ── Helper: filtered noise burst — texture layer (rustle, whir, air) ─────────
+function _playNoise(
+  ctx: AudioContext,
+  startAt: number,
+  duration: number,
+  opts: { freq?: number; q?: number; peak?: number; type?: BiquadFilterType } = {}
+): void {
+  const { freq = 2400, q = 0.9, peak = 0.04, type = 'bandpass' } = opts;
+  const len = Math.max(1, Math.floor(ctx.sampleRate * duration));
+  const buf = ctx.createBuffer(1, len, ctx.sampleRate);
+  const d = buf.getChannelData(0);
+  for (let i = 0; i < len; i++) d[i] = Math.random() * 2 - 1;
+  const src = ctx.createBufferSource();
+  src.buffer = buf;
+  const filt = ctx.createBiquadFilter();
+  filt.type = type;
+  filt.frequency.value = freq;
+  filt.Q.value = q;
+  const env = ctx.createGain();
+  env.gain.setValueAtTime(0, startAt);
+  env.gain.linearRampToValueAtTime(peak, startAt + 0.02);
+  env.gain.exponentialRampToValueAtTime(0.001, startAt + duration);
+  src.connect(filt); filt.connect(env); env.connect(ctx.destination);
+  src.start(startAt);
+  src.stop(startAt + duration + 0.02);
+}
+
+// ── Helper: pitch-dropping "thunk" — a stamp / latch settling into place ─────
+function _playThunk(ctx: AudioContext, startAt: number, peak = 0.16): void {
+  const osc = ctx.createOscillator();
+  const env = ctx.createGain();
+  osc.type = 'sine';
+  osc.frequency.setValueAtTime(170, startAt);
+  osc.frequency.exponentialRampToValueAtTime(70, startAt + 0.10);
+  env.gain.setValueAtTime(0, startAt);
+  env.gain.linearRampToValueAtTime(peak, startAt + 0.008);
+  env.gain.exponentialRampToValueAtTime(0.001, startAt + 0.13);
+  osc.connect(env); env.connect(ctx.destination);
+  osc.start(startAt); osc.stop(startAt + 0.15);
+}
+
 /**
- * memory_retrieve — soft descending two-note (looking inward/recalling)
- * Two descending notes: A4 → F4, gentle and contemplative
+ * memory_retrieve — "recalling": a soft paper-rustle texture (flipping through
+ * a mental file) then a descending E5→C5→G4 motif that resolves downward —
+ * looking inward and finding something.
  */
 function _playMemoryRetrieveSound(ctx: AudioContext): void {
   const t = ctx.currentTime;
-  _playNote(ctx, 440.00, t, 0.12, 0.10, 'sine', 0.03, 0.08);     // A4
-  _playNote(ctx, 349.23, t + 0.10, 0.16, 0.12, 'sine', 0.03, 0.10); // F4
+  _playNoise(ctx, t, 0.16, { freq: 2800, q: 0.7, peak: 0.035 });
+  _playNote(ctx, 659.25, t + 0.09, 0.10, 0.10, 'sine', 0.02, 0.06);  // E5
+  _playNote(ctx, 523.25, t + 0.19, 0.10, 0.10, 'sine', 0.02, 0.06);  // C5
+  _playNote(ctx, 392.00, t + 0.29, 0.18, 0.12, 'sine', 0.02, 0.10);  // G4 — resolve
 }
 
 /**
- * memory_store — soft ascending two-note (putting something away for later)
- * Inverse of memory_retrieve: F4 → A4
+ * memory_store — "filed away": a low stamp thunk (the latch clicking shut),
+ * then an ascending A4→C#5→E5 confirm — put away and indexed.
  */
 function _playMemoryStoreSound(ctx: AudioContext): void {
   const t = ctx.currentTime;
-  _playNote(ctx, 349.23, t, 0.12, 0.10, 'sine', 0.03, 0.08);        // F4
-  _playNote(ctx, 440.00, t + 0.10, 0.16, 0.12, 'sine', 0.03, 0.10); // A4
+  _playThunk(ctx, t);
+  _playNote(ctx, 440.00, t + 0.11, 0.08, 0.10, 'sine', 0.015, 0.05);  // A4
+  _playNote(ctx, 554.37, t + 0.19, 0.08, 0.11, 'sine', 0.015, 0.05);  // C#5
+  _playNote(ctx, 659.25, t + 0.27, 0.14, 0.12, 'sine', 0.015, 0.08);  // E5 — filed
 }
 
 /**
- * screen_analysis — gentle frequency sweep (scanning)
- * A single note that sweeps from low to high, like a scanner passing over
+ * screen_analysis — sweep + blip-grid tail: the scanner passes, then two
+ * quick ticks like a grid locking onto elements.
  */
 function _playScreenAnalysisSound(ctx: AudioContext): void {
   const t = ctx.currentTime;
@@ -178,25 +224,40 @@ function _playScreenAnalysisSound(ctx: AudioContext): void {
   env.connect(ctx.destination);
   osc.start(t);
   osc.stop(t + 0.37);
+  _playNote(ctx, 1567.98, t + 0.30, 0.035, 0.06, 'sine', 0.004, 0.02); // grid blip
+  _playNote(ctx, 1567.98, t + 0.37, 0.035, 0.07, 'sine', 0.004, 0.02); // grid lock
 }
 
 /**
- * command_automate — steady double-pulse (working/processing)
- * Two firm notes at the same pitch: C4 → C4, confident and steady
+ * command_automate — "servo engaging": a short rising saw whir (actuator
+ * spooling up) over two firm ticks, resolving on D5 — work has started.
  */
 function _playCommandAutomateSound(ctx: AudioContext): void {
   const t = ctx.currentTime;
-  _playNote(ctx, 261.63, t, 0.10, 0.14, 'triangle', 0.02, 0.06);       // C4
-  _playNote(ctx, 261.63, t + 0.14, 0.12, 0.16, 'triangle', 0.02, 0.08); // C4
+  const whir = ctx.createOscillator();
+  const whirEnv = ctx.createGain();
+  whir.type = 'sawtooth';
+  whir.frequency.setValueAtTime(180, t);
+  whir.frequency.exponentialRampToValueAtTime(520, t + 0.18);
+  whirEnv.gain.setValueAtTime(0, t);
+  whirEnv.gain.linearRampToValueAtTime(0.045, t + 0.03);
+  whirEnv.gain.exponentialRampToValueAtTime(0.001, t + 0.20);
+  whir.connect(whirEnv); whirEnv.connect(ctx.destination);
+  whir.start(t); whir.stop(t + 0.22);
+  _playNote(ctx, 329.63, t,       0.04, 0.09, 'square',   0.005, 0.02); // tick
+  _playNote(ctx, 329.63, t + 0.09, 0.04, 0.09, 'square',   0.005, 0.02); // tick
+  _playNote(ctx, 587.33, t + 0.22, 0.12, 0.12, 'triangle', 0.01, 0.07); // resolve D5
 }
 
 /**
- * general_knowledge — neutral single tone
- * A single clear note: G4, calm and neutral
+ * general_knowledge — "lightbulb": a bright E6 sparkle strike over a warm E5
+ * body, settling on a B5 shimmer — the moment an answer switches on.
  */
 function _playGeneralKnowledgeSound(ctx: AudioContext): void {
   const t = ctx.currentTime;
-  _playNote(ctx, 392.00, t, 0.14, 0.12, 'sine', 0.02, 0.08); // G4
+  _playNote(ctx, 1318.51, t,        0.06, 0.09, 'sine',     0.005, 0.04); // sparkle
+  _playNote(ctx, 659.25,  t + 0.04, 0.10, 0.12, 'triangle', 0.01,  0.08); // body E5
+  _playNote(ctx, 987.77,  t + 0.11, 0.16, 0.11, 'sine',     0.01,  0.10); // B5 shimmer
 }
 
 /**

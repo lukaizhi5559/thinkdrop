@@ -420,6 +420,13 @@ function _sendGhost(data) {
   }
 }
 
+/** Send an arbitrary channel to the GhostLayer window (voice pills, sleep UI). */
+function _sendGhostChannel(channel, data) {
+  if (ghostLayerWindow && !ghostLayerWindow.isDestroyed()) {
+    try { ghostLayerWindow.webContents.send(channel, data); } catch (_) {}
+  }
+}
+
 function _restorePanelFromDrop() {
   dropSessionActive = false;
   _dropBoundaryToken++; // invalidate any in-flight session boundary draw
@@ -751,6 +758,12 @@ let activeCronProgressCallback = null;
 // Playwright Chrome worker and relays events to POST /voice.event below.
 let _voiceSessionActive = false;
 let _voiceLang = 'en';
+// 'pipeline' | 'realtime' — set by session-start opts and server 'mode' events.
+let _voiceMode = null;
+// Most recent voice-sourced handoff task — spoken/tool cancels target it.
+let _lastVoiceTaskId = null;
+// One showGhostLayer() per filler-generation run — progress ticks ~1k times.
+let _fillerPillShown = false;
 // Populated once routeThroughCommsGraph is defined inside the IPC registrar —
 // the /voice.event endpoint needs it for auto-submitting final transcripts.
 let _routeViaCommsGraph = null;
@@ -800,6 +813,11 @@ function _voiceSay(text, lang) {
   if (!spoken) return;
   const svcUrl = process.env.VOICE_SERVICE_URL || 'http://127.0.0.1:3006';
   _postJson(new URL('/voice.say', svcUrl), { text: spoken, lang: lang || _voiceLang || 'en' })
+    .then(r => {
+      if (r && r.spoken === false) {
+        console.warn('[Voice] TTS unavailable — response stayed text-only');
+      }
+    })
     .catch(err => console.warn('[Voice] say failed:', err.message));
 }
 
@@ -1088,6 +1106,14 @@ function startOverlayControlServer() {
             case 'state': {
               const state = evt.state || 'idle';
               safeSendUnified('voice:state', { state, reason: evt.reason });
+              // GhostLayer startup pill — "Starting voice…" while Chrome launches.
+              // The window must actually be shown — the pill state alone lands
+              // in a hidden window and the user sees nothing.
+              if (state === 'starting' && !dropSessionActive
+                  && (!ghostLayerWindow || ghostLayerWindow.isDestroyed() || !ghostLayerWindow.isVisible())) {
+                showGhostLayer();
+              }
+              _sendGhostChannel('voice:state', { state, reason: evt.reason });
               if (state === 'disconnected' || state === 'error') {
                 _voiceSessionActive = false;
                 safeSendUnified('voice:session', { active: false, reason: evt.reason });
@@ -1099,6 +1125,87 @@ function startOverlayControlServer() {
               break;
             case 'interrupted':
               safeSendUnified('voice:state', { state: 'listening' });
+              break;
+            case 'echo-dropped':
+              console.log(`🔇 [Voice] Echo dropped (${evt.reason}): "${(evt.text || '').substring(0, 80)}"`);
+              break;
+            case 'final-part':
+              // Mid-turn transcript chunk — display only; the voice bridge
+              // aggregates multi-part speech and sends one merged 'final'.
+              safeSendUnified('voice:final', { text: evt.text || '', lang: evt.lang });
+              break;
+            case 'filler-progress':
+              safeSendUnified('voice:filler-progress', evt);
+              // Voice-warmup pill on the GhostLayer — "Warming up marin's voice".
+              // Show the window ONCE per generation run, not per tick — the
+              // progress event streams ~1k times over several minutes.
+              if (evt.complete) _fillerPillShown = false;
+              else if (!_fillerPillShown || !ghostLayerWindow || ghostLayerWindow.isDestroyed() || !ghostLayerWindow.isVisible()) {
+                if (!dropSessionActive) { showGhostLayer(); _fillerPillShown = true; }
+              }
+              _sendGhostChannel('voice:filler-progress', evt);
+              break;
+            case 'sleep-state':
+              // Sleeping → pulsing GhostLayer pill; awake → clears itself.
+              safeSendUnified('voice:sleep-state', evt);
+              if (evt.sleeping && !dropSessionActive && (!ghostLayerWindow || ghostLayerWindow.isDestroyed() || !ghostLayerWindow.isVisible())) showGhostLayer();
+              _sendGhostChannel('voice:sleep-state', evt);
+              break;
+            case 'mode':
+              // Server-side session mode change (spoken "talk mode", or the
+              // auto-start fallback picking pipeline after realtime failed).
+              _voiceMode = evt.mode || 'pipeline';
+              safeSendUnified('voice:session', { active: true, mode: evt.mode });
+              safeSendUnified('voice:session-mode', { mode: evt.mode });
+              break;
+            case 'voice-cancel': {
+              // Spoken "cancel that" — kill the running voice-sourced task.
+              if (_lastVoiceTaskId) {
+                const tid = _lastVoiceTaskId;
+                console.log(`🎙️ [Voice] Spoken cancel → task ${tid}`);
+                try { require('./handoffRunner').cancel(tid); } catch (_) {}
+                _commsHttp('/comms.cancel', { taskId: tid }).catch(() => {});
+                safeSendUnified('task:complete', { taskId: tid, status: 'cancelled', error: 'cancelled by voice' });
+              }
+              break;
+            }
+            case 'audio-route':
+              // Worker detected a Bluetooth earbud mic — pipeline STT follows
+              // the OS default input, so recognition may degrade. Surface it.
+              console.warn(`🎧 [Voice] Bluetooth mic detected (${evt.device || 'unknown'}) — STT quality may drop; Talk Mode pins the built-in mic`);
+              safeSendUnified('voice:audio-route', evt);
+              break;
+            case 'thought-dropped':
+              console.log(`🤫 [Voice] Thought not spoken (${evt.reason}): "${(evt.text || '').substring(0, 60)}"`);
+              break;
+            case 'sleep-dropped':
+              console.log(`💤 [Voice] Sleep-dropped: "${(evt.text || '').substring(0, 60)}"`);
+              break;
+            case 'rt-transcript': {
+              // Talk Mode transcript — display only (no dispatch; the model
+              // already responded in-voice).
+              const rtText = (evt.text || '').trim();
+              if (!rtText) break;
+              if (evt.role === 'user') {
+                safeSendUnified('unified:set-prompt', rtText);
+                safeSendUnified('voice:final', { text: rtText, lang: evt.lang });
+              } else {
+                // Complete assistant utterance — a dedicated feed message so it
+                // commits as an entry even while automation mode owns the live
+                // stream region (chunk/done there snapshots to a segment and
+                // the spoken reply never renders).
+                safeSendUnified('ws-bridge:message', { type: 'voice_utterance', role: 'assistant', text: rtText });
+              }
+              break;
+            }
+            case 'rt-state': {
+              const m = { 'user-speaking': 'listening', 'responding': 'speaking',
+                          'connected': 'listening', 'listening': 'listening',
+                          'failed': 'error', 'disconnected': 'disconnected' };
+              safeSendUnified('voice:state', { state: m[evt.state] || evt.state || 'listening' });
+              break;
+            }
+            case 'speech-event':
               break;
             case 'final': {
               const text = (evt.text || '').trim();
@@ -1131,6 +1238,56 @@ function startOverlayControlServer() {
       return;
     }
 
+    // ── POST /voice.tool — Talk Mode (S2S) function calls land here ───────────
+    // run_thinkdrop_task routes the instruction through comms-graph exactly
+    // like a voice prompt and returns the immediate response text — the
+    // realtime model then speaks it in-voice.
+    if (req.url === '/voice.tool') {
+      let body = '';
+      req.on('data', chunk => { body += chunk; });
+      req.on('end', async () => {
+        try {
+          const { name, args } = JSON.parse(body || '{}');
+          if (name === 'cancel_current_task') {
+            // Model-driven cancel — same target as spoken pipeline cancels.
+            if (_lastVoiceTaskId) {
+              const tid = _lastVoiceTaskId;
+              try { require('./handoffRunner').cancel(tid); } catch (_) {}
+              _commsHttp('/comms.cancel', { taskId: tid }).catch(() => {});
+              safeSendUnified('task:complete', { taskId: tid, status: 'cancelled', error: 'cancelled by voice' });
+              res.writeHead(200).end(JSON.stringify({ ok: true, output: 'Cancelled the task.' }));
+            } else {
+              res.writeHead(200).end(JSON.stringify({ ok: true, output: 'Nothing is running right now.' }));
+            }
+            return;
+          }
+          if (name !== 'run_thinkdrop_task') {
+            res.writeHead(400).end(JSON.stringify({ error: `unknown tool: ${name}` }));
+            return;
+          }
+          const instruction = (args?.instruction || '').trim();
+          console.log(`🗣️ [VoiceTool] run_thinkdrop_task: "${instruction.substring(0, 80)}"`);
+          const commsPort = parseInt(process.env.COMMS_GRAPH_PORT || '3015', 10);
+          let output = 'Working on it — I\'ll let you know when it\'s done.';
+          try {
+            const r = await _postJson(
+              new URL('/comms.process', `http://127.0.0.1:${commsPort}`),
+              { text: instruction, source: 'voice', sessionId: currentSessionId },
+              15000
+            );
+            if (r?.ok && r?.data?.text) output = r.data.text;
+            else promptQueue.enqueue(instruction, { sessionId: currentSessionId });
+          } catch (_) {
+            promptQueue.enqueue(instruction, { sessionId: currentSessionId });
+          }
+          res.writeHead(200).end(JSON.stringify({ ok: true, output }));
+        } catch (err) {
+          res.writeHead(500).end(JSON.stringify({ error: err.message }));
+        }
+      });
+      return;
+    }
+
     // ── POST /comms.handoff — comms-graph sends async handoff tasks ───────────
     // Each handoff spawns an independent stategraph instance (concurrent, not serial)
     if (req.url === '/comms.handoff') {
@@ -1154,6 +1311,8 @@ function startOverlayControlServer() {
             source: source || 'text',
             guessedIntent: guessedIntent !== undefined ? guessedIntent : null,
           });
+          // Voice-sourced tasks are the spoken-cancel target.
+          if (source === 'voice') _lastVoiceTaskId = taskId;
 
           // Spawn concurrent stategraph run via handoffRunner
           const handoffRunner = require('./handoffRunner');
@@ -2451,9 +2610,19 @@ function initStateGraph() {
           }
           // Voice TTS fan-out — a handoff task submitted by voice speaks its
           // final answer when it completes (the ack was already spoken).
+          // Realtime mode: push the result INTO the live call so the model
+          // announces it in-voice; pipeline mode: plain TTS.
           if (channel === 'task:complete' && data && data.source === 'voice'
-              && data.status === 'done' && data.answer && _voiceSessionActive) {
-            _voiceSay(data.answer, _voiceLang);
+              && _voiceSessionActive && (data.status === 'done' || data.status === 'failed' || data.status === 'cancelled')) {
+            if (_voiceMode === 'realtime') {
+              const svcUrl = process.env.VOICE_SERVICE_URL || 'http://127.0.0.1:3006';
+              _postJson(new URL('/voice.task-result', svcUrl), {
+                taskId: data.taskId, prompt: data.prompt || '',
+                answer: data.answer || '', status: data.status,
+              }).catch(() => {});
+            } else if (data.status === 'done' && data.answer) {
+              _voiceSay(data.answer, _voiceLang);
+            }
           }
         },
         setPendingPreflightPrompt: (taskId, ctx) => _pendingPreflightPromptsByTask.set(taskId, ctx),
@@ -5194,18 +5363,30 @@ app.whenReady().then(async () => {
 
   // voice:session-start — ask the voice-bridge to launch its hidden Chrome
   // worker and begin listening. Events flow back via POST /voice.event.
-  ipcMain.on('voice:session-start', async () => {
-    console.log('🎙️ [Voice] Session start → voice-bridge');
+  ipcMain.on('voice:session-start', async (_e, opts) => {
+    console.log(`🎙️ [Voice] Session start → voice-bridge (mode=${opts?.mode || 'auto'})`);
     try {
       const url = new URL('/voice.session.start', VOICE_SERVICE_URL);
-      await _postJson(url, {});
+      await _postJson(url, { mode: opts?.mode || 'auto' });
       _voiceSessionActive = true;
+      _voiceMode = null; // server confirms via a 'mode' event once connected
       safeSendUnified('voice:session', { active: true });
     } catch (err) {
       console.warn('[Voice] session start failed:', err.message);
       _voiceSessionActive = false;
       safeSendUnified('voice:session', { active: false, error: err.message });
       safeSendUnified('voice:error', { error: err.message });
+    }
+  });
+
+  // voice:session-wake — manual wake while the session is asleep.
+  ipcMain.on('voice:session-wake', async () => {
+    console.log('🎙️ [Voice] Wake → voice-bridge');
+    try {
+      await _postJson(new URL('/voice.wake', VOICE_SERVICE_URL), {});
+      safeSendUnified('voice:state', { state: 'listening' });
+    } catch (err) {
+      console.warn('[Voice] wake failed:', err.message);
     }
   });
 
@@ -5216,6 +5397,7 @@ app.whenReady().then(async () => {
     try {
       const url = new URL('/voice.session.stop', VOICE_SERVICE_URL);
       await _postJson(url, {});
+      _voiceMode = null;
     } catch (err) {
       console.warn('[Voice] session stop failed:', err.message);
     }

@@ -97,6 +97,18 @@ function GhostLayer() {
   // Reported upward so we can tell main when the window is truly empty.
   const [screenOccupied, setScreenOccupied] = useState(false);
 
+  // Filler-library warmup — "Warming up marin's voice — 43/126". Shown while
+  // the voice-service batch-generates the cached voice clips in the background.
+  const [fillerProgress, setFillerProgress] = useState<{ done: number; total: number; voiceKey?: string } | null>(null);
+  const fillerClearTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Voice sleep mode — pulsing "ThinkDrop is sleeping" pill; SR keeps running
+  // server-side but only wake phrases get through.
+  const [voiceSleeping, setVoiceSleeping] = useState(false);
+  // Voice session startup — the hidden Chrome launch takes a few seconds;
+  // this pill covers that dead air ("Starting voice…").
+  const [voiceStarting, setVoiceStarting] = useState(false);
+
   // Track previous state for conditional logging
   const prevState = useRef({ highlights: 0, isVisible: false, isScanning: false });
 
@@ -255,6 +267,53 @@ function GhostLayer() {
     };
   }, []);
 
+  // Voice filler warmup progress — pill lingers briefly after completion.
+  useEffect(() => {
+    if (!ipcRenderer) return;
+    const handleProgress = (data: { done: number; total: number; complete?: boolean; voiceKey?: string }) => {
+      if (fillerClearTimer.current) { clearTimeout(fillerClearTimer.current); fillerClearTimer.current = null; }
+      const finished = !!data?.complete || (data?.total > 0 && data?.done >= data?.total);
+      if (finished) {
+        setFillerProgress({ done: data.total, total: data.total, voiceKey: data.voiceKey });
+        fillerClearTimer.current = setTimeout(() => setFillerProgress(null), 1600);
+      } else if (data?.total > 0) {
+        setFillerProgress({ done: data.done, total: data.total, voiceKey: data.voiceKey });
+      }
+    };
+    ipcRenderer.on('voice:filler-progress', handleProgress, GHOST_TOKEN);
+    return () => {
+      ipcRenderer.removeListenerByToken('voice:filler-progress', GHOST_TOKEN);
+      if (fillerClearTimer.current) clearTimeout(fillerClearTimer.current);
+    };
+  }, []);
+
+  // Voice sleep state — keeps the ghost window occupied while asleep.
+  useEffect(() => {
+    if (!ipcRenderer) return;
+    const handleSleep = (data: { sleeping?: boolean }) => setVoiceSleeping(!!data?.sleeping);
+    ipcRenderer.on('voice:sleep-state', handleSleep, GHOST_TOKEN);
+    return () => {
+      ipcRenderer.removeListenerByToken('voice:sleep-state', GHOST_TOKEN);
+    };
+  }, []);
+
+  // Voice session state — 'starting' shows a pill until the worker is live.
+  useEffect(() => {
+    if (!ipcRenderer) return;
+    const handleVoiceState = (data: { state?: string }) => {
+      const s = data?.state;
+      if (s === 'starting') setVoiceStarting(true);
+      else if (s === 'listening' || s === 'talking' || s === 'speaking' || s === 'sleeping' ||
+               s === 'idle' || s === 'disconnected' || s === 'error') {
+        setVoiceStarting(false);
+      }
+    };
+    ipcRenderer.on('voice:state', handleVoiceState, GHOST_TOKEN);
+    return () => {
+      ipcRenderer.removeListenerByToken('voice:state', GHOST_TOKEN);
+    };
+  }, []);
+
   // Clear highlights on Escape key
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -289,7 +348,7 @@ function GhostLayer() {
   // Tell main when the window goes fully idle — highlights gone, not scanning,
   // no drop/boundary, and no screen-output displays. Main then hides the
   // window + clears its display tracking (restores click-through).
-  const ghostOccupied = screenOccupied || isVisible || isScanning || !!drop || !!boundary || !!controlLock;
+  const ghostOccupied = screenOccupied || isVisible || isScanning || !!drop || !!boundary || !!controlLock || !!fillerProgress || voiceSleeping || voiceStarting;
   const prevOccupied = useRef(ghostOccupied);
   useEffect(() => {
     if (prevOccupied.current && !ghostOccupied) {
@@ -302,6 +361,15 @@ function GhostLayer() {
   // always-on sibling (not gated by isScanning/isVisible) so displays work
   // with zero highlights and alerts can preempt the scan UI.
   const stageNode = <ScreenStage onOccupancyChange={setScreenOccupied} />;
+
+  // Voice-startup pill — covers the seconds while the hidden worker launches.
+  const startNode = voiceStarting ? <VoiceStartingPill /> : null;
+
+  // Filler warmup pill — renders in every path (independent of highlights).
+  const fillerNode = fillerProgress ? <FillerProgressPill progress={fillerProgress} /> : null;
+
+  // Sleep overlay — pulsing dim logo + "say Hey ThinkDrop" pill.
+  const sleepNode = voiceSleeping ? <SleepOverlay /> : null;
 
   // "AI in Control" lock — renders in every path (independent of highlights).
   const lockNode = controlLock ? (
@@ -318,7 +386,7 @@ function GhostLayer() {
 
   // Show scanning overlay with dark background
   if (isScanning) {
-    return <>{stageNode}{lockNode}<ScanningOverlay timer={scanTimer} /></>;
+    return <>{stageNode}{fillerNode}{startNode}{sleepNode}{lockNode}<ScanningOverlay timer={scanTimer} /></>;
   }
 
   // The progress drop renders independently of bounding-box highlights — it is
@@ -330,7 +398,7 @@ function GhostLayer() {
   const boundaryNode = boundary ? <PersistentBoundary element={boundary} visible={dropVisible} /> : null;
 
   if (!isVisible || highlights.length === 0) {
-    return <>{stageNode}{boundaryNode}{dropNode}{lockNode}</>;
+    return <>{stageNode}{boundaryNode}{dropNode}{fillerNode}{startNode}{sleepNode}{lockNode}</>;
   }
 
   return (
@@ -367,6 +435,9 @@ function GhostLayer() {
       )}
       {boundaryNode}
       {dropNode}
+      {fillerNode}
+      {startNode}
+      {sleepNode}
       {lockNode}
       {highlights.map((element, index) => (
         <BoundingBox
@@ -735,6 +806,174 @@ function ControlLock({ label, visible, onCancel }: { label: string; visible: boo
 }
 
 /**
+ * FillerProgressPill — bottom-center pill shown while the voice-service
+ * batch-generates the cached voice filler library in the background.
+ * voiceKey looks like "openai:marin:gpt-4o-mini-tts" — middle segment is
+ * the friendly voice name.
+ */
+/**
+ * VoiceStartingPill — shown while the hidden Chrome worker launches and the
+ * voice session connects (covers the multi-second dead air after mic click).
+ */
+function VoiceStartingPill() {
+  return (
+    <div
+      style={{
+        position: 'fixed',
+        bottom: 28,
+        left: '50%',
+        transform: 'translateX(-50%)',
+        zIndex: 100000,
+        pointerEvents: 'none',
+        display: 'flex',
+        alignItems: 'center',
+        gap: 10,
+        padding: '9px 16px',
+        borderRadius: 9999,
+        background: 'rgba(10,14,22,0.82)',
+        backdropFilter: 'blur(8px)',
+        WebkitBackdropFilter: 'blur(8px)',
+        border: '1px solid rgba(251,191,36,0.35)',
+        boxShadow: '0 6px 24px rgba(0,0,0,0.35), 0 0 16px rgba(251,191,36,0.18)',
+        color: '#e5e7eb',
+        fontFamily: 'system-ui, -apple-system, sans-serif',
+      }}
+    >
+      <span style={{ display: 'flex', animation: 'td-drop-bob 2.4s ease-in-out infinite' }}>
+        <ThinkDropLogo size={18} />
+      </span>
+      <span style={{ fontSize: 13, fontWeight: 600 }}>Starting voice…</span>
+      <span
+        style={{
+          width: 12,
+          height: 12,
+          flexShrink: 0,
+          borderRadius: '50%',
+          border: '2px solid #fbbf24',
+          borderTopColor: 'transparent',
+          animation: 'td-drop-spin 0.8s linear infinite',
+        }}
+      />
+    </div>
+  );
+}
+
+function FillerProgressPill({ progress }: { progress: { done: number; total: number; voiceKey?: string } }) {
+  const voice = (progress.voiceKey || '').split(':')[1] || (progress.voiceKey || 'voice');
+  const finished = progress.total > 0 && progress.done >= progress.total;
+  return (
+    <div
+      style={{
+        position: 'fixed',
+        bottom: 76,
+        left: '50%',
+        transform: 'translateX(-50%)',
+        zIndex: 100000,
+        pointerEvents: 'none',
+        display: 'flex',
+        alignItems: 'center',
+        gap: 10,
+        padding: '9px 16px',
+        borderRadius: 9999,
+        background: 'rgba(10,14,22,0.82)',
+        backdropFilter: 'blur(8px)',
+        WebkitBackdropFilter: 'blur(8px)',
+        border: '1px solid rgba(167,139,250,0.35)',
+        boxShadow: '0 6px 24px rgba(0,0,0,0.35), 0 0 16px rgba(167,139,250,0.22)',
+        color: '#e5e7eb',
+        fontFamily: 'system-ui, -apple-system, sans-serif',
+      }}
+    >
+      <span style={{ display: 'flex', animation: 'td-drop-bob 2.4s ease-in-out infinite' }}>
+        <ThinkDropLogo size={18} />
+      </span>
+      <span style={{ fontSize: 13, fontWeight: 600 }}>
+        {finished ? `${voice}'s voice is ready` : `Warming up ${voice}'s voice…`}
+      </span>
+      {finished ? (
+        <span style={{ fontSize: 11, fontWeight: 700, color: '#34d399' }}>✓</span>
+      ) : (
+        <>
+          <span style={{ fontSize: 11, fontWeight: 700, color: '#a78bfa', opacity: 0.9 }}>
+            {progress.done}/{progress.total}
+          </span>
+          <span
+            style={{
+              width: 12,
+              height: 12,
+              flexShrink: 0,
+              borderRadius: '50%',
+              border: '2px solid #a78bfa',
+              borderTopColor: 'transparent',
+              animation: 'td-drop-spin 0.8s linear infinite',
+            }}
+          />
+        </>
+      )}
+    </div>
+  );
+}
+
+/**
+ * SleepOverlay — pulsing dim ThinkDrop logo + "sleeping" pill. The voice
+ * bridge keeps SR running but drops all non-wake-phrase transcripts, so the
+ * cost of staying asleep is zero; saying "Hey ThinkDrop" (or clicking the
+ * voice button) wakes it.
+ */
+function SleepOverlay() {
+  return (
+    <div
+      style={{
+        position: 'fixed',
+        bottom: 40,
+        left: '50%',
+        transform: 'translateX(-50%)',
+        zIndex: 100000,
+        pointerEvents: 'none',
+        display: 'flex',
+        flexDirection: 'column',
+        alignItems: 'center',
+        gap: 12,
+        fontFamily: 'system-ui, -apple-system, sans-serif',
+      }}
+    >
+      <span style={{ display: 'flex', animation: 'td-sleep-breathe 3.2s ease-in-out infinite', opacity: 0.75 }}>
+        <ThinkDropLogo size={44} />
+      </span>
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: 8,
+          padding: '7px 14px',
+          borderRadius: 9999,
+          background: 'rgba(10,14,22,0.7)',
+          backdropFilter: 'blur(8px)',
+          WebkitBackdropFilter: 'blur(8px)',
+          border: '1px solid rgba(148,163,184,0.25)',
+          color: '#94a3b8',
+          fontSize: 12,
+          fontWeight: 600,
+          letterSpacing: '0.02em',
+        }}
+      >
+        <span
+          style={{
+            width: 7,
+            height: 7,
+            borderRadius: '50%',
+            backgroundColor: '#818cf8',
+            animation: 'pulse-dot 2s ease-in-out infinite',
+          }}
+        />
+        ThinkDrop is sleeping — say "Hey ThinkDrop"
+        <span style={{ opacity: 0.6, fontWeight: 400 }}>zZz</span>
+      </div>
+    </div>
+  );
+}
+
+/**
  * Scanning overlay with wave animation and timer
  */
 function ScanningOverlay({ timer }: { timer: number }) {
@@ -891,6 +1130,11 @@ if (!document.getElementById('ghostlayer-styles')) {
     @keyframes td-drop-bob {
       0%, 100% { transform: translateY(0); }
       50%       { transform: translateY(-2px); }
+    }
+
+    @keyframes td-sleep-breathe {
+      0%, 100% { transform: scale(1);    opacity: 0.55; filter: drop-shadow(0 0 6px rgba(129,140,248,0.25)); }
+      50%       { transform: scale(1.07); opacity: 0.95; filter: drop-shadow(0 0 18px rgba(129,140,248,0.55)); }
     }
 
     @keyframes td-lock-glow {

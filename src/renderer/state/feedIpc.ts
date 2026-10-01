@@ -40,8 +40,23 @@ export function installFeedIpc(store: FeedStore, ui: FeedIpcUi): () => void {
   const s = store;
 
   // --- Results / Streaming -------------------------------------------------
-  const handleWsMessage = (message: { type: string; text?: string; lane?: string; payload?: any; taskId?: string; isPlaceholder?: boolean }) => {
+  const handleWsMessage = (message: { type: string; text?: string; lane?: string; payload?: any; taskId?: string; isPlaceholder?: boolean; role?: string }) => {
     if (!message) return;
+    // S2S assistant utterance — arrives as complete text from the realtime
+    // transcript relay. Commit directly as an assistant entry: the chunk/done
+    // stream path swallows replies whenever isAutomationMode is active (the
+    // 'done' handler snapshots streamAcc into a segment and never commits).
+    if (message.type === 'voice_utterance') {
+      const vText = String(message.text || '').trim();
+      if (vText && message.role === 'assistant') {
+        s.appendEntry({
+          kind: 'assistant',
+          text: vText,
+          prompt: s.internal.lastPrompt || undefined,
+        });
+      }
+      return;
+    }
     const preview = message.text ? `"${message.text.substring(0, 50)}${message.text.length > 50 ? '...' : ''}"` : '(no text)';
     dbg(`[UNIFIED:DIAG] msg.type=${message.type} lane=${message.lane} preview=${preview} curRespLen=${s.internal.streamAcc.length}`);
     dbg('📨 [UNIFIED] WebSocket message received:', message.type, preview, 'lane:', message.lane, 'full message:', message);

@@ -8,6 +8,12 @@ interface ShortcutItem {
 }
 
 type PlanApprovalMode = 'always' | 'multi_step' | 'auto';
+type VoiceMode = 'conversation' | 'pipeline';
+
+const VOICE_MODE_OPTIONS: { value: VoiceMode; label: string; desc: string }[] = [
+  { value: 'conversation', label: 'Conversation (S2S)', desc: 'Natural realtime voice — falls back to the classic pipeline if it can\'t connect' },
+  { value: 'pipeline',     label: 'Classic pipeline',   desc: 'Chrome speech recognition + text-to-speech only (no realtime conversation)' },
+];
 
 const PLAN_APPROVAL_OPTIONS: { value: PlanApprovalMode; label: string; desc: string }[] = [
   { value: 'always',     label: 'Always approve',       desc: 'Every plan pauses for your review' },
@@ -24,6 +30,7 @@ export function _SettingsTab() {
   ]);
 
   const [planApproval, setPlanApproval] = useState<PlanApprovalMode>('multi_step');
+  const [voiceMode, setVoiceMode] = useState<VoiceMode>('conversation');
 
   useEffect(() => {
     // Request shortcuts from main process
@@ -44,6 +51,13 @@ export function _SettingsTab() {
       }
     });
 
+    // Load voice mode setting
+    ipcRenderer?.invoke('settings:get', { key: 'voiceMode' }).then((res: any) => {
+      if (res?.value && ['conversation', 'pipeline'].includes(res.value)) {
+        setVoiceMode(res.value);
+      }
+    });
+
     return () => {
       ipcRenderer?.removeListener('settings:shortcuts', handleShortcuts);
     };
@@ -54,8 +68,46 @@ export function _SettingsTab() {
     ipcRenderer?.send('settings:set', { key: 'planApprovalMode', value: mode });
   };
 
+  const handleVoiceModeChange = (mode: VoiceMode) => {
+    setVoiceMode(mode);
+    ipcRenderer?.send('settings:set', { key: 'voiceMode', value: mode });
+  };
+
   return (
     <div className="space-y-6">
+      <div>
+        <h3 className="text-sm font-semibold text-gray-300 mb-3">Voice</h3>
+        <p className="text-xs text-gray-500 mb-3">
+          How the mic button listens. Conversation uses realtime speech-to-speech.
+        </p>
+        <div className="space-y-2">
+          {VOICE_MODE_OPTIONS.map((opt) => (
+            <label
+              key={opt.value}
+              className="flex items-start gap-3 p-3 rounded-lg cursor-pointer transition-colors"
+              style={{
+                backgroundColor: voiceMode === opt.value ? 'rgba(59, 130, 246, 0.12)' : 'rgba(255, 255, 255, 0.03)',
+                border: voiceMode === opt.value ? '1px solid rgba(59, 130, 246, 0.35)' : '1px solid transparent',
+              }}
+            >
+              <input
+                type="radio"
+                name="voiceMode"
+                value={opt.value}
+                checked={voiceMode === opt.value}
+                onChange={() => handleVoiceModeChange(opt.value)}
+                className="mt-0.5"
+                style={{ accentColor: '#3b82f6' }}
+              />
+              <div>
+                <span className="text-sm text-gray-300 font-medium">{opt.label}</span>
+                <p className="text-xs text-gray-500 mt-0.5">{opt.desc}</p>
+              </div>
+            </label>
+          ))}
+        </div>
+      </div>
+
       <div>
         <h3 className="text-sm font-semibold text-gray-300 mb-3">Plan Approval</h3>
         <p className="text-xs text-gray-500 mb-3">
