@@ -662,6 +662,46 @@
   }
  },
  {
+  "id": "three-playful-no-shake",
+  "desc": "fullscreen kind + playful mood — animation clamps to fades, never wobbles the screen",
+  "payload": {
+   "kind": "three",
+   "mood": "playful",
+   "three": {
+    "scene": "knot"
+   }
+  },
+  "expect": {
+   "webgl": true,
+   "noTransformAnim": true
+  }
+ },
+ {
+  "id": "image-carousel",
+  "desc": "images[] → Splide carousel — 2 slides, caption + 1/2 counter",
+  "payload": {
+   "kind": "image",
+   "interactive": true,
+   "caption": "test carousel",
+   "images": [
+    {
+     "dataUrl": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="
+    },
+    {
+     "dataUrl": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
+    }
+   ],
+   "durationMs": 0,
+   "dismiss": "manual"
+  },
+  "expect": {
+   "img": true,
+   "minImgs": 2,
+   "text": "test carousel",
+   "text2": "1 / 2"
+  }
+ },
+ {
   "id": "invalid-kind",
   "desc": "invalid payload → 400",
   "payload": {

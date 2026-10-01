@@ -65,7 +65,12 @@ export function ChartScreen({ output }: { output: ScreenOutput }) {
         </div>
       }>
         <div style={{ width: 680, maxWidth: '72vw' }}>
-          <AntChart chart={chart} accent={accent} rows={rows} />
+          <AntChart
+            chart={chart}
+            accent={accent}
+            rows={rows}
+            height={Math.min(520, Math.max(260, Math.round((output.screen?.height || 900) * 0.42)))}
+          />
         </div>
       </Suspense>
     );

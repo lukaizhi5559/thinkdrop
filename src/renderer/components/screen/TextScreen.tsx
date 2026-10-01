@@ -9,20 +9,33 @@ const FONT_SIZES: Record<string, number> = { md: 28, lg: 44, xl: 64, hero: 96 };
 const MIN_FONT = 22;
 /** Fraction of viewport height the card may occupy before scrolling kicks in. */
 const MAX_CARD_VH = 0.82;
-/** Scroll speed for overflowing passages, px per second. */
+/** Auto-scroll speed for overflowing passages, px per second. */
 const SCROLL_PX_PER_SEC = 46;
-const SCROLL_HOLD_FRAC = 0.12; // hold at start/end of each scroll pass
+const SCROLL_UP_PX_PER_SEC = 140; // rewind pass is faster than the read pass
+const HOLD_MS_TOP = 2000;
+const HOLD_MS_BOTTOM = 1400;
+const ZOOM_STEP = 1.25;
+const ZOOM_MIN = 0.5;
+const ZOOM_MAX = 3;
 
 /**
- * TextScreen — kind:'text': hero text on a soft scrim, tinted by mood,
- * animated by animate.css classes. An `emoji` field renders the accent glyph
- * above the text (the "Are you still there? 🙂" moment).
+ * TextScreen — kind:'text': left-aligned reading card on a soft scrim.
+ *
+ * Interaction model: the card hover-captures pointer input
+ * (ghostlayer:hover-interactive) so trackpad scroll, text selection, and the
+ * control cluster all work while the cursor is over it; the rest of the
+ * screen stays click-through. Arrow keys scroll, Cmd±/Cmd0 zoom, Space
+ * toggles autoplay — all via the capability → global-shortcut pipeline.
+ *
+ * Overflowing text scrolls inside a real overflow container (scrollTop), not
+ * a transform. Autoplay (rAF scroll loop) starts PAUSED — press the play
+ * button or Space to animate; it ping-pongs top→bottom→top with holds.
  *
  * text supports markdown-lite: **bold**, *italic*, and line breaks.
  *
  * Fit behaviour (output.fit):
  *   'auto'   — shrink the font stepwise (down to MIN_FONT) until the content
- *              fits ~82vh; if it still overflows, auto-scroll the passage.
+ *              fits ~82vh; if it still overflows, the passage scrolls.
  *   'scroll' — skip shrinking to fit; keep the requested size and scroll.
  */
 export function TextScreen({ output, animateClass }: { output: ScreenOutput; animateClass: string }) {
@@ -31,29 +44,27 @@ export function TextScreen({ output, animateClass }: { output: ScreenOutput; ani
   const forceScroll = output.fit === 'scroll';
 
   const cardRef = useRef<HTMLDivElement>(null);
-  const textRef = useRef<HTMLDivElement>(null);
-  const scrollAnim = useRef<Animation | null>(null);
+  const scrollRef = useRef<HTMLDivElement>(null); // the scrollable text container
+  const playRaf = useRef(0);
 
-  const [fontSize, setFontSize] = useState(baseSize);
-  const [overflowPx, setOverflowPx] = useState(0); // >0 → scroll mode
-  // Trackpad manual scroll: null = auto-marquee; a number = user-driven
-  // offset (px). Set by wheel events; auto-scroll resumes after idle.
-  const [manualY, setManualY] = useState<number | null>(null);
-  const manualIdle = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [fontSize, setFontSize] = useState(baseSize); // fitted base size
+  const [userScale, setUserScale] = useState(1);      // Cmd± multiplier
+  const [overflowPx, setOverflowPx] = useState(0);    // >0 → scrollable
+  const [playing, setPlaying] = useState(false);      // autoplay off by default
+  const [scrollFrac, setScrollFrac] = useState(0);    // progress indicator
   const shrinkGuard = useRef(0);
 
-  // Measure + shrink loop. Runs when fontSize changes until content fits or
-  // the floor is reached; overflow beyond the floor becomes scroll distance.
-  useLayoutEffect(() => {
-    const card = cardRef.current;
-    const text = textRef.current;
-    if (!card || !text) return;
-    const avail = window.innerHeight * MAX_CARD_VH;
-    // Budget for the text = card height minus everything else (title, emoji,
-    // gaps, padding) — scroll distance is the text's overflow past that.
-    const nonText = card.scrollHeight - text.scrollHeight;
-    const overflow = text.scrollHeight - (avail - nonText);
+  const effSize = Math.round(fontSize * userScale);
+  const scrolling = overflowPx > 0;
 
+  // Measure + shrink loop. Runs when fontSize/userScale change until content
+  // fits or the floor is reached; remaining overflow becomes scrollable.
+  // userScale is strictly multiplicative over the fitted base — the shrink
+  // loop only operates at scale 1 so zooming can't fight it.
+  useLayoutEffect(() => {
+    const sc = scrollRef.current;
+    if (!sc) return;
+    const overflow = sc.scrollHeight - sc.clientHeight - 1;
     if (forceScroll) {
       setOverflowPx(Math.max(0, overflow));
       return;
@@ -62,102 +73,113 @@ export function TextScreen({ output, animateClass }: { output: ScreenOutput; ani
       setOverflowPx(0);
       return;
     }
-    if (fontSize > MIN_FONT && shrinkGuard.current < 12) {
+    if (userScale === 1 && fontSize > MIN_FONT && shrinkGuard.current < 12) {
       shrinkGuard.current += 1;
       setFontSize(prev => Math.max(MIN_FONT, Math.floor(prev * 0.85)));
       return; // re-measure at the smaller size
     }
-    // At the floor and still overflowing → scroll the remainder.
     setOverflowPx(overflow);
-  }, [fontSize, forceScroll, output.id]);
+  }, [fontSize, userScale, forceScroll, output.id, effSize]);
 
-  // Scroll pass: translateY 0 → -overflowPx with holds at both ends, looping.
-  // Suspended while the user is driving the scroll offset manually.
-  useLayoutEffect(() => {
-    scrollAnim.current?.cancel();
-    scrollAnim.current = null;
-    const text = textRef.current;
-    if (!text || overflowPx <= 0 || manualY != null) {
-      if (text && manualY != null) text.style.transform = `translateY(${-manualY}px)`;
-      return;
-    }
-    text.style.transform = ''; // clear any manual offset before the anim resumes
-    const scrollFrac = 1 - SCROLL_HOLD_FRAC * 2;
-    const duration = Math.max(8000, (overflowPx / SCROLL_PX_PER_SEC) * 1000 / scrollFrac);
-    scrollAnim.current = text.animate(
-      [
-        { transform: 'translateY(0px)', offset: 0 },
-        { transform: 'translateY(0px)', offset: SCROLL_HOLD_FRAC },
-        { transform: `translateY(${-overflowPx}px)`, offset: 1 - SCROLL_HOLD_FRAC },
-        { transform: `translateY(${-overflowPx}px)`, offset: 1 },
-      ],
-      { duration, iterations: Infinity, easing: 'linear' },
-    );
-    return () => { scrollAnim.current?.cancel(); scrollAnim.current = null; };
-  }, [overflowPx, manualY]);
-
-  const scrolling = overflowPx > 0;
-
-  // Report arrow-key capability once overflow is measured — main registers
-  // global Up/Down only while a scrollable display exists. Retract on
-  // unmount / when the content fits.
+  // Autoplay: rAF scroll loop — down at reading pace, hold, rewind faster,
+  // hold, repeat. Manual scrolling while paused never fights this loop.
   useEffect(() => {
+    if (!playing || !scrolling) return;
+    let dir: 1 | -1 = 1;
+    let holdUntil = performance.now() + HOLD_MS_TOP;
+    let last = performance.now();
+    const step = (now: number) => {
+      const el = scrollRef.current;
+      if (!el) return;
+      const dt = Math.min(50, now - last);
+      last = now;
+      if (now >= holdUntil) {
+        const pps = dir === 1 ? SCROLL_PX_PER_SEC : SCROLL_UP_PX_PER_SEC;
+        el.scrollTop += (pps * dt / 1000) * dir;
+        const max = el.scrollHeight - el.clientHeight;
+        if (el.scrollTop >= max - 1 && dir === 1) {
+          el.scrollTop = max;
+          dir = -1;
+          holdUntil = now + HOLD_MS_BOTTOM;
+        } else if (el.scrollTop <= 0 && dir === -1) {
+          el.scrollTop = 0;
+          dir = 1;
+          holdUntil = now + HOLD_MS_TOP;
+        }
+      }
+      playRaf.current = requestAnimationFrame(step);
+    };
+    playRaf.current = requestAnimationFrame(step);
+    return () => cancelAnimationFrame(playRaf.current);
+  }, [playing, scrolling]);
+
+  // Report key capabilities — arrows only when scrollable, zoom + play always
+  // (zooming in past fit makes a fitting text scrollable). Retract on unmount.
+  useEffect(() => {
+    const keys = ['up', 'down', 'zoom_in', 'zoom_out', 'zoom_reset'];
+    if (scrolling) keys.push('play');
     try {
-      ipcRenderer?.send('ghostlayer:display-capabilities', {
-        id: output.id,
-        keys: scrolling ? ['up', 'down'] : [],
-      });
+      ipcRenderer?.send('ghostlayer:display-capabilities', { id: output.id, keys });
     } catch (_) {}
     return () => {
       try { ipcRenderer?.send('ghostlayer:display-capabilities', { id: output.id, keys: [] }); } catch (_) {}
     };
   }, [scrolling, output.id]);
 
-  // Arrow-key scroll — ScreenStage re-broadcasts global Up/Down as
-  // 'screen:text-scroll'. Same manualY path as the trackpad handler.
+  // Arrow-key scroll — ScreenStage re-broadcasts global Up/Down.
   useEffect(() => {
-    if (!scrolling) return;
     const onKey = (e: Event) => {
+      const el = scrollRef.current;
+      if (!el) return;
       const dir = (e as CustomEvent).detail?.dir === 'up' ? -1 : 1;
-      if (manualIdle.current) clearTimeout(manualIdle.current);
-      setManualY(prev => {
-        const cur = prev ?? 0;
-        return Math.max(0, Math.min(overflowPx, cur + dir * fontSize * 3));
-      });
-      manualIdle.current = setTimeout(() => setManualY(null), 4000);
+      el.scrollTop += dir * effSize * 3;
     };
     window.addEventListener('screen:text-scroll', onKey);
     return () => window.removeEventListener('screen:text-scroll', onKey);
-  }, [scrolling, overflowPx, fontSize]);
+  }, [effSize]);
 
-  // Trackpad scroll: wheel deltas drive a manual offset, clamped to the
-  // overflow range. Marquee resumes ~4s after the last wheel event.
-  const onWheel = (e: React.WheelEvent) => {
-    if (!scrolling) return;
-    if (manualIdle.current) clearTimeout(manualIdle.current);
-    setManualY(prev => {
-      const cur = prev ?? (() => {
-        // Seed from the running animation's current offset so the transition
-        // is seamless — WAAPI doesn't write inline style, read the computed
-        // matrix's translateY.
-        try {
-          const cs = textRef.current ? getComputedStyle(textRef.current).transform : '';
-          return cs && cs !== 'none' ? Math.abs(new DOMMatrixReadOnly(cs).m42) : 0;
-        } catch (_) { return 0; }
-      })();
-      return Math.max(0, Math.min(overflowPx, cur + e.deltaY));
-    });
-    manualIdle.current = setTimeout(() => setManualY(null), 4000);
+  // Cmd±/Cmd0 zoom — userScale multiplies the fitted base size.
+  useEffect(() => {
+    const onZoom = (e: Event) => {
+      const dir = (e as CustomEvent).detail?.dir;
+      if (dir === 'zoom_reset') {
+        setUserScale(1);
+        if (scrollRef.current) scrollRef.current.scrollTop = 0;
+        return;
+      }
+      setUserScale(prev =>
+        Math.min(ZOOM_MAX, Math.max(ZOOM_MIN,
+          Math.round((dir === 'zoom_in' ? prev * ZOOM_STEP : prev / ZOOM_STEP) * 100) / 100)));
+    };
+    window.addEventListener('screen:text-zoom', onZoom);
+    return () => window.removeEventListener('screen:text-zoom', onZoom);
+  }, []);
+
+  // Space toggles autoplay (capability only reported when scrollable).
+  useEffect(() => {
+    const onPlay = () => setPlaying(p => !p);
+    window.addEventListener('screen:text-play', onPlay);
+    return () => window.removeEventListener('screen:text-play', onPlay);
+  }, []);
+
+  // Trackpad scroll is native (overflow container) — nothing to handle here.
+  // Scroll progress for the edge indicator.
+  const onScroll = () => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const max = el.scrollHeight - el.clientHeight;
+    setScrollFrac(max > 0 ? Math.min(1, Math.max(0, el.scrollTop / max)) : 0);
   };
 
-  // Hover-capture: while the cursor is over a scrollable card, main lifts
-  // click-through so wheel/trackpad events actually reach us. On leave the
-  // window goes back to click-through (clicks pass to apps below).
-  const hoverProps = scrolling ? {
-    onWheel,
+  // Hover-capture: while the cursor is over the card, main lifts
+  // click-through so wheel/trackpad events and control clicks reach us.
+  const hoverProps = {
     onMouseEnter: () => { try { ipcRenderer?.send('ghostlayer:hover-interactive', { hovering: true }); } catch (_) {} },
     onMouseLeave: () => { try { ipcRenderer?.send('ghostlayer:hover-interactive', { hovering: false }); } catch (_) {} },
-  } : {};
+  };
+
+  const zoomPct = Math.round(userScale * 100);
+  const canPlay = scrolling;
 
   return (
     <div
@@ -165,30 +187,103 @@ export function TextScreen({ output, animateClass }: { output: ScreenOutput; ani
       className={animateClass}
       {...hoverProps}
       style={{
-        pointerEvents: scrolling ? 'auto' : 'none',
+        pointerEvents: 'auto',
         display: 'flex',
         flexDirection: 'column',
-        alignItems: 'center',
-        gap: 28,
-        maxWidth: '80vw',
-        textAlign: 'center',
-        padding: '48px 56px',
+        alignItems: 'stretch',
+        gap: 22,
+        width: 'min(1100px, 80vw)',
+        textAlign: 'left',
+        padding: '40px 52px',
         borderRadius: 28,
         background: 'rgba(8, 12, 20, 0.55)',
         border: `1px solid ${accent}44`,
         boxShadow: `0 8px 60px rgba(0,0,0,0.5), 0 0 40px ${accent}22`,
         backdropFilter: 'blur(10px)',
         WebkitBackdropFilter: 'blur(10px)',
-        // Clip content when scrolling so the passage slides inside the card.
-        ...(scrolling ? { maxHeight: `${MAX_CARD_VH * 100}vh`, overflow: 'hidden' } : {}),
+        maxHeight: `${MAX_CARD_VH * 100}vh`,
+        position: 'relative',
       }}
     >
-      {output.emoji && <EmojiGlyph emoji={output.emoji} accent={accent} size={110} />}
+      {/* Text-adjust control cluster — hover-capture makes these clickable. */}
+      <div
+        style={{
+          position: 'absolute',
+          top: 10,
+          right: 14,
+          display: 'flex',
+          alignItems: 'center',
+          gap: 6,
+          zIndex: 2,
+        }}
+      >
+        <CtlBtn
+          label={playing ? '❚❚' : '▶'}
+          title={canPlay ? (playing ? 'Pause auto-scroll (Space)' : 'Play auto-scroll (Space)') : 'Fits — nothing to scroll'}
+          accent={accent}
+          disabled={!canPlay}
+          onClick={() => setPlaying(p => !p)}
+        />
+        <CtlBtn
+          label="A−"
+          title="Smaller text (⌘−)"
+          accent={accent}
+          disabled={userScale <= ZOOM_MIN}
+          onClick={() => setUserScale(s => Math.max(ZOOM_MIN, Math.round(s / ZOOM_STEP * 100) / 100))}
+        />
+        <span style={{ fontSize: 11, color: '#94a3b8', minWidth: 36, textAlign: 'center', fontFamily: 'system-ui' }}>
+          {zoomPct}%
+        </span>
+        <CtlBtn
+          label="A+"
+          title="Bigger text (⌘=)"
+          accent={accent}
+          disabled={userScale >= ZOOM_MAX}
+          onClick={() => setUserScale(s => Math.min(ZOOM_MAX, Math.round(s * ZOOM_STEP * 100) / 100))}
+        />
+        <CtlBtn
+          label="⟲"
+          title="Reset zoom + scroll (⌘0)"
+          accent={accent}
+          onClick={() => { setUserScale(1); if (scrollRef.current) scrollRef.current.scrollTop = 0; }}
+        />
+      </div>
+
+      {/* Scroll progress bar — thin accent line on the card's left edge. */}
+      {scrolling && (
+        <div
+          style={{
+            position: 'absolute',
+            left: 0,
+            top: 14,
+            bottom: 14,
+            width: 3,
+            borderRadius: 999,
+            background: 'rgba(148,163,184,0.15)',
+            overflow: 'hidden',
+          }}
+        >
+          <div
+            style={{
+              position: 'absolute',
+              top: 0,
+              left: 0,
+              width: '100%',
+              height: `${Math.round(scrollFrac * 100)}%`,
+              background: accent,
+              borderRadius: 999,
+              transition: 'height 0.15s ease-out',
+            }}
+          />
+        </div>
+      )}
+
+      {output.emoji && <EmojiGlyph emoji={output.emoji} accent={accent} size={72} />}
       {output.title && (
         <div
           style={{
             color: accent,
-            fontSize: Math.max(16, fontSize * 0.32),
+            fontSize: Math.max(16, effSize * 0.32),
             fontWeight: 700,
             letterSpacing: '0.14em',
             textTransform: 'uppercase',
@@ -202,22 +297,63 @@ export function TextScreen({ output, animateClass }: { output: ScreenOutput; ani
       )}
       {output.text && (
         <div
-          ref={textRef}
+          ref={scrollRef}
+          onScroll={onScroll}
           style={{
-            color: '#f3f4f6',
-            fontSize,
-            fontWeight: 700,
-            lineHeight: 1.25,
-            fontFamily: 'system-ui, -apple-system, sans-serif',
-            textShadow: '0 2px 20px rgba(0,0,0,0.6)',
-            whiteSpace: 'pre-wrap',
-            willChange: scrolling ? 'transform' : undefined,
+            overflowY: scrolling ? 'auto' : 'hidden',
+            overflowX: 'hidden',
+            flexShrink: 1,
+            minHeight: 0,
+            scrollbarWidth: 'none',
+            msOverflowStyle: 'none',
           }}
         >
-          {renderLite(output.text)}
+          <div
+            style={{
+              color: '#f3f4f6',
+              fontSize: effSize,
+              fontWeight: 700,
+              lineHeight: 1.25,
+              fontFamily: 'system-ui, -apple-system, sans-serif',
+              textShadow: '0 2px 20px rgba(0,0,0,0.6)',
+              whiteSpace: 'pre-wrap',
+              textAlign: 'left',
+            }}
+          >
+            {renderLite(output.text)}
+          </div>
         </div>
       )}
     </div>
+  );
+}
+
+/** Small pill button for the text-adjust control cluster. */
+function CtlBtn({ label, title, accent, onClick, disabled }: {
+  label: string; title: string; accent: string; onClick: () => void; disabled?: boolean;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      title={title}
+      disabled={disabled}
+      style={{
+        minWidth: 30,
+        height: 26,
+        padding: '0 8px',
+        borderRadius: 7,
+        border: `1px solid ${accent}55`,
+        background: 'rgba(10,14,22,0.7)',
+        color: disabled ? '#475569' : '#e5e7eb',
+        fontSize: 12,
+        fontWeight: 700,
+        fontFamily: 'system-ui, -apple-system, sans-serif',
+        cursor: disabled ? 'default' : 'pointer',
+        opacity: disabled ? 0.5 : 1,
+      }}
+    >
+      {label}
+    </button>
   );
 }
 

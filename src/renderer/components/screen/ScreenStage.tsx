@@ -3,6 +3,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import type { ScreenOutput, ScreenClearMessage } from './types';
 import { TextScreen } from './TextScreen';
 import { ImageScreen } from './ImageScreen';
+import { CarouselScreen } from './CarouselScreen';
 import { SceneScreen } from './SceneScreen';
 import { EmojiScreen } from './EmojiGlyph';
 import { EffectScreen } from './EffectScreen';
@@ -76,18 +77,30 @@ export function ScreenStage({ onOccupancyChange }: { onOccupancyChange?: (occupi
       else if (data?.type === 'capture_end') setFaded(false);
     };
 
-    // Arrow-key nav — main registers global arrows while displays report
-    // needing them (capability-driven). left/right → deck slide nav;
-    // up/down → text scroll. Components listen on DOM events so the stage
-    // stays kind-agnostic.
+    // Key nav — main registers global shortcuts while displays report
+    // needing them (capability-driven). left/right → deck/carousel slide nav;
+    // up/down → text scroll; zoom_*/play → text controls; the rest
+    // (orbit/zoom/reset/edit/control_mode) → three-key events for 3D displays.
+    // Components listen on DOM events so the stage stays kind-agnostic.
     const handleNav = (data: { dir?: string }) => {
       const dir = data?.dir;
+      if (!dir) return;
       if (dir === 'prev' || dir === 'next' || dir === 'left' || dir === 'right') {
-        window.dispatchEvent(new CustomEvent('screen:deck-nav', {
-          detail: { dir: (dir === 'prev' || dir === 'left') ? 'prev' : 'next' },
-        }));
+        const rel = (dir === 'prev' || dir === 'left') ? 'prev' : 'next';
+        window.dispatchEvent(new CustomEvent('screen:deck-nav', { detail: { dir: rel } }));
+        window.dispatchEvent(new CustomEvent('screen:three-key', { detail: { key: rel } }));
       } else if (dir === 'up' || dir === 'down') {
         window.dispatchEvent(new CustomEvent('screen:text-scroll', { detail: { dir } }));
+        window.dispatchEvent(new CustomEvent('screen:three-key', { detail: { key: dir } }));
+      } else if (dir === 'zoom_in' || dir === 'zoom_out' || dir === 'zoom_reset') {
+        window.dispatchEvent(new CustomEvent('screen:text-zoom', { detail: { dir } }));
+        window.dispatchEvent(new CustomEvent('screen:three-key', { detail: { key: dir } }));
+      } else if (dir === 'play') {
+        window.dispatchEvent(new CustomEvent('screen:text-play'));
+        window.dispatchEvent(new CustomEvent('screen:three-key', { detail: { key: 'play' } }));
+      } else {
+        // 3D-scene vocabulary: reset / edit / control_mode / preset_*
+        window.dispatchEvent(new CustomEvent('screen:three-key', { detail: { key: dir } }));
       }
     };
 
@@ -188,9 +201,7 @@ function ScreenItem({ output, outSeq, stackIndex = 0, onRemove }: {
 
   return (
     <div
-      onAnimationEnd={onAnimEnd}
       onClick={onBackdropClick}
-      className={cls}
       style={{
         position: 'absolute',
         inset: 0,
@@ -247,8 +258,13 @@ function ScreenItem({ output, outSeq, stackIndex = 0, onRemove }: {
             click-through only while hovered — main forwards pointer moves so
             enter/leave fire even while clicks pass through. Blocking items
             keep 'auto' so descendants' own pointer-events (nav zones, cards)
-            stay hit-testable — 'none' here would suppress them too. */}
+            stay hit-testable — 'none' here would suppress them too.
+            The animate.css class lives HERE (the content card), not on the
+            fullscreen wrapper — mood animations (wobble/pulse/bounceIn) must
+            never transform the scrim or the whole screen. */}
         <div
+          className={cls}
+          onAnimationEnd={onAnimEnd}
           onMouseEnter={output.interactive ? () => { try { ipcRenderer?.send('ghostlayer:hover-interactive', { hovering: true }); } catch (_) {} } : undefined}
           onMouseLeave={output.interactive ? () => { try { ipcRenderer?.send('ghostlayer:hover-interactive', { hovering: false }); } catch (_) {} } : undefined}
           style={{ pointerEvents: (output.blocking || output.interactive) ? 'auto' : 'none' }}
@@ -271,13 +287,19 @@ function ScreenItem({ output, outSeq, stackIndex = 0, onRemove }: {
 function animateClasses(output: ScreenOutput, phase: Phase): string {
   const a = output.animate || {};
   const speed = output.animateSpeed ? ` animate__${output.animateSpeed}` : '';
+  // Fullscreen displays (three/scene/effect/deck) — the "content wrapper" IS
+  // the whole screen, so any transform/scale animation (wobble, jackInTheBox,
+  // bounceIn, …) shakes the entire canvas. Clamp to opacity-only fades; card
+  // kinds keep their full mood animation.
+  const fullscreen = output.position === 'fullscreen';
   if (phase === 'in') {
-    return `animate__animated${a.in ? ` animate__${a.in}` : ''}${speed}`;
+    const inCls = fullscreen ? (a.in ? 'fadeIn' : '') : a.in;
+    return `animate__animated${inCls ? ` animate__${inCls}` : ''}${speed}`;
   }
   if (phase === 'idle') {
-    return a.idle ? `animate__animated animate__${a.idle} animate__infinite${speed}` : '';
+    return (!fullscreen && a.idle) ? `animate__animated animate__${a.idle} animate__infinite${speed}` : '';
   }
-  return `animate__animated ${a.out ? `animate__${a.out}` : 'animate__fadeOut'} animate__faster`;
+  return `animate__animated ${fullscreen ? 'fadeOut' : (a.out ? `animate__${a.out}` : 'animate__fadeOut')} animate__faster`;
 }
 
 function positionFlex(position: ScreenOutput['position']): React.CSSProperties {
@@ -314,7 +336,9 @@ function Scrim({ output }: { output: ScreenOutput }) {
 function KindView({ output, animateClass, onDismiss }: { output: ScreenOutput; animateClass: string; onDismiss?: () => void }) {
   switch (output.kind) {
     case 'text':  return <TextScreen  output={output} animateClass={animateClass} />;
-    case 'image': return <ImageScreen output={output} animateClass={animateClass} />;
+    case 'image': return (output.images && output.images.length > 1)
+      ? <CarouselScreen output={output} animateClass={animateClass} />
+      : <ImageScreen output={output} animateClass={animateClass} />;
     case 'emoji': return <EmojiScreen output={output} animateClass={animateClass} />;
     case 'effect': return <EffectScreen output={output} />;
     case 'chart':  return <ChartScreen  output={output} />;

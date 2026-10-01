@@ -65,17 +65,20 @@ const MOOD_MAP = {
   calm:    { accent: '#34d399', emoji: '😌', animate: { in: 'fadeIn',      idle: null,         out: 'fadeOut' },      speed: 'slower' },
 };
 
-/** Per-kind defaults applied when the payload omits lifecycle fields. */
+/** Per-kind defaults applied when the payload omits lifecycle fields.
+ *  durationMs defaults are all 0 = sticky (user decision — displays stay on
+ *  screen until Esc or /screen/clear). Producers can still set an explicit
+ *  durationMs for ephemeral announcements. */
 const KIND_DEFAULTS = {
-  text:   { position: 'center',     scrim: 'dim',  durationMs: 12000, priority: 20, fontSize: 'xl' },
-  image:  { position: 'center',     scrim: 'dim',  durationMs: 15000, priority: 30, fit: 'contain' },
-  chart:  { position: 'center',     scrim: 'dim',  durationMs: 0,     priority: 30 },
-  effect: { position: 'fullscreen', scrim: 'none', durationMs: 10000, priority: 10 },
-  emoji:  { position: 'center',     scrim: 'none', durationMs: 6000,  priority: 15 },
-  alert:  { position: 'fullscreen', scrim: 'black', durationMs: 0,    priority: 90, severity: 'warn' },
-  deck:   { position: 'fullscreen', scrim: 'blur', durationMs: 0,     priority: 40 },
-  scene:  { position: 'fullscreen', scrim: 'none', durationMs: 0,     priority: 50 },
-  three:  { position: 'fullscreen', scrim: 'none', durationMs: 15000, priority: 15 },
+  text:   { position: 'center',     scrim: 'dim',  durationMs: 0, priority: 20, fontSize: 'xl' },
+  image:  { position: 'center',     scrim: 'dim',  durationMs: 0, priority: 30, fit: 'contain' },
+  chart:  { position: 'center',     scrim: 'dim',  durationMs: 0, priority: 30 },
+  effect: { position: 'fullscreen', scrim: 'none', durationMs: 0, priority: 10 },
+  emoji:  { position: 'center',     scrim: 'none', durationMs: 0, priority: 15 },
+  alert:  { position: 'fullscreen', scrim: 'black', durationMs: 0, priority: 90, severity: 'warn' },
+  deck:   { position: 'fullscreen', scrim: 'blur', durationMs: 0, priority: 40 },
+  scene:  { position: 'fullscreen', scrim: 'none', durationMs: 0, priority: 50 },
+  three:  { position: 'fullscreen', scrim: 'none', durationMs: 0, priority: 15 },
 };
 
 /** Max accepted sizes — defensive clamps for a localhost trust boundary. */
@@ -111,6 +114,26 @@ function _animate(v) {
     return Object.keys(out).length ? out : null;
   }
   return null;
+}
+/** images[] entry — a bare string (url/path/data-url) or
+ *  { url?, path?, dataUrl?, caption? }. Used by kind:'image' to drive the
+ *  Splide carousel when a producer has several pictures on hand. */
+function _imageItem(raw) {
+  if (typeof raw === 'string') {
+    const s = _str(raw, 2048);
+    if (!s) return null;
+    if (/^https?:\/\//i.test(s)) return { url: s };
+    if (s.startsWith('data:image/')) return { dataUrl: s };
+    return { path: s };
+  }
+  if (!raw || typeof raw !== 'object') return null;
+  const it = {};
+  if (raw.url) it.url = _str(raw.url, 2048);
+  if (raw.path) it.path = _str(raw.path, 2048);
+  if (raw.dataUrl) it.dataUrl = _str(raw.dataUrl, MAX_DATAURL_BYTES);
+  if (raw.caption) it.caption = _str(raw.caption, MAX_TITLE_LEN);
+  if (it.url && !/^https?:\/\//i.test(it.url)) return null;
+  return (it.url || it.path || it.dataUrl) ? it : null;
 }
 function _slide(raw) {
   if (!raw || typeof raw !== 'object') return null;
@@ -220,7 +243,14 @@ function normalizeScreenOutput(raw) {
       out.dataUrl = _str(raw.dataUrl, MAX_DATAURL_BYTES);
       out.caption = _str(raw.caption, MAX_TITLE_LEN);
       out.fit = _oneOf(raw.fit, FITS) || d.fit;
-      if (!out.url && !out.path && !out.dataUrl) return { ok: false, error: 'image kind requires url, path, or dataUrl' };
+      // images[] — multi-image carousel (Splide). Single url/path/dataUrl
+      // stays the simple case; images[] wins when both are present.
+      out.images = Array.isArray(raw.images)
+        ? raw.images.map(_imageItem).filter(Boolean).slice(0, MAX_SLIDES)
+        : null;
+      if (!out.url && !out.path && !out.dataUrl && !(out.images && out.images.length)) {
+        return { ok: false, error: 'image kind requires url, path, dataUrl, or images[]' };
+      }
       if (out.url && !/^https?:\/\//i.test(out.url)) return { ok: false, error: 'image url must be http(s) — use path for local files' };
       break;
     }

@@ -2171,6 +2171,13 @@ __metadata:
   languageName: node
   linkType: hard
 
+"@splidejs/splide@npm:4.1.4":
+  version: 4.1.4
+  resolution: "@splidejs/splide@npm:4.1.4"
+  checksum: 919f6e1e5da1ebdfe6df77592fab25d0dd52b1809ac61723157cf1c8dd1804bf7739a28e2bb7a22257c5f7628eacba0439ff1268e9bab8577f638f5376fd4b5e
+  languageName: node
+  linkType: hard
+
 "@swc/helpers@npm:^0.3.13":
   version: 0.3.17
   resolution: "@swc/helpers@npm:0.3.17"
@@ -9609,6 +9616,7 @@ __metadata:
     "@dnd-kit/utilities": ^3.2.2
     "@nut-tree-fork/nut-js": 4.2.6
     "@radix-ui/react-slot": ^1.0.0
+    "@splidejs/splide": 4.1.4
     "@thinkdrop/stategraph": "github:lukaizhi5559/thinkdrop-stategraph-module"
     "@types/node": ^20.0.0
     "@types/react": ^18.2.0

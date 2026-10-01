@@ -2,6 +2,8 @@ import { useEffect, useRef, useState } from 'react';
 import type { ScreenOutput } from './types';
 import { MOOD_ACCENT } from './types';
 
+const ipcRenderer = (window as any).electron?.ipcRenderer;
+
 /**
  * ThreeScreen — preset three.js/WebGL scenes (kind:'three').
  *
@@ -13,11 +15,66 @@ import { MOOD_ACCENT } from './types';
  * `speed` (0–2) scales rotation/drift, `density` (0.1–1) scales point
  * counts and geometry resolution, `color` overrides the mood accent,
  * `text` renders a caption chip over the canvas.
+ *
+ * Interactivity: when the display is `blocking` (interactive phrasing in the
+ * prompt) or ⌘⇧K control mode is on, the canvas gets real pointer input —
+ * drag to orbit, wheel/trackpad to zoom. Keyboard (capability-driven global
+ * shortcuts → 'screen:three-key' DOM events): arrows orbit, +/− zoom,
+ * Space pauses, R resets, E opens the prompt bar to iterate the scene.
  */
+
+const VIEW = { yaw: 0, pitch: 0, dist: 400, distMin: 120, distMax: 900 };
 
 export function ThreeScreen({ output }: { output: ScreenOutput }) {
   const hostRef = useRef<HTMLDivElement | null>(null);
   const [failed, setFailed] = useState(false);
+  const [ctrlMode, setCtrlMode] = useState(false);
+  const interactive = output.blocking === true;
+  const accent = output.three?.color || MOOD_ACCENT[output.mood] || '#94a3b8';
+
+  // Shared view state — mutated by pointer/key handlers, consumed by tick.
+  const view = useRef({ ...VIEW });
+  const paused = useRef(false);
+  const tOffset = useRef(0);
+  const pauseStart = useRef(0);
+
+  // Report key capabilities while the display lives — arrows orbit ambient,
+  // ⌘⇧K arms the printable-key cluster, ⌘E opens the prompt loop.
+  useEffect(() => {
+    const keys = ['left', 'right', 'up', 'down', 'edit', 'controlable'];
+    try {
+      ipcRenderer?.send('ghostlayer:display-capabilities', { id: output.id, keys });
+    } catch (_) {}
+    return () => {
+      try { ipcRenderer?.send('ghostlayer:display-capabilities', { id: output.id, keys: [] }); } catch (_) {}
+    };
+  }, [output.id]);
+
+  // Keyboard — rebroadcast by ScreenStage as 'screen:three-key'.
+  useEffect(() => {
+    const onKey = (e: Event) => {
+      const key = (e as CustomEvent).detail?.key;
+      const v = view.current;
+      switch (key) {
+        case 'prev': v.yaw -= 0.25; break;         // ←
+        case 'next': v.yaw += 0.25; break;         // →
+        case 'up':   v.pitch = Math.min(1.4, v.pitch + 0.18); break;
+        case 'down': v.pitch = Math.max(-1.4, v.pitch - 0.18); break;
+        case 'zoom_in':  v.dist = Math.max(VIEW.distMin, v.dist - 40); break;
+        case 'zoom_out': v.dist = Math.min(VIEW.distMax, v.dist + 40); break;
+        case 'zoom_reset':
+        case 'reset': Object.assign(view.current, VIEW); break;
+        case 'play': paused.current = !paused.current; break;
+        case 'preset_prev': case 'preset_next': break; // presets fixed per payload — no-op
+        case 'control_mode': setCtrlMode(c => !c); break;
+        case 'edit':
+          try { ipcRenderer?.send('ghostlayer:open-scene-prompt', {}); } catch (_) {}
+          break;
+      }
+    };
+    window.addEventListener('screen:three-key', onKey);
+    return () => window.removeEventListener('screen:three-key', onKey);
+  }, []);
 
   useEffect(() => {
     const host = hostRef.current;
@@ -51,7 +108,47 @@ export function ThreeScreen({ output }: { output: ScreenOutput }) {
 
       const scene = new THREE.Scene();
       const camera = new THREE.PerspectiveCamera(60, 1, 0.1, 2000);
-      camera.position.z = 400;
+      camera.position.z = VIEW.dist;
+
+      // ── Pointer interaction — drag to orbit, wheel to zoom. Events only
+      // arrive while the window captures input (blocking display or ⌘⇧K
+      // control mode), so handlers are always attached and safe.
+      const applyView = () => {
+        const v = view.current;
+        camera.position.set(
+          v.dist * Math.sin(v.yaw) * Math.cos(v.pitch),
+          v.dist * Math.sin(v.pitch),
+          v.dist * Math.cos(v.yaw) * Math.cos(v.pitch),
+        );
+        camera.lookAt(0, 0, 0);
+      };
+      let dragging = false;
+      let lx = 0, ly = 0;
+      const onDown = (e: PointerEvent) => {
+        dragging = true;
+        lx = e.clientX; ly = e.clientY;
+        canvas.style.cursor = 'grabbing';
+        try { canvas.setPointerCapture(e.pointerId); } catch (_) {}
+      };
+      const onMove = (e: PointerEvent) => {
+        if (!dragging) return;
+        const v = view.current;
+        v.yaw += (e.clientX - lx) * 0.006;
+        v.pitch = Math.max(-1.4, Math.min(1.4, v.pitch + (e.clientY - ly) * 0.006));
+        lx = e.clientX; ly = e.clientY;
+      };
+      const onUp = () => { dragging = false; canvas.style.cursor = 'grab'; };
+      const onWheel = (e: WheelEvent) => {
+        const v = view.current;
+        v.dist = Math.max(VIEW.distMin, Math.min(VIEW.distMax, v.dist + e.deltaY * 0.5));
+        e.preventDefault();
+      };
+      canvas.style.cursor = 'grab';
+      canvas.addEventListener('pointerdown', onDown);
+      canvas.addEventListener('pointermove', onMove);
+      canvas.addEventListener('pointerup', onUp);
+      canvas.addEventListener('pointercancel', onUp);
+      canvas.addEventListener('wheel', onWheel, { passive: false });
 
       const disposables: { dispose(): void }[] = [];
       const mat = (opts: any) => {
@@ -138,9 +235,18 @@ export function ThreeScreen({ output }: { output: ScreenOutput }) {
       resize();
       window.addEventListener('resize', resize);
 
+      // Pause freezes the t handed to update (accumulated offset) so the
+      // scene holds its frame but orbit/zoom still respond live.
       let raf = 0;
       const tick = (t: number) => {
-        update?.(t);
+        if (paused.current && !pauseStart.current) pauseStart.current = t;
+        if (!paused.current && pauseStart.current) {
+          tOffset.current += t - pauseStart.current;
+          pauseStart.current = 0;
+        }
+        const te = paused.current ? pauseStart.current - tOffset.current : t - tOffset.current;
+        applyView();
+        update?.(te);
         renderer.render(scene, camera);
         raf = requestAnimationFrame(tick);
       };
@@ -149,6 +255,11 @@ export function ThreeScreen({ output }: { output: ScreenOutput }) {
       cleanup = () => {
         cancelAnimationFrame(raf);
         window.removeEventListener('resize', resize);
+        canvas.removeEventListener('pointerdown', onDown);
+        canvas.removeEventListener('pointermove', onMove);
+        canvas.removeEventListener('pointerup', onUp);
+        canvas.removeEventListener('pointercancel', onUp);
+        canvas.removeEventListener('wheel', onWheel);
         for (const d of disposables) d.dispose();
         renderer.dispose();
         canvas.remove();
@@ -161,8 +272,21 @@ export function ThreeScreen({ output }: { output: ScreenOutput }) {
     };
   }, [output.three?.scene, output.three?.speed, output.three?.density, output.three?.color, output.mood]);
 
+  const hint = ctrlMode || interactive
+    ? 'Drag orbit · scroll zoom · Space pause · R reset · E edit · ⌘⇧K release · Esc exit'
+    : 'Arrows orbit · ⌘⇧K grab control · ⌘E edit scene · Esc exit';
+
   return (
-    <div ref={hostRef} style={{ position: 'absolute', inset: 0, pointerEvents: 'none' }}>
+    <div
+      ref={hostRef}
+      style={{
+        position: 'absolute', inset: 0,
+        // The canvas needs real pointer events only when the display is
+        // interactive or ⌘⇧K control mode is armed — ambient scenes stay
+        // fully click-through.
+        pointerEvents: (interactive || ctrlMode) ? 'auto' : 'none',
+      }}
+    >
       {failed && (
         <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#94a3b8', fontSize: 18 }}>
           3D scene unavailable
@@ -172,10 +296,24 @@ export function ThreeScreen({ output }: { output: ScreenOutput }) {
         <div style={{
           position: 'absolute', left: '50%', bottom: '12%', transform: 'translateX(-50%)',
           padding: '10px 22px', borderRadius: 999, fontSize: 20, fontWeight: 600,
-          color: '#fff', background: 'rgba(15,23,42,0.55)', border: `1px solid ${output.three.color || MOOD_ACCENT[output.mood]}`,
-          backdropFilter: 'blur(8px)', whiteSpace: 'nowrap',
+          color: '#fff', background: 'rgba(15,23,42,0.55)', border: `1px solid ${accent}`,
+          backdropFilter: 'blur(8px)', whiteSpace: 'nowrap', pointerEvents: 'none',
         }}>
           {output.three.text}
+        </div>
+      )}
+      {!failed && (
+        <div style={{
+          position: 'absolute', left: '50%', bottom: 22, transform: 'translateX(-50%)',
+          padding: '6px 14px', borderRadius: 999, fontSize: 11, fontWeight: 600,
+          letterSpacing: '0.04em',
+          color: ctrlMode || interactive ? accent : '#94a3b8',
+          background: 'rgba(10,14,22,0.72)',
+          border: `1px solid ${ctrlMode || interactive ? accent + '88' : 'rgba(148,163,184,0.3)'}`,
+          backdropFilter: 'blur(8px)', whiteSpace: 'nowrap', pointerEvents: 'none',
+          fontFamily: 'system-ui, -apple-system, sans-serif',
+        }}>
+          {ctrlMode ? `🎮 ${hint}` : hint}
         </div>
       )}
     </div>

@@ -54,6 +54,14 @@ export interface ScreenThree {
   text?: string;   // optional caption chip
 }
 
+/** kind:'image' carousel entry — url, local path, or inline data URL. */
+export interface ScreenImage {
+  url?: string;
+  path?: string;
+  dataUrl?: string;
+  caption?: string;
+}
+
 export interface ScreenOutput {
   id: string;
   kind: ScreenKind;
@@ -79,8 +87,11 @@ export interface ScreenOutput {
   fontSize?: 'md' | 'lg' | 'xl' | 'hero';
   screen?: { width: number; height: number }; // real display dims (injected by main.js)
   url?: string;
+  path?: string;
   dataUrl?: string;
   caption?: string;
+  /** kind:'image' multi-image carousel — Splide. Wins over url/path/dataUrl. */
+  images?: ScreenImage[] | null;
   /** kind-scoped: image → 'contain'|'cover'; text → 'auto'|'scroll' */
   fit?: 'contain' | 'cover' | 'auto' | 'scroll';
   chart?: ScreenChart;

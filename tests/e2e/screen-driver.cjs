@@ -50,7 +50,10 @@ const probes = {
     try { return !!(c.getContext('webgl2') || c.getContext('webgl')); } catch (_) { return false; }
   }),
   counter: () => (document.body.innerText.match(/(\d+)\s*\/\s*(\d+)/) || []).slice(1, 3).map(Number),
-  scrollAnimating: () => [...document.querySelectorAll('div')].some(d => (d.getAnimations?.() || []).some(a => a.playState === 'running')),
+  // TextScreen scrolls a native overflow container now (scrollTop), not a
+  // marquee transform — "scrollable" = content taller than its container.
+  scrollAnimating: () => [...document.querySelectorAll('div')].some(d =>
+    d.scrollHeight > d.clientHeight + 4 && /^(auto|scroll)$/.test(getComputedStyle(d).overflowY)),
   tag: (tag) => { const el = document.querySelector(tag); return el ? el.textContent : null; },
   blockingOverlay: () => [...document.querySelectorAll('div')].some(d => {
     const s = getComputedStyle(d);
@@ -99,14 +102,21 @@ const probes = {
     }
     return els.length;
   },
-  // Manual-scroll offset on a scrolling text card — the text div's computed
-  // translateY (negative while scrolling; |v| = px offset)
+  // Manual-scroll offset on a scrolling text card — native scrollTop of the
+  // overflow container (the pre-wrap text div's scrolling parent).
   textScrollOffset: () => {
-    const el = [...document.querySelectorAll('div')].find(d => (d.style.whiteSpace || '') === 'pre-wrap');
-    if (!el) return null;
-    const t = getComputedStyle(el).transform;
-    return t && t !== 'none' ? Math.abs(new DOMMatrixReadOnly(t).m42) : 0;
+    const el = [...document.querySelectorAll('div')].find(d =>
+      d.scrollHeight > d.clientHeight + 4 && /^(auto|scroll)$/.test(getComputedStyle(d).overflowY));
+    return el ? el.scrollTop : null;
   },
+  // Fullscreen displays must never carry transform animations — a wobble/
+  // jackInTheBox on a fullscreen content wrapper shakes the whole screen.
+  // Pass = no animated element with a transform, and no infinite loop class.
+  noTransformAnim: () =>
+    ![...document.querySelectorAll('.animate__animated')].some(el =>
+      getComputedStyle(el).transform !== 'none')
+    && ![...document.querySelectorAll('[class]')].some(el =>
+      String(el.className).includes('animate__infinite')),
   // ESC affordance — the per-display chip (data-esc-badge carries the id)
   escBadge: () => !!document.querySelector('[data-esc-badge]'),
   escBadgeClick: () => {
@@ -242,17 +252,21 @@ async function main() {
         }
       }
     }
-    // Trackpad scroll → manual text offset (scrolling text card, deltaY)
+    // Trackpad scroll → native scrollTop (scrolling text card, deltaY).
+    // Synthetic WheelEvents don't drive native overflow scrolling, so this
+    // uses trusted input: mouse.move over the card then mouse.wheel.
     if (ex.textWheel) {
       const before = await probe(page, 'textScrollOffset');
-      if (!(await probe(page, 'dispatchWheel', { dx: 0, dy: 400 }))) {
-        out.failures.push('no element at viewport center for wheel dispatch');
-      } else {
-        await sleep(600);
-        const after = await probe(page, 'textScrollOffset');
-        if (after == null || after <= (before || 0) + 10) {
-          out.failures.push(`wheel scroll did not move text offset (${before} → ${after})`);
-        }
+      try {
+        const vp = page.viewportSize() || { width: 1280, height: 800 };
+        await page.mouse.move(vp.width / 2, vp.height / 2);
+        await sleep(150);
+        await page.mouse.wheel(0, 400);
+      } catch (_) {}
+      await sleep(600);
+      const after = await probe(page, 'textScrollOffset');
+      if (after == null || after <= (before || 0) + 10) {
+        out.failures.push(`wheel scroll did not move text offset (${before} → ${after})`);
       }
     }
     // Arrow-key scroll → same manual path via the DOM nav event
@@ -274,6 +288,11 @@ async function main() {
       if (!after || !before || after[0] !== before[0] + 1) {
         out.failures.push(`Right arrow did not move counter (${JSON.stringify(before)} → ${JSON.stringify(after)})`);
       }
+    }
+    // Fullscreen kinds — mood animations must be clamped to fades (no
+    // transform, no infinite idle loop) so the screen can't shake.
+    if (ex.noTransformAnim && !(await probe(page, 'noTransformAnim'))) {
+      out.failures.push('fullscreen display has a transform/infinite animation — screen shake');
     }
     // ESC badge — every display carries the exit chip; optionally click it
     if (ex.escBadge && !(await probe(page, 'escBadge'))) {

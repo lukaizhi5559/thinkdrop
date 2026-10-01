@@ -105,14 +105,23 @@ let dropSessionActive = false;
 // Mouse-targeting actions (search_and_click, teleport) are excluded — a locking
 // overlay would swallow the automation's own synthetic clicks.
 let controlLock = null; // { taskId, label }
+// True while any plan task is executing (set on step_start, cleared on the
+// terminal events in driveProgressDrop). Gates the overlay key-release
+// endpoint and the focus auto-resign below — while a task runs, the overlay
+// must never hold the macOS key window or synthetic keystrokes land on it.
+let _taskInFlight = false;
 const CONTROL_LOCK_ACTIONS = new Set([
-  'read_url', 'scan_page', 'navigate_url', 'print_page',
+  'read_url', 'scan_page', 'navigate_url', 'nav_task', 'print_page',
   'execute_shortcut', 'type_text',
   'clipboard_backup', 'clipboard_restore', 'extract_content_via_clipboard',
 ]);
 
 function _armControlLock(taskId, label) {
   controlLock = { taskId: taskId || null, label: label || 'AI in Control' };
+  // Hand key focus back to the user's app — synthetic keystrokes during the
+  // lock must land there, never on our panel (it stays key after the user
+  // types a prompt because it's a non-activating window).
+  void _releaseOverlayKeyFocus();
   try { if (typeof showGhostLayer === 'function') showGhostLayer(); } catch (_) {}
   _sendGhost({ type: 'control_lock', taskId: controlLock.taskId, label: controlLock.label });
   _applyScreenClickThrough();
@@ -151,7 +160,7 @@ function _applyScreenClickThrough() {
   if (!ghostLayerWindow || ghostLayerWindow.isDestroyed()) return;
   const blocking = [...screenDisplays.values()].some(d => d && d.blocking);
   try {
-    if (blocking || _hoverInteractive || controlLock) {
+    if (blocking || _hoverInteractive || controlLock || _sceneControlMode) {
       ghostLayerWindow.setIgnoreMouseEvents(false);
     } else {
       ghostLayerWindow.setIgnoreMouseEvents(true, { forward: true });
@@ -166,8 +175,88 @@ function _applyScreenClickThrough() {
 // window; displays are short-lived, and for blocking alerts this is the
 // intended escape hatch).
 let _escRegistered = false;
+// Automation sends synthetic Escape keystrokes (e.g. closing Chrome's find bar
+// in scan_page's deselect sequence). A registered global shortcut SWALLOWS the
+// key — the app never receives it — so suppression must actually unregister
+// Escape for the window, not just ignore it in the handler.
+let _escSuppressUntil = 0;
+let _escRearmTimer = null;
+
+function _suppressEscBriefly(ms = 1200) {
+  _escSuppressUntil = Date.now() + ms;
+  if (_escRegistered) {
+    try { globalShortcut.unregister('Escape'); } catch (_) {}
+    _escRegistered = false;
+  }
+  clearTimeout(_escRearmTimer);
+  _escRearmTimer = setTimeout(() => {
+    _escSuppressUntil = 0;
+    _updateEscShortcut(); // re-arms only if lock/displays still want it
+  }, ms);
+}
+
+// ── Overlay key-focus release ────────────────────────────────────────────────
+// Our overlay windows are focusable:true non-activating panels — they can hold
+// the macOS KEY window (which receives keystrokes) while another app stays the
+// frontmost/active app. open -a / osascript activate are no-ops when the target
+// app is already frontmost, so they can never take key back from our panel —
+// only our own process can resign it. Synthetic nut.js keystrokes must never
+// land on the overlay, so release key focus before keyboard-driving actions.
+// blur() alone is unreliable on macOS panels, so verify isFocused() actually
+// flipped; if it didn't, escalate to a hide/showInactive order-out (a window
+// that is ordered out cannot be key; showInactive re-shows without retaking it).
+async function _releaseOverlayKeyFocus() {
+  const wins = [unifiedWindow, promptCaptureWindow, resultsWindow];
+  let anyFocused = false;
+  for (const win of wins) {
+    try {
+      if (win && !win.isDestroyed() && win.isFocused()) {
+        win.blur();
+        anyFocused = true;
+      }
+    } catch (_) {}
+  }
+  if (!anyFocused) return;
+  await new Promise(r => setTimeout(r, 150));
+  for (const win of wins) {
+    try {
+      if (win && !win.isDestroyed() && win.isFocused()) {
+        const wasVisible = win.isVisible();
+        win.setFocusable(false);
+        win.hide();
+        if (wasVisible) win.showInactive();
+        win.setFocusable(true);
+      }
+    } catch (_) {}
+  }
+}
+
+// Root enforcement: while a task/control-lock/AppControl session is active,
+// the overlay must never hold key focus — synthetic keystrokes (nut.js,
+// osascript "System Events keystroke", any future emitter) go to whatever
+// window is key. Auto-resign the moment an overlay window gains focus so no
+// per-emitter bookkeeping is required. The release is isFocused()-gated, so
+// this is a no-op once focus has already moved on.
+function _guardOverlayWindowFocus(win) {
+  if (!win || win.isDestroyed() || win._keyFocusGuarded) return;
+  win._keyFocusGuarded = true;
+  win.on('focus', () => {
+    if (!_taskInFlight && !controlLock && !appControlMode?.active) return;
+    void _releaseOverlayKeyFocus();
+  });
+}
 
 function _onEscClear() {
+  if (Date.now() < _escSuppressUntil) {
+    // Safety net for a key that slipped through after re-arm.
+    console.log('[Screen] Esc suppressed — synthetic keypress from automation');
+    return;
+  }
+  // 3D control mode → first Esc releases the key cluster, second clears.
+  if (_sceneControlMode) {
+    _setSceneControlMode(false);
+    return;
+  }
   // Control lock → Esc cancels the running task (same affordance as the X).
   if (controlLock) {
     const taskId = controlLock.taskId;
@@ -182,6 +271,7 @@ function _onEscClear() {
 
 function _cancelLockedTask() {
   const taskId = controlLock?.taskId;
+  _taskInFlight = false;
   _releaseControlLock('cancelled');
   if (taskId) {
     try { require('./handoffRunner').cancel(taskId); } catch (_) {}
@@ -209,36 +299,89 @@ function _updateEscShortcut() {
 // Same constraint as Esc — the window can't take key events, so arrows are
 // global shortcuts. Which keys get registered is the UNION of what live
 // displays report they can use: decks with controls → left/right (payload
-// sniff at POST time), scrollable text → up/down (renderer reports via
-// 'ghostlayer:display-capabilities' once it measures overflow).
+// sniff at POST time), scrollable text → up/down/zoom/play (renderer reports
+// via 'ghostlayer:display-capabilities'), three/scene displays → arrows + edit.
 let _navKeys = new Set();
+
+// Capability name → accelerator + dir payload sent over ghostlayer:display-nav.
+// Modifier chords are safe to register ambient (short display lifetimes);
+// bare printable keys for 3D control live in _CTRL_KEYS behind control mode.
+const _CAP_KEYS = {
+  left:        { accel: 'Left',             dir: 'prev' },
+  right:       { accel: 'Right',            dir: 'next' },
+  up:          { accel: 'Up',               dir: 'up' },
+  down:        { accel: 'Down',             dir: 'down' },
+  zoom_in:     { accel: 'CmdOrCtrl+=',      dir: 'zoom_in' },
+  zoom_out:    { accel: 'CmdOrCtrl+-',      dir: 'zoom_out' },
+  zoom_reset:  { accel: 'CmdOrCtrl+0',      dir: 'zoom_reset' },
+  play:        { accel: 'Space',            dir: 'play' },
+  edit:        { accel: 'CmdOrCtrl+E',      dir: 'edit' },
+  controlable: { accel: 'CmdOrCtrl+Shift+K', dir: 'control_mode' },
+};
+// Control-mode-only accelerators (bare keys — only registered while
+// _sceneControlMode is on so a live scene can't eat typing in other apps).
+const _CTRL_KEYS = {
+  'Space': 'play',
+  '=':     'zoom_in',
+  '-':     'zoom_out',
+  '0':     'zoom_reset',
+  'R':     'reset',
+  'E':     'edit',
+  '[':     'preset_prev',
+  ']':     'preset_next',
+  // WASD for generated-scene game controls — safe here because control mode
+  // is the explicit opt-in for printable-key capture.
+  'W':     'key_w',
+  'A':     'key_a',
+  'S':     'key_s',
+  'D':     'key_d',
+};
+
+// 3D control mode — ⌘⇧K toggles it while a display reports 'controlable'.
+// Beyond the key cluster it also lifts click-through so scenes gain pointer
+// input live (drag-orbit on displays that were posted ambient).
+let _sceneControlMode = false;
+
+function _setSceneControlMode(on) {
+  const next = !!on;
+  if (_sceneControlMode === next) return;
+  _sceneControlMode = next;
+  _applyScreenClickThrough();
+  _updateNavShortcut();
+  _sendNav('control_mode'); // renderer shows/hides the controls HUD
+}
 
 function _sendNav(dir) {
   if (ghostLayerWindow && !ghostLayerWindow.isDestroyed()) {
     try { ghostLayerWindow.webContents.send('ghostlayer:display-nav', { dir }); } catch (_) {}
   }
 }
-const _NAV_KEY_DIRS = { Left: 'prev', Right: 'next', Up: 'up', Down: 'down' };
 
 function _updateNavShortcut() {
-  const want = new Set();
+  // No displays → control mode can't stay armed.
+  if (screenDisplays.size === 0 && _sceneControlMode) _setSceneControlMode(false);
+
+  const want = new Map(); // accel -> dir
   for (const d of screenDisplays.values()) {
-    if (d && d.arrowNav) { want.add('Left'); want.add('Right'); }
+    if (d && d.arrowNav) { want.set('Left', 'prev'); want.set('Right', 'next'); }
     if (d && d.keys) for (const k of d.keys) {
-      if (k === 'left') want.add('Left');
-      else if (k === 'right') want.add('Right');
-      else if (k === 'up') want.add('Up');
-      else if (k === 'down') want.add('Down');
+      const spec = _CAP_KEYS[k];
+      if (spec) want.set(spec.accel, spec.dir);
     }
   }
-  for (const key of want) {
-    if (!_navKeys.has(key)) {
+  if (_sceneControlMode) {
+    for (const [accel, dir] of Object.entries(_CTRL_KEYS)) want.set(accel, dir);
+  }
+  for (const [accel, dir] of want) {
+    if (!_navKeys.has(accel)) {
       try {
-        const dir = _NAV_KEY_DIRS[key];
-        if (globalShortcut.register(key, () => _sendNav(dir))) _navKeys.add(key);
-        else console.warn(`[Screen] ${key} registration failed — key nav unavailable`);
+        if (globalShortcut.register(accel, () => {
+          if (dir === 'control_mode') { _setSceneControlMode(!_sceneControlMode); return; }
+          _sendNav(dir);
+        })) _navKeys.add(accel);
+        else console.warn(`[Screen] ${accel} registration failed — key nav unavailable`);
       } catch (e) {
-        console.warn(`[Screen] ${key} registration error:`, e.message);
+        console.warn(`[Screen] ${accel} registration error:`, e.message);
       }
     }
   }
@@ -342,6 +485,12 @@ async function driveProgressDrop(evt) {
   if (!evt || typeof evt !== 'object') return;
   const t = evt.type;
   if (t === 'plan:step_start' || t === 'step_start') {
+    // Task begins (or advances): the overlay must not hold key focus while
+    // automation is running, or synthetic keystrokes land on our panel.
+    if (!_taskInFlight) {
+      _taskInFlight = true;
+      void _releaseOverlayKeyFocus();
+    }
     // "AI in Control" lock — arm while a keyboard/clipboard-driving app.agent
     // step runs so the user can't click into the page mid-copy and so the
     // visible browser/tab activity reads as intentional automation.
@@ -395,6 +544,7 @@ async function driveProgressDrop(evt) {
     _releaseControlLock('step-end');
   } else if (t === 'all_done' || t === 'failed' || t === 'ask_user' || t === 'plan:complete' || t === 'error') {
     // Any terminal / user-input event → clear the drop and bring the panel back.
+    _taskInFlight = false;
     _releaseControlLock('terminal');
     _restorePanelFromDrop();
   }
@@ -1559,6 +1709,31 @@ function startOverlayControlServer() {
       return;
     }
 
+    // POST /overlay/suppress-esc — app.agent is about to send a synthetic
+    // Escape (find-bar close, dialog dismiss). Unregister the global shortcut
+    // briefly so the keystroke actually reaches the app instead of triggering
+    // the AI-control-lock cancel.
+    if (req.method === 'POST' && req.url === '/overlay/suppress-esc') {
+      _suppressEscBriefly(1200);
+      res.writeHead(200).end(JSON.stringify({ ok: true, action: 'suppress-esc' }));
+      return;
+    }
+
+    // POST /overlay/release-key — command-service is about to send synthetic
+    // keystrokes; resign key focus from our overlay panels so they land on the
+    // user's app. Gated on an active AI-control lock (or AppControl mode) so it
+    // can't steal focus from the user typing into the prompt while idle.
+    if (req.method === 'POST' && req.url === '/overlay/release-key') {
+      if (!controlLock && !appControlMode?.active && !_taskInFlight) {
+        res.writeHead(204).end();
+        return;
+      }
+      _releaseOverlayKeyFocus()
+        .then(() => res.writeHead(200).end(JSON.stringify({ ok: true, action: 'release-key' })))
+        .catch(() => res.writeHead(200).end(JSON.stringify({ ok: true, action: 'release-key' })));
+      return;
+    }
+
     // ── Flash endpoints — brief hide + GhostLayer camera-flash for screenshots ──
     // Unlike /overlay/hide (which keeps the panel hidden until /overlay/show),
     // /overlay/flash hides the panel + triggers a camera-flash animation in
@@ -1700,17 +1875,25 @@ function startOverlayControlServer() {
             output.screen = { width: d.bounds.width, height: d.bounds.height };
           } catch (_) {}
 
-          // Local file path → dataUrl (image kind). ~15MB cap matches the
-          // normalizer's dataUrl clamp.
-          if (output.kind === 'image' && output.path && !output.dataUrl) {
+          // Local file path → dataUrl (image kind, including carousel
+          // images[] entries). ~15MB cap matches the normalizer's dataUrl clamp.
+          const MIME = { '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.gif': 'image/gif', '.webp': 'image/webp', '.svg': 'image/svg+xml' };
+          const pathToDataUrl = async (item) => {
+            const buf = await fs.promises.readFile(item.path);
+            const mime = MIME[path.extname(item.path).toLowerCase()] || 'application/octet-stream';
+            if (buf.length <= 15 * 1024 * 1024) {
+              item.dataUrl = `data:${mime};base64,${buf.toString('base64')}`;
+            }
+            delete item.path;
+          };
+          if (output.kind === 'image') {
             try {
-              const buf = await fs.promises.readFile(output.path);
-              const MIME = { '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.gif': 'image/gif', '.webp': 'image/webp', '.svg': 'image/svg+xml' };
-              const mime = MIME[path.extname(output.path).toLowerCase()] || 'application/octet-stream';
-              if (buf.length <= 15 * 1024 * 1024) {
-                output.dataUrl = `data:${mime};base64,${buf.toString('base64')}`;
+              if (output.path && !output.dataUrl) await pathToDataUrl(output);
+              if (Array.isArray(output.images)) {
+                for (const it of output.images) {
+                  if (it.path && !it.dataUrl) await pathToDataUrl(it);
+                }
               }
-              delete output.path;
             } catch (e) {
               res.writeHead(400).end(JSON.stringify({ ok: false, error: `cannot read image path: ${e.message}` }));
               return;
@@ -1719,7 +1902,9 @@ function startOverlayControlServer() {
 
           screenDisplays.set(output.id, {
             blocking: output.blocking === true,
-            arrowNav: output.kind === 'deck' && output.deck && output.deck.controls === true,
+            arrowNav: (output.kind === 'deck' && output.deck && output.deck.controls === true)
+              // Multi-image carousels navigate with ←/→ too.
+              || (output.kind === 'image' && Array.isArray(output.images) && output.images.length > 1),
           });
           showGhostLayer();
           _applyScreenClickThrough();
@@ -2257,6 +2442,12 @@ function initStateGraph() {
           }
           if (unifiedWindow && !unifiedWindow.isDestroyed()) {
             safeSend(unifiedWindow, channel, data);
+          }
+          // Handoff tasks take this broadcast path, not safeSendUnified — so
+          // the GhostLayer drop/control-lock driver must be invoked here too,
+          // or app.agent steps via comms-graph never show "AI in Control".
+          if (channel === 'automation:progress') {
+            try { driveProgressDrop(data).catch(() => {}); } catch (_) {}
           }
           // Voice TTS fan-out — a handoff task submitted by voice speaks its
           // final answer when it completes (the ack was already spoken).
@@ -2804,6 +2995,7 @@ function createPromptCaptureWindow() {
     promptCaptureWindow = null;
   });
 
+  _guardOverlayWindowFocus(promptCaptureWindow);
   return promptCaptureWindow;
 }
 
@@ -2914,6 +3106,7 @@ function createResultsWindow() {
     resultsWindow = null;
   });
 
+  _guardOverlayWindowFocus(resultsWindow);
   return resultsWindow;
 }
 
@@ -3070,6 +3263,7 @@ function createUnifiedWindow() {
     }
   });
 
+  _guardOverlayWindowFocus(unifiedWindow);
   return unifiedWindow;
 }
 
@@ -3297,6 +3491,24 @@ ipcMain.on('ghostlayer:control-cancel', (_e, data) => {
 ipcMain.on('ghostlayer:display-clear-request', (_e, data) => {
   const id = data && typeof data.id === 'string' ? data.id : null;
   clearScreenDisplays(id);
+});
+
+// Scene edit affordance — 'E'/✎ on a live three/scene display brings up the
+// main overlay prompt so the user can describe changes ("add moons, neon").
+// The submitted prompt flows through the normal pipeline; screenOutput
+// re-POSTs the regenerated scene under the stable 'scene:active' id so the
+// display remounts in place (the prompt→scene loop).
+ipcMain.on('ghostlayer:open-scene-prompt', (_e, data) => {
+  if (!unifiedWindow || unifiedWindow.isDestroyed()) return;
+  try {
+    _userHasMovedPanel = false;
+    const bounds = unifiedWindow.getBounds();
+    if (typeof applyUnifiedBounds === 'function') {
+      applyUnifiedBounds({ contentHeight: bounds.height, width: bounds.width, animate: false });
+    }
+    unifiedWindow.show();
+    unifiedWindow.focus();
+  } catch (_) {}
 });
 
 // Clipboard monitoring functionality
@@ -7418,6 +7630,7 @@ app.whenReady().then(async () => {
       try {
         const { keyboard, Key } = require('@nut-tree-fork/nut-js');
         const cmd = scrollMatch[0].trim().toLowerCase();
+        await _releaseOverlayKeyFocus();
         if (cmd === 'scroll down' || cmd === 'page down' || cmd === 'down' || cmd === 'scroll') {
           await keyboard.pressKey(Key.PageDown);
           await keyboard.releaseKey(Key.PageDown);
@@ -7448,6 +7661,7 @@ app.whenReady().then(async () => {
       try {
         const { keyboard } = require('@nut-tree-fork/nut-js');
         const toType = typeMatch[1] || typeMatch[2];
+        await _releaseOverlayKeyFocus();
         await keyboard.type(toType);
         console.log(`[AppControl] Dispatched type: "${toType}"`);
         safeSend(resultsWindow, 'app-control:command-ack', { command: `type: "${toType}"` });
@@ -7477,6 +7691,8 @@ app.whenReady().then(async () => {
         };
         const mapped = KEY_MAP[keyStr.toLowerCase()];
         if (mapped) {
+          await _releaseOverlayKeyFocus();
+          if (mapped === Key.Escape) _suppressEscBriefly(1200);
           if (Array.isArray(mapped)) {
             await keyboard.pressKey(...mapped);
             await keyboard.releaseKey(...mapped);

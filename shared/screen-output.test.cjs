@@ -47,9 +47,9 @@ it('honors a producer-supplied id', () => {
 // ── Lifecycle defaults ───────────────────────────────────────────────────────
 section('lifecycle defaults');
 
-it('text defaults: center / dim scrim / 12s / priority 20 / xl', () => {
+it('text defaults: center / dim scrim / sticky / priority 20 / xl', () => {
   const { output: o } = normalizeScreenOutput({ kind: 'text', text: 'hi' });
-  assert(o.position === 'center' && o.scrim === 'dim' && o.durationMs === 12000
+  assert(o.position === 'center' && o.scrim === 'dim' && o.durationMs === 0
     && o.priority === 20 && o.fontSize === 'xl' && o.dismiss === 'auto' && o.blocking === false);
 });
 
@@ -59,9 +59,9 @@ it('text fit field: scroll passes, unknown → auto, default auto', () => {
   assert(normalizeScreenOutput({ kind: 'text', text: 'hi' }).output.fit === 'auto');
 });
 
-it('effect defaults: fullscreen / no scrim / 10s / intensity 0.5', () => {
+it('effect defaults: fullscreen / no scrim / sticky / intensity 0.5', () => {
   const { output: o } = normalizeScreenOutput({ kind: 'effect', effect: 'rain' });
-  assert(o.position === 'fullscreen' && o.scrim === 'none' && o.durationMs === 10000 && o.intensity === 0.5);
+  assert(o.position === 'fullscreen' && o.scrim === 'none' && o.durationMs === 0 && o.intensity === 0.5);
 });
 
 it('effect intensity: clamps to 0.05–1', () => {
@@ -130,6 +130,25 @@ it('image requires a source; rejects non-http urls', () => {
   assert(normalizeScreenOutput({ kind: 'image', url: 'file:///etc/passwd' }).ok === false);
   assert(normalizeScreenOutput({ kind: 'image', url: 'https://x.com/a.png' }).ok === true);
   assert(normalizeScreenOutput({ kind: 'image', path: '/Users/me/a.png' }).ok === true);
+});
+
+it('image images[] satisfies the source requirement; items normalize', () => {
+  const { ok, output } = normalizeScreenOutput({ kind: 'image', images: [
+    'https://x.com/a.png',
+    '/Users/me/b.png',
+    'data:image/png;base64,iVBORw0KGgo=',
+    { url: 'https://x.com/c.png', caption: 'third' },
+    { url: 'file:///etc/passwd' },          // non-http url rejected
+    42, {},                                  // unusable entries dropped
+  ] });
+  assert(ok === true);
+  assert(output.images.length === 4);
+  assert(output.images[0].url === 'https://x.com/a.png');
+  assert(output.images[1].path === '/Users/me/b.png');
+  assert(output.images[2].dataUrl.startsWith('data:image/'));
+  assert(output.images[3].caption === 'third');
+  // Single-item arrays still normalize (renderer falls back to ImageScreen).
+  assert(normalizeScreenOutput({ kind: 'image', images: ['https://x.com/one.png'] }).ok === true);
 });
 
 it('chart requires non-empty data and a known type', () => {
