@@ -15,3 +15,8 @@ docs
 .claude
 .windsurf
 .devin
+
+# Nested repos — tracked independently in their own remotes
+comms-graph/
+stategraph-module/
+mcp-services/
