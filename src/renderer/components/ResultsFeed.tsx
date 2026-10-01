@@ -33,11 +33,11 @@ export interface FeedDraft {
 }
 
 export type FeedEntry =
-  | { id: string; ts: number; kind: 'user'; text: string; exchangeId?: string; attachments?: { kind: 'file' | 'folder' | 'context' | 'thought' | 'highlight'; label: string; path?: string }[] }
-  | { id: string; ts: number; kind: 'assistant'; text: string; items?: WebResultItem[]; sources?: { url: string; hostname: string; title?: string }[]; taskId?: string; pending?: boolean; prompt?: string; isError?: boolean; errorRaw?: string; exchangeId?: string }
-  | { id: string; ts: number; kind: 'run'; title: string; status: FeedRunStatus; steps?: { title: string; status: string; skill?: string; output?: string; savedFilePath?: string; draftPath?: string; openIn?: string[]; diff?: string | null }[]; savedFilePaths?: string[]; drafts?: FeedDraft[]; error?: string | null; taskId?: string; planFile?: string | null; durationMs?: number | null; prompt?: string; exchangeId?: string }
-  | { id: string; ts: number; kind: 'proactive'; text: string; thoughtId?: string; pending?: boolean; exchangeId?: string }
-  | { id: string; ts: number; kind: 'system'; text: string; exchangeId?: string };
+  | { id: string; ts: number; kind: 'user'; text: string; exchangeId?: string; historic?: boolean; attachments?: { kind: 'file' | 'folder' | 'context' | 'thought' | 'highlight'; label: string; path?: string }[] }
+  | { id: string; ts: number; kind: 'assistant'; text: string; items?: WebResultItem[]; sources?: { url: string; hostname: string; title?: string }[]; taskId?: string; pending?: boolean; prompt?: string; isError?: boolean; errorRaw?: string; exchangeId?: string; historic?: boolean }
+  | { id: string; ts: number; kind: 'run'; title: string; status: FeedRunStatus; steps?: { title: string; status: string; skill?: string; output?: string; savedFilePath?: string; draftPath?: string; openIn?: string[]; diff?: string | null }[]; savedFilePaths?: string[]; drafts?: FeedDraft[]; error?: string | null; taskId?: string; planFile?: string | null; durationMs?: number | null; prompt?: string; exchangeId?: string; historic?: boolean }
+  | { id: string; ts: number; kind: 'proactive'; text: string; thoughtId?: string; pending?: boolean; exchangeId?: string; historic?: boolean }
+  | { id: string; ts: number; kind: 'system'; text: string; exchangeId?: string; historic?: boolean };
 
 interface ResultsFeedProps {
   entries: FeedEntry[];
@@ -289,10 +289,10 @@ const COLLAPSE_CHARS = 900;
 const COLLAPSE_LINES = 10;
 const COLLAPSE_HEIGHT = 220;
 
-function CollapsibleContent({ text, children }: { text: string; children: React.ReactNode }) {
+function CollapsibleContent({ text, defaultExpanded = false, children }: { text: string; defaultExpanded?: boolean; children: React.ReactNode }) {
   const needsClamp =
     text.length > COLLAPSE_CHARS || (text.match(/\n/g) || []).length > COLLAPSE_LINES;
-  const [expanded, setExpanded] = useState(false);
+  const [expanded, setExpanded] = useState(defaultExpanded);
   if (!needsClamp) return <>{children}</>;
   return (
     <div>
@@ -505,7 +505,7 @@ const FeedEntryRow = React.memo(function FeedEntryRow({
           ) : (
             <div style={{ overflowX: 'hidden', wordBreak: 'break-word', overflowWrap: 'break-word' }}>
               {entry.items && entry.items.length > 0 && <WebResultsGrid items={entry.items} />}
-              <CollapsibleContent text={entry.text}>
+              <CollapsibleContent text={entry.text} defaultExpanded={!entry.historic}>
                 <RichContentRenderer
                   content={stripItemImageMarkdown(entry.text, entry.items || [])}
                   animated

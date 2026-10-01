@@ -381,6 +381,14 @@ async function execute({ taskId, prompt, agentId, source, originalPrompt, sessio
     // payload isn't a blank answer.
     let answer = finalState.answer || '';
     if (!answer && Array.isArray(finalState.skillResults)) {
+      // A synthesize step's output is the real answer — surface it directly
+      // rather than burying it in the Step outputs debug blob.
+      const _synth = [...finalState.skillResults].reverse().find(r =>
+        r && r.skill === 'synthesize' && r.ok !== false &&
+        String(r.stdout || r.result || '').trim());
+      if (_synth) answer = String(_synth.stdout || _synth.result).trim();
+    }
+    if (!answer && Array.isArray(finalState.skillResults)) {
       const outs = finalState.skillResults
         .filter(r => r && r.ok !== false && typeof r.stdout === 'string' && r.stdout.trim())
         .map(r => `[${r.description || r.skill || 'step'}]:\n${r.stdout.trim().slice(0, 500)}`);

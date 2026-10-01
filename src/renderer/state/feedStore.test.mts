@@ -12,6 +12,7 @@ import {
 
   dedupePlannerTail,
   deriveRunDrafts,
+  isThoughtReply,
   mapHistoryMessages,
   oldestMessageCursor,
   toDisplayPrompt,
@@ -292,6 +293,74 @@ test('dedupePlannerTail leaves ordinary prose untouched', () => {
   assert.equal(dedupePlannerTail(t), t);
 });
 
+test('dedupePlannerTail hoists [synthesize] over a generic Done. lead, drops completed markers', () => {
+  const ans = 'The article covers new Trump photos and debunks health rumors.';
+  const blob = `Done.\n\nStep outputs:\n[app.agent/scan_page]: completed\n\n[synthesize]:\n${ans}`;
+  assert.equal(dedupePlannerTail(blob), ans);
+});
+
+test('dedupePlannerTail keeps substantive non-synth blocks after hoisted answer', () => {
+  const ans = 'Summary of the file.';
+  const blob = `Done.\n\nStep outputs:\n[app.agent/scan_page]: completed\n\n[fs.read]:\nfile.txt\nother.txt\n\n[synthesize]:\n${ans}`;
+  const out = dedupePlannerTail(blob);
+  assert.ok(out.startsWith(ans));
+  assert.ok(out.includes('[fs.read]:'));
+  assert.ok(!out.includes('scan_page'));
+});
+
+test('dedupePlannerTail: generic lead without synth collapses to Done.', () => {
+  const out = dedupePlannerTail('Done.\n\nStep outputs:\n[shell.run]: completed\n\n[app.agent/navigate_url]: completed');
+  assert.equal(out, 'Done.');
+});
+
+test('dedupePlannerTail: real lead + distinct synth keeps synth in outputs', () => {
+  const blob = 'Partial answer.\n\nStep outputs:\n[synthesize]:\nextra detail not equal to lead';
+  const out = dedupePlannerTail(blob);
+  assert.ok(out.includes('Partial answer.'));
+  assert.ok(out.includes('extra detail'));
+});
+
+// ── isThoughtReply — conditional tail-card auto-attach ──────────────────────
+
+const MMA_CARD = `I noticed you're watching a video about the RAF press conference with MMA fighters Arman Tsarukyan and Georgio Poullas. Here's a quick snapshot: Arman Tsarukyan: 27-year-old Russian-Ukrainian lightweight, known for his strong grappling and recent UFC wins. Georgio Poullas: 29-year-old French welterweight, praised for his striking accuracy. RAF 06 Press Conference: Held on Sep 28 2026, the event highlighted upcoming match-ups and fight strategies.`;
+
+test('isThoughtReply: unrelated navigation prompt does not attach', () => {
+  assert.equal(isThoughtReply('goto john 1 on biblegateway and show', MMA_CARD), false);
+  assert.equal(isThoughtReply('open gmail and check my inbox', MMA_CARD), false);
+});
+
+test('isThoughtReply: bare replies attach', () => {
+  for (const p of ['yes', 'tell me more', 'go ahead', 'why', 'interesting', 'go on']) {
+    assert.equal(isThoughtReply(p, MMA_CARD), true, p);
+  }
+});
+
+test('isThoughtReply: entity / content overlap attaches', () => {
+  assert.equal(isThoughtReply("what about Tsarukyan's next fight", MMA_CARD), true);
+  assert.equal(isThoughtReply('when was that press conference held', MMA_CARD), true);
+});
+
+test('isThoughtReply: deictic + overlap attaches even with a new-domain verb', () => {
+  assert.equal(isThoughtReply('go to youtube and show that fight', MMA_CARD), true);
+});
+
+test('isThoughtReply: non-deictic unrelated prompt does not attach', () => {
+  assert.equal(
+    isThoughtReply('remind me about the budget numbers for next quarter review',
+      'Your dentist appointment is tomorrow at 3pm.'),
+    false,
+  );
+});
+
+test('isThoughtReply: ambiguous bare deictic attaches (fail-open toward the card)', () => {
+  assert.equal(isThoughtReply('what about that?', MMA_CARD), true);
+});
+
+test('isThoughtReply: empty inputs never attach', () => {
+  assert.equal(isThoughtReply('', MMA_CARD), false);
+  assert.equal(isThoughtReply('yes', ''), false);
+});
+
 // ── prependHistory + TTL eviction ───────────────────────────────────────────
 
 const histMsg = (id: number, ts: string) => ({ id, sender: 'user', text: `m${id}`, timestamp: ts });
@@ -380,4 +449,22 @@ test('deriveRunDrafts falls back to step draftPath metadata', () => {
 test('deriveRunDrafts returns empty for non-run entries and draft-free runs', () => {
   assert.equal(deriveRunDrafts({ kind: 'user', text: 'hi' } as any).length, 0);
   assert.equal(deriveRunDrafts({ kind: 'run', steps: [{ title: 'x', status: 'done' }] } as any).length, 0);
+});
+
+// ── historic stamping ─────────────────────────────────────────────────────────
+// prependHistory marks rows so CollapsibleContent can clamp old history while
+// freshly-settled (live) answers render expanded by default.
+
+test('prependHistory stamps entries historic; live appendEntry does not', () => {
+  const s = mkStore();
+  s.appendEntry({ kind: 'assistant', text: 'live answer' } as any);
+  const mapped = mapHistoryMessages([
+    { id: 1, sender: 'user', text: 'old q', timestamp: '2026-01-01T00:00:00Z' },
+    { id: 2, sender: 'assistant', text: 'old a', timestamp: '2026-01-01T00:00:01Z' },
+  ]);
+  s.prependHistory(mapped, { cursor: '2026-01-01T00:00:00Z', hasMore: false });
+  const entries = s.getState().entries;
+  assert.equal((entries[0] as any).historic, true);   // prepended user
+  assert.equal((entries[1] as any).historic, true);   // prepended assistant
+  assert.equal((entries[2] as any).historic, undefined); // live entry untouched
 });

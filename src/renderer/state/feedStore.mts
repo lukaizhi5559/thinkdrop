@@ -168,6 +168,102 @@ export function toDisplayPrompt(raw: string): string {
   return t.trim();
 }
 
+// ── Thought auto-attach gate ─────────────────────────────────────────────────
+// When a proactive Thought card sits at the feed tail, the submit path used to
+// attach it to EVERY prompt — an unrelated "goto biblegateway" dragged the MMA
+// card along (and rendered it under the bubble). isThoughtReply gates that:
+// attach when the prompt reads as a reply to the card, send clean otherwise.
+// Failing to attach is the safe direction — the card still lives in session
+// history, and explicit click-to-attach chips bypass this gate entirely.
+
+const _REPLY_STOPWORDS = new Set([
+  'the', 'a', 'an', 'and', 'or', 'but', 'of', 'to', 'in', 'on', 'at', 'for',
+  'with', 'about', 'is', 'are', 'was', 'were', 'be', 'been', 'it', 'its',
+  'this', 'that', 'these', 'those', 'they', 'them', 'he', 'she', 'his', 'her',
+  'i', 'you', 'we', 'me', 'my', 'your', 'our', 'what', 'whats', 'who', 'when',
+  'where', 'which', 'why', 'how', 'do', 'does', 'did', 'can', 'could', 'will',
+  'would', 'should', 'there', 'here', 'from', 'by', 'as', 'if', 'so', 'than',
+  'then', 'just', 'also', 'more', 'much', 'many', 'some', 'any', 'all', 'not',
+  'no', 'yes', 'up', 'out', 'off', 'over', 'into', 'show', 'tell', 'give',
+  'get', 'go', 'goto', 'let', 'let\'s', 'please', 'know', 'think', 'like',
+]);
+
+/** Words ≥4 chars, lowercased, stopword-free; plural tolerance via `s` fold. */
+function _contentTokens(s: string): Set<string> {
+  const out = new Set<string>();
+  for (const raw of String(s || '').toLowerCase().split(/[^a-z0-9]+/)) {
+    if (raw.length < 4 || _REPLY_STOPWORDS.has(raw)) continue;
+    out.add(raw);
+    if (raw.endsWith('s') && raw.length > 4) out.add(raw.slice(0, -1));
+  }
+  return out;
+}
+
+/** Capitalized tokens — candidate entity names (Tsarukyan, Poullas, RAF). */
+function _entityTokens(s: string): Set<string> {
+  const out = new Set<string>();
+  for (const m of String(s || '').matchAll(/\b[A-Z][a-z0-9]{2,}\b/g)) {
+    const w = m[0].toLowerCase();
+    if (!_REPLY_STOPWORDS.has(w)) out.add(w);
+  }
+  return out;
+}
+
+/** Bare replies to the last card — closed-class utterances with no own topic. */
+const _THOUGHT_BARE_REPLY_RE = new RegExp([
+  '^(?:yes|yeah|yep|yup|sure|ok(?:ay)?|go\\s+ahead|do\\s+it|please\\s+do',
+  '|sounds?\\s+good|absolutely|definitely|of\\s+course|no|nope|nah|not\\s+now',
+  '|maybe\\s+later|i\'?m\\s+good|pass|why|why\\s+not|how\\s+come|really',
+  '|seriously|huh|what|and|so|interesting|cool|nice|wow|thanks|thank\\s+you',
+  '|tell\\s+me\\s+more|more\\s+please|go\\s+on|continue|keep\\s+going',
+  '|deeper|elaborate|expand|explain\\s+more|like\\s+what|such\\s+as)[.!?\\s]*$',
+].join(''), 'i');
+
+/** Anaphoric phrasing — the referent lives in the card, not the prompt. */
+const _THOUGHT_DEICTIC_RE = /\b(?:this|that|these|those|it|them|they|he|she|the\s+(?:first|second|third|last|former|latter)\s+(?:one|guy|fighter|thing|part|point)|tell\s+me\s+more\s+about|more\s+about|what\s+about|how\s+about|expand\s+on|elaborate\s+on)\b/i;
+
+/** Explicit new-domain navigation/action — "goto X.com", "open youtube",
+ *  "search amazon for …". Suppresses weak deictic hits when the prompt
+ *  clearly leaves the card's topic. */
+const _THOUGHT_NEW_DOMAIN_RE = /\b(?:go\s*to|goto|open|navigate|browse|visit|launch|search|look\s+up|play|watch|find|read|download|send|post|check)\b[^.?!]{0,60}?\b(?:https?|www\.|[\w-]+\.(?:com|org|net|io|dev|ai|gov|edu|co|app)|biblegateway|youtube|gmail|amazon|reddit|github|spotify|netflix|twitter|x\.com|linkedin|instagram|tiktok|maps|docs|slides)\b/i;
+
+/**
+ * isThoughtReply — should the tail Thought card ride along with this prompt?
+ * Attach on: bare replies ("tell me more"), lexical/entity overlap
+ * ("Tsarukyan's next fight"), or deictic reference ("show that fight")
+ * unless the prompt clearly opens a new domain. Otherwise send clean —
+ * session.route still lands the prompt in the right prior context.
+ */
+export function isThoughtReply(promptText: string, thoughtText: string): boolean {
+  const p = String(promptText || '').trim();
+  const t = String(thoughtText || '').trim();
+  if (!p || !t) return false;
+  const lower = p.toLowerCase().trim();
+
+  // Bare replies carry no topic of their own — aimed at the card.
+  if (_THOUGHT_BARE_REPLY_RE.test(lower)) return true;
+
+  const pTok = _contentTokens(p);
+  const tTok = _contentTokens(t);
+  const pEnt = _entityTokens(p);
+  const tEnt = _entityTokens(t);
+  let entityHits = 0;
+  let commonHits = 0;
+  for (const w of pEnt) if (tEnt.has(w) || tTok.has(w)) entityHits++;
+  for (const w of pTok) if (tTok.has(w)) commonHits++;
+
+  // Lexical match: any shared entity name, or ≥2 shared content words.
+  if (entityHits >= 1 || commonHits >= 2) return true;
+
+  // Deictic/anaphoric reply — but not when the prompt names a new destination.
+  if (_THOUGHT_DEICTIC_RE.test(lower)) {
+    if (_THOUGHT_NEW_DOMAIN_RE.test(lower) && commonHits === 0) return false;
+    // Short deictic prompts ("what about that?") or one shared word ("that fight").
+    if (lower.split(/\s+/).length <= 10 || commonHits >= 1) return true;
+  }
+  return false;
+}
+
 /**
  * logConversation stores a planner-context tail on command_automate /
  * memory_retrieve assistant messages — "Step outputs:" blocks + "Saved
@@ -191,14 +287,32 @@ export function dedupePlannerTail(text: string): string {
   lines.forEach((l, i) => { if (/^\[[^\]]+\]:/.test(l)) starts.push(i); });
   if (starts.length === 0) return text;
   const norm = (s: string) => s.replace(/\s+/g, ' ').trim();
+  // Bare status markers add noise, not information ("[app.agent/scan_page]: completed").
+  const TRIVIAL_RE = /^(completed|done|ok|success|succeeded)\.?$/i;
+  // Generic leads mean the real content lives in the [synthesize] block.
+  const GENERIC_LEAD_RE = /^done[.!]?$/i;
   const leadN = norm(lead);
-  const blocks: string[] = [];
+  const kept: { label: string; body: string; block: string }[] = [];
   for (let i = 0; i < starts.length; i++) {
     const end = i + 1 < starts.length ? starts[i + 1] : lines.length;
     const block = lines.slice(starts[i], end).join('\n').trimEnd();
+    const label = (lines[starts[i]].match(/^\[([^\]]+)\]/) || [])[1] || '';
     const body = block.replace(/^\[[^\]]*\]:\s*/, '');
-    if (norm(body) !== leadN) blocks.push(block);
+    if (norm(body) === leadN || TRIVIAL_RE.test(norm(body))) continue;
+    kept.push({ label, body, block });
   }
+  // Hoist the last [synthesize] block into the lead when the lead is a bare
+  // "Done." — the synthesis is the user-facing answer, the blob is a debug tail.
+  const synthIdx = kept.map((k, i) => k.label.toLowerCase() === 'synthesize' ? i : -1).filter(i => i >= 0).pop();
+  if (GENERIC_LEAD_RE.test(leadN) && synthIdx !== undefined) {
+    const synthBody = kept[synthIdx].body.trim();
+    const rest = kept.filter((_, i) => i !== synthIdx).map(k => k.block);
+    const out = rest.length
+      ? `${synthBody}\n\nStep outputs:\n${rest.join('\n\n')}${saved}`
+      : `${synthBody}${saved}`;
+    return out.trim();
+  }
+  const blocks = kept.map(k => k.block);
   if (blocks.length === 0) return (lead + saved).trim();
   return `${lead}\n\nStep outputs:\n${blocks.join('\n\n')}${saved}`.trim();
 }
@@ -490,7 +604,9 @@ export function createFeedStore(now: () => number = () => Date.now()): FeedStore
       const existing = new Set(prev.map(e => e.id));
       const fresh = mapped.filter(e => !existing.has(e.id));
       if (!fresh.length) return prev;
-      return [...fresh, ...prev];
+      // History rows render collapsed ("Show more") — live entries default
+      // expanded so a just-streamed answer isn't clamped right after it lands.
+      return [...fresh.map(e => ({ ...e, historic: true })), ...prev];
     });
     set({ hasMoreHistory: opts.hasMore });
   };

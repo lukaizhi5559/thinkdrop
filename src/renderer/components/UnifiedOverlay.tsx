@@ -29,7 +29,7 @@ import { OverlayHeader } from './OverlayHeader';
 import { ResultsContent, type SkillBuildState, type BridgeStatus, type ActionChip, type InstallPrompt, type SchedulePending } from './ResultsContent';
 import { ResultsFeed, type FeedEntry, type FeedDraft } from './ResultsFeed';
 import type { RunSummary } from './AutomationProgress';
-import { feedStore } from '../state/feedStore.mts';
+import { feedStore, isThoughtReply } from '../state/feedStore.mts';
 import { useFeedStore } from '../state/feedSelectors';
 import { installFeedIpc, scheduleGlowOff, cancelGlowOff } from '../state/feedIpc';
 
@@ -574,12 +574,15 @@ export function UnifiedOverlay() {
       finalPrompt += '\n';
     }
 
-    // Auto-context: when the feed tail is a just-delivered thought, a reply is
-    // almost certainly aimed at it — attach it (same [Thought:] form as the
-    // click-to-attach chip) so context survives session-route misses.
-    // Skipped while isolating — the [Context:] chip is the ONLY context.
+    // Auto-context: when the feed tail is a just-delivered thought AND the
+    // prompt reads as a reply to it, attach it (same [Thought:] form as the
+    // click-to-attach chip) so context survives session-route misses. The
+    // relevance gate keeps unrelated prompts clean — an "open biblegateway"
+    // sent under an MMA card must not drag the card along. Skipped while
+    // isolating — the [Context:] chip is the ONLY context.
     const tailEntry = feedStore.getState().entries[feedStore.getState().entries.length - 1];
     const tailThought = !hasIsolatedContext && tailEntry && tailEntry.kind === 'proactive' && !(tailEntry as any).pending && (tailEntry as any).text
+      && isThoughtReply(finalPromptText, (tailEntry as any).text)
       ? `[Thought: ${(tailEntry as any).text.replace(/\s+/g, ' ').trim()}]`
       : null;
     // Structured metadata for the same card — lets comms-graph/stategraph treat
