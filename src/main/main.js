@@ -667,6 +667,7 @@ async function restoreQueueFromJournal() {
         sessionId: t.sessionId || null,
         planFile: t.planFile || null,
         progress: t.progress || null,
+        artifacts: t.artifacts || null,
       })),
     });
     console.log('[QueueRestore] Done');
@@ -4820,11 +4821,18 @@ app.whenReady().then(async () => {
   // the feed as automation:progress {type:'draft_applied'}.
   ipcMain.on('edit:apply', async (_event, { draftPath, filePath, taskId } = {}) => {
     console.log(`[EditApply] edit:apply — draft=${draftPath} → ${filePath} (task=${taskId || 'none'})`);
+    // Dual-emit when taskId is set: the tagged copy reaches the queue card's
+    // task-scoped AutomationProgress; the untagged copy reaches the live
+    // instance + feed-level draft patching (both ignore task-scoped events).
+    const emitApply = (payload) => {
+      safeSendUnified('automation:progress', payload);
+      if (payload.taskId) safeSendUnified('automation:progress', { ...payload, taskId: undefined });
+    };
     if (!draftPath || !filePath) {
-      safeSendUnified('automation:progress', { type: 'draft_applied', ok: false, draftPath, filePath, taskId, error: 'Missing draftPath or filePath' });
+      emitApply({ type: 'draft_applied', ok: false, draftPath, filePath, taskId, error: 'Missing draftPath or filePath' });
       return;
     }
-    safeSendUnified('automation:progress', { type: 'draft_apply_start', draftPath, filePath, taskId });
+    emitApply({ type: 'draft_apply_start', draftPath, filePath, taskId });
     try {
       const http = require('http');
       const body = JSON.stringify({ payload: { skill: 'edit.agent', args: { mode: 'apply', draftPath, filePath, closeHolders: true } } });
@@ -4843,7 +4851,7 @@ app.whenReady().then(async () => {
         req.write(body); req.end();
       });
       console.log(`[EditApply] result: ok=${result?.ok} ${result?.summary || result?.error || ''}`);
-      safeSendUnified('automation:progress', {
+      emitApply({
         type: 'draft_applied', draftPath, filePath, taskId,
         ok: result?.ok === true,
         summary: result?.summary || null,
@@ -4852,9 +4860,15 @@ app.whenReady().then(async () => {
         closedIn: result?.closedIn || null,
         backupPath: result?.backupPath || null,
       });
+      // Persist the applied flag onto the journal task's artifacts so the
+      // queue-row "pending draft" marker clears across restarts.
+      if (result?.ok === true && taskId) {
+        _commsHttp('/comms.artifacts', { taskId, appliedDraftPaths: [draftPath] })
+          .catch(err => console.warn(`[EditApply] artifacts patch failed: ${err.message}`));
+      }
     } catch (err) {
       console.error(`[EditApply] apply failed:`, err.message);
-      safeSendUnified('automation:progress', { type: 'draft_applied', ok: false, draftPath, filePath, taskId, error: err.message });
+      emitApply({ type: 'draft_applied', ok: false, draftPath, filePath, taskId, error: err.message });
     }
   });
 

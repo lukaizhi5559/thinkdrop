@@ -340,7 +340,14 @@ export function mapHistoryMessage(m: any): FeedEntry | null {
     if (intent === 'command_automate' || intent === 'memory_retrieve') {
       text = dedupePlannerTail(text);
     }
-    return { id, ts, kind: 'assistant', text, taskId: m?.metadata?.taskId || undefined } as FeedEntry;
+    // Run artifacts logged at completion — file links + pending drafts +
+    // step list rehydrate onto the response after a restart.
+    const art = m?.metadata?.artifacts;
+    const files = art?.savedFilePaths?.length ? art.savedFilePaths : undefined;
+    const drafts = art?.drafts?.length ? art.drafts : undefined;
+    const steps = art?.steps?.length ? art.steps : undefined;
+    return { id, ts, kind: 'assistant', text, taskId: m?.metadata?.taskId || undefined,
+      ...(files ? { files } : {}), ...(drafts ? { drafts } : {}), ...(steps ? { steps } : {}) } as FeedEntry;
   }
   return null; // 'system' rows (recovery/ask_user) stay out of the feed
 }
@@ -353,13 +360,23 @@ const normText = (s: string) => s.replace(/\s+/g, ' ').trim();
  * the same user prompt once per execute() and land adjacently (system rows
  * are filtered); legit re-asks always have an assistant reply between them.
  */
-export function mapHistoryMessages(msgs: any[], opts?: { tasks?: { id: string; prompt?: string; sessionId?: string | null }[] }): FeedEntry[] {
+export function mapHistoryMessages(msgs: any[], opts?: { tasks?: { id: string; prompt?: string; sessionId?: string | null; artifacts?: any; items?: any[] | null }[] }): FeedEntry[] {
   // Chronological fold: track the preceding user message's RAW text so the
   // assistant entry can carry `prompt` — history rows keep their redo action
   // (live commits get prompt from internal.lastPrompt; reloaded rows had
   // nothing before this).
   let lastUserRaw: string | undefined;
   const tasks = opts?.tasks || [];
+  // Journal task artifacts onto the response entry — covers rows logged
+  // before metadata.artifacts existed and joins items the message lacks.
+  const stampTaskArtifacts = (e: any, task: any) => {
+    if (!task) return;
+    const a = task.artifacts;
+    if (a?.savedFilePaths?.length && !e.files) e.files = a.savedFilePaths;
+    if (a?.drafts?.length && !e.drafts) e.drafts = a.drafts;
+    if (a?.steps?.length && !e.steps) e.steps = a.steps;
+    if (task.items?.length && !e.items) e.items = task.items;
+  };
   return msgs
     .slice()
     .sort((a, b) => (Date.parse(a.timestamp || a.created_at || '') || 0) -
@@ -379,6 +396,7 @@ export function mapHistoryMessages(msgs: any[], opts?: { tasks?: { id: string; p
             normText(t.prompt || '') === normText(lastUserRaw!));
           if (hit) e.taskId = hit.id;
         }
+        if (e.taskId) stampTaskArtifacts(e, tasks.find(t => t.id === e.taskId));
       }
       return e;
     })

@@ -36,7 +36,7 @@ export interface FeedDraft {
 
 export type FeedEntry =
   | { id: string; ts: number; kind: 'user'; text: string; exchangeId?: string; historic?: boolean; attachments?: { kind: 'file' | 'folder' | 'context' | 'thought' | 'highlight'; label: string; path?: string }[] }
-  | { id: string; ts: number; kind: 'assistant'; text: string; items?: WebResultItem[]; sources?: { url: string; hostname: string; title?: string }[]; taskId?: string; pending?: boolean; prompt?: string; isError?: boolean; errorRaw?: string; exchangeId?: string; historic?: boolean }
+  | { id: string; ts: number; kind: 'assistant'; text: string; items?: WebResultItem[]; sources?: { url: string; hostname: string; title?: string }[]; taskId?: string; pending?: boolean; prompt?: string; isError?: boolean; errorRaw?: string; exchangeId?: string; historic?: boolean; files?: string[]; drafts?: FeedDraft[]; steps?: { title: string; status: string; skill?: string; output?: string; savedFilePath?: string; draftPath?: string; openIn?: string[]; diff?: string | null }[] }
   | { id: string; ts: number; kind: 'run'; title: string; status: FeedRunStatus; steps?: { title: string; status: string; skill?: string; output?: string; savedFilePath?: string; draftPath?: string; openIn?: string[]; diff?: string | null }[]; savedFilePaths?: string[]; drafts?: FeedDraft[]; error?: string | null; taskId?: string; planFile?: string | null; durationMs?: number | null; prompt?: string; exchangeId?: string; historic?: boolean }
   | { id: string; ts: number; kind: 'proactive'; text: string; thoughtId?: string; pending?: boolean; exchangeId?: string; historic?: boolean }
   | { id: string; ts: number; kind: 'system'; text: string; exchangeId?: string; historic?: boolean };
@@ -92,6 +92,94 @@ function _dayLabel(ts: number): string {
   if (_dayKey(ts) === _dayKey(today.getTime())) return 'Today';
   if (_dayKey(ts) === _dayKey(yesterday.getTime())) return 'Yesterday';
   return d.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric', year: d.getFullYear() !== today.getFullYear() ? 'numeric' : undefined });
+}
+
+/** One edit.agent draft row: chip opens the draft file, Apply writes it over
+ *  the original, View diff previews the change inline (same affordances as
+ *  AutomationProgress's draft rows). */
+function _DraftRow({ draft: d, onOpenPath, onApplyDraft }: {
+  draft: FeedDraft;
+  onOpenPath: (path: string) => void;
+  onApplyDraft?: (draft: FeedDraft) => void;
+}) {
+  const [diffOpen, setDiffOpen] = useState(false);
+  const holder = d.openIn && d.openIn.length > 0 ? d.openIn[0] : null;
+  const diffLines = d.diff ? d.diff.split('\n') : [];
+  const diffTruncated = diffLines.length > 200;
+  return (
+    <div className="flex items-center flex-wrap gap-1.5">
+      <button
+        onClick={() => onOpenPath(d.draftPath)}
+        className="flex items-center gap-1.5"
+        style={{ padding: '3px 9px', borderRadius: 10, backgroundColor: 'rgba(167,139,250,0.10)', border: '1px solid rgba(167,139,250,0.30)', color: '#c4b5fd', fontSize: '0.65rem', fontFamily: 'monospace', cursor: 'pointer' }}
+        title={`Draft (original untouched): ${d.draftPath}`}
+      >
+        <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5z"/></svg>
+        {(d.filePath || d.draftPath).split('/').pop() || 'draft'} (draft)
+      </button>
+      {d.applied ? (
+        <span style={{ padding: '3px 10px', borderRadius: 6, backgroundColor: 'rgba(16,185,129,0.10)', border: '1px solid rgba(16,185,129,0.30)', color: '#6ee7b7', fontSize: '0.68rem', fontWeight: 600 }}>
+          Applied
+        </span>
+      ) : onApplyDraft ? (
+        <button
+          onClick={() => onApplyDraft(d)}
+          disabled={!!d.applying}
+          style={{ padding: '3px 10px', borderRadius: 6, backgroundColor: 'rgba(59,130,246,0.14)', border: '1px solid rgba(59,130,246,0.40)', color: '#93c5fd', fontSize: '0.68rem', fontWeight: 600, cursor: d.applying ? 'default' : 'pointer', opacity: d.applying ? 0.6 : 1 }}
+          title={holder
+            ? `Close ${holder}'s copy of ${d.filePath || 'the file'} (you'll be asked to save unsaved changes), then apply the draft`
+            : `Apply the draft over ${d.filePath || 'the original'}`}
+        >
+          {d.applying ? 'Applying…' : holder ? `Close ${holder} & Apply` : 'Apply'}
+        </button>
+      ) : null}
+      {d.applyError && (
+        <span style={{ color: '#f87171', fontSize: '0.65rem' }}>{d.applyError}</span>
+      )}
+      {d.diff && (
+        <button
+          onClick={() => setDiffOpen(v => !v)}
+          style={{ padding: '3px 8px', borderRadius: 6, backgroundColor: 'rgba(148,163,184,0.10)', border: '1px solid rgba(148,163,184,0.25)', color: '#94a3b8', fontSize: '0.65rem', fontWeight: 600, cursor: 'pointer' }}
+          title="Preview the changes before applying"
+        >
+          {diffOpen ? 'Hide diff' : 'View diff'}
+        </button>
+      )}
+      {diffOpen && d.diff && (
+        <pre
+          className="w-full overflow-auto"
+          style={{
+            margin: '2px 0 0',
+            padding: '8px 10px',
+            borderRadius: 8,
+            backgroundColor: 'rgba(0,0,0,0.25)',
+            border: '1px solid rgba(148,163,184,0.2)',
+            maxHeight: 240,
+            fontSize: '0.68rem',
+            lineHeight: 1.45,
+            fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
+            whiteSpace: 'pre-wrap',
+            wordBreak: 'break-all',
+          }}
+        >
+          {(diffTruncated ? diffLines.slice(0, 200) : diffLines).map((ln, i) => (
+            <div
+              key={i}
+              style={{
+                color: ln.startsWith('+') ? '#4ade80'
+                  : ln.startsWith('-') ? '#f87171'
+                  : ln.startsWith('@') ? '#a78bfa'
+                  : '#94a3b8',
+              }}
+            >{ln}</div>
+          ))}
+          {diffTruncated && (
+            <div style={{ color: '#64748b' }}>… {diffLines.length - 200} more diff lines — open the draft file to see all</div>
+          )}
+        </pre>
+      )}
+    </div>
+  );
 }
 
 // ── Exchange grouping ─────────────────────────────────────────────────────────
@@ -532,6 +620,32 @@ const FeedEntryRow = React.memo(function FeedEntryRow({
                   ))}
                 </div>
               )}
+              {/* Artifact chips — files the run saved + edit drafts pending/applied.
+                  Restored from journal/history so they survive restarts. */}
+              {((entry.files?.length || 0) > 0 || (entry.drafts?.length || 0) > 0) && (
+                <div className="flex flex-wrap gap-1.5" style={{ marginTop: 8 }}>
+                  {(entry.files || []).map(fp => (
+                    <button
+                      key={fp}
+                      onClick={() => onOpenPath(fp)}
+                      className="flex items-center gap-1.5"
+                      style={{ padding: '3px 9px', borderRadius: 10, backgroundColor: 'rgba(59,130,246,0.10)', border: '1px solid rgba(59,130,246,0.25)', color: '#93c5fd', fontSize: '0.65rem', fontFamily: 'monospace', cursor: 'pointer' }}
+                      title={fp}
+                    >
+                      <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+                      {fp.split('/').pop() || fp}
+                    </button>
+                  ))}
+                  {(entry.drafts || []).map(d => (
+                    <_DraftRow
+                      key={d.draftPath}
+                      draft={d}
+                      onOpenPath={onOpenPath}
+                      onApplyDraft={onApplyDraft ? (dd) => onApplyDraft(entry.id, dd) : undefined}
+                    />
+                  ))}
+                </div>
+              )}
             </div>
           )}
           {hoverActions(entry)}
@@ -583,6 +697,40 @@ const FeedEntryRow = React.memo(function FeedEntryRow({
               {steps.length > 0 && `${doneCount}/${steps.length} tasks`}
               {entry.durationMs != null ? ` · ${Math.round(entry.durationMs / 1000)}s` : ''}
             </span>
+            {/* Artifact markers — files/drafts this run produced, visible without expanding */}
+            {(() => {
+              const fileCount = (entry.savedFilePaths || []).length;
+              const pendingD = runDrafts.filter(d => !d.applied).length;
+              const appliedD = runDrafts.length - pendingD;
+              if (!fileCount && !runDrafts.length) return null;
+              const tip = [
+                ...(entry.savedFilePaths || []),
+                ...runDrafts.map(d => `${(d.filePath || d.draftPath || 'draft').split('/').pop()} (${d.applied ? 'draft applied' : 'draft pending apply'})`),
+              ].join('\n');
+              const iconProps = { width: 10, height: 10, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 2.2, strokeLinecap: 'round' as const, strokeLinejoin: 'round' as const };
+              return (
+                <span title={tip} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: '0.6rem', fontFamily: 'ui-monospace,monospace', flexShrink: 0 }}>
+                  {fileCount > 0 && (
+                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 2, color: '#93c5fd' }}>
+                      <svg {...iconProps}><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+                      {fileCount}
+                    </span>
+                  )}
+                  {pendingD > 0 && (
+                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 2, color: '#fbbf24' }}>
+                      <svg {...iconProps}><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5z"/></svg>
+                      {pendingD}
+                    </span>
+                  )}
+                  {pendingD === 0 && appliedD > 0 && (
+                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 2, color: '#4ade80' }}>
+                      <svg {...iconProps}><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5z"/></svg>
+                      {appliedD}
+                    </span>
+                  )}
+                </span>
+              );
+            })()}
             <span style={{ color: meta.color, fontSize: '0.65rem', fontWeight: 500, marginLeft: 'auto', flexShrink: 0 }}>
               {meta.label}
             </span>
@@ -662,39 +810,14 @@ const FeedEntryRow = React.memo(function FeedEntryRow({
               )}
               {runDrafts.length > 0 && (
                 <div className="flex flex-col gap-1.5">
-                  {runDrafts.map(d => {
-                    const holder = d.openIn && d.openIn.length > 0 ? d.openIn[0] : null;
-                    return (
-                      <div key={d.draftPath} className="flex items-center flex-wrap gap-1.5">
-                        <button
-                          onClick={() => onOpenPath(d.draftPath)}
-                          style={{ padding: '3px 9px', borderRadius: 10, backgroundColor: 'rgba(167,139,250,0.10)', border: '1px solid rgba(167,139,250,0.30)', color: '#c4b5fd', fontSize: '0.65rem', fontFamily: 'monospace', cursor: 'pointer' }}
-                          title={`Draft (original untouched): ${d.draftPath}`}
-                        >
-                          {(d.filePath || d.draftPath).split('/').pop() || 'draft'} (draft)
-                        </button>
-                        {d.applied ? (
-                          <span style={{ padding: '3px 10px', borderRadius: 6, backgroundColor: 'rgba(16,185,129,0.10)', border: '1px solid rgba(16,185,129,0.30)', color: '#6ee7b7', fontSize: '0.68rem', fontWeight: 600 }}>
-                            Applied
-                          </span>
-                        ) : onApplyDraft ? (
-                          <button
-                            onClick={() => onApplyDraft(entry.id, d)}
-                            disabled={!!d.applying}
-                            style={{ padding: '3px 10px', borderRadius: 6, backgroundColor: 'rgba(59,130,246,0.14)', border: '1px solid rgba(59,130,246,0.40)', color: '#93c5fd', fontSize: '0.68rem', fontWeight: 600, cursor: d.applying ? 'default' : 'pointer', opacity: d.applying ? 0.6 : 1 }}
-                            title={holder
-                              ? `Close ${holder}'s copy of ${d.filePath || 'the file'} (you'll be asked to save unsaved changes), then apply the draft`
-                              : `Apply the draft over ${d.filePath || 'the original'}`}
-                          >
-                            {d.applying ? 'Applying…' : holder ? `Close ${holder} & Apply` : 'Apply'}
-                          </button>
-                        ) : null}
-                        {d.applyError && (
-                          <span style={{ color: '#f87171', fontSize: '0.65rem' }}>{d.applyError}</span>
-                        )}
-                      </div>
-                    );
-                  })}
+                  {runDrafts.map(d => (
+                    <_DraftRow
+                      key={d.draftPath}
+                      draft={d}
+                      onOpenPath={onOpenPath}
+                      onApplyDraft={onApplyDraft ? (dd) => onApplyDraft(entry.id, dd) : undefined}
+                    />
+                  ))}
                 </div>
               )}
               {entry.status === 'awaiting-approval' && entry.taskId && (

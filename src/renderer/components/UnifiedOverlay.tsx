@@ -937,12 +937,35 @@ export function UnifiedOverlay() {
   const handleApplyDraft = useCallback((_entryId: string, draft: FeedDraft) => {
     // Resolve the run entry's taskId so draft_apply_* progress events reach the
     // task-scoped AutomationProgress inside QueueTaskCard (it filters out
-    // untagged events) as well as the global instance.
-    const owner = feedStore.getState().entries.find(e => e.kind === 'run' && (e.drafts || []).some(d => d.draftPath === draft.draftPath));
+    // untagged events) as well as the global instance. Fall back to the entry's
+    // own taskId (assistant artifact chips) then a commsTask artifacts scan —
+    // restored drafts still tag correctly so the journal patch lands.
+    const state = feedStore.getState();
+    const owner = state.entries.find(e => (e.kind === 'run' || e.kind === 'assistant') && (e.drafts || []).some((d: any) => d.draftPath === draft.draftPath));
+    const ownerTaskId = (owner && (owner.kind === 'run' || owner.kind === 'assistant')) ? owner.taskId : undefined;
+    const task = ownerTaskId ? undefined : state.commsTasks.find(t => (t.artifacts?.drafts || []).some(d => d.draftPath === draft.draftPath));
     ipcRenderer?.send('edit:apply', {
       draftPath: draft.draftPath,
       filePath: draft.filePath || undefined,
-      taskId: owner && owner.kind === 'run' ? owner.taskId : undefined,
+      taskId: ownerTaskId || task?.id || undefined,
+    });
+  }, []);
+
+  // Queue tab — taskId comes from the card's own row (no owner lookup needed).
+  const handleQueueApplyDraft = useCallback((taskId: string, draft: FeedDraft) => {
+    ipcRenderer?.send('edit:apply', {
+      draftPath: draft.draftPath,
+      filePath: draft.filePath || undefined,
+      taskId,
+    });
+  }, []);
+
+  // Live progress card in ResultsContent — untagged so draft_apply_* events
+  // reach this untagged instance (task-scoped cards get the tagged copy).
+  const handleLiveApplyDraft = useCallback((draft: FeedDraft) => {
+    ipcRenderer?.send('edit:apply', {
+      draftPath: draft.draftPath,
+      filePath: draft.filePath || undefined,
     });
   }, []);
 
@@ -1121,15 +1144,23 @@ export function UnifiedOverlay() {
       });
     };
 
-    // Patch a draft's apply state on whichever run entry carries it.
+    // Patch a draft's apply state on whichever entry carries it (run cards and
+    // assistant artifact chips), plus the owning comms task's persisted
+    // artifacts so queue-row markers reflect the apply too.
     const patchFeedDraft = (draftPath: string | undefined, patch: Record<string, any>) => {
       if (!draftPath) return;
       const entries = feedStore.getState().entries;
-      const hit = entries.find(e => e.kind === 'run' && (e.drafts || []).some(d => d.draftPath === draftPath));
-      if (!hit || hit.kind !== 'run') return;
-      patchFeedEntry(hit.id, {
-        drafts: (hit.drafts || []).map(d => d.draftPath === draftPath ? { ...d, ...patch } : d),
-      } as Partial<FeedEntry>);
+      const hit = entries.find(e => (e as any).drafts?.some((d: any) => d.draftPath === draftPath));
+      if (hit) {
+        patchFeedEntry(hit.id, {
+          drafts: ((hit as any).drafts || []).map((d: any) => d.draftPath === draftPath ? { ...d, ...patch } : d),
+        } as Partial<FeedEntry>);
+      }
+      feedStore.setCommsTasks(prev => prev.map(t => {
+        const drafts = t.artifacts?.drafts;
+        if (!drafts?.some(d => d.draftPath === draftPath)) return t;
+        return { ...t, artifacts: { ...t.artifacts!, drafts: drafts.map(d => d.draftPath === draftPath ? { ...d, ...patch } : d) } };
+      }));
     };
 
     const handleAutomationProgress = (data: any) => {
@@ -2507,6 +2538,7 @@ export function UnifiedOverlay() {
                 onHeightChange={handleAutomationHeightChange}
                 onActiveChange={handleAutomationActiveChange}
                 onRunSummary={handleRunSummary}
+                onApplyDraft={handleLiveApplyDraft}
               />
             </ResultsFeed>
           </div>
@@ -2547,6 +2579,7 @@ export function UnifiedOverlay() {
                 onHeightChange={handleQueueHeightChange}
                 focusRequest={queueFocus}
                 onFocusHandled={handleQueueFocusHandled}
+                onApplyDraft={handleQueueApplyDraft}
               />}
             </div>
 

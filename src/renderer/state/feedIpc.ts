@@ -320,6 +320,7 @@ export function installFeedIpc(store: FeedStore, ui: FeedIpcUi): () => void {
             source: j.source || 'text',
             planFile: j.planFile || null,
             sessionId: j.sessionId || null,
+            artifacts: j.artifacts || null,
           } as CommsTask;
         });
       return added.length > 0 ? [...prev, ...added] : prev;
@@ -367,6 +368,7 @@ export function installFeedIpc(store: FeedStore, ui: FeedIpcUi): () => void {
         error: data.error || null,
         planFile: data.planFile || t.planFile || null,
         sessionId: data.sessionId || t.sessionId || null,
+        artifacts: data.artifacts || t.artifacts || null,
       };
     }));
 
@@ -389,6 +391,11 @@ export function installFeedIpc(store: FeedStore, ui: FeedIpcUi): () => void {
       // them — fall back so the feed entry gets the same results grid.
       const resolvedItems = (items && items.length > 0) ? items
         : (s.getTask(data.taskId)?.items ?? undefined);
+      // Run artifacts (saved files, pending drafts) stamp onto the response
+      // entry so the feed shows file/draft chips without expanding a card.
+      const _art = data.artifacts || s.getTask(data.taskId)?.artifacts || null;
+      const _artFiles = (_art?.savedFilePaths?.length ? _art.savedFilePaths : undefined) as string[] | undefined;
+      const _artDrafts = (_art?.drafts?.length ? _art.drafts : undefined) as any[] | undefined;
       const hit = [...s.getState().entries].reverse().find(e =>
         e.kind === 'assistant' && (e.taskId === data.taskId || e.pending));
       if (hit) {
@@ -397,9 +404,11 @@ export function installFeedIpc(store: FeedStore, ui: FeedIpcUi): () => void {
         s.patchEntry(hit.id, {
           text, pending: false, items: resolvedItems, taskId: data.taskId,
           prompt: (hit as any).prompt || s.internal.lastPrompt || undefined,
+          ...(_artFiles ? { files: _artFiles } : {}),
+          ...(_artDrafts ? { drafts: _artDrafts } : {}),
         } as any);
       } else {
-        s.appendEntry({ kind: 'assistant', text, items: resolvedItems, taskId: data.taskId, prompt: s.internal.lastPrompt || undefined, exchangeId: s.exchangeForTask(data.taskId, s.internal.lastPrompt) });
+        s.appendEntry({ kind: 'assistant', text, items: resolvedItems, taskId: data.taskId, prompt: s.internal.lastPrompt || undefined, exchangeId: s.exchangeForTask(data.taskId, s.internal.lastPrompt), ...(_artFiles ? { files: _artFiles } : {}), ...(_artDrafts ? { drafts: _artDrafts } : {}) });
       }
     };
 

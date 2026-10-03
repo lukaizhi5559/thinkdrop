@@ -38,6 +38,13 @@ export interface CommsTask {
   planFile?: string | null;
   /** Conversation session this task's discussion lives in — used by Continue Thread. */
   sessionId?: string | null;
+  /** Run artifacts persisted at completion (journal) — steps/files/drafts that
+   *  let the expanded card render the real run after a restart. */
+  artifacts?: {
+    steps?: { title: string; status: string; skill?: string; output?: string; savedFilePath?: string; draftPath?: string; openIn?: string[]; diff?: string | null }[];
+    savedFilePaths?: string[];
+    drafts?: DraftRef[];
+  } | null;
 }
 
 // ── Status config ──────────────────────────────────────────────────────────────
@@ -400,6 +407,52 @@ export function QueueTaskCard({ task, onContinueThread, onHeightChange, flash, o
               )}
               {!isActive && <span style={{ fontSize: '0.6rem', color: '#4b5563' }}>{agoStr}</span>}
 
+              {/* Artifact markers — files/drafts/cards this run produced, so a
+                  collapsed row shows it without expanding. Pending drafts stay
+                  amber until applied. */}
+              {(() => {
+                const fileCount = task.artifacts?.savedFilePaths?.length || 0;
+                const drafts = task.artifacts?.drafts || [];
+                const pendingDrafts = drafts.filter(d => !d.applied).length;
+                const appliedDrafts = drafts.length - pendingDrafts;
+                const itemCount = task.items?.length || 0;
+                if (!fileCount && !drafts.length && !itemCount) return null;
+                const tip = [
+                  ...(task.artifacts?.savedFilePaths || []),
+                  ...drafts.map(d => `${(d.filePath || d.draftPath || 'draft').split('/').pop()} (${d.applied ? 'draft applied' : 'draft pending apply'})`),
+                  ...(itemCount ? [`${itemCount} result card${itemCount > 1 ? 's' : ''}`] : []),
+                ].join('\n');
+                const iconProps = { width: 10, height: 10, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 2.2, strokeLinecap: 'round' as const, strokeLinejoin: 'round' as const };
+                return (
+                  <span title={tip} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: '0.6rem', fontFamily: 'ui-monospace,monospace' }}>
+                    {fileCount > 0 && (
+                      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 2, color: '#93c5fd' }}>
+                        <svg {...iconProps}><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+                        {fileCount}
+                      </span>
+                    )}
+                    {pendingDrafts > 0 && (
+                      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 2, color: '#fbbf24' }}>
+                        <svg {...iconProps}><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5z"/></svg>
+                        {pendingDrafts}
+                      </span>
+                    )}
+                    {pendingDrafts === 0 && appliedDrafts > 0 && (
+                      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 2, color: '#4ade80' }}>
+                        <svg {...iconProps}><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5z"/></svg>
+                        {appliedDrafts}
+                      </span>
+                    )}
+                    {itemCount > 0 && (
+                      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 2, color: '#a5b4fc' }}>
+                        <svg {...iconProps}><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
+                        {itemCount}
+                      </span>
+                    )}
+                  </span>
+                );
+              })()}
+
               {/* Auto-purge countdown for completed/cancelled/failed */}
               {(task.status === 'done' || task.status === 'failed' || task.status === 'cancelled') && task.doneAt && (
                 <span style={{ fontSize: '0.56rem', color: '#abafb8', display: 'flex', alignItems: 'center', gap: 3 }}>
@@ -532,6 +585,17 @@ export function QueueTaskCard({ task, onContinueThread, onHeightChange, flash, o
               onActiveChange={() => {}}
               onRunSummary={onRunSummary}
               onApplyDraft={onApplyDraft}
+              seedSummary={!isActive && task.artifacts ? {
+                title: task.prompt || 'Automation run',
+                status: (task.status === 'failed' ? 'failed' : 'done') as RunSummary['status'],
+                steps: task.artifacts.steps || [],
+                savedFilePaths: task.artifacts.savedFilePaths || [],
+                drafts: task.artifacts.drafts,
+                planFile: task.planFile || null,
+                error: task.error || null,
+                durationMs: null,
+                taskId: task.id,
+              } : undefined}
             />
           </div>
         )}
@@ -943,12 +1007,16 @@ function QueueFilterBar({ search, onSearchChange, open, onToggleOpen, filters, o
 }
 
 // ── QueueTaskList — renders all comms-graph tasks, newest first + filters ──────
-export function _QueueTaskList({ tasks, onContinueThread, onHeightChange, focusRequest, onFocusHandled }: {
+export function _QueueTaskList({ tasks, onContinueThread, onHeightChange, focusRequest, onFocusHandled, onApplyDraft }: {
   tasks: CommsTask[];
   onContinueThread?: (task: CommsTask) => void;
   onHeightChange?: () => void;
   focusRequest?: { taskId: string; status?: string; nonce: number } | null;
   onFocusHandled?: () => void;
+  /** Forwarded to each card's embedded AutomationProgress — "Apply"/"Close
+   *  <App> & Apply" on a draft row. Carries taskId so draft_apply_* events
+   *  route back to this card's task-scoped instance. */
+  onApplyDraft?: (taskId: string, draft: DraftRef) => void;
 }) {
   perfRender('QueueTaskList');
   const [filters, setFilters] = React.useState<QueueFilters>(_loadFilters);
@@ -1078,7 +1146,7 @@ export function _QueueTaskList({ tasks, onContinueThread, onHeightChange, focusR
       ) : (<>
         {visible.map(task => (
           <div key={task.id} ref={el => { cardRefs.current[task.id] = el; }}>
-            <QueueTaskCard task={task} onContinueThread={onContinueThread} onHeightChange={onHeightChange} flash={task.id === flashTaskId} />
+            <QueueTaskCard task={task} onContinueThread={onContinueThread} onHeightChange={onHeightChange} flash={task.id === flashTaskId} onApplyDraft={onApplyDraft ? (d) => onApplyDraft(task.id, d) : undefined} />
           </div>
         ))}
         {filtered.length > visibleCount && (

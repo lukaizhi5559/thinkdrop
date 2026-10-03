@@ -274,6 +274,11 @@ interface AutomationProgressProps {
   /** "Apply" / "Close <App> & Apply" clicked on a draft row — parent sends
    *  the edit:apply IPC; apply progress lands via draft_apply_* events. */
   onApplyDraft?: (draft: DraftRef) => void;
+  /** Persisted run summary for a terminal task restored from the journal —
+   *  hydrates steps/files/drafts so an expanded card shows the real run after
+   *  a restart (no live events remain to rebuild state). Only applied while
+   *  the instance is still idle on mount. */
+  seedSummary?: RunSummary | null;
 }
 
 export interface RunSummary {
@@ -916,7 +921,7 @@ function parsePlanStepTitles(content: string): string[] {
 // a second mount would overwrite the first's handler and unmounting one kills both).
 let _apInstanceSeq = 0;
 
-export default function AutomationProgress({ onHeightChange, onActiveChange, onOpenRules, onAskUserShown, setIsSubmitting, onAuthPending, suppressIfScheduled, activeTab, taskId, planFile, onRunSummary, onApplyDraft }: AutomationProgressProps) {
+export default function AutomationProgress({ onHeightChange, onActiveChange, onOpenRules, onAskUserShown, setIsSubmitting, onAuthPending, suppressIfScheduled, activeTab, taskId, planFile, onRunSummary, onApplyDraft, seedSummary }: AutomationProgressProps) {
   perfRender('AutomationProgress');
   const [instanceSeq] = useState(() => ++_apInstanceSeq);
   const [phase, setPhase] = useState<AutomationPhase>('idle');
@@ -1193,6 +1198,37 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
     draftsSnapshotRef.current = drafts;
     planReviewSnapshotRef.current = planReview;
   });
+
+  // Hydrate from a persisted run summary (restored terminal task expanded for
+  // the first time). Mount-only + idle-guarded so a live run's real state is
+  // never clobbered — tasks only carry artifacts after completion anyway.
+  const seededRef = useRef(false);
+  useEffect(() => {
+    if (seededRef.current || !seedSummary) return;
+    if (phaseRef.current !== 'idle') return;
+    seededRef.current = true;
+    const seedSteps = (seedSummary.steps || []).map((s, i) => ({
+      index: i,
+      skill: s.skill || '',
+      description: s.title || s.skill || 'Step',
+      status: (s.status as StepStatus) || 'done',
+      stdout: s.output,
+      savedFilePath: s.savedFilePath,
+      draftPath: s.draftPath,
+      openIn: s.openIn,
+      diff: s.diff || undefined,
+    }));
+    setSteps(seedSteps);
+    setSavedFilePaths(seedSummary.savedFilePaths || []);
+    setDrafts((seedSummary.drafts || []).map(d => ({ ...d })));
+    setTotalCount(seedSteps.length);
+    if (seedSummary.error) setGlobalError(seedSummary.error);
+    // 'cancelled' has no phase of its own — 'done' renders the terminated view.
+    setPhase(seedSummary.status === 'failed' ? 'failed' : 'done');
+    // Seeded state IS the terminal snapshot — don't re-emit it as a new summary.
+    runSummaryEmittedRef.current = true;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const emitRunSummary = useCallback((status: 'done' | 'failed' | 'cancelled', error: string | null = null) => {
     if (runSummaryEmittedRef.current) return;

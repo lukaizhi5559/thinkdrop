@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import type { RefObject } from 'react';
 import { Favicon } from './DefaultFaviconIcon';
 import { ThinkDropLogo } from './SlideoutDrawer';
-import AutomationProgress, { type RunSummary } from './AutomationProgress';
+import AutomationProgress, { type RunSummary, type DraftRef } from './AutomationProgress';
 import { WebResultsGrid } from './rich-content';
 import StreamingRichContent from './rich-content/StreamingRichContent';
 import SkillBuildProgress from './SkillBuildProgress';
@@ -97,6 +97,8 @@ interface ResultsContentProps {
   onHeightChange: () => void;
   onActiveChange: (active: boolean) => void;
   onRunSummary: (summary: RunSummary) => void;
+  /** "Apply"/"Close <App> & Apply" on a draft row in the live progress card. */
+  onApplyDraft?: (draft: DraftRef) => void;
 }
 
 function ResultsContentImpl({
@@ -130,6 +132,7 @@ function ResultsContentImpl({
   onHeightChange,
   onActiveChange,
   onRunSummary,
+  onApplyDraft,
 }: ResultsContentProps) {
   // Hot-path subscriptions live here so per-chunk stream updates re-render
   // only this live region, not the whole overlay (header/tabs/input).
@@ -516,6 +519,7 @@ function ResultsContentImpl({
           onAskUserShown={onScrollToBottom}
           onOpenRules={onOpenRules}
           onRunSummary={onRunSummary}
+          onApplyDraft={onApplyDraft}
         />
       </div>
 

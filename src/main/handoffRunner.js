@@ -31,6 +31,114 @@ const COMMS_GRAPH_PORT = parseInt(process.env.COMMS_GRAPH_PORT || '3015', 10);
 /** @type {Map<string, { abortController: AbortController, stateGraph: any, progressCallback: Function }>} */
 const _activeRuns = new Map();
 
+// ── Per-run artifact accumulation ──────────────────────────────────────────────
+// Steps/files/drafts produced during the run — persisted onto the journal task
+// via /comms.complete so queue cards re-expand to real artifacts (step list,
+// saved-file links, pending drafts) after a restart instead of empty state.
+/** @type {Map<string, { steps: Map<number, any>, savedFilePaths: Set<string>, drafts: Map<string, any> }>} */
+const _runArtifacts = new Map();
+
+const _ARTIFACT_MAX_STEPS = 50;
+const _ARTIFACT_MAX_OUTPUT = 2000;
+
+function _artifactFor(taskId) {
+  let a = _runArtifacts.get(taskId);
+  if (!a) {
+    a = { steps: new Map(), savedFilePaths: new Set(), drafts: new Map() };
+    _runArtifacts.set(taskId, a);
+  }
+  return a;
+}
+
+function _recordStepArtifact(taskId, event) {
+  const a = _artifactFor(taskId);
+  const idx = typeof event.stepIndex === 'number' ? event.stepIndex
+    : (typeof event.step === 'number' ? event.step - 1 : a.steps.size);
+  const prev = a.steps.get(idx) || {};
+  const output = String(event.error || event.stdout || '').trim();
+  a.steps.set(idx, {
+    title: event.description || event.title || prev.title || event.skill || 'Step',
+    status: event.type === 'step_failed' || /step_failed$/.test(event.type) ? 'failed'
+      : (event.skipped === true || prev.status === 'skipped') ? 'skipped'
+      : 'done',
+    skill: event.skill || prev.skill || undefined,
+    output: output ? output.slice(0, _ARTIFACT_MAX_OUTPUT) : prev.output || undefined,
+    savedFilePath: event.savedFilePath || prev.savedFilePath || undefined,
+    draftPath: event.draftPath || prev.draftPath || undefined,
+    openIn: Array.isArray(event.openIn) ? event.openIn : prev.openIn || undefined,
+    diff: event.diff || prev.diff || undefined,
+  });
+  if (event.savedFilePath) a.savedFilePaths.add(event.savedFilePath);
+  // A step_done carrying draftPath is the same draft all_done lists — record
+  // it eagerly so a failed-after-draft run still shows the pending draft.
+  if (event.draftPath) {
+    a.drafts.set(event.draftPath, {
+      draftPath: event.draftPath,
+      filePath: event.filePath || null,
+      openIn: Array.isArray(event.openIn) ? event.openIn : [],
+      diff: event.diff || null,
+    });
+  }
+  // Bound growth — a runaway loop can't bloat the journal.
+  while (a.steps.size > _ARTIFACT_MAX_STEPS) {
+    a.steps.delete(Math.min(...a.steps.keys()));
+  }
+}
+
+function _recordAllDoneArtifacts(taskId, event) {
+  const a = _artifactFor(taskId);
+  for (const p of (Array.isArray(event.savedFilePaths) ? event.savedFilePaths : [])) {
+    if (p) a.savedFilePaths.add(p);
+  }
+  for (const d of (Array.isArray(event.drafts) ? event.drafts : [])) {
+    if (d?.draftPath) {
+      a.drafts.set(d.draftPath, {
+        draftPath: d.draftPath,
+        filePath: d.filePath || null,
+        openIn: Array.isArray(d.openIn) ? d.openIn : [],
+        diff: d.diff || null,
+      });
+    }
+  }
+  // skillResults carry per-step status detail (skipped/needs_input) the
+  // step_done stream may not — merge by index without clobbering failures.
+  for (const r of (Array.isArray(event.skillResults) ? event.skillResults : [])) {
+    if (!r || typeof r !== 'object') continue;
+    const idx = typeof r.stepIndex === 'number' ? r.stepIndex
+      : (typeof r.step === 'number' ? r.step - 1 : null);
+    if (idx === null) continue;
+    const prev = a.steps.get(idx) || {};
+    const status = prev.status === 'failed' ? 'failed'
+      : r.skipped ? 'skipped'
+      : r.ok === false ? 'failed'
+      : 'done';
+    const output = String(r.error || r.stdout || '').trim();
+    a.steps.set(idx, {
+      title: r.description || prev.title || r.skill || 'Step',
+      status,
+      skill: r.skill || prev.skill || undefined,
+      output: output ? output.slice(0, _ARTIFACT_MAX_OUTPUT) : prev.output || undefined,
+      savedFilePath: r.savedFilePath || prev.savedFilePath || undefined,
+      draftPath: r.draftPath || prev.draftPath || undefined,
+      openIn: Array.isArray(r.openIn) ? r.openIn : prev.openIn || undefined,
+      diff: r.diff || prev.diff || undefined,
+    });
+  }
+  while (a.steps.size > _ARTIFACT_MAX_STEPS) {
+    a.steps.delete(Math.min(...a.steps.keys()));
+  }
+}
+
+function _artifactSnapshot(taskId) {
+  const a = _runArtifacts.get(taskId);
+  if (!a) return null;
+  const steps = [...a.steps.keys()].sort((x, y) => x - y).map(k => a.steps.get(k));
+  const savedFilePaths = [...a.savedFilePaths];
+  const drafts = [...a.drafts.values()];
+  if (steps.length === 0 && savedFilePaths.length === 0 && drafts.length === 0) return null;
+  return { steps, savedFilePaths, drafts };
+}
+
 // A task that emits no progress for this long is considered stalled (provider
 // hang, runaway graph). It is force-failed so the serial prompt queue isn't
 // poisoned for every subsequent prompt.
@@ -117,8 +225,8 @@ function _notifyProgress(taskId, agentId, progress) {
   return _postToComms('/comms.progress', { taskId, agentId, progress });
 }
 
-function _notifyComplete(taskId, agentId, status, result, items, sessionId = null, planFile = null, trace = null) {
-  return _postToComms('/comms.complete', { taskId, agentId, status, result, items: items || null, sessionId, planFile, trace });
+function _notifyComplete(taskId, agentId, status, result, items, sessionId = null, planFile = null, trace = null, artifacts = null) {
+  return _postToComms('/comms.complete', { taskId, agentId, status, result, items: items || null, sessionId, planFile, trace, artifacts });
 }
 
 // ── Create a fresh stategraph instance for a handoff task ──────────────────────
@@ -169,6 +277,15 @@ function _makeProgressCallback(taskId, agentId) {
 
     // Tag the event with taskId so the renderer can route it to the right queue card
     const taggedEvent = { ...event, taskId };
+
+    // Accumulate run artifacts for journal persistence — queue cards re-expand
+    // to real steps/files/drafts after restart (see _artifactSnapshot).
+    if (event.type === 'step_done' || event.type === 'step_failed'
+        || event.type === 'plan:step_done' || event.type === 'plan:step_failed') {
+      _recordStepArtifact(taskId, event);
+    } else if (event.type === 'all_done' || event.type === 'plan:complete') {
+      _recordAllDoneArtifacts(taskId, event);
+    }
 
     // Forward all rich events to the renderer (plan:generated, preflight:*, plan:step_start, etc.)
     if (_ipcBroadcast) {
@@ -499,7 +616,7 @@ async function execute({ taskId, prompt, agentId, source, originalPrompt, sessio
       console.log(`[HandoffRunner] Task ${taskId} awaiting plan approval — planFile=${planFileFromState}`);
       // Emit pipeline:done so AutomationProgress clears any planning spinner
       progressCallback({ type: 'pipeline:done', contract: finalState._contract });
-      _notifyComplete(taskId, agentId, 'awaiting-approval', '', null, finalState.resolvedSessionId || sessionId, planFileFromState);
+      _notifyComplete(taskId, agentId, 'awaiting-approval', '', null, finalState.resolvedSessionId || sessionId, planFileFromState, null, _artifactSnapshot(taskId));
       if (_ipcBroadcast) {
         _ipcBroadcast('task:complete', {
           taskId,
@@ -513,6 +630,7 @@ async function execute({ taskId, prompt, agentId, source, originalPrompt, sessio
           agentId,
           source,
           sessionId: finalState.resolvedSessionId || sessionId || null,
+          artifacts: _artifactSnapshot(taskId),
         });
       }
       return { ok: true, status: 'awaiting-approval', planFile: planFileFromState };
@@ -523,7 +641,7 @@ async function execute({ taskId, prompt, agentId, source, originalPrompt, sessio
       console.log(`[HandoffRunner] Task ${taskId} auth required: ${finalState.planError}`);
       // Emit pipeline:done so AutomationProgress clears any planning spinner
       progressCallback({ type: 'pipeline:done', contract: finalState._contract });
-      _notifyComplete(taskId, agentId, 'auth-required', finalState.planError, null, finalState.resolvedSessionId || sessionId);
+      _notifyComplete(taskId, agentId, 'auth-required', finalState.planError, null, finalState.resolvedSessionId || sessionId, null, null, _artifactSnapshot(taskId));
       if (_ipcBroadcast) {
         _ipcBroadcast('task:complete', {
           taskId,
@@ -537,6 +655,7 @@ async function execute({ taskId, prompt, agentId, source, originalPrompt, sessio
           agentId,
           source,
           sessionId: finalState.resolvedSessionId || sessionId || null,
+          artifacts: _artifactSnapshot(taskId),
         });
       }
       // Populate the per-task pending map so the preflight:auth_continue
@@ -571,7 +690,7 @@ async function execute({ taskId, prompt, agentId, source, originalPrompt, sessio
       console.error(`[HandoffRunner] Task ${taskId} plan error: ${finalState.planError}`);
       // Emit pipeline:done so AutomationProgress clears any planning spinner
       progressCallback({ type: 'pipeline:done', contract: finalState._contract });
-      _notifyComplete(taskId, agentId, 'failed', finalState.planError, null, finalState.resolvedSessionId || sessionId);
+      _notifyComplete(taskId, agentId, 'failed', finalState.planError, null, finalState.resolvedSessionId || sessionId, null, null, _artifactSnapshot(taskId));
       if (_ipcBroadcast) {
         _ipcBroadcast('task:complete', {
           taskId,
@@ -585,6 +704,7 @@ async function execute({ taskId, prompt, agentId, source, originalPrompt, sessio
           agentId,
           source,
           sessionId: finalState.resolvedSessionId || sessionId || null,
+          artifacts: _artifactSnapshot(taskId),
         });
       }
       return { ok: false, status: 'failed', error: finalState.planError };
@@ -597,7 +717,7 @@ async function execute({ taskId, prompt, agentId, source, originalPrompt, sessio
       _pendingQuestions.set(taskId, { finalState, prompt, agentId, source, originalPrompt, sessionId });
       // Emit pipeline:done so AutomationProgress clears any planning spinner
       progressCallback({ type: 'pipeline:done', contract: finalState._contract });
-      _notifyComplete(taskId, agentId, 'waiting-for-input', '', null, finalState.resolvedSessionId || sessionId);
+      _notifyComplete(taskId, agentId, 'waiting-for-input', '', null, finalState.resolvedSessionId || sessionId, null, null, _artifactSnapshot(taskId));
       if (_ipcBroadcast) {
         _ipcBroadcast('task:complete', {
           taskId,
@@ -609,6 +729,7 @@ async function execute({ taskId, prompt, agentId, source, originalPrompt, sessio
           agentId,
           source,
           sessionId: finalState.resolvedSessionId || sessionId || null,
+          artifacts: _artifactSnapshot(taskId),
         });
       }
       return { ok: true, status: 'waiting-for-input' };
@@ -627,7 +748,7 @@ async function execute({ taskId, prompt, agentId, source, originalPrompt, sessio
       const _trace = Array.isArray(finalState.trace)
         ? finalState.trace.map(t => ({ node: t.node, duration: t.duration }))
         : null;
-      _notifyComplete(taskId, agentId, 'done', answer, items, finalState.resolvedSessionId || sessionId, null, _trace);
+      _notifyComplete(taskId, agentId, 'done', answer, items, finalState.resolvedSessionId || sessionId, null, _trace, _artifactSnapshot(taskId));
       if (_ipcBroadcast) {
         _ipcBroadcast('task:complete', {
           taskId,
@@ -641,6 +762,7 @@ async function execute({ taskId, prompt, agentId, source, originalPrompt, sessio
           agentId,
           source,
           sessionId: finalState.resolvedSessionId || sessionId || null,
+          artifacts: _artifactSnapshot(taskId),
         });
       }
       return { ok: true, status: 'done', answer, thinking, intent };
@@ -655,7 +777,7 @@ async function execute({ taskId, prompt, agentId, source, originalPrompt, sessio
     const _failTrace = Array.isArray(_runEntry?.state?.trace)
       ? _runEntry.state.trace.map(t => ({ node: t.node, duration: t.duration }))
       : null;
-    _notifyComplete(taskId, agentId, status, err.message, null, sessionId, null, _failTrace);
+    _notifyComplete(taskId, agentId, status, err.message, null, sessionId, null, _failTrace, _artifactSnapshot(taskId));
 
     if (_ipcBroadcast) {
       _ipcBroadcast('task:complete', {
@@ -667,6 +789,7 @@ async function execute({ taskId, prompt, agentId, source, originalPrompt, sessio
         agentId,
         source,
         sessionId: sessionId || null,
+        artifacts: _artifactSnapshot(taskId),
       });
     }
 
@@ -675,6 +798,7 @@ async function execute({ taskId, prompt, agentId, source, originalPrompt, sessio
   } finally {
     clearTimeout(_activeRuns.get(taskId)?.stallTimer);
     _activeRuns.delete(taskId);
+    _runArtifacts.delete(taskId);
   }
 }
 
@@ -770,12 +894,13 @@ async function answerQuestion(taskId, answer) {
     : [];
 
   const _broadcastDone = (status) => {
-    _notifyComplete(taskId, ctx.agentId, status, '', null, ctx.sessionId);
+    _notifyComplete(taskId, ctx.agentId, status, '', null, ctx.sessionId, null, null, _artifactSnapshot(taskId));
     if (_ipcBroadcast) {
       _ipcBroadcast('task:complete', {
         taskId, prompt: ctx.originalPrompt || ctx.prompt, answer: '',
         status, agentId: ctx.agentId, source: ctx.source,
         sessionId: ctx.sessionId || null,
+        artifacts: _artifactSnapshot(taskId),
       });
     }
   };
