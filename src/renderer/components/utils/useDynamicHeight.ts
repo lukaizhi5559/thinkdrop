@@ -128,7 +128,11 @@ export function useDynamicHeight({
     ipcRenderer.send('unified:set-content-height', {
       height: Math.round(height),
       ...(width != null ? { width: Math.round(width) } : {}),
-      animate: true,
+      // Content-driven resizes must NOT animate: a setBounds animation re-lays
+      // out and re-rasters the whole window every frame — during streaming the
+      // window would sit in a perpetual animated-resize relayout storm.
+      // Explicit gestures (width toggle) send their own animate:true IPC.
+      animate: false,
     });
     onResize?.(height);
   }, [suppress, getWidth, onResize]);
@@ -143,17 +147,19 @@ export function useDynamicHeight({
     }, debounceMs);
   }, [computeTargetHeight, sendResize, suppress, debounceMs]);
 
-  // ResizeObserver on header + input bar + all tab content targets.
-  // - Content growth (streaming, automation, list loads) fires via the content targets.
+  // ResizeObserver on header + input bar + the ACTIVE tab's content target only.
+  // - Content growth (streaming, automation, list loads) fires via the content target.
   // - Textarea auto-resize grows the input bar → caught here.
-  // - display:none elements report 0×0 and re-fire when shown → tab switches caught here.
+  // - Only the active tab is observed: computeTargetHeight only ever reads the
+  //   active tab's scrollHeight, so hidden-tab mutations used to trigger wasted
+  //   synchronous layout reads on every queue/feed update.
+  // - Tab switches re-measure via the separate activeTab effect below.
   useEffect(() => {
     const elements: HTMLElement[] = [];
     if (headerRef.current) elements.push(headerRef.current);
     if (inputBarRef.current) elements.push(inputBarRef.current);
-    for (const ref of Object.values(contentRefs)) {
-      if (ref.current) elements.push(ref.current);
-    }
+    const activeContentEl = contentRefs[activeTab]?.current;
+    if (activeContentEl) elements.push(activeContentEl);
     if (overlayEl) elements.push(overlayEl);
     if (elements.length === 0) return;
 
@@ -170,7 +176,7 @@ export function useDynamicHeight({
       observerRef.current = null;
     };
     // contentRefs is memoized at the call site — stable identity across renders.
-  }, [headerRef, inputBarRef, contentRefs, measureAndResize, overlayEl]);
+  }, [headerRef, inputBarRef, contentRefs, activeTab, measureAndResize, overlayEl]);
 
   // MutationObserver for the overlay card: ResizeObserver can miss content growth
   // inside a flex/card container (e.g. adding credential rows in the CLI agent modal).

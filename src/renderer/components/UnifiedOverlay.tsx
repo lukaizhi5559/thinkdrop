@@ -32,6 +32,9 @@ import type { RunSummary } from './AutomationProgress';
 import { feedStore, isThoughtReply } from '../state/feedStore.mts';
 import { useFeedStore } from '../state/feedSelectors';
 import { installFeedIpc, scheduleGlowOff, cancelGlowOff } from '../state/feedIpc';
+import { voiceSessionStore } from '../state/voiceSessionStore';
+import { highlightsStore } from '../state/highlightsStore';
+import { perfRender, perfGaugeIpcChannels } from '../utils/perfCounters';
 
 // New entries: FeedEntry minus the assigned fields (id/ts optional). The
 // conditional distributes over the union so each variant keeps its props.
@@ -62,11 +65,22 @@ interface TrainingModeState {
 
 // --- Components ---
 export function UnifiedOverlay() {
+  perfRender('UnifiedOverlay');
+  perfGaugeIpcChannels(['automation:progress', 'plan:approved', 'ws-bridge:message', 'gather:question_batch']);
   // --- Tab State ---
   const [activeTab, setActiveTab] = useState<TabId | 'settings' | 'rules'>('results');
   // Deferred tab value: TabBar highlight uses activeTab (urgent — instant on click),
   // tab content display styles + useDynamicHeight use deferredTab (non-blocking swap).
   const deferredTab = useDeferredValue(activeTab);
+  // Keep-alive tab mounting: a tab's subtree mounts on first visit and stays
+  // mounted afterwards (preserving scroll/filter state). Never-visited tabs
+  // render an empty shell so the measure refs used by useDynamicHeight still
+  // attach — mounting ~9 heavy tabs eagerly was a large part of the startup
+  // layout storm.
+  const [visitedTabs, setVisitedTabs] = useState<ReadonlySet<string>>(() => new Set([deferredTab as string]));
+  useEffect(() => {
+    setVisitedTabs(prev => prev.has(deferredTab) ? prev : new Set(prev).add(deferredTab as string));
+  }, [deferredTab]);
   const [isSlideoutOpen, setIsSlideoutOpen] = useState(false);
   const [isExpanded, setIsExpanded] = useState(false);
   const [unreadTabs, setUnreadTabs] = useState<Set<TabId>>(new Set());
@@ -83,7 +97,9 @@ export function UnifiedOverlay() {
   // --- Prompt Input State ---
   // promptText, promptHistory, terminalHistory, and textareaRef now live in
   // PromptInputBar so typing doesn't re-render the entire overlay.
-  const [highlights, setHighlights] = useState<string[]>([]);
+  // Context-highlight chips live in highlightsStore — PromptInputBar subscribes.
+  // Root reads imperatively (store.get()) so chip add/remove never re-renders
+  // the whole overlay (was the 1-3s drop→chip delay).
   // "Continue Thread" — task discussion pinned as context for the next prompt.
   const [threadContext, setThreadContext] = useState<{ taskId: string; sessionId: string | null; prompt: string; result: string | null } | null>(null);
   const [copyButtonGlowing, setCopyButtonGlowing] = useState(false);
@@ -109,7 +125,8 @@ export function UnifiedOverlay() {
   const historyLoading = useFeedStore(s => s.historyLoading);
   const hasMoreHistory = useFeedStore(s => s.hasMoreHistory);
   const liveRunHidden = useFeedStore(s => s.liveRunHidden);
-  const isDropping = useFeedStore(s => s.isDropping);
+  // isDropping stays in feedStore but the ROOT doesn't subscribe — ResultsContent
+  // subscribes internally so drag enter/leave doesn't re-render this component.
 
   // Setter aliases — same call signatures as the old useState setters so the
   // remaining call sites are untouched. getState() is synchronous, so updater
@@ -152,7 +169,9 @@ export function UnifiedOverlay() {
   const [installPrompt, setInstallPrompt] = useState<InstallPrompt | null>(null);
   const [isInstalling, setIsInstalling] = useState(false);
   const [installOutput, setInstallOutput] = useState<string[]>([]);
-  const [isDragOver, setIsDragOver] = useState(false);
+  // File-drag hover state is imperatively toggled on the ring element below —
+  // no React state (dragover/dragleave/drop would each re-render the root).
+  const dragGlowRingRef = useRef<HTMLDivElement>(null);
   
   // --- Debug Terminal State ---
   const [isDebugMode] = useState(false);
@@ -213,15 +232,9 @@ export function UnifiedOverlay() {
   const isScrolledUpRef = useRef(false); // DOM-coupled mirror for the store.subscribe auto-scroll
 
   // --- Voice session (hidden-Chrome voice bridge via voice-service) ---
-  // active → PromptInputBar swaps the textarea for VoiceBars + transcript line.
-  const [voiceSession, setVoiceSession] = useState<{
-    active: boolean;
-    state: string;      // ready | listening | speaking | processing | idle | error
-    interimText: string;
-    finalText: string;
-    level: number;      // 0..1 mic amplitude
-  }>({ active: false, state: 'idle', interimText: '', finalText: '', level: 0 });
-  const _lastVoiceLevelAtRef = useRef(0);
+  // Lives in voiceSessionStore (external store) — level arrives ~10Hz and
+  // would re-render this entire tree per frame as root state. PromptInputBar
+  // subscribes to the store directly.
   // const [, setPromptTextHeader] = useState('');
   const contentRef = useRef<HTMLDivElement>(null);
   const resultsMeasureRef = useRef<HTMLDivElement>(null);
@@ -256,12 +269,11 @@ export function UnifiedOverlay() {
   // Intent-sound dedup set → feedStore.internal.playedIntentSound.
 
   // --- Dragging State ---
-  const [isDragging, setIsDragging] = useState(false);
+  // Ref-only: drag start/end also toggles body.td-dragging for the cursor —
+  // a React state here re-rendered the whole overlay on every window grab.
   const isDraggingRef = useRef(false);   // Synchronous — safe to read inside ResizeObserver/setTimeout closures
   const isResizingRef = useRef(false);   // True while native window resize handle is active
   const resizeDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const dragOffsetX = useRef(0);
-  const dragOffsetY = useRef(0);
   // Epoch ms until which content-driven resize is suppressed after a manual collapse click.
   const manualCollapseUntilRef = useRef(0);
   // Epoch ms of the last mouseup — keeps resize suppressed briefly after a
@@ -277,8 +289,6 @@ export function UnifiedOverlay() {
   // ~800ms past task end so the response-commit reflow (feed entry commit,
   // live-run card hiding) can't shrink the window right as the answer lands.
   const taskEndedAtRef = useRef(0);
-  const dragRafRef = useRef<number | null>(null);
-  const pendingMoveRef = useRef<{ x: number; y: number } | null>(null);
 
   // Suppress all resize IPC while user is dragging, using the native resize handle,
   // within the brief hold window after a manual collapse via the width toggle, or
@@ -508,7 +518,7 @@ export function UnifiedOverlay() {
       // Reset parent state via startTransition — non-blocking, lets the browser paint
       // the child's cleared text before the parent re-renders.
       startTransition(() => {
-        setHighlights([]);
+        highlightsStore.clear();
         setStreamingResponse('');
         setResultItems([]);
         setSearchSources([]);
@@ -529,7 +539,7 @@ export function UnifiedOverlay() {
     } else {
       // Light reset only: clear chips for the next message + show pending dots
       // for this exchange. The running task's flags stay untouched.
-      setHighlights([]);
+      highlightsStore.clear();
       setIsThinking(true);
     }
 
@@ -675,32 +685,47 @@ export function UnifiedOverlay() {
     // Note: isSubmitting stays true until task completes (handled in all_done)
   }, [isSubmitting, threadContext, appendUserEntry, appendFeedEntry, commitInFlightStream]);
 
-  const handleHighlightRemove = useCallback((index: number) => {
-    setHighlights(prev => prev.filter((_, i) => i !== index));
-  }, []);
+  // (highlight chip removal is handled inside PromptInputBar via highlightsStore)
 
   // --- Drag and Drop ---
+  // dragover fires continuously and dragleave bounces on every child-boundary
+  // crossing — only set state on real enter/leave transitions, or hovering a
+  // file over the panel spams root re-renders + drag-ring repaint right up to
+  // the drop (the 1-3s chip delay).
+  const isFileDragRef = useRef(false);
+  const setDragRing = (on: boolean) => {
+    dragGlowRingRef.current?.classList.toggle('active', on);
+  };
   const handleDragOver = (e: React.DragEvent) => {
     if (e.dataTransfer.types.includes('Files')) {
       e.preventDefault();
       e.stopPropagation();
-      setIsDropping(true);
-      setIsDragOver(true);
+      if (!isFileDragRef.current) {
+        isFileDragRef.current = true;
+        setIsDropping(true);
+        setDragRing(true);
+      }
     }
   };
 
   const handleDragLeave = (e: React.DragEvent) => {
     e.preventDefault();
     e.stopPropagation();
+    // Ignore leaves that just move into a descendant — the drag is still over
+    // the overlay. relatedTarget is null when leaving the window entirely.
+    if (e.relatedTarget instanceof Node && (e.currentTarget as HTMLElement).contains(e.relatedTarget)) return;
+    if (!isFileDragRef.current) return;
+    isFileDragRef.current = false;
     setIsDropping(false);
-    setIsDragOver(false);
+    setDragRing(false);
   };
 
   const handleDrop = (e: React.DragEvent) => {
     e.preventDefault();
     e.stopPropagation();
+    isFileDragRef.current = false;
     setIsDropping(false);
-    setIsDragOver(false);
+    setDragRing(false);
 
     const files = Array.from(e.dataTransfer.files);
     console.log('[File Drop] Dropped files:', files.map(f => ({ name: f.name, type: f.type, path: (f as any).path })));
@@ -712,8 +737,8 @@ export function UnifiedOverlay() {
         const itemText = isDir
           ? `[Folder: ${filePath}]`
           : `[File: ${filePath}]`;
-        if (!highlights.includes(itemText)) {
-          setHighlights((prev) => [...prev, itemText]);
+        if (!highlightsStore.get().includes(itemText)) {
+          highlightsStore.set((prev) => [...prev, itemText]);
         }
       });
     }
@@ -742,14 +767,14 @@ export function UnifiedOverlay() {
           const itemText = isDir
             ? `[Folder: ${filePath}]`
             : `[File: ${filePath}]`;
-          if (!highlights.find(h => h.includes(filePath))) {
-            setHighlights((prev) => [...prev, itemText]);
+          if (!highlightsStore.get().find(h => h.includes(filePath))) {
+            highlightsStore.set((prev) => [...prev, itemText]);
           }
         });
       }
     }
     // Text paste is handled naturally by textarea
-  }, [highlights]);
+  }, []);
 
   // --- Voice Recording ---
   // const toggleRecording = () => {
@@ -940,15 +965,16 @@ export function UnifiedOverlay() {
   const _contextTag = (text: string) => `[Context: ${text.replace(/\s+/g, ' ').trim()}]`;
   const handleIsolateContext = useCallback((text: string) => {
     const tagged = _contextTag(text);
-    setHighlights(prev => prev.includes(tagged)
+    highlightsStore.set(prev => prev.includes(tagged)
       ? prev.filter(h => h !== tagged)          // toggle off — remove chip
       : [...prev, tagged]);
     promptInputBarRef.current?.focus();
   }, []);
   // Row active-state: is this body's [Context:] chip currently in the input bar?
+  // ResultsContent subscribes to the store itself, so this stays fresh per row.
   const isContextActive = useCallback(
-    (text: string) => highlights.includes(_contextTag(text)),
-    [highlights],
+    (text: string) => highlightsStore.get().includes(_contextTag(text)),
+    [],
   );
 
   const handleToggleSlideout = useCallback(() => {
@@ -1007,61 +1033,10 @@ export function UnifiedOverlay() {
   }, []);
 
   // --- Drag to Move Window ---
-  const handleMouseDown = useCallback((e: React.MouseEvent) => {
-    if (e.button !== 0) return; // Only left mouse
-    if (!ipcRenderer) return;
-
-    isDraggingRef.current = true; // Set ref synchronously — readable in any closure immediately
-    setIsDragging(true);
-    const bounds = (e.currentTarget as HTMLElement).getBoundingClientRect();
-    dragOffsetX.current = e.clientX - bounds.left;
-    dragOffsetY.current = e.clientY - bounds.top;
-    console.log('[Drag] Mouse down - starting drag');
-  }, []);
-
-  useEffect(() => {
-    if (!isDragging) return;
-
-    const handleMouseMove = (e: MouseEvent) => {
-      if (!ipcRenderer) return;
-      const newX = Math.round(e.screenX - dragOffsetX.current);
-      const newY = Math.round(e.screenY - dragOffsetY.current);
-      if (!Number.isFinite(newX) || !Number.isFinite(newY)) return;
-      // rAF-throttle: raw mousemove can fire faster than the main process can
-      // apply setPosition — queued IPCs make the window lag then jump to catch
-      // up. Coalesce to one move per frame.
-      pendingMoveRef.current = { x: newX, y: newY };
-      if (dragRafRef.current == null) {
-        dragRafRef.current = requestAnimationFrame(() => {
-          dragRafRef.current = null;
-          const p = pendingMoveRef.current;
-          if (p) ipcRenderer.send('window:move', p);
-        });
-      }
-    };
-
-    const handleMouseUp = () => {
-      // Flush any pending coalesced move so the window ends under the cursor.
-      if (dragRafRef.current != null) { cancelAnimationFrame(dragRafRef.current); dragRafRef.current = null; }
-      const p = pendingMoveRef.current;
-      if (p) { ipcRenderer?.send('window:move', p); pendingMoveRef.current = null; }
-      dragEndedAtRef.current = Date.now(); // post-drag resize suppression window
-      isDraggingRef.current = false; // Clear ref synchronously
-      setIsDragging(false);
-      // Tell main to clamp the panel back into the work area (animated snap-back
-      // if the user dragged it partly off-screen). We don't clamp during
-      // mousemove because that would fight the cursor.
-      ipcRenderer?.send('window:move-done');
-    };
-
-    document.addEventListener('mousemove', handleMouseMove);
-    document.addEventListener('mouseup', handleMouseUp);
-
-    return () => {
-      document.removeEventListener('mousemove', handleMouseMove);
-      document.removeEventListener('mouseup', handleMouseUp);
-    };
-  }, [isDragging]);
+  // Handled natively: the header strip is -webkit-app-region:drag (see
+  // OverlayHeader) and main emits unified:drag-start/drag-end from will-move/
+  // moved. No mousemove→rAF→IPC→setPosition loop — the window tracks the
+  // cursor at OS speed even when the renderer main thread is busy.
 
   // --- IPC Event Listeners ---
   useEffect(() => {
@@ -1426,7 +1401,7 @@ export function UnifiedOverlay() {
 
     // --- Highlights ---
     const handleHighlightsUpdate = (newHighlights: string[]) => {
-      setHighlights(prev => {
+      highlightsStore.set(prev => {
         const combined = [...prev, ...newHighlights];
         // Remove duplicates
         return combined.filter((h, i) => combined.indexOf(h) === i);
@@ -1440,7 +1415,7 @@ export function UnifiedOverlay() {
     };
 
     const handleHighlightsConfirmed = (data: { highlights: string[]; sourceApp?: string }) => {
-      setHighlights(prev => {
+      highlightsStore.set(prev => {
         const combined = [...prev, ...data.highlights];
         return combined.filter((h, i) => combined.indexOf(h) === i);
       });
@@ -1470,35 +1445,27 @@ export function UnifiedOverlay() {
 
     // --- Voice bridge session events (main relays POST /voice.event) ---
     const handleVoiceSession = (data: { active: boolean }) => {
-      setVoiceSession(v => ({
-        ...v,
-        active: !!data?.active,
-        ...(data?.active ? {} : { state: 'idle', interimText: '', finalText: '', level: 0 }),
-      }));
+      voiceSessionStore.setActive(!!data?.active);
     };
     const handleVoiceState = (data: { state: string }) => {
-      setVoiceSession(v => ({ ...v, state: data?.state || 'idle' }));
+      voiceSessionStore.set({ state: data?.state || 'idle' });
     };
     const handleVoiceInterim = (data: { text: string }) => {
-      setVoiceSession(v => ({ ...v, interimText: data?.text || '', state: 'listening' }));
+      voiceSessionStore.set({ interimText: data?.text || '', state: 'listening' });
     };
     const handleVoiceFinal = (data: { text: string }) => {
-      setVoiceSession(v => ({ ...v, interimText: '', finalText: data?.text || '', state: 'processing' }));
+      voiceSessionStore.set({ interimText: '', finalText: data?.text || '', state: 'processing' });
     };
     const handleVoiceLevel = (data: { level: number }) => {
-      // Mic level arrives ~10Hz — throttle re-renders to ~6Hz.
-      const now = Date.now();
-      if (now - _lastVoiceLevelAtRef.current < 150) return;
-      _lastVoiceLevelAtRef.current = now;
-      setVoiceSession(v => ({ ...v, level: data?.level || 0 }));
+      voiceSessionStore.setLevel(data?.level || 0);
     };
 
     // --- File Drop Response ---
     const handleFileDropResult = (data: { highlights: string[] }) => {
       console.log('[File Drop] Received result:', data);
       if (data.highlights) {
-        setHighlights(prev => {
-          const combined = [...prev, ...data.highlights];
+        highlightsStore.set(prev => {
+          const combined = [...prev, ...(data.highlights as string[])];
           return combined.filter((h, i) => combined.indexOf(h) === i);
         });
       }
@@ -2056,6 +2023,18 @@ export function UnifiedOverlay() {
       const h = Math.round(data?.height || 0);
       userPinnedHeightRef.current = h > COLLAPSED_HEIGHT + 4 ? h : 0;
     }, token);
+    // Native window drag (app-region on the header): main emits will-move →
+    // drag-start and moved → drag-end. Drives the grabbing cursor +
+    // resize suppression — no mousemove/rAF/IPC path in the drag loop.
+    ipcRenderer.on('unified:drag-start', () => {
+      isDraggingRef.current = true;
+      document.body.classList.add('td-dragging');
+    }, token);
+    ipcRenderer.on('unified:drag-end', () => {
+      dragEndedAtRef.current = Date.now();
+      isDraggingRef.current = false;
+      document.body.classList.remove('td-dragging');
+    }, token);
     ipcRenderer.on('voice:session', handleVoiceSession, token);
     ipcRenderer.on('voice:state', handleVoiceState, token);
     ipcRenderer.on('voice:interim', handleVoiceInterim, token);
@@ -2213,6 +2192,8 @@ export function UnifiedOverlay() {
       detachFeedIpc();
       ipcRenderer.removeListenerByToken('unified:set-prompt', token);
       ipcRenderer.removeListenerByToken('unified:user-resize', token);
+      ipcRenderer.removeListenerByToken('unified:drag-start', token);
+      ipcRenderer.removeListenerByToken('unified:drag-end', token);
       ipcRenderer.removeListenerByToken('unified:clear', token);
       ipcRenderer.removeListenerByToken('automation:progress', token);
       ipcRenderer.removeListenerByToken('is-streaming', token);
@@ -2408,7 +2389,7 @@ export function UnifiedOverlay() {
     >
       {/* Glow effect for automation mode */}
       <OverlayStyles />
-      <div className={`drag-glow-ring${isDragOver ? ' active' : ''}`} />
+      <div ref={dragGlowRingRef} className="drag-glow-ring" />
       <div className={`prompt-glow-ring${isGlowActive ? ' active' : isThinking ? ' thinking' : ''}`} />
 
       {/* Main Container */}
@@ -2425,7 +2406,6 @@ export function UnifiedOverlay() {
         {/* Header - Two Row Layout */}
         <OverlayHeader
           headerRef={headerRef}
-          isDragging={isDragging}
           isExpanded={isExpanded}
           showCopyButton={hasStreamText}
           isCopied={isCopied}
@@ -2436,7 +2416,6 @@ export function UnifiedOverlay() {
           onToggleWidth={toggleWidth}
           onCopy={handleCopy}
           onClose={handleClose}
-          onMouseDown={handleMouseDown}
           onToggleSlideout={handleToggleSlideout}
           onTabSelect={handleTabSelect}
         />
@@ -2507,7 +2486,6 @@ export function UnifiedOverlay() {
                 thinkingElapsed={thinkingElapsed}
                 isTaskWorking={isTaskWorking}
                 isAutomationMode={isAutomationMode}
-                isDropping={isDropping}
                 installPrompt={installPrompt}
                 isInstalling={isInstalling}
                 installOutput={installOutput}
@@ -2539,7 +2517,7 @@ export function UnifiedOverlay() {
             className="overflow-y-auto overflow-x-hidden px-4 pb-4 flex flex-col gap-2"
             style={{ display: deferredTab === 'queue' ? 'flex' : 'none', height: 'auto', maxHeight: '100%' }}
           >
-              {restartAlert && (
+              {visitedTabs.has('queue') && restartAlert && (
                 <div style={{ marginTop: 12, borderRadius: 9, padding: '10px 14px', backgroundColor: 'rgba(245,158,11,0.07)', border: '1px solid rgba(245,158,11,0.3)', display: 'flex', flexDirection: 'column', gap: 6 }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                     <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#f59e0b" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -2563,13 +2541,13 @@ export function UnifiedOverlay() {
               )}
 
               {/* comms-graph background tasks (concurrent handoffs) — at top */}
-              <QueueTaskList
+              {visitedTabs.has('queue') && <QueueTaskList
                 tasks={commsTasks}
                 onContinueThread={handleContinueThread}
                 onHeightChange={handleQueueHeightChange}
                 focusRequest={queueFocus}
                 onFocusHandled={handleQueueFocusHandled}
-              />
+              />}
             </div>
 
           {/* Cron Tab */}
@@ -2578,12 +2556,12 @@ export function UnifiedOverlay() {
             className="overflow-y-auto overflow-x-hidden p-4"
             style={{ display: deferredTab === 'cron' ? 'block' : 'none', height: 'auto', maxHeight: '100%' }}
           >
-              <CronTab
+              {visitedTabs.has('cron') && <CronTab
                 items={cronItems}
                 onToggle={handleCronToggle}
                 onDelete={handleCronDelete}
                 onRerun={handleCronRerun}
-              />
+              />}
             </div>
 
           {/* Agents Tab */}
@@ -2592,12 +2570,12 @@ export function UnifiedOverlay() {
             className="overflow-y-auto overflow-x-hidden"
             style={{ display: deferredTab === 'agents' ? 'block' : 'none', height: 'auto', maxHeight: '100%' }}
           >
-              <AgentsTab
+              {visitedTabs.has('agents') && <AgentsTab
                 items={agentItems}
                 onRefresh={handleAgentsRefresh}
                 onContentResize={measureNow}
                 modalCardRef={setModalCardEl}
-              />
+              />}
             </div>
 
           {/* Skills Tab */}
@@ -2606,7 +2584,7 @@ export function UnifiedOverlay() {
             className="overflow-y-auto overflow-x-hidden p-4"
             style={{ display: deferredTab === 'skills' ? 'block' : 'none', height: 'auto', maxHeight: '100%' }}
           >
-              <SkillsTab
+              {visitedTabs.has('skills') && <SkillsTab
                 items={skillItems}
                 onSaveSecret={handleSkillsSaveSecret}
                 onOpenCode={handleSkillsOpenCode}
@@ -2619,7 +2597,7 @@ export function UnifiedOverlay() {
                 onRefreshSkills={handleSkillsRefresh}
                 onContentResize={measureNow}
                 modalCardRef={setModalCardEl}
-              />
+              />}
             </div>
 
           {/* Connections Tab */}
@@ -2628,12 +2606,12 @@ export function UnifiedOverlay() {
             className="overflow-y-auto overflow-x-hidden p-4"
             style={{ display: deferredTab === 'connections' ? 'block' : 'none', height: 'auto', maxHeight: '100%' }}
           >
-              <ConnectionsTab
+              {visitedTabs.has('connections') && <ConnectionsTab
                 items={connectionItems}
                 onConnect={handleConnectionsConnect}
                 onDisconnect={handleConnectionsDisconnect}
                 onRefresh={handleConnectionsRefresh}
-              />
+              />}
             </div>
 
           {/* Store Tab — removed (skills now managed in Skills tab) */}
@@ -2651,7 +2629,7 @@ export function UnifiedOverlay() {
             className="overflow-y-auto overflow-x-hidden p-4"
             style={{ display: deferredTab === 'settings' ? 'block' : 'none', height: 'auto', maxHeight: '100%' }}
           >
-              <SettingsTab />
+              {visitedTabs.has('settings') && <SettingsTab />}
             </div>
 
           {/* Rules Tab */}
@@ -2660,7 +2638,7 @@ export function UnifiedOverlay() {
             className="overflow-y-auto overflow-x-hidden p-4"
             style={{ display: deferredTab === 'rules' ? 'block' : 'none', height: 'auto', maxHeight: '100%' }}
           >
-              <RulesManagementPanel />
+              {visitedTabs.has('rules') && <RulesManagementPanel />}
             </div>
 
           {/* Brain Tab — Thought/Trigger engine visibility */}
@@ -2669,11 +2647,11 @@ export function UnifiedOverlay() {
             className="overflow-y-auto overflow-x-hidden px-4 pb-4"
             style={{ display: deferredTab === 'brain' ? 'block' : 'none', height: 'auto', maxHeight: '100%' }}
           >
-              <BrainTab
+              {visitedTabs.has('brain') && <BrainTab
                 thoughts={brainThoughts}
                 onDecide={handleThoughtDecide}
                 onRefresh={handleThoughtsRefresh}
-              />
+              />}
             </div>
 
           {/* Floating scroll-to-bottom button */}
@@ -2690,7 +2668,6 @@ export function UnifiedOverlay() {
                 border: '1px solid rgba(59, 130, 246, 0.45)',
                 color: '#93c5fd',
                 zIndex: 20,
-                backdropFilter: 'blur(4px)',
               }}
               title="Scroll to bottom"
             >
@@ -2714,8 +2691,6 @@ export function UnifiedOverlay() {
         <PromptInputBar
           ref={promptInputBarRef}
           inputBarRef={inputBarRef}
-          highlights={highlights}
-          onHighlightRemove={handleHighlightRemove}
           gatherPending={gatherPending}
           gatherQuestion={gatherQuestion}
           isDebugMode={isDebugMode}
@@ -2729,7 +2704,6 @@ export function UnifiedOverlay() {
           aiActivityPanelRef={aiActivityPanelRef}
           threadContext={threadContext}
           onThreadContextClear={handleThreadContextClear}
-          voiceSession={voiceSession}
         />
       </div>
 

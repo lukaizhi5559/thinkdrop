@@ -3,10 +3,11 @@ import type { RefObject } from 'react';
 import { Favicon } from './DefaultFaviconIcon';
 import { ThinkDropLogo } from './SlideoutDrawer';
 import AutomationProgress, { type RunSummary } from './AutomationProgress';
-import { RichContentRenderer } from './rich-content';
-import { WebResultsGrid, stripItemImageMarkdown } from './rich-content';
+import { WebResultsGrid } from './rich-content';
+import StreamingRichContent from './rich-content/StreamingRichContent';
 import SkillBuildProgress from './SkillBuildProgress';
 import { useFeedStore } from '../state/feedSelectors';
+import { useHighlights } from '../state/highlightsStore';
 
 // --- Shared types (exported for use by UnifiedOverlay) ---
 
@@ -65,7 +66,6 @@ interface ResultsContentProps {
   thinkingElapsed: number;
   isTaskWorking: boolean;
   isAutomationMode: boolean;
-  isDropping: boolean;
   // Install state
   installPrompt: InstallPrompt | null;
   isInstalling: boolean;
@@ -108,7 +108,6 @@ function ResultsContentImpl({
   thinkingElapsed,
   isTaskWorking,
   isAutomationMode,
-  isDropping,
   installPrompt,
   isInstalling,
   installOutput,
@@ -134,6 +133,11 @@ function ResultsContentImpl({
 }: ResultsContentProps) {
   // Hot-path subscriptions live here so per-chunk stream updates re-render
   // only this live region, not the whole overlay (header/tabs/input).
+  // File-drag hover (drop-animate on the feed) — subscribed here so drag
+  // enter/leave doesn't re-render the parent overlay.
+  const isDropping = useFeedStore(s => s.isDropping);
+  // Keeps per-row isContextActive() chip-state fresh (reads highlightsStore).
+  useHighlights();
   const streamingResponse = useFeedStore(s => s.streamText);
   const resultItems = useFeedStore(s => s.resultItems);
   const searchSources = useFeedStore(s => s.searchSources);
@@ -347,10 +351,11 @@ function ResultsContentImpl({
         {streamingResponse && !isAutomationMode && (
           <div className="relative" style={{ overflowX: 'hidden', wordBreak: 'break-word', overflowWrap: 'break-word' }}>
             {resultItems.length > 0 && <WebResultsGrid items={resultItems} />}
-            <RichContentRenderer
-              content={stripItemImageMarkdown(streamingResponse, resultItems)}
-              animated={!isStreaming}
+            <StreamingRichContent
+              content={streamingResponse}
+              streaming={isStreaming}
               className="text-sm"
+              searchResults={resultItems}
             />
             {isStreaming && (
               <span className="inline-block w-1.5 h-4 bg-blue-500 animate-pulse ml-1" />
@@ -435,10 +440,11 @@ function ResultsContentImpl({
                   }}
                 >
                   {resultItems.length > 0 && <WebResultsGrid items={resultItems} />}
-                  <RichContentRenderer
-                    content={stripItemImageMarkdown(streamingResponse, resultItems)}
-                    animated={!isStreaming}
+                  <StreamingRichContent
+                    content={streamingResponse}
+                    streaming={isStreaming}
                     className="text-sm"
+                    searchResults={resultItems}
                   />
                   {isStreaming && (
                     <span className="inline-block w-1.5 h-4 bg-blue-500 animate-pulse ml-1" />

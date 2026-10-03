@@ -12,6 +12,7 @@ import { useEffect, useState, useRef, useCallback } from 'react';
 import { QuestionCard, QuestionBatch, PartialFailureCard, PartialFailureSummary } from './QuestionCard';
 import { Favicon } from './DefaultFaviconIcon';
 import { ipcOn, ipcOff } from '../utils/ipcBus';
+import { perfRender } from '../utils/perfCounters';
 
 const ipcRenderer = (window as any).electron?.ipcRenderer;
 
@@ -916,6 +917,7 @@ function parsePlanStepTitles(content: string): string[] {
 let _apInstanceSeq = 0;
 
 export default function AutomationProgress({ onHeightChange, onActiveChange, onOpenRules, onAskUserShown, setIsSubmitting, onAuthPending, suppressIfScheduled, activeTab, taskId, planFile, onRunSummary, onApplyDraft }: AutomationProgressProps) {
+  perfRender('AutomationProgress');
   const [instanceSeq] = useState(() => ++_apInstanceSeq);
   const [phase, setPhase] = useState<AutomationPhase>('idle');
   const planReviewRef = useRef<HTMLDivElement>(null);
@@ -1262,10 +1264,12 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
     return () => clearTimeout(id);
   }, [questionBatch]);
 
-  // Heartbeat ticker — drives flickering status labels on running steps
+  // Heartbeat ticker — refreshes elapsed-time/status labels on running steps.
+  // 1s granularity is enough for second-scale labels; 200ms re-rendered the
+  // whole instance 5×/s per executing task for no visible benefit.
   useEffect(() => {
     if (phase !== 'executing') return;
-    const id = setInterval(() => setHeartbeatTick(t => t + 1), 200);
+    const id = setInterval(() => setHeartbeatTick(t => t + 1), 1000);
     return () => clearInterval(id);
   }, [phase]);
 
@@ -5130,8 +5134,10 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
                               <span style={{
                                 color: textColor,
                                 fontStyle: isThought ? 'italic' : 'normal',
+                                // Static gradient — an ANIMATED background-clip:text
+                                // re-rasterizes the glyphs every frame (CoreText flood +
+                                // constant paint). Same look, rasterized once.
                                 ...(isChecking ? {
-                                  animation: 'agentGloss 1.5s ease-in-out infinite',
                                   background: 'linear-gradient(90deg, #93c5fd 30%, #c4b5fd 50%, #93c5fd 70%)',
                                   backgroundSize: '200% auto',
                                   WebkitBackgroundClip: 'text',

@@ -5,6 +5,8 @@ import VoiceBars from './VoiceBars';
 import type { RefObject } from 'react';
 import type { AIActivityPanelHandle } from './AIActivityPanel';
 import { BrainIcon } from './QueueTaskCard';
+import { useVoiceSession } from '../state/voiceSessionStore';
+import { useHighlights, highlightsStore } from '../state/highlightsStore';
 
 export interface PromptInputBarHandle {
   setPromptText: (text: string) => void;
@@ -14,9 +16,7 @@ export interface PromptInputBarHandle {
 interface PromptInputBarProps {
   /** Wrapper div ref — observed by useDynamicHeight's ResizeObserver in parent. */
   inputBarRef: RefObject<HTMLDivElement>;
-  /** Highlight chips to display above the textarea. */
-  highlights: string[];
-  onHighlightRemove: (index: number) => void;
+  /** Highlight chips now come from highlightsStore (subscribed internally). */
   /** Gather flow — changes placeholder text. */
   gatherPending: boolean;
   gatherQuestion: string | null;
@@ -41,15 +41,6 @@ interface PromptInputBarProps {
   /** "Continue Thread" — recalled task context pinned for the next prompt. */
   threadContext?: { prompt: string } | null;
   onThreadContextClear?: () => void;
-  /** Voice session — when active, the textarea is replaced by voice bars +
-   *  the live transcript line. */
-  voiceSession?: {
-    active: boolean;
-    state: string;       // ready | listening | speaking | processing | idle | error
-    interimText: string;
-    finalText?: string;
-    level?: number;
-  } | null;
 }
 
 // ── Chip icons (inline SVG — no emojis) ────────────────────────────────────────
@@ -102,8 +93,6 @@ function _promptLabel(p: string): string {
 function PromptInputBarImpl(
   {
     inputBarRef,
-    highlights,
-    onHighlightRemove,
     gatherPending,
     gatherQuestion,
     isDebugMode,
@@ -117,10 +106,18 @@ function PromptInputBarImpl(
     aiActivityPanelRef,
     threadContext,
     onThreadContextClear,
-    voiceSession,
   }: PromptInputBarProps,
   ref: React.Ref<PromptInputBarHandle>,
 ) {
+  // Voice session from the external store — level ticks ~6Hz must not
+  // re-render the parent overlay; this subtree is the only consumer.
+  const voiceSession = useVoiceSession();
+  // Highlight chips from the external store — drop/paste writes re-render ONLY
+  // this subtree, not the whole overlay (was the 1–3s drop→chip delay).
+  const highlights = useHighlights();
+  const onHighlightRemove = useCallback((index: number) => {
+    highlightsStore.set(prev => prev.filter((_, i) => i !== index));
+  }, []);
   // --- Input state (owned by this component so typing doesn't re-render parent) ---
   const [promptText, setPromptText] = useState('');
   const [promptHistory, setPromptHistory] = useState<string[]>([]);

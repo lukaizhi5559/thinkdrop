@@ -7,6 +7,7 @@ import RichContentRenderer from './rich-content/RichContentRenderer';
 import WebResultsGrid from './rich-content/WebResultsGrid';
 import { stripItemImageMarkdown } from './rich-content/itemImages';
 import type { WebResultItem } from './rich-content/WebResultCard';
+import { perfRender } from '../utils/perfCounters';
 
 const ipcRenderer = (window as any).electron?.ipcRenderer;
 
@@ -234,10 +235,17 @@ export function QueueTaskCard({ task, onContinueThread, onHeightChange, flash, o
   /** Results feed only: collapse the card when the run reaches a terminal state. */
   autoCollapseOnSettle?: boolean;
 }) {
+  perfRender('QueueTaskCard');
   const [expanded, setExpanded] = React.useState(false);
   const [headerHover, setHeaderHover] = React.useState(false);
   const [thinkingExpanded, setThinkingExpanded] = React.useState(false);
   const [confirmingDelete, setConfirmingDelete] = React.useState(false);
+  // Lazy-mount the expanded body: mounting AutomationProgress eagerly costs ~4
+  // ipcBus subscriptions + timers per card — with ~50 restored tasks that's
+  // ~200 handlers fanning out on every stream chunk. Terminal cards that were
+  // never expanded mount nothing below the header; once expanded the body
+  // stays mounted (keep-alive) so plan-review/progress state survives collapse.
+  const [hasExpanded, setHasExpanded] = React.useState(false);
   const cfg = TASK_STATUS_CONFIG[task.status] || TASK_STATUS_CONFIG.queued;
   const isActive = task.status === 'running' || task.status === 'queued' || task.status === 'waiting-for-agent' || task.status === 'auth-required' || task.status === 'awaiting-approval' || task.status === 'waiting-for-input';
   const needsAttention = task.status === 'auth-required' || task.status === 'awaiting-approval' || task.status === 'waiting-for-input';
@@ -264,6 +272,7 @@ export function QueueTaskCard({ task, onContinueThread, onHeightChange, flash, o
     lastStatusRef.current = task.status;
     if (isActive || needsAttention) {
       setExpanded(true);
+      setHasExpanded(true);
       notifyHeightChange();
     } else if (autoCollapseOnSettle &&
                (task.status === 'done' || task.status === 'failed' || task.status === 'cancelled')) {
@@ -277,6 +286,7 @@ export function QueueTaskCard({ task, onContinueThread, onHeightChange, flash, o
   React.useEffect(() => {
     if (flash) {
       setExpanded(true);
+      setHasExpanded(true);
       notifyHeightChange();
     }
   }, [flash, notifyHeightChange]);
@@ -293,7 +303,10 @@ export function QueueTaskCard({ task, onContinueThread, onHeightChange, flash, o
   }, [task.status]);
 
   const handleExpand = () => {
-    setExpanded(e => !e);
+    setExpanded(e => {
+      if (!e) setHasExpanded(true);
+      return !e;
+    });
     notifyHeightChange();
   };
   const handleContinueThread = () => { if (onContinueThread) onContinueThread(task); };
@@ -496,29 +509,34 @@ export function QueueTaskCard({ task, onContinueThread, onHeightChange, flash, o
       </div>
 
       {/* ── Expanded section — full AutomationProgress ── */}
-      {/* IMPORTANT: keep AutomationProgress mounted even when collapsed so it
-          preserves state (plan review, preflight cards, step progress).
-          Use display:none instead of conditional rendering. */}
+      {/* AutomationProgress mounts for active tasks (it must track live progress
+          even while collapsed) and stays mounted after the first expand so plan
+          review/preflight/step state survives collapse. Terminal cards that
+          were never expanded mount nothing here — the header already carries
+          the summary, and the static body below renders on first expand. */}
       <div style={{
         display: expanded ? 'block' : 'none',
         borderTop: expanded ? `1px solid ${cfg.border}` : 'none',
         backgroundColor: 'rgba(0,0,0,0.15)',
       }}>
         {/* Inner padding so AutomationProgress/PlanPanel/QuestionCard don't touch edges */}
-        <div style={{ padding: '12px' }}>
-          <AutomationProgress
-            taskId={task.id}
-            planFile={task.status === 'awaiting-approval' ? task.planFile || undefined : undefined}
-            setIsSubmitting={() => {}}
-            onAuthPending={() => {}}
-            activeTab="queue"
-            onHeightChange={notifyHeightChange}
-            onActiveChange={() => {}}
-            onRunSummary={onRunSummary}
-            onApplyDraft={onApplyDraft}
-          />
-        </div>
+        {(isActive || hasExpanded) && (
+          <div style={{ padding: '12px' }}>
+            <AutomationProgress
+              taskId={task.id}
+              planFile={task.status === 'awaiting-approval' ? task.planFile || undefined : undefined}
+              setIsSubmitting={() => {}}
+              onAuthPending={() => {}}
+              activeTab="queue"
+              onHeightChange={notifyHeightChange}
+              onActiveChange={() => {}}
+              onRunSummary={onRunSummary}
+              onApplyDraft={onApplyDraft}
+            />
+          </div>
+        )}
 
+        {hasExpanded && (<>
         {/* Thinking (collapsible, if present) */}
         {task.thinking && (
           <div style={{ margin: '0 12px 8px' }}>
@@ -618,6 +636,7 @@ export function QueueTaskCard({ task, onContinueThread, onHeightChange, flash, o
             </button>
           )}
         </div>
+        </>)}
       </div>
     </div>
   );
@@ -748,8 +767,9 @@ function QueueFilterBar({ search, onSearchChange, open, onToggleOpen, filters, o
       position: 'sticky', top: 0, zIndex: 6,
       // Negative margins bleed the sticky bar to the queue tab's edge (container has px-4)
       margin: '0 -16px',
-      backgroundColor: 'rgba(23,23,23,0.94)',
-      backdropFilter: 'blur(8px)', WebkitBackdropFilter: 'blur(8px)',
+      // No backdrop-filter: the blur resamples + repaints every scroll frame
+      // and every card animation behind it — and this bg is 96% opaque anyway.
+      backgroundColor: 'rgba(23,23,23,0.96)',
       borderBottom: '1px solid rgba(255,255,255,0.06)',
       display: 'flex', flexDirection: 'column', gap: 6, padding: '4px 16px 6px',
     }}>
@@ -930,10 +950,15 @@ export function _QueueTaskList({ tasks, onContinueThread, onHeightChange, focusR
   focusRequest?: { taskId: string; status?: string; nonce: number } | null;
   onFocusHandled?: () => void;
 }) {
+  perfRender('QueueTaskList');
   const [filters, setFilters] = React.useState<QueueFilters>(_loadFilters);
   const [search, setSearch] = React.useState('');
   const [filtersOpen, setFiltersOpen] = React.useState(false);
   const [flashTaskId, setFlashTaskId] = React.useState<string | null>(null);
+  // Render cap — restored journals can carry 50+ tasks; mounting every card at
+  // once stalls the renderer. Show the most recent N and grow on demand.
+  const QUEUE_PAGE = 20;
+  const [visibleCount, setVisibleCount] = React.useState(QUEUE_PAGE);
   const cardRefs = React.useRef<Record<string, HTMLDivElement | null>>({});
   const tasksRef = React.useRef(tasks);
   tasksRef.current = tasks;
@@ -976,6 +1001,9 @@ export function _QueueTaskList({ tasks, onContinueThread, onHeightChange, focusR
     });
     setSearch('');
     setFlashTaskId(taskId);
+    // The target may sit beyond the render cap — grow the window so its card
+    // actually mounts before we try to scroll to it.
+    setVisibleCount(c => Math.max(c, tasksRef.current.length));
     // The queue tab may still be display:none (deferredTab) — scroll after paint.
     // Timers are fire-and-forget: onFocusHandled clears focusRequest, re-running
     // this effect — a cleanup return would cancel the pending scroll/flash.
@@ -993,6 +1021,8 @@ export function _QueueTaskList({ tasks, onContinueThread, onHeightChange, focusR
   const filtered = preStatus
     .filter(t => statusSel === 'all' || statusSel.includes(STATUS_BUCKET_MAP[t.status] || 'in-progress'))
     .sort((a, b) => _eventTs(b) - _eventTs(a));
+
+  const visible = filtered.slice(0, visibleCount);
 
   // Window resize: filter rows expand/collapse + filtered count changes
   React.useEffect(() => {
@@ -1045,11 +1075,28 @@ export function _QueueTaskList({ tasks, onContinueThread, onHeightChange, focusR
             Clear filters
           </button>
         </div>
-      ) : filtered.map(task => (
-        <div key={task.id} ref={el => { cardRefs.current[task.id] = el; }}>
-          <QueueTaskCard task={task} onContinueThread={onContinueThread} onHeightChange={onHeightChange} flash={task.id === flashTaskId} />
-        </div>
-      ))}
+      ) : (<>
+        {visible.map(task => (
+          <div key={task.id} ref={el => { cardRefs.current[task.id] = el; }}>
+            <QueueTaskCard task={task} onContinueThread={onContinueThread} onHeightChange={onHeightChange} flash={task.id === flashTaskId} />
+          </div>
+        ))}
+        {filtered.length > visibleCount && (
+          <button
+            onClick={() => setVisibleCount(c => c + QUEUE_PAGE)}
+            style={{
+              padding: '6px 12px', borderRadius: 6, fontSize: '0.66rem', cursor: 'pointer',
+              alignSelf: 'center',
+              background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.1)',
+              color: '#9ca3af', fontWeight: 500, transition: 'background 0.15s',
+            }}
+            onMouseEnter={e => (e.currentTarget.style.background = 'rgba(255,255,255,0.08)')}
+            onMouseLeave={e => (e.currentTarget.style.background = 'rgba(255,255,255,0.04)')}
+          >
+            Show {Math.min(QUEUE_PAGE, filtered.length - visibleCount)} more of {filtered.length - visibleCount} remaining
+          </button>
+        )}
+      </>)}
     </div>
   );
 }

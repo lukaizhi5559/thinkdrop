@@ -5,7 +5,6 @@ import type { RefObject } from 'react';
 
 interface OverlayHeaderProps {
   headerRef: RefObject<HTMLDivElement>;
-  isDragging: boolean;
   isExpanded: boolean;
   showCopyButton: boolean;
   isCopied: boolean;
@@ -16,14 +15,16 @@ interface OverlayHeaderProps {
   onToggleWidth: () => void;
   onCopy: () => void;
   onClose: () => void;
-  onMouseDown: (e: React.MouseEvent) => void;
   onToggleSlideout: () => void;
   onTabSelect: (tab: TabId | 'settings' | 'rules') => void;
 }
 
+// Interactive children inside an app-region:drag strip must opt out or clicks
+// are swallowed by the native drag.
+const NO_DRAG = { WebkitAppRegion: 'no-drag' } as React.CSSProperties;
+
 function OverlayHeaderImpl({
   headerRef,
-  isDragging,
   isExpanded,
   showCopyButton,
   isCopied,
@@ -34,7 +35,6 @@ function OverlayHeaderImpl({
   onToggleWidth,
   onCopy,
   onClose,
-  onMouseDown,
   onToggleSlideout,
   onTabSelect,
 }: OverlayHeaderProps) {
@@ -42,15 +42,20 @@ function OverlayHeaderImpl({
     <div
       ref={headerRef}
       className="flex flex-col"
-      onMouseDown={onMouseDown}
       style={{
         flexShrink: 0,
-        cursor: isDragging ? 'grabbing' : 'grab',
+        cursor: 'grab', // body.td-dragging flips to grabbing during an OS drag
         userSelect: 'none',
       }}
     >
-      {/* Row 1: Hamburger + Logo (centered) + Action Buttons */}
-      <div className="flex items-center justify-between px-4 py-2 relative">
+      {/* Row 1: Hamburger + Logo (centered) + Action Buttons.
+          OS-level drag region — the window follows the cursor with no
+          mousemove→IPC→setPosition round-trip (previously starved whenever the
+          renderer was busy, = visible drag lag). */}
+      <div
+        className="flex items-center justify-between px-4 py-2 relative"
+        style={{ WebkitAppRegion: 'drag' } as React.CSSProperties}
+      >
         {/* Left: Hamburger Menu */}
         <button
           onClick={(e) => {
@@ -58,7 +63,7 @@ function OverlayHeaderImpl({
             onToggleSlideout();
           }}
           className="w-8 h-8 flex items-center justify-center rounded-md hover:bg-white/10 transition-colors"
-          style={{ color: '#9ca3af' }}
+          style={{ color: '#9ca3af', ...NO_DRAG }}
           title="Menu"
         >
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -83,6 +88,7 @@ function OverlayHeaderImpl({
               backgroundColor: 'rgba(255, 255, 255, 0.1)',
               border: '1px solid rgba(255, 255, 255, 0.2)',
               color: '#9ca3af',
+              ...NO_DRAG,
             }}
             title={isExpanded ? 'Collapse' : 'Expand'}
           >
@@ -114,6 +120,7 @@ function OverlayHeaderImpl({
                 backgroundColor: isCopied ? 'rgba(34, 197, 94, 0.2)' : 'rgba(255, 255, 255, 0.1)',
                 border: '1px solid rgba(255, 255, 255, 0.2)',
                 color: isCopied ? '#22c55e' : '#9ca3af',
+                ...NO_DRAG,
               }}
               title={isCopied ? 'Copied!' : 'Copy response'}
             >
@@ -138,6 +145,7 @@ function OverlayHeaderImpl({
               backgroundColor: 'rgba(255, 255, 255, 0.1)',
               border: '1px solid rgba(255, 255, 255, 0.2)',
               color: '#9ca3af',
+              ...NO_DRAG,
             }}
             title="Close (ESC)"
           >
@@ -146,8 +154,9 @@ function OverlayHeaderImpl({
         </div>
       </div>
 
-      {/* Row 2: TabBar */}
-      <div style={{ flexShrink: 0 }}>
+      {/* Row 2: TabBar — drag on the strip (gaps/margins), no-drag on buttons
+          (each tab button opts out inside TabBar). */}
+      <div style={{ flexShrink: 0, WebkitAppRegion: 'drag' } as React.CSSProperties}>
         <TabBar
           active={activeTab === 'settings' ? 'results' : activeTab as TabId}
           onSelect={(tab) => onTabSelect(tab as TabId | 'settings' | 'rules')}

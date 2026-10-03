@@ -9,6 +9,7 @@
 import { friendlyErrorMessage } from '../components/ResultsFeed';
 import { playDropSound, playIntentSound, playDefaultSound } from '../utils/thinkDropSound';
 import { mapHistoryMessages, oldestMessageCursor, toDisplayPrompt, type FeedStore } from './feedStore.mts';
+import type { CommsTask } from '../components/QueueTaskCard';
 
 const ipcRenderer = (window as any).electron?.ipcRenderer;
 
@@ -271,6 +272,63 @@ export function installFeedIpc(store: FeedStore, ui: FeedIpcUi): () => void {
     }
   };
 
+  // ── Journal restore (batched) ────────────────────────────────────────────
+  // One tasks:restored event replaces the old per-task task:created +
+  // task:complete/task:progress replay — a single setCommsTasks pass instead of
+  // ~2×N IPC events and setStates. Reproduces the restored-* semantics exactly:
+  // populate queue cards only — no sounds, toasts, feed entries, unread badges.
+  const handleTasksRestored = (data: { tasks?: any[] }) => {
+    const list = Array.isArray(data?.tasks) ? data.tasks : [];
+    if (list.length === 0) return;
+    const ACTIONABLE = new Set(['awaiting-approval', 'auth-required', 'waiting-for-input']);
+    const TERMINAL = new Set(['done', 'failed', 'cancelled']);
+    s.setCommsTasks(prev => {
+      const existing = new Set(prev.map(t => t.id));
+      const added = list
+        .filter(j => j?.id && !existing.has(j.id))
+        .map(j => {
+          const hasProgress = !!(j.progress && (j.progress.step > 0 || j.progress.currentStep));
+          // Mirror the old event sequence: created→'queued', then actionable
+          // statuses via task:complete, then progress→'running'. Actionable
+          // wins over a stale progress flag (plan-paused tasks stayed queued
+          // under the old ordering otherwise).
+          const status: any = TERMINAL.has(j.status) ? j.status
+            : ACTIONABLE.has(j.status) ? j.status
+            : hasProgress ? 'running' : 'queued';
+          return {
+            id: j.id,
+            prompt: j.prompt || '',
+            agentId: j.agentId || null,
+            status,
+            createdAt: j.createdAt || Date.now(),
+            startedAt: j.startedAt || null,
+            doneAt: j.doneAt || null,
+            error: j.error || null,
+            progress: hasProgress
+              ? {
+                  step: j.progress.step || 0,
+                  totalSteps: j.progress.totalSteps || 0,
+                  currentStep: j.progress.currentStep || null,
+                  eta: j.progress.eta || null,
+                }
+              : { step: 0, totalSteps: 0, currentStep: null, eta: null },
+            result: j.result || null,
+            thinking: j.thinking || null,
+            sources: j.sources || null,
+            items: j.items || null,
+            intent: 'handoff',
+            source: j.source || 'text',
+            planFile: j.planFile || null,
+            sessionId: j.sessionId || null,
+          } as CommsTask;
+        });
+      return added.length > 0 ? [...prev, ...added] : prev;
+    });
+    for (const j of list) {
+      if (j?.id && j.prompt) s.internal.taskPrompts.set(j.id, j.prompt);
+    }
+  };
+
   const handleTaskProgress = (data: any) => {
     if (!data?.taskId) return;
     s.setCommsTasks(prev => prev.map(t => {
@@ -481,6 +539,7 @@ export function installFeedIpc(store: FeedStore, ui: FeedIpcUi): () => void {
   ipcRenderer.on('ws-bridge:message', handleWsMessage, token);
   ipcRenderer.on('search:sources', handleSearchSources, token);
   ipcRenderer.on('conversation:list', handleConversationList, token);
+  ipcRenderer.on('tasks:restored', handleTasksRestored, token);
   ipcRenderer.on('task:created', handleTaskCreated, token);
   ipcRenderer.on('task:progress', handleTaskProgress, token);
   ipcRenderer.on('task:complete', handleTaskComplete, token);
@@ -491,6 +550,7 @@ export function installFeedIpc(store: FeedStore, ui: FeedIpcUi): () => void {
     ipcRenderer.removeListenerByToken('ws-bridge:message', token);
     ipcRenderer.removeListenerByToken('search:sources', token);
     ipcRenderer.removeListenerByToken('conversation:list', token);
+    ipcRenderer.removeListenerByToken('tasks:restored', token);
     ipcRenderer.removeListenerByToken('task:created', token);
     ipcRenderer.removeListenerByToken('task:progress', token);
     ipcRenderer.removeListenerByToken('task:complete', token);

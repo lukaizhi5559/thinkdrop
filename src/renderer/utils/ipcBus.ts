@@ -48,3 +48,8 @@ export function ipcOn(channel: string, token: string, handler: IpcHandler): void
 export function ipcOff(channel: string, token: string): void {
   _handlers.get(channel)?.delete(token);
 }
+
+/** Diagnostics — live per-token handler count for a channel (TD_PERF). */
+export function ipcHandlerCount(channel: string): number {
+  return _handlers.get(channel)?.size ?? 0;
+}

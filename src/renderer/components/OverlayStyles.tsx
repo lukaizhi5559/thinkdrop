@@ -31,13 +31,15 @@ export function OverlayStyles() {
         animation: drop-in 0.45s cubic-bezier(0.22, 1, 0.36, 1) forwards;
         transform-origin: top center;
       }
+      /* Rings are permanently mounted — animation lives ONLY on the state
+         classes below, never the base class. An invisible ring must not run a
+         60fps conic-gradient repaint (opacity:0 does not stop CSS animations). */
       .prompt-glow-ring {
         position: absolute;
         inset: -1px;
         border-radius: 13px;
         padding: 1.5px;
         background: conic-gradient(from var(--prompt-angle), transparent 65%, #3b82f6 82%, #60a5fa 88%, #3b82f6 94%, transparent);
-        animation: prompt-border-sweep 2.4s linear infinite;
         -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
         -webkit-mask-composite: xor;
         mask-composite: exclude;
@@ -47,6 +49,7 @@ export function OverlayStyles() {
         transition: opacity 0.4s ease;
       }
       .prompt-glow-ring.active {
+        animation: prompt-border-sweep 2.4s linear infinite;
         opacity: 1;
       }
       .prompt-glow-ring.ptt {
@@ -71,7 +74,6 @@ export function OverlayStyles() {
         border-radius: 8px;
         padding: 2px;
         background: conic-gradient(from var(--prompt-angle), transparent 60%, #ef4444 78%, #f87171 86%, #ef4444 93%, transparent);
-        animation: prompt-border-sweep 1.4s linear infinite;
         -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
         -webkit-mask-composite: xor;
         mask-composite: exclude;
@@ -81,6 +83,7 @@ export function OverlayStyles() {
         transition: opacity 0.2s ease;
       }
       .cancel-glow-ring.active {
+        animation: prompt-border-sweep 1.4s linear infinite;
         opacity: 1;
       }
       .drag-glow-ring {
@@ -89,7 +92,6 @@ export function OverlayStyles() {
         border-radius: 13px;
         padding: 2px;
         background: conic-gradient(from var(--prompt-angle), transparent 60%, #3b82f6 75%, #60a5fa 85%, #3b82f6 95%, transparent);
-        animation: prompt-border-sweep 1.5s linear infinite;
         -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
         -webkit-mask-composite: xor;
         mask-composite: exclude;
@@ -99,6 +101,7 @@ export function OverlayStyles() {
         transition: opacity 0.3s ease;
       }
       .drag-glow-ring.active {
+        animation: prompt-border-sweep 1.5s linear infinite;
         opacity: 1;
       }
     `}</style>

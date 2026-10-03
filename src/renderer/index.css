@@ -16,7 +16,11 @@ body {
   margin: 0;
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen',
     'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue',
-    sans-serif;
+    'Apple Color Emoji', 'Segoe UI Symbol',
+    /* Symbol coverage for ▸▾▴⟳✓✗ chevrons — without a local match Chromium
+       falls back to .CJKSymbolsFallbackSC and logs a CoreText warning on every
+       text rasterization (was the repeated warning flood in main.log). */
+    'Apple Symbols', 'Hiragino Sans', 'Arial Unicode MS', sans-serif;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
@@ -85,19 +89,27 @@ body {
   }
 }
 
+/* Keep the pulse transform-only — animating box-shadow forces a repaint every
+   frame for the whole time the button glows (which is whenever the clipboard
+   has content). A compositor-only scale pulse reads the same at 28px. */
 @keyframes copy-button-pulse {
   0%, 100% {
     transform: scale(1);
-    box-shadow: 0 0 6px rgba(59, 130, 246, 0.3);
   }
   50% {
     transform: scale(1.12);
-    box-shadow: 0 0 16px rgba(59, 130, 246, 0.65);
   }
 }
 
 .copy-button-glowing {
   animation: copy-button-pulse 1.2s ease-in-out infinite;
+}
+
+/* Set by unified:drag-start/end while the OS-level window drag is active —
+   drives the grabbing cursor without a React re-render. */
+body.td-dragging,
+body.td-dragging * {
+  cursor: grabbing !important;
 }
 
 @keyframes spin {

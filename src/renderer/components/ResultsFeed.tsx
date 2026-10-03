@@ -4,6 +4,8 @@ import { Favicon } from './DefaultFaviconIcon';
 import { ThinkDropLogo } from './SlideoutDrawer';
 import { RichContentRenderer } from './rich-content';
 import { WebResultsGrid, stripItemImageMarkdown } from './rich-content';
+import StreamingRichContent from './rich-content/StreamingRichContent';
+import { perfRender } from '../utils/perfCounters';
 import { StepIcon, SkillBadge, SkillIcon } from './AutomationProgress';
 import type { RunSummary } from './AutomationProgress';
 import { QueueTaskCard, BrainIcon } from './QueueTaskCard';
@@ -462,9 +464,10 @@ const FeedEntryRow = React.memo(function FeedEntryRow({
               return entry.text ? (
                 // Pending ack (e.g. "Let me find you a solid answer on that.") —
                 // stays visible above the run card until settlePendingAssistant
-                // swaps in the real answer.
+                // swaps in the real answer. Streaming path: synth-diverted
+                // chunks patch this text per frame — blocks parse once.
                 <div>
-                  <RichContentRenderer content={entry.text} className="text-sm" onFileLinkClick={onOpenPath} />
+                  <StreamingRichContent content={entry.text} streaming className="text-sm" onFileLinkClick={onOpenPath} />
                   {working && <PendingDots />}
                 </div>
               ) : (
@@ -767,6 +770,7 @@ function ResultsFeedImpl({
   isContextActive,
   children,
 }: ResultsFeedProps) {
+  perfRender('ResultsFeed');
   // Manually-toggled run cards; default = expanded while active, collapsed when
   // the run settles (done/failed/cancelled).
   const [toggledRuns, setToggledRuns] = useState<Set<string>>(new Set());
@@ -782,6 +786,19 @@ function ResultsFeedImpl({
   );
   const historyEntries = splitIdx >= 0 ? grouped.slice(0, splitIdx) : grouped;
   const currentEntries = splitIdx >= 0 ? grouped.slice(splitIdx) : [];
+
+  // Run-card lookup sets — one O(n) pass instead of an O(n) scan per entry.
+  const { runTaskIds, runExchangeIds } = useMemo(() => {
+    const taskIds = new Set<string>();
+    const exchangeIds = new Set<string>();
+    for (const e of grouped) {
+      if (e.kind === 'run') {
+        if (e.taskId) taskIds.add(e.taskId);
+        if (e.exchangeId != null) exchangeIds.add(e.exchangeId);
+      }
+    }
+    return { runTaskIds: taskIds, runExchangeIds: exchangeIds };
+  }, [grouped]);
 
   const toggleRun = (id: string) => {
     setToggledRuns(prev => {
@@ -803,10 +820,9 @@ function ResultsFeedImpl({
     const eTaskId = (entry.kind === 'assistant' || entry.kind === 'run') ? entry.taskId : undefined;
     // A run card in the same task/exchange is the progress indicator — its
     // presence suppresses pending dots on the exchange's ack bubble.
-    const hasRunCard = grouped.some(e =>
-      e.kind === 'run' && (
-        (eTaskId && e.taskId === eTaskId) ||
-        (entry.exchangeId != null && e.exchangeId === entry.exchangeId)));
+    const hasRunCard =
+      (!!eTaskId && runTaskIds.has(eTaskId)) ||
+      (entry.exchangeId != null && runExchangeIds.has(entry.exchangeId));
     return (
     <FeedEntryRow
       key={entry.id}

@@ -322,11 +322,12 @@ export function TabBar({ active, onSelect, queueCount, cronCount, unreadTabs }: 
               borderBottom: isActive ? `2px solid ${tab.activeColor}` : '2px solid transparent',
               marginBottom: -1,
               color: isActive ? tab.activeColor : '#abafb8',
+              WebkitAppRegion: 'no-drag', // tab clicks inside the header drag region
               fontSize: '0.65rem', fontWeight: isActive ? 600 : 400,
               transition: 'all 0.15s',
               position: 'relative',
               whiteSpace: 'nowrap', flex: '1 1 0', justifyContent: 'center', minWidth: 0,
-            }}
+            } as React.CSSProperties}
             title={tab.label}
           >
             {tab.icon}
@@ -2283,7 +2284,9 @@ export function BrainTab({ thoughts, onDecide, onRefresh }: {
     <div style={{ display: 'flex', flexDirection: 'column', gap: 7 }}>
       <div style={{
         position: 'sticky', top: 0, zIndex: 2,
-        backgroundColor: 'rgba(17,17,24,0.92)', backdropFilter: 'blur(10px)',
+        // No backdrop-filter — resamples+repaints on every frame of content
+        // scrolling beneath it; the bg is already ~96% opaque.
+        backgroundColor: 'rgba(17,17,24,0.96)',
         paddingTop: 8, paddingBottom: 6,
         display: 'flex', flexDirection: 'column', gap: 7,
       }}>

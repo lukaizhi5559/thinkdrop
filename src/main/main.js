@@ -56,8 +56,11 @@ function safeSend(win, channel, ...args) {
 
 // Unified window IPC send — sends to unifiedWindow if available, otherwise falls back to old windows
 function safeSendUnified(channel, ...args) {
-  // Trace the exact ordering of stream-related messages so doubling can be diagnosed.
-  if (channel === 'ws-bridge:message' || channel === 'unified:set-prompt') {
+  // Trace the exact ordering of stream-related messages so doubling can be
+  // diagnosed. Gated: per-chunk logging at stream rates floods main.log and
+  // costs a format+write per token. Enable with TD_IPC_TRACE=1.
+  if (process.env.TD_IPC_TRACE === '1'
+      && (channel === 'ws-bridge:message' || channel === 'unified:set-prompt')) {
     const msg = args[0];
     const textPreview = msg?.text ? `"${String(msg.text).substring(0, 30).replace(/\n/g, '\\n')}${msg.text.length > 30 ? '...' : ''}"` : '';
     console.log(`[SEND→UNIFIED] ch=${channel} type=${msg?.type || 'n/a'} textLen=${msg?.text?.length ?? 0} lane=${msg?.lane || ''} ${textPreview}`);
@@ -625,71 +628,48 @@ async function _commsGet(urlPath) {
 }
 
 // Restore persisted tasks from comms-graph journal to the frontend queue on startup.
-// Fetches GET /tasks and emits task:created + task:complete for each persisted task.
+// Fetches GET /tasks and emits ONE tasks:restored event with a bounded list —
+// all non-terminal tasks plus the most recent terminal ones. The previous
+// per-task task:created/task:complete replay produced ~2×N IPC events and one
+// React setState each; a single batch is one render pass.
 // Returns true when the journal was reachable (even if empty), false on failure.
+const QUEUE_RESTORE_TERMINAL_CAP = 15;
 async function restoreQueueFromJournal() {
   try {
     const resp = await _commsGet('/tasks');
     const tasks = resp?.tasks || [];
     if (tasks.length === 0) return true;
-    console.log(`[QueueRestore] Restoring ${tasks.length} tasks from journal`);
-    for (const t of tasks) {
-      // `restored: true` tells the renderer these are historical events replayed
-      // from the journal on startup — populate queue cards but skip side effects
-      // (sounds, toasts, response-panel overwrite, unread badges).
-      safeSendUnified('task:created', {
-        taskId: t.id,
+    const TERMINAL = ['done', 'failed', 'cancelled'];
+    const active = tasks.filter(t => !TERMINAL.includes(t.status));
+    const terminal = tasks
+      .filter(t => TERMINAL.includes(t.status))
+      .sort((a, b) => (b.doneAt || b.createdAt || 0) - (a.doneAt || a.createdAt || 0))
+      .slice(0, QUEUE_RESTORE_TERMINAL_CAP);
+    const restored = [...active, ...terminal];
+    console.log(`[QueueRestore] Restoring ${restored.length} of ${tasks.length} journal tasks (${active.length} active, ${terminal.length} terminal)`);
+    // `restored: true` semantics live in the renderer handler — it populates
+    // queue cards but skips side effects (sounds, toasts, unread badges).
+    safeSendUnified('tasks:restored', {
+      tasks: restored.map(t => ({
+        id: t.id,
         prompt: t.prompt || '',
-        agentId: t.agentId,
+        agentId: t.agentId || null,
+        status: t.status || 'queued',
         source: t.source || 'text',
         createdAt: t.createdAt || Date.now(),
         startedAt: t.startedAt || null,
+        doneAt: t.doneAt || null,
+        result: t.result || null,
+        error: t.error || null,
+        items: t.items || null,
+        sources: t.sources || null,
+        thinking: t.thinking || null,
         sessionId: t.sessionId || null,
-        restored: true,
-      });
-      // Emit completion for terminal tasks so the card shows the final state
-      const isTerminal = ['done', 'failed', 'cancelled'].includes(t.status);
-      if (isTerminal) {
-        safeSendUnified('task:complete', {
-          taskId: t.id,
-          status: t.status,
-          answer: t.result || null,
-          error: t.error || null,
-          prompt: t.prompt || '',
-          items: t.items || null,
-          sessionId: t.sessionId || null,
-          planFile: t.planFile || null,
-          // Persisted timestamps so the card shows the real age, not restore time
-          startedAt: t.startedAt || null,
-          doneAt: t.doneAt || null,
-          restored: true,
-        });
-      } else {
-        // Non-terminal but user-actionable statuses — restore status + planFile
-        // so e.g. a persisted awaiting-approval card shows its review UI again
-        if (t.status === 'awaiting-approval' || t.status === 'auth-required' || t.status === 'waiting-for-input') {
-          safeSendUnified('task:complete', {
-            taskId: t.id,
-            status: t.status,
-            prompt: t.prompt || '',
-            sessionId: t.sessionId || null,
-            planFile: t.planFile || null,
-            restored: true,
-          });
-        }
-        // Active task — emit progress if available
-        if (t.progress && (t.progress.step > 0 || t.progress.currentStep)) {
-          safeSendUnified('task:progress', {
-            taskId: t.id,
-            step: t.progress.step,
-            totalSteps: t.progress.totalSteps,
-            node: t.progress.currentStep,
-            restored: true,
-          });
-        }
-      }
-    }
-    console.log(`[QueueRestore] Done — restored ${tasks.length} tasks`);
+        planFile: t.planFile || null,
+        progress: t.progress || null,
+      })),
+    });
+    console.log('[QueueRestore] Done');
     return true;
   } catch (err) {
     console.warn(`[QueueRestore] Failed: ${err.message}`);
@@ -2469,6 +2449,36 @@ let _preExpandBounds = null;
 let _lastUserResizeSentAt = 0;
 let _userResizeSendTimer = null;
 
+// Timestamp of the last programmatic setBounds/setPosition on unifiedWindow.
+// will-move can also fire for programmatic moves — we must not treat those as
+// user drags (would flip _userHasMovedPanel and change the anchor behavior).
+let _lastProgrammaticMoveAt = 0;
+
+// Snap the panel back into the primary display's work area (animated).
+// Used on drag end ('moved' event) — we deliberately do not clamp during a
+// drag because that fights the cursor.
+function clampUnifiedWindowToWorkArea() {
+  if (!unifiedWindow || unifiedWindow.isDestroyed()) return;
+  const primaryDisplay = screen.getPrimaryDisplay();
+  const { width: screenWidth, height: screenHeight } = primaryDisplay.workAreaSize;
+  const margin = UNIFIED_MARGIN;
+  const topMargin = UNIFIED_TOP_MARGIN;
+  const usableMaxH = Math.max(UNIFIED_COLLAPSED_HEIGHT, screenHeight - topMargin - margin);
+  const maxH = Math.min(UNIFIED_ABSOLUTE_MAX_HEIGHT, usableMaxH);
+  const b = unifiedWindow.getBounds();
+  const clampedW = b.width;
+  const clampedH = Math.min(Math.max(b.height, UNIFIED_COLLAPSED_HEIGHT), maxH);
+  const clampedX = Math.max(margin, Math.min(b.x, screenWidth - clampedW - margin));
+  const clampedY = Math.max(topMargin, Math.min(b.y, screenHeight - clampedH - margin));
+  if (clampedX !== b.x || clampedY !== b.y || clampedH !== b.height) {
+    _lastProgrammaticMoveAt = Date.now();
+    unifiedWindow.setBounds(
+      { x: Math.round(clampedX), y: Math.round(clampedY), width: Math.round(clampedW), height: Math.round(clampedH) },
+      true
+    );
+  }
+}
+
 // Apply size + position to the unified overlay using quadrant-aware anchoring.
 //   contentHeight: desired total window height (renderer-measured). Falls back to collapsed.
 //   width:         desired window width. Falls back to current width, then UNIFIED_MIN_WIDTH.
@@ -2511,6 +2521,7 @@ function applyUnifiedBounds({ contentHeight, width, animate = true, saveBounds =
     const rH = Math.min(Math.max(restored.height, minH), maxH);
     const rX = Math.max(margin, Math.min(restored.x, screenWidth - rW - margin));
     const rY = Math.max(topMargin, Math.min(restored.y, screenHeight - rH - margin));
+    _lastProgrammaticMoveAt = Date.now();
     unifiedWindow.setBounds(
       { x: Math.round(rX), y: Math.round(rY), width: Math.round(rW), height: Math.round(rH) },
       animate
@@ -2542,6 +2553,7 @@ function applyUnifiedBounds({ contentHeight, width, animate = true, saveBounds =
     newX = Math.max(margin, Math.min(bounds.x, screenWidth - clampedW - margin));
   }
 
+  _lastProgrammaticMoveAt = Date.now();
   unifiedWindow.setBounds(
     { x: Math.round(newX), y: Math.round(newY), width: Math.round(clampedW), height: Math.round(clampedH) },
     animate
@@ -3310,7 +3322,10 @@ function createUnifiedWindow() {
     minimizable: false,
     maximizable: false,
     closable: true,
-    hasShadow: true,
+    // Off: a live window shadow on a transparent always-on-top panel re-renders
+    // on every move/resize frame — measurable drag cost, near-invisible against
+    // the 95%-opaque dark panel. Re-enable if the edge reads wrong.
+    hasShadow: false,
     show: false,
     focusable: true,
     // 'panel' type suppresses the macOS native OS focus ring on transparent frameless windows
@@ -3344,6 +3359,28 @@ function createUnifiedWindow() {
       if (_userResizeSendTimer) clearTimeout(_userResizeSendTimer);
       _userResizeSendTimer = setTimeout(send, 110);
     }
+  });
+
+  // Native (-webkit-app-region: drag) window moves. will-move marks the panel
+  // as user-positioned (quadrant anchoring from then on) and tells the
+  // renderer to suppress content-driven resizes while dragging; 'moved' fires
+  // on drag end → clear the flag + snap back inside the work area.
+  // will-move can also fire for our own setBounds/setPosition — ignore those
+  // via the _lastProgrammaticMoveAt timestamp so programmatic moves don't
+  // silently flip the panel to user-dragged anchoring.
+  unifiedWindow.on('will-move', () => {
+    if (Date.now() - _lastProgrammaticMoveAt < 400) return;
+    _userHasMovedPanel = true;
+    safeSendUnified('unified:drag-start');
+  });
+
+  unifiedWindow.on('moved', () => {
+    // Always clear the renderer's drag flag — a missed drag-end would leave
+    // resize suppression stuck on forever. Only skip the snap-back clamp when
+    // this 'moved' was actually our own programmatic setBounds finishing.
+    safeSendUnified('unified:drag-end');
+    if (Date.now() - _lastProgrammaticMoveAt < 400) return;
+    clampUnifiedWindowToWorkArea();
   });
 
   const isDev = process.env.NODE_ENV === 'development';
@@ -8975,24 +9012,7 @@ app.whenReady().then(async () => {
   // We deliberately do NOT clamp during `window:move` (mousemove) because that
   // would fight the cursor; instead we snap back once the user releases.
   ipcMain.on('window:move-done', () => {
-    if (!unifiedWindow || unifiedWindow.isDestroyed()) return;
-    const primaryDisplay = screen.getPrimaryDisplay();
-    const { width: screenWidth, height: screenHeight } = primaryDisplay.workAreaSize;
-    const margin = UNIFIED_MARGIN;
-    const topMargin = UNIFIED_TOP_MARGIN;
-    const usableMaxH = Math.max(UNIFIED_COLLAPSED_HEIGHT, screenHeight - topMargin - margin);
-    const maxH = Math.min(UNIFIED_ABSOLUTE_MAX_HEIGHT, usableMaxH);
-    const b = unifiedWindow.getBounds();
-    const clampedW = b.width;
-    const clampedH = Math.min(Math.max(b.height, UNIFIED_COLLAPSED_HEIGHT), maxH);
-    const clampedX = Math.max(margin, Math.min(b.x, screenWidth - clampedW - margin));
-    const clampedY = Math.max(topMargin, Math.min(b.y, screenHeight - clampedH - margin));
-    if (clampedX !== b.x || clampedY !== b.y || clampedH !== b.height) {
-      unifiedWindow.setBounds(
-        { x: Math.round(clampedX), y: Math.round(clampedY), width: Math.round(clampedW), height: Math.round(clampedH) },
-        true
-      );
-    }
+    clampUnifiedWindowToWorkArea();
   });
 
   ipcMain.on('results-window:close', () => {
