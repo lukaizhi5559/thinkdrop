@@ -24,14 +24,10 @@ interface PromptInputBarProps {
   isDebugMode: boolean;
   /** Submit/cancel button state. */
   isSubmitting: boolean;
-  /** Copy capture button glow state. */
-  copyButtonGlowing: boolean;
   /** Paste handler — parent owns highlights state. */
   onPaste: (e: React.ClipboardEvent) => void;
   /** File attach button. */
   onAttachClick: () => void;
-  /** Copy capture button click. */
-  onCopyClick: () => void;
   /** Cancel automation. */
   onCancel: () => void;
   /** Submit callback — receives text + current highlights + gatherPending. */
@@ -97,10 +93,8 @@ function PromptInputBarImpl(
     gatherQuestion,
     isDebugMode,
     isSubmitting,
-    copyButtonGlowing,
     onPaste,
     onAttachClick,
-    onCopyClick,
     onCancel,
     onSubmit,
     aiActivityPanelRef,
@@ -409,33 +403,6 @@ function PromptInputBarImpl(
           >
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
               <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48" />
-            </svg>
-          </button>
-
-          {/* Copy Button — pulses when text is highlighted (detected via mouse drag) */}
-          <button
-            id="copy-capture-button"
-            onClick={copyButtonGlowing ? onCopyClick : undefined}
-            title={copyButtonGlowing ? 'Click to save highlighted text as a copy file' : 'Highlight text to activate'}
-            className={copyButtonGlowing ? 'copy-button-glowing' : ''}
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              width: '36px',
-              height: '36px',
-              borderRadius: '8px',
-              backgroundColor: copyButtonGlowing ? 'rgba(59,130,246,0.25)' : 'rgba(255,255,255,0.05)',
-              border: '1px solid',
-              borderColor: copyButtonGlowing ? 'rgba(59,130,246,0.5)' : 'rgba(255,255,255,0.1)',
-              color: copyButtonGlowing ? '#93c5fd' : '#abafb8',
-              cursor: copyButtonGlowing ? 'pointer' : 'default',
-              transition: 'background-color 0.2s, border-color 0.2s, color 0.2s',
-            }}
-          >
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
-              <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
             </svg>
           </button>
 

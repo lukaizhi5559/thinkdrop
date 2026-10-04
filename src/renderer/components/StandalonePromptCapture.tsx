@@ -15,7 +15,7 @@ interface InstalledSkill {
 export default function StandalonePromptCapture() {
   const [promptText, setPromptText] = useState('');
   const [highlights, setHighlights] = useState<string[]>([]);
-  const [copyButtonGlowing, setCopyButtonGlowing] = useState(false);
+  const [selectionArmed, setSelectionArmed] = useState(false);
   const [isDragOver, setIsDragOver] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -45,9 +45,10 @@ export default function StandalonePromptCapture() {
   const [confirmDeleteSkill, setConfirmDeleteSkill] = useState<string | null>(null);
   const [deleteError, setDeleteError] = useState<string | null>(null);
 
-  const handleAddHighlight = (_event: any, text: string) => {
+  const handleAddHighlight = (text: string) => {
+    if (!text) return;
     console.log('📥 [STANDALONE_PROMPT] Received highlight:', text);
-    
+
     setHighlights(prev => {
       if (prev.includes(text)) {
         console.log('⏭️ [STANDALONE_PROMPT] Duplicate highlight ignored');
@@ -62,7 +63,7 @@ export default function StandalonePromptCapture() {
   useEffect(() => {
     if (!ipcRenderer) return;
 
-    const handleShow = (_event: any, data: { position?: { x: number; y: number } }) => {
+    const handleShow = (data: { position?: { x: number; y: number } }) => {
       console.log('📥 [STANDALONE_PROMPT] Window shown at position:', data?.position);
       
       setHighlights([]);
@@ -74,16 +75,16 @@ export default function StandalonePromptCapture() {
       }, 300);
     };
 
-    const handleProgress = (_event: any, data: any) => {
+    const handleProgress = (data: any) => {
       if (data?.type === 'all_done') setIsProcessing(false);
     };
 
-    const handleBridgeMessage = (_event: any, msg: any) => {
+    const handleBridgeMessage = (msg: any) => {
       if (msg?.type === 'done' || msg?.type === 'llm_stream_end') setIsProcessing(false);
     };
 
     // Voice inject: clear textarea + show processing ring. Do NOT populate the text input.
-    const handleVoiceInjectPrompt = (_event: any) => {
+    const handleVoiceInjectPrompt = () => {
       playThinkDropSound();
       setPromptText('');
       setHighlights([]);
@@ -95,12 +96,12 @@ export default function StandalonePromptCapture() {
       setIsProcessing(false);
     };
 
-    const handleSkillListResponse = (_event: any, { skills: list }: { skills: InstalledSkill[] }) => {
+    const handleSkillListResponse = ({ skills: list }: { skills: InstalledSkill[] }) => {
       setSkills(list || []);
       setSkillsLoading(false);
     };
 
-    const handleSkillDeleteResponse = (_event: any, { ok, name, error }: { ok: boolean; name?: string; error?: string }) => {
+    const handleSkillDeleteResponse = ({ ok, name, error }: { ok: boolean; name?: string; error?: string }) => {
       setDeletingSkill(null);
       if (ok && name) {
         setSkills(prev => prev.filter(s => s.name !== name));
@@ -112,10 +113,10 @@ export default function StandalonePromptCapture() {
 
     // needs_skill auto-trigger: skill:store-trigger is now handled by ResultsWindow
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    const handleSkillStoreTrigger = (_event: any, _data: any) => {};
+    const handleSkillStoreTrigger = (_data: any) => {};
 
     // gatherContext active: route submit to gather:answer instead of stategraph:process
-    const handleGatherPending = (_event: any, { active, question }: { active: boolean; question?: string | null }) => {
+    const handleGatherPending = ({ active, question }: { active: boolean; question?: string | null }) => {
       setGatherPending(active);
       setGatherQuestion(active && question ? question : null);
     };
@@ -125,9 +126,15 @@ export default function StandalonePromptCapture() {
       setIsProcessing(false);
     };
 
-    // Copy button glow — main process sends this when text is highlighted
-    const handleCopyButtonGlow = (_event: any, glowing: boolean) => {
-      setCopyButtonGlowing(!!glowing);
+    // Selection context — main arms/disarms this when text is highlighted
+    const handleSelectionArmed = (data: { armed?: boolean }) => {
+      setSelectionArmed(!!data?.armed);
+    };
+
+    // A newer selection superseded the auto-captured chip — pull it out.
+    const handleChipRemove = (data: { text?: string }) => {
+      if (!data?.text) return;
+      setHighlights(prev => prev.filter(h => h !== data.text));
     };
 
     ipcRenderer.on('prompt-capture:show', handleShow, SPC_TOKEN);
@@ -141,7 +148,8 @@ export default function StandalonePromptCapture() {
     ipcRenderer.on('skill:store-trigger', handleSkillStoreTrigger, SPC_TOKEN);
     ipcRenderer.on('queue:started', handleQueueStarted, SPC_TOKEN);
     ipcRenderer.on('gather:pending', handleGatherPending, SPC_TOKEN);
-    ipcRenderer.on('copy-button:glow', handleCopyButtonGlow, SPC_TOKEN);
+    ipcRenderer.on('selection:armed', handleSelectionArmed, SPC_TOKEN);
+    ipcRenderer.on('selection:chip-remove', handleChipRemove, SPC_TOKEN);
 
     return () => {
       if (ipcRenderer.removeListenerByToken) {
@@ -156,7 +164,8 @@ export default function StandalonePromptCapture() {
         ipcRenderer.removeListenerByToken('skill:store-trigger', SPC_TOKEN);
         ipcRenderer.removeListenerByToken('queue:started', SPC_TOKEN);
         ipcRenderer.removeListenerByToken('gather:pending', SPC_TOKEN);
-        ipcRenderer.removeListenerByToken('copy-button:glow', SPC_TOKEN);
+        ipcRenderer.removeListenerByToken('selection:armed', SPC_TOKEN);
+        ipcRenderer.removeListenerByToken('selection:chip-remove', SPC_TOKEN);
       }
     };
   }, []);
@@ -336,7 +345,7 @@ export default function StandalonePromptCapture() {
     };
 
     // IPC: transcript comes back from main.js after Whisper STT
-    const handleTranscript = (_evt: any, { transcript, detectedLanguage, wasTranslated }: { transcript: string; detectedLanguage?: string; wasTranslated?: boolean }) => {
+    const handleTranscript = ({ transcript, detectedLanguage, wasTranslated }: { transcript: string; detectedLanguage?: string; wasTranslated?: boolean }) => {
       console.log('[PTT] Transcript received:', transcript, detectedLanguage ? `(lang: ${detectedLanguage})` : '');
       if (transcript?.trim()) {
         playThinkDropSound();
@@ -549,9 +558,9 @@ export default function StandalonePromptCapture() {
       const hasExtension = /\.[a-zA-Z0-9]{1,10}$/.test(path.split('/').pop() || '');
       const isFolder = (file.size === 0 && !hasExtension) || file.type === '';
       if (isFolder) {
-        handleAddHighlight(null, `[Folder: ${path}]`);
+        handleAddHighlight(`[Folder: ${path}]`);
       } else {
-        handleAddHighlight(null, `[File: ${path}]`);
+        handleAddHighlight(`[File: ${path}]`);
       }
     });
   };
@@ -616,9 +625,14 @@ export default function StandalonePromptCapture() {
           animation: prompt-border-sweep 1.8s linear infinite;
           opacity: 1;
         }
+        .prompt-glow-ring.selection {
+          background: conic-gradient(from var(--prompt-angle), transparent 55%, #f97316 74%, #fdba74 84%, #fb923c 90%, #f97316 96%, transparent);
+          animation: prompt-border-sweep 2.8s linear infinite, think-breathe 2.4s ease-in-out infinite;
+          opacity: 1;
+        }
       `}</style>
       <div style={{ position: 'relative' }}>
-        <div className={`prompt-glow-ring${isPTTActive ? ' ptt' : gatherPending ? ' gathering' : isProcessing ? ' thinking' : ''}`} />
+        <div className={`prompt-glow-ring${isPTTActive ? ' ptt' : gatherPending ? ' gathering' : isProcessing ? ' thinking' : selectionArmed ? ' selection' : ''}`} />
         <div
           ref={containerRef}
           className="rounded-xl shadow-2xl backdrop-blur-md"
@@ -909,28 +923,6 @@ export default function StandalonePromptCapture() {
               <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
             </svg>
             <span>Attach file or folder</span>
-          </button>
-
-          {/* Copy Button — pulses when text is highlighted (detected via mouse drag) */}
-          <button
-            title={copyButtonGlowing ? 'Click to save highlighted text as a copy file' : 'Highlight text to activate'}
-            onClick={copyButtonGlowing ? () => ipcRenderer?.send('copy-button:click') : undefined}
-            className={copyButtonGlowing ? 'copy-button-glowing' : ''}
-            style={{
-              display: 'flex', alignItems: 'center', justifyContent: 'center',
-              width: '26px', height: '26px', borderRadius: '6px',
-              backgroundColor: copyButtonGlowing ? 'rgba(59,130,246,0.25)' : 'rgba(255,255,255,0.04)',
-              border: `1px solid ${copyButtonGlowing ? 'rgba(59,130,246,0.5)' : 'rgba(255,255,255,0.07)'}`,
-              color: copyButtonGlowing ? '#93c5fd' : '#abafb8',
-              cursor: copyButtonGlowing ? 'pointer' : 'default',
-              transition: 'background-color 0.2s, border-color 0.2s, color 0.2s',
-              flexShrink: 0,
-            }}
-          >
-            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
-              <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
-            </svg>
           </button>
 
           {/* Skills Manager gear button — flush right */}

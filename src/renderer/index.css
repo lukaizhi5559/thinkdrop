@@ -89,22 +89,6 @@ body {
   }
 }
 
-/* Keep the pulse transform-only — animating box-shadow forces a repaint every
-   frame for the whole time the button glows (which is whenever the clipboard
-   has content). A compositor-only scale pulse reads the same at 28px. */
-@keyframes copy-button-pulse {
-  0%, 100% {
-    transform: scale(1);
-  }
-  50% {
-    transform: scale(1.12);
-  }
-}
-
-.copy-button-glowing {
-  animation: copy-button-pulse 1.2s ease-in-out infinite;
-}
-
 /* Set by unified:drag-start/end while the OS-level window drag is active —
    drives the grabbing cursor without a React re-render. */
 body.td-dragging,

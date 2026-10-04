@@ -108,6 +108,9 @@ function GhostLayer() {
   // Voice session startup — the hidden Chrome launch takes a few seconds;
   // this pill covers that dead air ("Starting voice…").
   const [voiceStarting, setVoiceStarting] = useState(false);
+  // Selection context — pill shown while a text selection is armed for the
+  // next prompt (main captures the text at submit time).
+  const [selectionCtx, setSelectionCtx] = useState(false);
 
   // Track previous state for conditional logging
   const prevState = useRef({ highlights: 0, isVisible: false, isScanning: false });
@@ -297,6 +300,17 @@ function GhostLayer() {
     };
   }, []);
 
+  // Selection armed/disarmed — keeps the ghost window occupied while the
+  // "Text Highlighted Context" pill is up.
+  useEffect(() => {
+    if (!ipcRenderer) return;
+    const handleSel = (data: { armed?: boolean }) => setSelectionCtx(!!data?.armed);
+    ipcRenderer.on('selection:armed', handleSel, GHOST_TOKEN);
+    return () => {
+      ipcRenderer.removeListenerByToken('selection:armed', GHOST_TOKEN);
+    };
+  }, []);
+
   // Voice session state — 'starting' shows a pill until the worker is live.
   useEffect(() => {
     if (!ipcRenderer) return;
@@ -348,7 +362,7 @@ function GhostLayer() {
   // Tell main when the window goes fully idle — highlights gone, not scanning,
   // no drop/boundary, and no screen-output displays. Main then hides the
   // window + clears its display tracking (restores click-through).
-  const ghostOccupied = screenOccupied || isVisible || isScanning || !!drop || !!boundary || !!controlLock || !!fillerProgress || voiceSleeping || voiceStarting;
+  const ghostOccupied = screenOccupied || isVisible || isScanning || !!drop || !!boundary || !!controlLock || !!fillerProgress || voiceSleeping || voiceStarting || selectionCtx;
   const prevOccupied = useRef(ghostOccupied);
   useEffect(() => {
     if (prevOccupied.current && !ghostOccupied) {
@@ -371,6 +385,9 @@ function GhostLayer() {
   // Sleep overlay — pulsing dim logo + "say Hey ThinkDrop" pill.
   const sleepNode = voiceSleeping ? <SleepOverlay /> : null;
 
+  // Selection context pill — "Text Highlighted Context" while armed.
+  const selNode = selectionCtx ? <SelectionContextPill /> : null;
+
   // "AI in Control" lock — renders in every path (independent of highlights).
   const lockNode = controlLock ? (
     <ControlLock
@@ -386,7 +403,7 @@ function GhostLayer() {
 
   // Show scanning overlay with dark background
   if (isScanning) {
-    return <>{stageNode}{fillerNode}{startNode}{sleepNode}{lockNode}<ScanningOverlay timer={scanTimer} /></>;
+    return <>{stageNode}{fillerNode}{startNode}{sleepNode}{selNode}{lockNode}<ScanningOverlay timer={scanTimer} /></>;
   }
 
   // The progress drop renders independently of bounding-box highlights — it is
@@ -398,7 +415,7 @@ function GhostLayer() {
   const boundaryNode = boundary ? <PersistentBoundary element={boundary} visible={dropVisible} /> : null;
 
   if (!isVisible || highlights.length === 0) {
-    return <>{stageNode}{boundaryNode}{dropNode}{fillerNode}{startNode}{sleepNode}{lockNode}</>;
+    return <>{stageNode}{boundaryNode}{dropNode}{fillerNode}{startNode}{sleepNode}{selNode}{lockNode}</>;
   }
 
   return (
@@ -438,6 +455,7 @@ function GhostLayer() {
       {fillerNode}
       {startNode}
       {sleepNode}
+      {selNode}
       {lockNode}
       {highlights.map((element, index) => (
         <BoundingBox
@@ -811,6 +829,49 @@ function ControlLock({ label, visible, onCancel }: { label: string; visible: boo
  * voiceKey looks like "openai:marin:gpt-4o-mini-tts" — middle segment is
  * the friendly voice name.
  */
+/**
+ * SelectionContextPill — shown while a text selection is armed: the user
+ * highlighted text in another app and ThinkDrop will capture it when the
+ * next prompt is submitted. Click-through (no interaction — the selection
+ * disarms on click-away or is consumed at submit).
+ */
+function SelectionContextPill() {
+  return (
+    <div
+      style={{
+        position: 'fixed',
+        bottom: 124,
+        left: '50%',
+        transform: 'translateX(-50%)',
+        zIndex: 100000,
+        pointerEvents: 'none',
+        display: 'flex',
+        alignItems: 'center',
+        gap: 10,
+        padding: '9px 16px',
+        borderRadius: 9999,
+        background: 'rgba(10,14,22,0.82)',
+        backdropFilter: 'blur(8px)',
+        WebkitBackdropFilter: 'blur(8px)',
+        border: '1px solid rgba(249,115,22,0.4)',
+        boxShadow: '0 6px 24px rgba(0,0,0,0.35), 0 0 16px rgba(249,115,22,0.22)',
+        color: '#e5e7eb',
+        fontFamily: 'system-ui, -apple-system, sans-serif',
+      }}
+    >
+      <span style={{ display: 'flex', color: '#fb923c' }}>
+        {/* highlighter icon */}
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <path d="m9 11-6 6v3h9l3-3" />
+          <path d="m22 12-4.6 4.6a2 2 0 0 1-2.8 0l-5.2-5.2a2 2 0 0 1 0-2.8L14 4l8 8z" />
+        </svg>
+      </span>
+      <span style={{ fontSize: 13, fontWeight: 600 }}>Text Highlighted Context</span>
+      <span style={{ fontSize: 11, fontWeight: 500, color: '#9ca3af' }}>captured on submit</span>
+    </div>
+  );
+}
+
 /**
  * VoiceStartingPill — shown while the hidden Chrome worker launches and the
  * voice session connects (covers the multi-second dead air after mic click).

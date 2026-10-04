@@ -102,7 +102,7 @@ export function UnifiedOverlay() {
   // the whole overlay (was the 1-3s drop→chip delay).
   // "Continue Thread" — task discussion pinned as context for the next prompt.
   const [threadContext, setThreadContext] = useState<{ taskId: string; sessionId: string | null; prompt: string; result: string | null } | null>(null);
-  const [copyButtonGlowing, setCopyButtonGlowing] = useState(false);
+  const [selectionArmed, setSelectionArmed] = useState(false);
   const [_isRecording, setIsRecording] = useState(false);
   // Skill panel removed - now in slideout
   // ── Feed domain — external store (state/feedStore.mts) ──────────────────
@@ -591,7 +591,11 @@ export function UnifiedOverlay() {
     // sent under an MMA card must not drag the card along. Skipped while
     // isolating — the [Context:] chip is the ONLY context.
     const tailEntry = feedStore.getState().entries[feedStore.getState().entries.length - 1];
-    const tailThought = !hasIsolatedContext && tailEntry && tailEntry.kind === 'proactive' && !(tailEntry as any).pending && (tailEntry as any).text
+    // Selection/highlight context is a stronger referent than the tail card —
+    // "what is this about" + a highlight asks about the highlight, not the
+    // card, and thoughtContext would force a handoff in comms-graph.
+    const hasHighlightCtx = selectionArmed || finalHighlights.some(h => !h.startsWith('[Thought:'));
+    const tailThought = !hasIsolatedContext && !hasHighlightCtx && tailEntry && tailEntry.kind === 'proactive' && !(tailEntry as any).pending && (tailEntry as any).text
       && isThoughtReply(finalPromptText, (tailEntry as any).text)
       ? `[Thought: ${(tailEntry as any).text.replace(/\s+/g, ' ').trim()}]`
       : null;
@@ -633,6 +637,12 @@ export function UnifiedOverlay() {
       }
       return { kind: 'highlight' as const, label: h.replace(/\s+/g, ' ').trim().slice(0, 120) };
     });
+
+    // Armed-but-uncaptured selection — main captures the text at submit time;
+    // show the context riding along on the user bubble.
+    if (selectionArmed && !_attachments.some(a => a.kind === 'highlight')) {
+      _attachments.push({ kind: 'highlight', label: 'Highlighted text' });
+    }
 
     if (allHighlights.length > 0) {
       finalPrompt += allHighlights.map(h =>
@@ -683,7 +693,7 @@ export function UnifiedOverlay() {
     dbg('✅ [UNIFIED] Prompt enqueued');
 
     // Note: isSubmitting stays true until task completes (handled in all_done)
-  }, [isSubmitting, threadContext, appendUserEntry, appendFeedEntry, commitInFlightStream]);
+  }, [isSubmitting, threadContext, selectionArmed, appendUserEntry, appendFeedEntry, commitInFlightStream]);
 
   // (highlight chip removal is handled inside PromptInputBar via highlightsStore)
 
@@ -1022,17 +1032,8 @@ export function UnifiedOverlay() {
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, [showSourcesPanel]);
 
-  // --- Clear copy-button pulse on any click inside the overlay ---
-  // The copy capture button's onClick (sends copy-button:click) fires first in
-  // the bubble phase, so saving still works. Any other click clears the glow
-  // and tells main to discard the stored captured text.
-  const handleOverlayClick = (e: React.MouseEvent) => {
-    if (!copyButtonGlowing) return;
-    const target = e.target as HTMLElement;
-    if (target?.closest?.('#copy-capture-button')) return;
-    setCopyButtonGlowing(false);
-    ipcRenderer?.send('copy-button:clear');
-  };
+  // Selection context: clicking the overlay while armed keeps the armed state —
+  // that's the "come ask about it" gesture, and main captures the highlight then.
 
   // --- Native window resize listener — suppress resize IPC while user drags the window edge ---
   useEffect(() => {
@@ -1452,9 +1453,15 @@ export function UnifiedOverlay() {
       });
     };
 
-    // --- Copy Button Glow ---
-    const handleCopyButtonGlow = (glowing: boolean) => {
-      setCopyButtonGlowing(!!glowing);
+    // --- Selection context armed state (highlight detected in another app) ---
+    const handleSelectionArmed = (data: { armed?: boolean }) => {
+      setSelectionArmed(!!data?.armed);
+    };
+
+    // A newer selection superseded the auto-captured chip — pull it out.
+    const handleChipRemove = (data: { text?: string }) => {
+      if (!data?.text) return;
+      highlightsStore.set(prev => prev.filter(h => h !== data.text));
     };
 
     // --- Voice ---
@@ -2157,7 +2164,8 @@ export function UnifiedOverlay() {
     ipcRenderer.on('highlights:update', handleHighlightsUpdate, token);
     ipcRenderer.on('highlights:available', handleHighlightsAvailable, token);
     ipcRenderer.on('highlights:confirmed', handleHighlightsConfirmed, token);
-    ipcRenderer.on('copy-button:glow', handleCopyButtonGlow, token);
+    ipcRenderer.on('selection:armed', handleSelectionArmed, token);
+    ipcRenderer.on('selection:chip-remove', handleChipRemove, token);
     ipcRenderer.on('voice:inject-prompt', handleVoiceInject, token);
     ipcRenderer.on('voice:response', handleVoiceResponse, token);
     ipcRenderer.on('voice:recording-started', handleVoiceRecordingStarted, token);
@@ -2242,7 +2250,8 @@ export function UnifiedOverlay() {
       ipcRenderer.removeListenerByToken('highlights:update', token);
       ipcRenderer.removeListenerByToken('highlights:available', token);
       ipcRenderer.removeListenerByToken('highlights:confirmed', token);
-      ipcRenderer.removeListenerByToken('copy-button:glow', token);
+      ipcRenderer.removeListenerByToken('selection:armed', token);
+      ipcRenderer.removeListenerByToken('selection:chip-remove', token);
       ipcRenderer.removeListenerByToken('voice:inject-prompt', token);
       ipcRenderer.removeListenerByToken('voice:response', token);
       ipcRenderer.removeListenerByToken('voice:recording-started', token);
@@ -2421,12 +2430,11 @@ export function UnifiedOverlay() {
       {/* Glow effect for automation mode */}
       <OverlayStyles />
       <div ref={dragGlowRingRef} className="drag-glow-ring" />
-      <div className={`prompt-glow-ring${isGlowActive ? ' active' : isThinking ? ' thinking' : ''}`} />
+      <div className={`prompt-glow-ring${isGlowActive ? ' active' : isThinking ? ' thinking' : selectionArmed ? ' selection' : ''}`} />
 
       {/* Main Container */}
       <div
         className="w-full h-full flex flex-col"
-        onClick={handleOverlayClick}
         style={{
           backgroundColor: 'rgba(23, 23, 23, 0.95)',
           borderRadius: '11px',
@@ -2728,10 +2736,8 @@ export function UnifiedOverlay() {
           gatherQuestion={gatherQuestion}
           isDebugMode={isDebugMode}
           isSubmitting={isSubmitting}
-          copyButtonGlowing={copyButtonGlowing}
           onPaste={handlePaste}
           onAttachClick={handleAttachClick}
-          onCopyClick={() => ipcRenderer?.send('copy-button:click')}
           onCancel={() => ipcRenderer?.send('automation:cancel')}
           onSubmit={handleSubmitFromInputBar}
           aiActivityPanelRef={aiActivityPanelRef}

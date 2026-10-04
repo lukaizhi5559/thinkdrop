@@ -67,6 +67,13 @@ export function OverlayStyles() {
         animation: prompt-border-sweep 1.8s linear infinite;
         opacity: 1;
       }
+      /* Selection context armed — text highlighted in another app. Orange,
+         slower-breathing sweep so it reads as "context ready", not "working". */
+      .prompt-glow-ring.selection {
+        background: conic-gradient(from var(--prompt-angle), transparent 55%, #f97316 74%, #fdba74 84%, #fb923c 90%, #f97316 96%, transparent);
+        animation: prompt-border-sweep 2.8s linear infinite, think-breathe 2.4s ease-in-out infinite;
+        opacity: 1;
+      }
       /* Cancel button hover glow - red variant */
       .cancel-glow-ring {
         position: absolute;

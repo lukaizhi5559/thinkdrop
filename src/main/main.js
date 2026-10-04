@@ -1196,16 +1196,28 @@ function startOverlayControlServer() {
               safeSendUnified('voice:final', { text, lang });
               console.log(`🎙️ [Voice] Final transcript → comms-graph: "${text.substring(0, 80)}" (lang=${lang})`);
               const responseLanguage = lang !== 'en' ? lang : null;
-              // A spoken "yes send it" resolves a pending plan approval instead of
-              // spawning a duplicate task (previously caused double dispatches).
-              if (!_tryResolvePendingApproval(text)) {
-                const routed = _routeViaCommsGraph
-                  ? _routeViaCommsGraph(text, { responseLanguage, sessionId: currentSessionId, source: 'voice' })
-                  : false;
-                if (!routed) {
-                  promptQueue.enqueue(text, { responseLanguage, sessionId: currentSessionId });
+              // Selection context — the voice final is the trigger to capture an
+              // armed highlight (source app is still key during voice — plain
+              // Cmd+C, no focus dance) and send it along as [Highlighted:].
+              void (async () => {
+                let routedText = text;
+                let voiceSelectedText = '';
+                if (_selectionArmed || _capturedSelectionText) {
+                  const consumed = await _consumeSelectionForPrompt(text, '');
+                  routedText = consumed.prompt;
+                  voiceSelectedText = consumed.selectedText;
                 }
-              }
+                // A spoken "yes send it" resolves a pending plan approval instead of
+                // spawning a duplicate task (previously caused double dispatches).
+                if (!_tryResolvePendingApproval(text)) {
+                  const routed = _routeViaCommsGraph
+                    ? _routeViaCommsGraph(routedText, { selectedText: voiceSelectedText, responseLanguage, sessionId: currentSessionId, source: 'voice' })
+                    : false;
+                  if (!routed) {
+                    promptQueue.enqueue(routedText, { selectedText: voiceSelectedText, responseLanguage, sessionId: currentSessionId });
+                  }
+                }
+              })();
               break;
             }
             default:
@@ -1246,20 +1258,27 @@ function startOverlayControlServer() {
             res.writeHead(400).end(JSON.stringify({ error: `unknown tool: ${name}` }));
             return;
           }
-          const instruction = (args?.instruction || '').trim();
+          let instruction = (args?.instruction || '').trim();
           console.log(`🗣️ [VoiceTool] run_thinkdrop_task: "${instruction.substring(0, 80)}"`);
+          // Selection context — capture the armed highlight alongside the tool call.
+          let toolSelectedText = '';
+          if (_selectionArmed || _capturedSelectionText) {
+            const consumed = await _consumeSelectionForPrompt(instruction, '');
+            instruction = consumed.prompt;
+            toolSelectedText = consumed.selectedText;
+          }
           const commsPort = parseInt(process.env.COMMS_GRAPH_PORT || '3015', 10);
           let output = 'Working on it — I\'ll let you know when it\'s done.';
           try {
             const r = await _postJson(
               new URL('/comms.process', `http://127.0.0.1:${commsPort}`),
-              { text: instruction, source: 'voice', sessionId: currentSessionId },
+              { text: instruction, source: 'voice', sessionId: currentSessionId, selectedText: toolSelectedText || undefined },
               15000
             );
             if (r?.ok && r?.data?.text) output = r.data.text;
-            else promptQueue.enqueue(instruction, { sessionId: currentSessionId });
+            else promptQueue.enqueue(instruction, { selectedText: toolSelectedText, sessionId: currentSessionId });
           } catch (_) {
-            promptQueue.enqueue(instruction, { sessionId: currentSessionId });
+            promptQueue.enqueue(instruction, { selectedText: toolSelectedText, sessionId: currentSessionId });
           }
           res.writeHead(200).end(JSON.stringify({ ok: true, output }));
         } catch (err) {
@@ -2292,6 +2311,76 @@ let pendingGatherQuestion = null; // Stored so we can re-send gather:pending on 
 let pendingGatherBatchResolve = null;
 let pendingGatherBatchData = null; // { batchId, questions } stored for re-send on window re-activation
 
+// gatherAnswerCallback: waits for user to type/speak an answer in StandalonePromptCapture.
+// NOTE: the actual ipcMain.on('gather:answer') listener is registered ONCE at module level
+// (see below) — NOT per run, to avoid MaxListenersExceeded accumulation.
+//
+// Grill-Me Phase C: supports TWO modes:
+//   1. Legacy single-string: gatherAnswerCallback("question text") → Promise<string>
+//   2. Batch mode: gatherAnswerCallback({ batch: true, batchId, questions }) → Promise<object>
+// The batch mode emits gather:question_batch to the renderer and awaits gather:answer_batch.
+//
+// Module scope (not inside runPromptThroughStateGraph) so comms-graph handoff
+// tasks can register it at handoffRunner.init time — previously it only
+// registered after the first serial run, so handoff ask_user cards silently
+// never appeared (task_f605d60d ambiguous file picker).
+function gatherAnswerCallback(questionOrBatch) {
+  // ── Batch mode (Grill-Me Phase C) ──────────────────────────────────────
+  if (questionOrBatch && typeof questionOrBatch === 'object' && questionOrBatch.batch) {
+    const { batchId, questions, routeConfirmation } = questionOrBatch;
+    const batchTaskId = questionOrBatch.taskId || null;
+    return new Promise((resolve) => {
+      pendingGatherBatchResolve = resolve;
+      pendingGatherBatchData = { batchId, questions, routeConfirmation: routeConfirmation || null, taskId: batchTaskId };
+      console.log(`[GatherContext] Waiting for batch answers (batchId=${batchId}, ${questions?.length || 0} questions)…`);
+      safeSendUnified('gather:question_batch', {
+        active: true,
+        batchId,
+        questions: questions || [],
+        routeConfirmation: routeConfirmation || null,
+        // Task-scoped batches render inside the feed's QueueTaskCard
+        // (its AutomationProgress only accepts batches tagged with its
+        // taskId). Untagged batches render in the global instance.
+        taskId: batchTaskId,
+      });
+      _notifyQuestion(
+        questions?.[0]?.question || questions?.[0]?.text || 'I have a few questions before I start',
+        'results'
+      );
+      // 10-minute timeout
+      setTimeout(() => {
+        if (pendingGatherBatchResolve === resolve) {
+          console.warn('[GatherContext] Timed out waiting for batch answers — skipping');
+          pendingGatherBatchResolve = null;
+          pendingGatherBatchData = null;
+          safeSendUnified('gather:question_batch', { active: false, batchId: null, questions: null });
+          _postThoughtInput('User did not answer the clarifying questions — they went unanswered until timeout.');
+          resolve({});
+        }
+      }, 10 * 60 * 1000);
+    });
+  }
+  // ── Legacy single-string mode ──────────────────────────────────────────
+  const question = questionOrBatch;
+  return new Promise((resolve) => {
+    pendingGatherResolve = resolve;
+    pendingGatherQuestion = question || null;
+    console.log('[GatherContext] Waiting for user answer…');
+    // Tell unified overlay to intercept next submit as gather:answer
+    safeSendUnified('gather:pending', { active: true, question: question || null });
+    // 10-minute timeout
+    setTimeout(() => {
+      if (pendingGatherResolve === resolve) {
+        console.warn('[GatherContext] Timed out waiting for answer — skipping question');
+        pendingGatherResolve = null;
+        pendingGatherQuestion = null;
+        safeSendUnified('gather:pending', { active: false });
+        resolve(null);
+      }
+    }, 10 * 60 * 1000);
+  });
+}
+
 // ── Proactive Q&A hooks ──────────────────────────────────────────────────────
 // Feed question engagement into the thought engine (grill answers reinforce the
 // topic Thought; dismissals are weaker evidence) and pop a real macOS
@@ -2639,6 +2728,9 @@ function initStateGraph() {
           }
         },
         setPendingPreflightPrompt: (taskId, ctx) => _pendingPreflightPromptsByTask.set(taskId, ctx),
+        // Module-level gather callback — handoff tasks can ask the user too
+        // (ambiguous file picker, clarifying questions) from app start.
+        gatherAnswerCallback,
       });
       console.log('✅ [HandoffRunner] Initialized for comms-graph concurrent handoffs');
     } catch (err) {
@@ -2751,22 +2843,50 @@ let clipboardCheckInterval = null;
 let sentHighlights = new Set();
 let recentlySubmittedPrompts = new Set(); // Track prompts sent via stategraph:process to avoid clipboard re-capture
 
-// ── Copy-to-File: highlight text → .md attachment ─────────────────────────
-// Global mouse monitor (uiohook-napi) detects text selection via drag, then
-// immediately sends Cmd+C to the still-focused source app, reads the clipboard,
-// restores it, and stores the text in memory. If the text passes detection
-// (non-empty, not a file/folder path), the copy button glows. Clicking the
-// glowing button (or pressing Shift+Cmd/Ctrl+C) writes the in-memory text to
-// ~/.thinkdrop/edits/copies/copy-<timestamp>.md and attaches it as [File: ...].
+// ── Selection context: highlight → armed state → lazy capture ─────────────
+// uiohook detects selection gestures (drag >5px, double-click word-select,
+// Cmd+A) OUTSIDE ThinkDrop windows and "arms" a pending selection — the
+// overlay shows an orange ring and the GhostLayer shows a context pill.
+// The clipboard is NEVER touched at selection time. (The old flow copied at
+// mouseup and restored 300ms later — a Cmd+V inside that window pasted the
+// synthetic copy, which is why paste sometimes needed a second Cmd+V.)
+// The text is captured lazily instead:
+//   - on overlay click/focus while armed (chip shows the text before typing)
+//   - at prompt submit / voice-final while still armed (fallback)
+//   - Shift+Cmd+C forces an immediate capture → .md + [File:] chip
 let _uIOhookInstance = null;
-let _mouseDownPos = null;        // { x, y, t } from last mousedown
-let _dragGlowTriggered = false;  // true once glow is sent during a drag (avoids repeated mousemove checks)
-let _lastCapturedText = '';     // text captured at mouseup, waiting to be written to file
-let _lastSelectionApp = null;   // frontmost app name at capture time (for logging)
-let _captureInProgress = false; // guard against overlapping captures
-let _cmdHeld = false;              // Cmd/Ctrl currently held (uIOhook keydown/keyup)
-let _shiftHeld = false;            // Shift currently held (uIOhook keydown/keyup)
-let _userCopiedAfterMouseup = false; // user pressed plain Cmd/Ctrl+C (no Shift) after this mouseup
+let _mouseDownPos = null;            // { x, y, t } from last outside mousedown (drag tracking)
+let _lastOutsideClick = null;        // { x, y, t } — double-click detection
+let _dragArmTriggered = false;       // once per drag — avoids repeated mousemove checks
+let _selectionArmed = false;         // a selection gesture was detected, context is pending
+let _selectionArmTimer = null;       // 90s auto-expire
+let _selectionApp = null;            // frontmost app at arm time (pill label / logging)
+let _capturedSelectionText = '';     // text captured early (overlay click) — consumed at submit
+let _selectionSentToChip = false;    // captured text was already delivered as an input chip
+let _captureInProgress = false;      // guard against overlapping captures
+let _cmdHeld = false;                // Cmd/Ctrl currently held (uIOhook keydown/keyup)
+let _shiftHeld = false;              // Shift currently held
+let _userCopiedAfterArm = false;     // plain Cmd/Ctrl+C since arm → clipboard holds the selection
+let _focusCaptureSuppressUntil = 0;  // dedupe window 'focus' re-fire after our own refocus
+let _selectionArmGen = 0;            // bumped on every arm — stale async captures self-discard
+// Gesture-scoped probe windows: while a selection gesture is live (drag,
+// Cmd+A, double-click, shift+nav) a 200ms poll runs the light capture cycle —
+// the source app guaranteed holds the key window, so no focus dance is needed.
+let _probeTimer = null;              // active probe interval
+let _probeUntilMouseUp = false;      // drag window — ends on mouseup, not deadline
+let _probeDeadline = 0;              // hard cap for timed windows
+let _probeGotText = false;           // this window produced text → push chip on close
+let _probeInFlight = false;          // reentrancy guard — a probe outlives the interval
+const PROBE_INTERVAL_MS = 200;
+let _autoCaptureTimer = null;        // deferred arm-time capture (source app still holds key)
+let _lastExternalKeyDownAt = 0;      // last keydown outside our overlay — delays synthetic copy
+let _synthKeyUntil = 0;              // uiohook sees our own synthetic keys — ignore them
+
+const SELECTION_ARM_TTL_MS = 90000;
+const AUTO_CAPTURE_DELAY_MS = 800;   // capture while the source app still holds key —
+                                     // long enough for a user's own Cmd+C/V to register
+                                     // (and disarm) before we ever synthesize
+const AUTO_CAPTURE_KEY_QUIET_MS = 250; // reschedule when the user is mid-chord/typing
 
 /**
  * Check if a point is inside any ThinkDrop window (so we can ignore internal clicks).
@@ -2780,6 +2900,11 @@ function _isInsideThinkDropWindow(x, y) {
     } catch (_) {}
   }
   return false;
+}
+
+function _overlayHasFocus() {
+  return [unifiedWindow, promptCaptureWindow].some(
+    w => w && !w.isDestroyed() && w.isFocused());
 }
 
 /**
@@ -2797,105 +2922,240 @@ function _getFrontmostAppName() {
 }
 
 /**
- * Capture text selection at mouseup time (source app still has focus).
- *
- * Two paths avoid racing the user's own Cmd+C:
- *  - Path A: Cmd/Ctrl held (no Shift) at mouseup → user is mid-copy. Skip
- *    synthetic keys entirely and wait for the user's own Cmd+C to land on the
- *    clipboard. Never restore (it's their copy).
- *  - Path B: Cmd/Ctrl not held (or Shift held → tag intent) → send synthetic
- *    Cmd+C as before, but DEFER the clipboard restore by 300ms. If the user
- *    presses Cmd+C in that window, skip the restore (don't wipe their copy).
+ * Push the armed state to all surfaces: orange ring on the overlay windows,
+ * context pill on the GhostLayer (anchored just above the overlay when it's
+ * visible). The ghost window is shown on arm unless a drop session owns it.
  */
-async function _captureOnMouseup() {
-  if (_captureInProgress) return;
-  _captureInProgress = true;
-  // Reset the user-copy flag for this capture cycle.
-  _userCopiedAfterMouseup = false;
+// Push selection state to the voice-service so the realtime model knows a
+// highlighted-text selection exists (it can't otherwise see the arm/capture).
+// Fire-and-forget — voice is an optional surface.
+function _pushSelectionToVoice(extra = {}) {
   try {
-    // Snapshot modifier state at mouseup — determines which path we take.
-    const cmdHeldAtMouseup = _cmdHeld;
-    const shiftHeldAtMouseup = _shiftHeld;
+    const svcUrl = process.env.VOICE_SERVICE_URL || 'http://127.0.0.1:3006';
+    _postJson(new URL('/voice.context', svcUrl), {
+      armed: _selectionArmed,
+      sourceApp: _selectionApp,
+      ...extra,
+    }).catch(() => {});
+  } catch (_) {}
+}
 
-    // Backup current clipboard (used by Path B's deferred restore).
-    const backup = clipboard.readText();
+function _broadcastSelectionState() {
+  const payload = { armed: _selectionArmed, sourceApp: _selectionApp };
+  safeSend(unifiedWindow, 'selection:armed', payload);
+  safeSend(promptCaptureWindow, 'selection:armed', payload);
+  _pushSelectionToVoice();
+  if (_selectionArmed) {
+    let anchor = null;
+    try {
+      if (unifiedWindow && !unifiedWindow.isDestroyed() && unifiedWindow.isVisible()) {
+        anchor = unifiedWindow.getBounds();
+      }
+    } catch (_) {}
+    if (!dropSessionActive) showGhostLayer();
+    _sendGhostChannel('selection:armed', { ...payload, anchor });
+  } else {
+    _sendGhostChannel('selection:armed', { armed: false });
+  }
+}
 
+function _armSelection(sourceApp) {
+  const wasArmed = _selectionArmed;
+  _selectionArmGen++;
+  _selectionArmed = true;
+  _selectionApp = sourceApp || _selectionApp;
+  _userCopiedAfterArm = false;
+  // A new selection gesture supersedes the previous capture — pull the stale
+  // auto-chip from the input bar so the old text doesn't ride along.
+  if (_selectionSentToChip && _capturedSelectionText) {
+    const stale = _capturedSelectionText;
+    safeSend(unifiedWindow, 'selection:chip-remove', { text: stale });
+    safeSend(promptCaptureWindow, 'selection:chip-remove', { text: stale });
+  }
+  _capturedSelectionText = '';
+  _selectionSentToChip = false;
+  clearTimeout(_selectionArmTimer);
+  _selectionArmTimer = setTimeout(() => _disarmSelection('expired'), SELECTION_ARM_TTL_MS);
+  // Deferred auto-capture: the source app still holds the key window right now,
+  // so a synthetic Cmd+C lands on the element holding the live selection —
+  // the same path that makes the explicit Shift+Cmd+C tag shortcut reliable.
+  // Click/submit capture later is only the fallback (by then our panel may own
+  // key and the keystroke can't be aimed at the right element).
+  const gen = _selectionArmGen;
+  clearTimeout(_autoCaptureTimer);
+  _autoCaptureTimer = setTimeout(() => void _autoCaptureSelection(gen), AUTO_CAPTURE_DELAY_MS);
+  if (!wasArmed) console.log(`[SelectCtx] Armed — selection detected in "${_selectionApp || 'unknown'}"`);
+  _broadcastSelectionState();
+}
+
+function _disarmSelection(reason) {
+  if (!_selectionArmed) return;
+  _selectionArmed = false;
+  _selectionApp = null;
+  _userCopiedAfterArm = false;
+  clearTimeout(_selectionArmTimer);
+  _selectionArmTimer = null;
+  clearTimeout(_autoCaptureTimer);
+  _autoCaptureTimer = null;
+  console.log(`[SelectCtx] Disarmed (${reason || 'cleared'})`);
+  _broadcastSelectionState();
+}
+
+// File/folder path (Finder drag, not text) — reject those as selection context.
+function _looksLikeFilePath(text) {
+  const trimmed = text.trim();
+  if (!/^(\/[^\n]+|[A-Z]:\\[^\n]+)$/.test(trimmed)) return false;
+  const fs = require('fs');
+  const withNarrowSpace = trimmed.replace(/ (AM|PM)\./g, ' $1.');
+  const candidates = [
+    trimmed,
+    withNarrowSpace,
+    trimmed.normalize('NFC'),
+    trimmed.normalize('NFD'),
+    withNarrowSpace.normalize('NFC'),
+    withNarrowSpace.normalize('NFD'),
+  ];
+  return candidates.some(c => { try { return fs.existsSync(c); } catch (_) { return false; } });
+}
+
+/**
+ * One light capture cycle: backup → synthetic Cmd+C → poll for clipboard delta
+ * → restore. No focus release, no refocus — used inside probe windows where
+ * the source app guaranteed holds the key window (mid-gesture), and by the
+ * click/submit capture after the release dance.
+ */
+async function _probeOnce() {
+  const nut = require('@nut-tree-fork/nut-js');
+  const { Key } = nut;
+  const backup = clipboard.readText();
+  _synthKeyUntil = Date.now() + 500;
+  const copyStart = Date.now();
+  await nut.keyboard.pressKey(Key.LeftSuper, Key.C);
+  await nut.keyboard.releaseKey(Key.LeftSuper, Key.C);
+
+  // Poll until the clipboard changes (copy processed) or timeout.
+  const pollStart = Date.now();
+  let text = '';
+  while (Date.now() - pollStart < 400) {
+    await new Promise(r => setTimeout(r, 5));
+    const current = clipboard.readText();
+    if (current !== backup) { text = current; break; }
+  }
+  if (_lastExternalKeyDownAt >= copyStart) {
+    console.log('[SelectCtx] User keydown landed mid-capture — paste may have read transient text.');
+  }
+  // Restore the prior clipboard — capture-time is a moment the user is
+  // interacting with ThinkDrop, not pasting into the source app.
+  if (text && clipboard.readText() === text) clipboard.writeText(backup);
+  return text;
+}
+
+// ── Gesture-scoped probe windows ─────────────────────────────────────────────
+// A selection gesture (drag / Cmd+A / double-click / shift+nav) opens a window
+// that probes until its deadline — or, for drags, until mouseup. Each cycle
+// that returns text replaces _capturedSelectionText; on close the latest text
+// is pushed as a chip once. File/folder drags produce no text → clean reject.
+function _stopProbeWindow({ pushChip = false } = {}) {
+  if (_probeTimer) {
+    clearInterval(_probeTimer);
+    _probeTimer = null;
+  }
+  _probeUntilMouseUp = false;
+  if (pushChip) _finishProbeWindow();
+}
+
+function _startProbeWindow({ untilMouseUp = false, timeoutMs = 800 } = {}) {
+  _stopProbeWindow();
+  _probeGotText = false;
+  _probeUntilMouseUp = untilMouseUp;
+  _probeDeadline = Date.now() + timeoutMs;
+  _probeTimer = setInterval(async () => {
+    if (_captureInProgress || _probeInFlight) return;
+    if (Date.now() > _probeDeadline) { _stopProbeWindow({ pushChip: true }); return; }
+    _probeInFlight = true;
+    try {
+      const t = await _probeOnce();
+      if (t && t.trim() && !_looksLikeFilePath(t)) {
+        _capturedSelectionText = t;
+        _probeGotText = true;
+      }
+    } catch (_) {
+    } finally {
+      _probeInFlight = false;
+    }
+  }, PROBE_INTERVAL_MS);
+}
+
+function _finishProbeWindow() {
+  if (!_probeGotText) return;
+  _probeGotText = false;
+  const text = _capturedSelectionText;
+  if (!text || !text.trim() || _selectionSentToChip) return;
+  _selectionSentToChip = true;
+  safeSend(unifiedWindow, 'prompt-capture:add-highlight', text);
+  safeSend(promptCaptureWindow, 'prompt-capture:add-highlight', text);
+  if (_selectionArmed) _disarmSelection('captured-to-chip');
+  _pushSelectionToVoice({ captured: true, excerpt: text.slice(0, 120) });
+  console.log(`[SelectCtx] Probe captured ${text.length} chars → chip`);
+}
+
+/**
+ * Grab the armed selection's text via synthetic Cmd+C — deferred to the last
+ * responsible moment so ordinary select→copy→paste flows are never disturbed.
+ *
+ * Fast path: the user pressed plain Cmd+C since arming — their own copy IS the
+ * selection. Read it; no synthetic keys, no restore.
+ *
+ * Otherwise: release overlay key focus unconditionally (a click can deliver
+ * focus mid-capture, so a racy pre-check is unreliable) → settle → backup →
+ * Cmd+C → poll → retry once on empty → restore → optionally refocus the
+ * overlay so the user can keep typing.
+ */
+async function _captureArmedSelection({ refocusWindow = null } = {}) {
+  if (_captureInProgress) return null;
+  _captureInProgress = true;
+  try {
+    if (_userCopiedAfterArm) {
+      const t = clipboard.readText();
+      if (t && t.trim()) {
+        console.log(`[SelectCtx] Using user's own Cmd+C (${t.length} chars) — no synthetic copy.`);
+        return t;
+      }
+    }
+
+    let nut;
+    try {
+      nut = require('@nut-tree-fork/nut-js');
+    } catch (err) {
+      console.warn('[SelectCtx] Nut.js unavailable:', err.message);
+      return null;
+    }
+
+    // If our panel holds (or is about to take) key focus, Cmd+C would land on
+    // it — release unconditionally; the helper self-verifies and escalates.
+    // Settle briefly after so the keystroke doesn't race the focus transition.
     let text = '';
-
-    if (cmdHeldAtMouseup && !shiftHeldAtMouseup) {
-      // ── Path A: user is holding Cmd/Ctrl (without Shift) at mouseup — they
-      // are about to press C to copy. Sending synthetic Cmd+C would collide
-      // with their held modifier (Race 2) and the immediate restore would
-      // wipe their copy (Race 1). Instead, wait for their own Cmd+C to land
-      // on the clipboard, capture it, and leave it intact (no restore).
-      console.log('[CopyMonitor] Path A — Cmd held at mouseup, waiting for user copy.');
-      const waitStart = Date.now();
-      while (Date.now() - waitStart < 400) {
-        await new Promise(r => setTimeout(r, 5));
-        const current = clipboard.readText();
-        if (current !== backup) { text = current; break; }
-      }
-      // Do NOT fall back to clipboard.readText() if unchanged — that would
-      // treat the user's prior clipboard content as a "captured selection".
-      // `text` stays empty if the user never pressed C (glow retracts below).
-    } else {
-      // ── Path B: user is not holding Cmd (or is holding Shift → tag intent).
-      // Send synthetic Cmd+C to capture the selection, then DEFER the restore
-      // so we can detect if the user presses Cmd+C within 300ms and skip the
-      // restore in that case (avoids wiping their copy, Race 1).
-      let nut;
-      try {
-        nut = require('@nut-tree-fork/nut-js');
-      } catch (err) {
-        console.warn('[CopyMonitor] Nut.js unavailable:', err.message);
-        return;
-      }
-      const { Key } = nut;
-      await nut.keyboard.pressKey(Key.LeftSuper, Key.C);
-      await nut.keyboard.releaseKey(Key.LeftSuper, Key.C);
-
-      // Poll clipboard until it changes from the backup value (Cmd+C was
-      // processed) or we hit the 200ms timeout. Instant for fast apps.
-      const pollStart = Date.now();
-      while (Date.now() - pollStart < 200) {
-        await new Promise(r => setTimeout(r, 5));
-        const current = clipboard.readText();
-        if (current !== backup) { text = current; break; }
-      }
-      if (!text) text = clipboard.readText(); // final read after timeout
-
-      // Defer the restore: if the user presses Cmd+C within 300ms, their copy
-      // is on the clipboard and we must not overwrite it. Otherwise restore
-      // the original clipboard content (preserve prior state when the user
-      // didn't copy). Only restore if the clipboard still holds our synthetic
-      // copy — if the user replaced it with something else, leave it alone.
-      const capturedText = text;
-      setTimeout(() => {
-        if (_userCopiedAfterMouseup) {
-          console.log('[CopyMonitor] User pressed Cmd+C after mouseup — skipping clipboard restore.');
-          return;
-        }
-        if (clipboard.readText() === capturedText) {
-          clipboard.writeText(backup);
-        }
-      }, 300);
+    for (let attempt = 0; attempt < 2 && !text; attempt++) {
+      await _releaseOverlayKeyFocus();
+      await new Promise(r => setTimeout(r, 200));
+      text = await _probeOnce();
     }
 
-    // Detection: skip if empty — retract optimistic glow if it was triggered
+    if (refocusWindow && !refocusWindow.isDestroyed() && !_taskInFlight) {
+      _focusCaptureSuppressUntil = Date.now() + 1500;
+      try { refocusWindow.focus(); } catch (_) {}
+    }
+
     if (!text || !text.trim()) {
-      console.log('[CopyMonitor] No text captured (not a text selection).');
-      if (_dragGlowTriggered) {
-        safeSend(unifiedWindow, 'copy-button:glow', false);
-        safeSend(promptCaptureWindow, 'copy-button:glow', false);
-      }
-      return;
+      console.log('[SelectCtx] Capture produced no new text (selection gone or copy missed).');
+      return null;
     }
 
-    // Detection: skip if it's a file/folder path (Finder drag, not text)
+    // File/folder path (Finder drag, not text) — skip, same as the old flow.
     const looksLikeFilePath = /^(\/[^\n]+|[A-Z]:\\[^\n]+)$/.test(text.trim());
     if (looksLikeFilePath) {
       const fs = require('fs');
-      const withNarrowSpace = text.trim().replace(/ (AM|PM)\./g, '\u202F$1.');
+      const withNarrowSpace = text.trim().replace(/ (AM|PM)\./g, ' $1.');
       const candidates = [
         text.trim(),
         withNarrowSpace,
@@ -2905,41 +3165,128 @@ async function _captureOnMouseup() {
         withNarrowSpace.normalize('NFD'),
       ];
       if (candidates.some(c => { try { return fs.existsSync(c); } catch (_) { return false; } })) {
-        console.log('[CopyMonitor] File/folder path detected — skipping (not text).');
-        if (_dragGlowTriggered) {
-          safeSend(unifiedWindow, 'copy-button:glow', false);
-          safeSend(promptCaptureWindow, 'copy-button:glow', false);
-        }
-        return;
+        console.log('[SelectCtx] File/folder path captured — not text context.');
+        return null;
       }
     }
 
-    // Confirmed text selection — store in memory (glow was already sent during drag)
-    _lastCapturedText = text;
-    _lastSelectionApp = _getFrontmostAppName();
-    console.log(`[CopyMonitor] Captured ${text.length} chars from "${_lastSelectionApp}" — copy button active.`);
-
-    // If the drag glow wasn't triggered (e.g. <5px movement but still a selection), glow now
-    if (!_dragGlowTriggered) {
-      safeSend(unifiedWindow, 'copy-button:glow', true);
-      safeSend(promptCaptureWindow, 'copy-button:glow', true);
-    }
+    console.log(`[SelectCtx] Captured ${text.length} chars from "${_selectionApp || 'unknown'}"`);
+    return text;
   } catch (err) {
-    console.error('[CopyMonitor] Capture error:', err.message);
+    console.error('[SelectCtx] Capture error:', err.message);
+    return null;
   } finally {
     _captureInProgress = false;
   }
 }
 
 /**
- * Write the last captured text to a .md file and attach as [File: ...] chip.
- * Called when the user clicks the glowing copy button or presses Shift+Cmd/Ctrl+C.
+ * Clicked/focused the overlay while armed → capture now so the text lands as
+ * an input chip before the user types. Failure leaves the state armed; the
+ * submit-time path is the fallback.
  */
-function _createCopyFile() {
-  if (!_lastCapturedText || !_lastCapturedText.trim()) {
-    console.log('[CopyMonitor] No captured text to write.');
-    safeSend(unifiedWindow, 'copy-button:glow', false);
-    safeSend(promptCaptureWindow, 'copy-button:glow', false);
+async function _captureArmedToChip(refocusWindow) {
+  const gen = _selectionArmGen;
+  const text = await _captureArmedSelection({ refocusWindow });
+  if (!text) return;
+  if (gen !== _selectionArmGen || !_selectionArmed) {
+    console.log('[SelectCtx] Capture superseded/disarmed mid-flight — discarding.');
+    return;
+  }
+  _capturedSelectionText = text;
+  _selectionSentToChip = true;
+  safeSend(unifiedWindow, 'highlights:update', [text]);
+  safeSend(promptCaptureWindow, 'prompt-capture:add-highlight', text);
+  _disarmSelection('captured-to-chip');
+  // Sent after the disarm broadcast so the final voice state is captured+excerpt.
+  _pushSelectionToVoice({ captured: true, excerpt: text.slice(0, 120) });
+}
+
+/**
+ * Deferred capture scheduled at arm time (~300ms) — the only moment the
+ * source app still holds the macOS key window, so the synthetic Cmd+C lands
+ * on the element holding the live selection (same mechanism that makes the
+ * explicit Shift+Cmd+C tag reliable). Bails when the user is keyboard-active
+ * (their own Cmd+C is read directly; Cmd+V/X disarms elsewhere), when our
+ * overlay already has focus (click/submit fallback owns it), or when the arm
+ * was superseded.
+ */
+async function _autoCaptureSelection(gen, rescheduled = false) {
+  if (gen !== _selectionArmGen) return;
+  if (!_selectionArmed || _capturedSelectionText || _captureInProgress) return;
+  if (_overlayHasFocus()) {
+    // Overlay took key before the capture ran — reschedule once; the click-into
+    // path usually covers this, but don't leave an arm silently chip-less.
+    if (!rescheduled) {
+      _autoCaptureTimer = setTimeout(
+        () => void _autoCaptureSelection(gen, true), 1500);
+    }
+    return;
+  }
+  if (Date.now() - _lastExternalKeyDownAt < AUTO_CAPTURE_KEY_QUIET_MS) {
+    if (rescheduled) return;
+    _autoCaptureTimer = setTimeout(
+      () => void _autoCaptureSelection(gen, true), AUTO_CAPTURE_DELAY_MS);
+    return;
+  }
+  await _captureArmedToChip(null);
+  // Copy missed (slow app, transient key drop) — one retry instead of leaving
+  // the arm chip-less until submit.
+  if (!_capturedSelectionText && _selectionArmed && gen === _selectionArmGen && !rescheduled) {
+    _autoCaptureTimer = setTimeout(
+      () => void _autoCaptureSelection(gen, true), 1500);
+  }
+}
+
+/**
+ * Focus-event entry point for click-capture. The window 'focus' event re-fires
+ * when we refocus after a capture — suppress that echo so a failed capture
+ * doesn't retry forever.
+ */
+function _maybeCaptureOnOverlayFocus(win) {
+  if (!_selectionArmed || _capturedSelectionText || _captureInProgress) return;
+  if (Date.now() < _focusCaptureSuppressUntil) return;
+  void _captureArmedToChip(win);
+}
+
+/**
+ * Consume the armed/captured selection for an outgoing prompt. Captures the
+ * text if the overlay-click path didn't already, prepends a [Highlighted:]
+ * tag (deduped when the chip already embedded it), and returns the enriched
+ * prompt + selectedText. Never blocks routing on capture failure.
+ */
+async function _consumeSelectionForPrompt(prompt, selectedText) {
+  let captured = _capturedSelectionText;
+  if (_selectionArmed && !captured) {
+    const gen = _selectionArmGen;
+    captured = await _captureArmedSelection({ refocusWindow: unifiedWindow });
+    if (captured && gen === _selectionArmGen) _capturedSelectionText = captured;
+    else if (gen !== _selectionArmGen) captured = null; // superseded mid-capture
+  }
+  const sentToChip = _selectionSentToChip;
+  _disarmSelection('consumed');
+  _capturedSelectionText = '';
+  _selectionSentToChip = false;
+  if (!captured || !captured.trim()) return { prompt, selectedText };
+
+  const trimmed = captured.trim();
+  const embedded = prompt.includes(trimmed) || (selectedText || '').includes(trimmed);
+  // The chip was delivered but is absent from the prompt — user removed it.
+  if (!embedded && sentToChip) return { prompt, selectedText };
+  if (embedded) return { prompt, selectedText };
+  return {
+    prompt: `[Highlighted: ${trimmed}]\n\n${prompt}`,
+    selectedText: [selectedText, trimmed].filter(Boolean).join('\n'),
+  };
+}
+
+/**
+ * Write captured text to a .md file and attach as [File: ...] chip.
+ * Called by the explicit Shift+Cmd/Ctrl+C tag shortcut.
+ */
+function _createCopyFile(text) {
+  if (!text || !text.trim()) {
+    console.log('[SelectCtx] No captured text to write.');
     return;
   }
 
@@ -2953,26 +3300,22 @@ function _createCopyFile() {
   const ts = Date.now();
   const filepath = path.join(copiesDir, `copy-${ts}.md`);
   try {
-    fs.writeFileSync(filepath, _lastCapturedText, 'utf8');
-    console.log(`[CopyMonitor] Wrote copy file: ${filepath}`);
+    fs.writeFileSync(filepath, text, 'utf8');
+    console.log(`[SelectCtx] Wrote copy file: ${filepath}`);
   } catch (err) {
-    console.error('[CopyMonitor] Failed to write copy file:', err.message);
+    console.error('[SelectCtx] Failed to write copy file:', err.message);
     return;
   }
 
-  // Attach as [File: ...] chip — same IPC channel as the existing Shift+Cmd+C text-tag shortcut
+  // Attach as [File: ...] chip — same IPC channel as before
   const tagContent = `[File: ${filepath}]`;
   safeSend(unifiedWindow, 'highlights:update', [tagContent]);
   sentHighlights.add(tagContent);
-
-  // Stop glowing and clear the stored text
-  safeSend(unifiedWindow, 'copy-button:glow', false);
-  safeSend(promptCaptureWindow, 'copy-button:glow', false);
-  _lastCapturedText = '';
 }
 
 /**
- * Start the global mouse monitor for text selection detection.
+ * Start the global selection monitor (uiohook-napi). Detection only — arms the
+ * selection-context state; the clipboard is never written here.
  */
 function startMouseSelectionMonitor() {
   if (_uIOhookInstance) return;
@@ -2980,33 +3323,50 @@ function startMouseSelectionMonitor() {
     const { uIOhook, UiohookKey } = require('uiohook-napi');
     _uIOhookInstance = uIOhook;
 
-    // Track Cmd/Ctrl/Shift key state so _captureOnMouseup() can detect when the
-    // user is mid-copy and avoid racing them with synthetic key events + clipboard
-    // restore (which previously wiped the user's own Cmd+C result). Both keydown
-    // and keyup reconcile state — keydown is authoritative on press, keyup clears
-    // on release, and keydown also self-corrects any stale state from a missed
-    // keyup (platform modifier-flag quirks).
+    const overlayHasFocus = _overlayHasFocus;
+
     uIOhook.on('keydown', (e) => {
+      // Our own synthetic keys (capture Cmd+C) surface here too — ignore them
+      // so they don't count as user activity or flip _userCopiedAfterArm.
+      if (Date.now() < _synthKeyUntil) return;
       _cmdHeld = !!(e.metaKey || e.ctrlKey);
       _shiftHeld = !!e.shiftKey;
-      // Plain Cmd/Ctrl+C (NOT Shift+Cmd+C — that's the tag shortcut and must
-      // not be treated as a user copy) → user is copying the selection.
-      if ((e.metaKey || e.ctrlKey) && !e.shiftKey && e.keycode === UiohookKey.C) {
-        _userCopiedAfterMouseup = true;
+      const outside = !overlayHasFocus();
+      if (outside) _lastExternalKeyDownAt = Date.now();
+      if ((e.metaKey || e.ctrlKey) && outside) {
+        // Plain Cmd/Ctrl+C (not the Shift+Cmd+C tag chord) → the user's own
+        // copy IS the selection; capture can read the clipboard directly
+        // without synthesizing anything.
+        if (!e.shiftKey && e.keycode === UiohookKey.C) {
+          _userCopiedAfterArm = true;
+        }
+        // Cmd+V / Cmd+X destroys the selection — disarm rather than leave a
+        // stale arm (and it cancels any pending synthetic copy for free).
+        if (e.keycode === UiohookKey.V || e.keycode === UiohookKey.X) {
+          _stopProbeWindow();
+          _disarmSelection('paste-cut');
+        }
       }
 
-      // Cmd+A (Select All) — no mouse drag involved, so the mouse monitor misses it.
-      // Detect the keyboard shortcut and trigger the same capture flow.
+      // Cmd+A (Select All) — no mouse drag involved, arm the same way.
+      // Skipped while our overlay is key (that's select-all inside our input).
       const isSelectAll = (e.metaKey || e.ctrlKey) && e.keycode === UiohookKey.A;
-      if (isSelectAll && !_captureInProgress) {
-        // Optimistic glow — the app is about to select all text
-        _dragGlowTriggered = true;
-        safeSend(unifiedWindow, 'copy-button:glow', true);
-        safeSend(promptCaptureWindow, 'copy-button:glow', true);
+      if (isSelectAll && outside) {
+        _armSelection(_getFrontmostAppName());
+        _startProbeWindow({ timeoutMs: 800 });
+      }
 
-        // Wait 100ms for the app to process Select All and for the user to release
-        // the Cmd key, avoiding Cmd+A+C chord interference. Then capture via Cmd+C.
-        setTimeout(() => { _captureOnMouseup(); }, 100);
+      // Shift+navigation = keyboard selection — char (Shift+Arrow), word
+      // (Shift+Option+Arrow), line (Shift+Cmd+Arrow): modifiers share the nav
+      // keycodes, so one check catches every combination. Guarded by armed so
+      // held-shift key-repeat doesn't churn re-arms.
+      const SELECTION_NAV_KEYS = [
+        UiohookKey.ArrowLeft, UiohookKey.ArrowRight, UiohookKey.ArrowUp, UiohookKey.ArrowDown,
+        UiohookKey.Home, UiohookKey.End, UiohookKey.PageUp, UiohookKey.PageDown,
+      ];
+      if (e.shiftKey && outside && SELECTION_NAV_KEYS.includes(e.keycode)) {
+        if (!_selectionArmed) _armSelection(_getFrontmostAppName());
+        _startProbeWindow({ timeoutMs: 800 });
       }
     });
 
@@ -3016,54 +3376,88 @@ function startMouseSelectionMonitor() {
     });
 
     uIOhook.on('mousedown', (e) => {
-      _mouseDownPos = { x: e.x, y: e.y, t: Date.now() };
-      _dragGlowTriggered = false;
+      if (e.button !== 1) { _mouseDownPos = null; return; } // left button only
+      const inside = _isInsideThinkDropWindow(e.x, e.y);
+      const now = Date.now();
 
-      // If the copy button is glowing and the user clicks outside ThinkDrop,
-      // clear the glow — they clicked away from the copy button.
-      if (_lastCapturedText && !_isInsideThinkDropWindow(e.x, e.y)) {
-        _lastCapturedText = '';
-        safeSend(unifiedWindow, 'copy-button:glow', false);
-        safeSend(promptCaptureWindow, 'copy-button:glow', false);
+      if (inside) {
+        // Clicks inside our panels never seed a drag, and clicking the overlay
+        // while armed is the "come ask about it" gesture — trigger the early
+        // capture so the text chip is ready before they type.
+        _mouseDownPos = null;
+        const clickedWin = [unifiedWindow, promptCaptureWindow].find(w => {
+          if (!w || w.isDestroyed()) return false;
+          try {
+            const b = w.getBounds();
+            return e.x >= b.x && e.x <= b.x + b.width && e.y >= b.y && e.y <= b.y + b.height;
+          } catch (_) { return false; }
+        });
+        _maybeCaptureOnOverlayFocus(clickedWin || unifiedWindow);
+        // Unarmed fallback: click-into-overlay right after outside input is the
+        // "ask about this" gesture — a probe no-ops harmlessly if nothing was
+        // selected (Cmd+C just doesn't change the clipboard).
+        if (!_selectionArmed && !_capturedSelectionText &&
+            _lastOutsideClick && now - _lastOutsideClick.t < 2000) {
+          _startProbeWindow({ timeoutMs: 800 });
+        }
+        return;
       }
+
+      // Double-click outside ThinkDrop → word selection candidate → arm.
+      const isDoubleClick = _lastOutsideClick
+        && now - _lastOutsideClick.t < 450
+        && Math.abs(e.x - _lastOutsideClick.x) <= 8
+        && Math.abs(e.y - _lastOutsideClick.y) <= 8;
+      _lastOutsideClick = { x: e.x, y: e.y, t: now };
+      if (isDoubleClick) {
+        _armSelection(_getFrontmostAppName());
+        _startProbeWindow({ timeoutMs: 800 }); // word/line select — instant
+        _mouseDownPos = null;
+        return;
+      }
+
+      // Plain outside click dismisses any armed selection.
+      _disarmSelection('click-away');
+      _mouseDownPos = { x: e.x, y: e.y, t: now };
+      _dragArmTriggered = false;
+      // Drag-scoped probe window: poll Cmd+C while the gesture is live — the
+      // source app guaranteed holds key until mouseup. Catches keyboard-free
+      // selections AND solves the chip delay (text is in memory at mouseup).
+      _startProbeWindow({ untilMouseUp: true, timeoutMs: 3000 });
     });
 
-    // Optimistic glow: start the pulse animation during the drag (before mouseup)
-    // for truly instant visual feedback. Fires once per drag — subsequent mousemove
-    // events hit the O(1) fast path (_dragGlowTriggered is already true).
+    // Optimistic arm during the drag — instant visual feedback, once per drag.
     uIOhook.on('mousemove', (e) => {
-      if (!_mouseDownPos || _dragGlowTriggered) return;
+      if (!_mouseDownPos || _dragArmTriggered) return;
       const dx = e.x - _mouseDownPos.x;
       const dy = e.y - _mouseDownPos.y;
       if (dx * dx + dy * dy < 25) return; // <5px (squared to avoid sqrt)
       if (_isInsideThinkDropWindow(e.x, e.y)) return;
 
-      _dragGlowTriggered = true;
-      safeSend(unifiedWindow, 'copy-button:glow', true);
-      safeSend(promptCaptureWindow, 'copy-button:glow', true);
+      _dragArmTriggered = true;
+      _armSelection(_getFrontmostAppName());
     });
 
-    uIOhook.on('mouseup', async (e) => {
+    uIOhook.on('mouseup', (e) => {
       if (!_mouseDownPos) return;
-      const dx = e.x - _mouseDownPos.x;
-      const dy = e.y - _mouseDownPos.y;
-      const dist = Math.sqrt(dx * dx + dy * dy);
       _mouseDownPos = null;
-
-      // Skip clicks (no movement) and internal ThinkDrop clicks
-      if (dist < 5) return;
-      if (_isInsideThinkDropWindow(e.x, e.y)) return;
-
-      // Candidate selection — capture immediately (source app still has focus).
-      // _captureOnMouseup() will retract the optimistic glow if no text is found.
-      await _captureOnMouseup();
+      const endedInside = _isInsideThinkDropWindow(e.x, e.y);
+      // A drag that ENDS inside a ThinkDrop window is a drag-onto-the-input,
+      // not a selection in another app — retract the optimistic arm and drop
+      // whatever the probe picked up.
+      if (endedInside) _capturedSelectionText = '';
+      if (_dragArmTriggered && endedInside) {
+        _disarmSelection('drag-ended-inside');
+      }
+      _stopProbeWindow({ pushChip: !endedInside });
+      _dragArmTriggered = false;
     });
 
     uIOhook.start();
-    console.log('[CopyMonitor] Mouse selection monitor started.');
+    console.log('[SelectCtx] Mouse selection monitor started.');
   } catch (err) {
-    console.warn('[CopyMonitor] Failed to start mouse monitor:', err.message);
-    console.warn('[CopyMonitor] The copy-to-file feature will not work. Check Accessibility permission.');
+    console.warn('[SelectCtx] Failed to start mouse monitor:', err.message);
+    console.warn('[SelectCtx] Selection context will not work. Check Accessibility permission.');
   }
 }
 
@@ -3074,10 +3468,11 @@ function stopMouseSelectionMonitor() {
   if (!_uIOhookInstance) return;
   try {
     _uIOhookInstance.stop();
-    console.log('[CopyMonitor] Mouse selection monitor stopped.');
+    console.log('[SelectCtx] Mouse selection monitor stopped.');
   } catch (_) {}
   _uIOhookInstance = null;
   _mouseDownPos = null;
+  _disarmSelection('monitor-stopped');
 }
 
 function createPromptCaptureWindow() {
@@ -3178,6 +3573,9 @@ function createPromptCaptureWindow() {
   });
 
   _guardOverlayWindowFocus(promptCaptureWindow);
+  // Selection context: focusing this window while armed → capture the
+  // highlighted text now so it lands as a chip before the user types.
+  promptCaptureWindow.on('focus', () => _maybeCaptureOnOverlayFocus(promptCaptureWindow));
   return promptCaptureWindow;
 }
 
@@ -3471,6 +3869,9 @@ function createUnifiedWindow() {
   });
 
   _guardOverlayWindowFocus(unifiedWindow);
+  // Selection context: focusing the overlay while armed → capture the
+  // highlighted text now so it lands as a chip before the user types.
+  unifiedWindow.on('focus', () => _maybeCaptureOnOverlayFocus(unifiedWindow));
   return unifiedWindow;
 }
 
@@ -4467,7 +4868,7 @@ app.whenReady().then(async () => {
 
     const commsPort = parseInt(process.env.COMMS_GRAPH_PORT || '3015', 10);
     console.log(`🧠 [CommsGraph] Routing prompt through comms-graph (source=${source}):`, prompt.substring(0, 80));
-    const commsBody = JSON.stringify({ text: prompt, source, language: responseLanguage || null, sessionId: sessionId || null, thoughtContext: thoughtContext || null });
+    const commsBody = JSON.stringify({ text: prompt, source, language: responseLanguage || null, sessionId: sessionId || null, thoughtContext: thoughtContext || null, selectedText: selectedText || null });
     const commsReq = http.request({
       hostname: '127.0.0.1',
       port: commsPort,
@@ -4545,8 +4946,8 @@ app.whenReady().then(async () => {
   // Expose to the /voice.event endpoint so voice finals route identically.
   _routeViaCommsGraph = routeThroughCommsGraph;
 
-  ipcMain.on('prompt-queue:submit', (_event, { prompt, selectedText = '', responseLanguage = null, isAskUserAnswer = false, taskId = null, sessionId: pinnedSessionId = null, thoughtContext = null } = {}) => {
-    const trimmedPrompt = prompt?.trim();
+  ipcMain.on('prompt-queue:submit', async (_event, { prompt, selectedText = '', responseLanguage = null, isAskUserAnswer = false, taskId = null, sessionId: pinnedSessionId = null, thoughtContext = null } = {}) => {
+    let trimmedPrompt = prompt?.trim();
     if (!trimmedPrompt) return;
 
     // ── Intercept: gather answer in flight ────────────────────────────────────
@@ -4611,6 +5012,14 @@ app.whenReady().then(async () => {
         safeSend(promptCaptureWindow, 'automation:progress', { type: 'plan:mode:cleared', source: 'prompt' });
       }
       return;
+    }
+
+    // ── Selection context — armed highlight rides along as [Highlighted:] ──
+    // Captured here (never at selection time) so normal Cmd+C/Cmd+V is untouched.
+    if (_selectionArmed || _capturedSelectionText) {
+      const consumed = await _consumeSelectionForPrompt(trimmedPrompt, selectedText);
+      trimmedPrompt = consumed.prompt;
+      selectedText = consumed.selectedText;
     }
 
     // ── comms-graph routing (feature-flagged) ──────────────────────────────
@@ -5466,10 +5875,13 @@ app.whenReady().then(async () => {
     }
   });
 
-  // voice:push-to-talk-start — renderer signals PTT button pressed
+  // voice:push-to-talk-start — renderer signals voice-activate pressed
   ipcMain.on('voice:push-to-talk-start', () => {
     console.log('🎙️ [Voice] Push-to-talk: start');
     voiceJournal.setVoiceStatus('listening');
+    // Voice-activation is an intent moment — probe for a selection a missed
+    // arm wouldn't have caught (no-op when nothing is selected).
+    if (!_capturedSelectionText) _startProbeWindow({ timeoutMs: 800 });
     const wins = [promptCaptureWindow, resultsWindow];
     for (const win of wins) {
       safeSend(win, 'voice:listening', { active: true });
@@ -5787,8 +6199,15 @@ app.whenReady().then(async () => {
   // All stategraph:process calls now go through the prompt queue so prompts
   // are serialized (printer-queue model). The queue calls runPromptThroughStateGraph
   // when a slot opens up.
-  ipcMain.on('stategraph:process', (_event, { prompt, selectedText = '', sessionId = null, responseLanguage = null } = {}) => {
+  ipcMain.on('stategraph:process', async (_event, { prompt, selectedText = '', sessionId = null, responseLanguage = null } = {}) => {
     if (!prompt?.trim()) return;
+
+    // ── Selection context — armed highlight rides along as [Highlighted:] ──
+    if (_selectionArmed || _capturedSelectionText) {
+      const consumed = await _consumeSelectionForPrompt(prompt.trim(), selectedText);
+      prompt = consumed.prompt;
+      selectedText = consumed.selectedText;
+    }
 
     // ── comms-graph routing (feature-flagged) ──────────────────────────────
     // When COMMS_GRAPH_ENABLED=true, text prompts route through comms-graph
@@ -6143,73 +6562,9 @@ app.whenReady().then(async () => {
     };
 
     // ── gatherContext callbacks ────────────────────────────────────────────────
-    // gatherAnswerCallback: waits for user to type/speak an answer in StandalonePromptCapture.
-    // NOTE: the actual ipcMain.on('gather:answer') listener is registered ONCE at module level
-    // (see below) — NOT here per-run, to avoid MaxListenersExceeded accumulation.
-    //
-    // Grill-Me Phase C: supports TWO modes:
-    //   1. Legacy single-string: gatherAnswerCallback("question text") → Promise<string>
-    //   2. Batch mode: gatherAnswerCallback({ batch: true, batchId, questions }) → Promise<object>
-    // The batch mode emits gather:question_batch to the renderer and awaits gather:answer_batch.
-    const gatherAnswerCallback = (questionOrBatch) => {
-      // ── Batch mode (Grill-Me Phase C) ──────────────────────────────────────
-      if (questionOrBatch && typeof questionOrBatch === 'object' && questionOrBatch.batch) {
-        const { batchId, questions, routeConfirmation } = questionOrBatch;
-        const batchTaskId = questionOrBatch.taskId || null;
-        return new Promise((resolve) => {
-          pendingGatherBatchResolve = resolve;
-          pendingGatherBatchData = { batchId, questions, routeConfirmation: routeConfirmation || null, taskId: batchTaskId };
-          console.log(`[GatherContext] Waiting for batch answers (batchId=${batchId}, ${questions?.length || 0} questions)…`);
-          safeSendUnified('gather:question_batch', {
-            active: true,
-            batchId,
-            questions: questions || [],
-            routeConfirmation: routeConfirmation || null,
-            // Task-scoped batches render inside the feed's QueueTaskCard
-            // (its AutomationProgress only accepts batches tagged with its
-            // taskId). Untagged batches render in the global instance.
-            taskId: batchTaskId,
-          });
-          _notifyQuestion(
-            questions?.[0]?.question || questions?.[0]?.text || 'I have a few questions before I start',
-            'results'
-          );
-          // 10-minute timeout
-          setTimeout(() => {
-            if (pendingGatherBatchResolve === resolve) {
-              console.warn('[GatherContext] Timed out waiting for batch answers — skipping');
-              pendingGatherBatchResolve = null;
-              pendingGatherBatchData = null;
-              safeSendUnified('gather:question_batch', { active: false, batchId: null, questions: null });
-              _postThoughtInput('User did not answer the clarifying questions — they went unanswered until timeout.');
-              resolve({});
-            }
-          }, 10 * 60 * 1000);
-        });
-      }
-      // ── Legacy single-string mode ──────────────────────────────────────────
-      const question = questionOrBatch;
-      return new Promise((resolve) => {
-        pendingGatherResolve = resolve;
-        pendingGatherQuestion = question || null;
-        console.log('[GatherContext] Waiting for user answer…');
-        // Tell unified overlay to intercept next submit as gather:answer
-        safeSendUnified('gather:pending', { active: true, question: question || null });
-        // 10-minute timeout
-        setTimeout(() => {
-          if (pendingGatherResolve === resolve) {
-            console.warn('[GatherContext] Timed out waiting for answer — skipping question');
-            pendingGatherResolve = null;
-            pendingGatherQuestion = null;
-            safeSendUnified('gather:pending', { active: false });
-            resolve(null);
-          }
-        }, 10 * 60 * 1000);
-      });
-    };
-
-    // handoffRunner.init() ran before this callback existed — register it now so
-    // concurrent comms-graph tasks can emit clarification question batches too.
+    // gatherAnswerCallback is now a module-level function (registered at
+    // handoffRunner.init so handoff tasks get it too). Re-registering here is
+    // a harmless idempotent no-op kept for safety on older resume paths.
     require('./handoffRunner').setGatherAnswerCallback(gatherAnswerCallback);
 
     // Normalizes a credential key to the canonical `credential:<agent>:<field>` form.
@@ -8019,29 +8374,26 @@ app.whenReady().then(async () => {
     }
   });
 
-  // Shift+Cmd+C — write the last captured text selection to a .md file and attach it.
-  // The mouse monitor captures text on mouseup (via Cmd+C) and stores it in _lastCapturedText.
-  // This shortcut writes that stored text to ~/.thinkdrop/edits/copies/copy-<ts>.md and
-  // attaches it as a [File: ...] chip — same as clicking the glowing copy button.
-  // If no text was captured (button not glowing), this is a no-op.
+  // Shift+Cmd+C — explicit tag shortcut. Captures the current selection NOW
+  // (works even without a detected drag — e.g. keyboard selection), writes it
+  // to ~/.thinkdrop/edits/copies/copy-<ts>.md, and attaches a [File:] chip.
+  // No-op when nothing is selectable.
   globalShortcut.register('CommandOrControl+Shift+C', () => {
-    _createCopyFile();
+    (async () => {
+      const text = _capturedSelectionText || await _captureArmedSelection({ refocusWindow: unifiedWindow });
+      _disarmSelection('shortcut');
+      _capturedSelectionText = '';
+      _selectionSentToChip = false;
+      _createCopyFile(text);
+    })();
   });
 
-  // Copy button click — renderer sends this when the user clicks the glowing copy button.
-  ipcMain.on('copy-button:click', () => {
-    _createCopyFile();
-  });
-
-  // Copy button clear — renderer sends this when the user clicks anywhere inside
-  // the overlay except the copy button itself. Discards the stored captured text
-  // and retracts the glow so the pulse doesn't linger after the user moves on.
-  ipcMain.on('copy-button:clear', () => {
-    if (_lastCapturedText) {
-      _lastCapturedText = '';
-      safeSend(unifiedWindow, 'copy-button:glow', false);
-      safeSend(promptCaptureWindow, 'copy-button:glow', false);
-    }
+  // Selection context clear — renderer asks to drop the armed state / pending
+  // capture (e.g. user dismisses the context affordance).
+  ipcMain.on('selection:clear', () => {
+    _disarmSelection('cleared');
+    _capturedSelectionText = '';
+    _selectionSentToChip = false;
   });
 
   // Start the global mouse monitor for text selection detection.
