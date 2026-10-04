@@ -74,6 +74,29 @@ export function OverlayStyles() {
         animation: prompt-border-sweep 2.8s linear infinite, think-breathe 2.4s ease-in-out infinite;
         opacity: 1;
       }
+      /* Pending selection chip — armed but not yet captured. Soft orange pulse
+         matching the selection ring; swaps for the real chip on capture. */
+      @keyframes selection-pending-pulse {
+        0%, 100% { opacity: 1; }
+        50% { opacity: 0.55; }
+      }
+      .selection-pending-chip {
+        animation: selection-pending-pulse 1.8s ease-in-out infinite;
+      }
+      /* Paste-context button glow — same conic sweep as .prompt-glow-ring.selection
+         orbiting the button so the affordance matches the border animation. */
+      .selection-paste-ring {
+        position: absolute;
+        inset: -2px;
+        border-radius: 8px;
+        padding: 2px;
+        background: conic-gradient(from var(--prompt-angle), transparent 55%, #f97316 74%, #fdba74 84%, #fb923c 90%, #f97316 96%, transparent);
+        -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+        -webkit-mask-composite: xor;
+        mask-composite: exclude;
+        pointer-events: none;
+        animation: prompt-border-sweep 2.8s linear infinite, think-breathe 2.4s ease-in-out infinite;
+      }
       /* Cancel button hover glow - red variant */
       .cancel-glow-ring {
         position: absolute;

@@ -37,6 +37,10 @@ interface PromptInputBarProps {
   /** "Continue Thread" — recalled task context pinned for the next prompt. */
   threadContext?: { prompt: string } | null;
   onThreadContextClear?: () => void;
+  /** Armed selection waiting to be captured — renders a pending chip and
+   *  triggers the capture request on textarea focus. Prop-driven (never in
+   *  highlightsStore) so it can't leak into submitted prompts. */
+  selectionPending?: boolean;
 }
 
 // ── Chip icons (inline SVG — no emojis) ────────────────────────────────────────
@@ -59,6 +63,16 @@ const ThreadIcon = () => (
 const TargetIcon = () => (
   <svg {..._iconProps}>
     <circle cx="12" cy="12" r="10" /><line x1="22" y1="12" x2="18" y2="12" /><line x1="6" y1="12" x2="2" y2="12" /><line x1="12" y1="6" x2="12" y2="2" /><line x1="12" y1="22" x2="12" y2="18" />
+  </svg>
+);
+// Clipboard with arrow-in — "paste context into the overlay" (distinct from
+// the old copy icon's two overlapping rects).
+const ClipboardPasteIcon = () => (
+  <svg {..._iconProps}>
+    <path d="M15 2H9a1 1 0 0 0-1 1v2a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1V3a1 1 0 0 0-1-1Z" />
+    <path d="M8 4H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2" />
+    <path d="M18.4 15.6 21 18l-2.6 2.4" />
+    <path d="M15 18h6" />
   </svg>
 );
 
@@ -100,6 +114,7 @@ function PromptInputBarImpl(
     aiActivityPanelRef,
     threadContext,
     onThreadContextClear,
+    selectionPending,
   }: PromptInputBarProps,
   ref: React.Ref<PromptInputBarHandle>,
 ) {
@@ -265,7 +280,7 @@ function PromptInputBarImpl(
 
   // --- Highlight chips ---
   const renderHighlightChips = () => {
-    if (!threadContext && highlights.length === 0) return null;
+    if (!threadContext && !selectionPending && highlights.length === 0) return null;
 
     return (
       <div className="flex flex-wrap gap-2 mb-2">
@@ -285,6 +300,42 @@ function PromptInputBarImpl(
               onClick={() => onThreadContextClear?.()}
               className="ml-1 hover:opacity-70"
               style={{ color: '#c4b5fd' }}
+            >
+              ×
+            </button>
+          </div>
+        )}
+        {selectionPending && (
+          <div className="relative flex items-center">
+            <span className="selection-paste-ring" aria-hidden="true" />
+            <button
+              onClick={() => (window as any).electron?.ipcRenderer?.send('selection:capture-request')}
+              className="relative flex items-center gap-1.5 px-2 py-1 rounded-md text-xs selection-pending-chip"
+              title="Paste highlighted text into the overlay (⌘;)"
+              style={{
+                backgroundColor: 'rgba(251, 146, 60, 0.14)',
+                border: '1px solid rgba(251, 146, 60, 0.35)',
+                color: '#fdba74',
+                cursor: 'pointer',
+              }}
+            >
+              <ClipboardPasteIcon />
+              <span>Paste context</span>
+              <kbd
+                className="px-1 rounded text-[10px]"
+                style={{
+                  backgroundColor: 'rgba(251, 146, 60, 0.12)',
+                  border: '1px solid rgba(251, 146, 60, 0.3)',
+                  fontFamily: 'inherit',
+                }}
+              >
+                ⌘;
+              </kbd>
+            </button>
+            <button
+              onClick={() => (window as any).electron?.ipcRenderer?.send('selection:clear')}
+              className="ml-1 hover:opacity-70 relative"
+              style={{ color: '#fdba74' }}
             >
               ×
             </button>

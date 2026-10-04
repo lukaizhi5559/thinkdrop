@@ -2743,6 +2743,7 @@ export function UnifiedOverlay() {
           aiActivityPanelRef={aiActivityPanelRef}
           threadContext={threadContext}
           onThreadContextClear={handleThreadContextClear}
+          selectionPending={selectionArmed}
         />
       </div>
 

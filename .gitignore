@@ -17,6 +17,6 @@ docs
 .devin
 
 # Nested repos — tracked independently in their own remotes
-# comms-graph/
-# stategraph-module/
-# mcp-services/
+comms-graph/
+stategraph-module/
+mcp-services/

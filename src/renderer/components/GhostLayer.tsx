@@ -840,7 +840,7 @@ function SelectionContextPill() {
     <div
       style={{
         position: 'fixed',
-        bottom: 124,
+        top: 48,
         left: '50%',
         transform: 'translateX(-50%)',
         zIndex: 100000,
@@ -867,7 +867,22 @@ function SelectionContextPill() {
         </svg>
       </span>
       <span style={{ fontSize: 13, fontWeight: 600 }}>Text Highlighted Context</span>
-      <span style={{ fontSize: 11, fontWeight: 500, color: '#9ca3af' }}>captured on submit</span>
+      <span style={{ fontSize: 11, fontWeight: 500, color: '#9ca3af', display: 'flex', alignItems: 'center', gap: 5 }}>
+        add to overlay
+        <span
+          style={{
+            padding: '1px 6px',
+            borderRadius: 4,
+            fontSize: 11,
+            fontWeight: 600,
+            color: '#fdba74',
+            background: 'rgba(251,146,60,0.12)',
+            border: '1px solid rgba(251,146,60,0.35)',
+          }}
+        >
+          ⌘;
+        </span>
+      </span>
     </div>
   );
 }
