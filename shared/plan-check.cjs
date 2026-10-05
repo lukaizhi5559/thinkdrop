@@ -7,14 +7,17 @@
  * the preflight auth ledger — no live probes, no LLM. Each row is either a
  * pass, a pending state (steps still generating), or an actionable issue:
  *
- *   signin         — registered browser service agent needs auth
- *   cli-key        — cli/api/mcp agent declares `secrets:` that aren't stored
- *   cli-login      — non-browser agent w/o secrets that may need a login run
- *   unknown-agent  — name matches no registry agent (suggested? attached)
- *   missing-steps  — task steps still generating (pending, not an issue)
+ *   signin             — registered browser service agent needs auth
+ *   cli-key            — cli/api/mcp agent declares `secrets:` that aren't stored
+ *   cli-login          — non-browser agent w/o secrets that may need a login run
+ *   unknown-agent      — name matches no registry agent (suggested? attached)
+ *   missing-steps      — task steps still generating (pending, not an issue)
+ *   steps-failed       — step generation failed (warn — executor replans at runtime)
+ *   approval-required  — task pauses mid-run for user review (info row)
  *
  * Items are what PlanCheckCard renders; actions resolve through
- * plan:check:action IPC. allClear === false blocks plan start.
+ * plan:check:action IPC. Only status 'issue' rows block plan start —
+ * 'warn' and 'pending' are advisory.
  */
 
 const serviceMap = require('./service-map.cjs');
@@ -27,12 +30,12 @@ function _preflight() {
 
 const LOCAL = new Set(['shell', 'none', 'general_knowledge', 'synthesize']);
 
-function _taskStepsReady(task) {
-  // plan-steps steps are [{skill,...}] after generation; a task with
-  // stepsStatus 'pending'/'generating' or no parsed steps isn't ready.
+function _taskStepsState(task) {
+  // 'failed' → issue; pending/generating/no steps → pending; else pass.
   const status = String(task.stepsStatus || '').toLowerCase();
-  if (status === 'pending' || status === 'generating') return false;
-  return Array.isArray(task.steps) && task.steps.length > 0;
+  if (status === 'failed') return 'failed';
+  if (status === 'pending' || status === 'generating') return 'pending';
+  return (Array.isArray(task.steps) && task.steps.length > 0) ? 'pass' : 'pending';
 }
 
 /**
@@ -52,16 +55,31 @@ async function computePlanCheck(tasks, opts = {}) {
     const title = String(task.prompt || task.title || `Task ${n}`).slice(0, 60);
     const assessment = byTask.get(n) || { auth: 'unknown', agents: [] };
 
-    // Steps row — pending while step-gen is still running.
-    const stepsReady = _taskStepsReady(task);
+    // Steps row — pending while step-gen is still running, issue when it failed.
+    const stepsState = _taskStepsState(task);
     items.push({
       id: `t${n}-steps`,
       taskNum: n,
-      label: `Task ${n} — steps ready`,
+      label: stepsState === 'failed'
+        ? `Task ${n} — step generation failed (will replan at run)`
+        : `Task ${n} — steps ready`,
       detail: title,
-      status: stepsReady ? 'pass' : 'pending',
-      kind: stepsReady ? undefined : 'missing-steps',
+      status: stepsState === 'pass' ? 'pass' : (stepsState === 'failed' ? 'warn' : 'pending'),
+      kind: stepsState === 'pass' ? undefined : (stepsState === 'failed' ? 'steps-failed' : 'missing-steps'),
     });
+
+    // Commit tasks pause mid-run for review — surface as an info row so the
+    // user knows the run will stop and ask before booking/sending.
+    if (task.approval === 'required') {
+      items.push({
+        id: `t${n}-approval`,
+        taskNum: n,
+        label: `Task ${n} — will pause for your review`,
+        detail: title,
+        status: 'pass',
+        kind: 'approval-required',
+      });
+    }
 
     const agents = (task.agents || []).map(a => String(a).trim()).filter(Boolean);
     const realAgents = agents.filter(a => {
@@ -136,7 +154,8 @@ async function computePlanCheck(tasks, opts = {}) {
     }
   }
 
-  const allClear = items.every(i => i.status === 'pass');
+  // 'warn' is advisory (executor replans at runtime); only 'issue' blocks.
+  const allClear = !items.some(i => i.status === 'issue' || i.status === 'pending');
   return { items, allClear };
 }
 

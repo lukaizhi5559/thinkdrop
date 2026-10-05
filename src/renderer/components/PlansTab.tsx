@@ -163,6 +163,7 @@ function PlanCard({ plan, onContinue, onRun, onCancelRun, onDelete, runState }: 
   const [expanded, setExpanded] = React.useState(false);
   const [renaming, setRenaming] = React.useState(false);
   const [nameDraft, setNameDraft] = React.useState('');
+  const [nameErr, setNameErr] = React.useState<string | null>(null);
   const [confirmDel, setConfirmDel] = React.useState(false);
   const meta = STATUS_META[plan.status] || STATUS_META.drafting;
   const isRunning = plan.status === 'running' || runState?.status === 'running';
@@ -175,10 +176,16 @@ function PlanCard({ plan, onContinue, onRun, onCancelRun, onDelete, runState }: 
     return () => clearTimeout(t);
   }, [confirmDel]);
 
-  const _commitRename = () => {
+  const _commitRename = async () => {
     const v = nameDraft.trim();
-    setRenaming(false);
-    if (v && ipcRenderer) ipcRenderer.invoke('plan:rename', { planFile: plan.file, planName: v });
+    if (!v || v === plan.name || !ipcRenderer) { setRenaming(false); setNameErr(null); return; }
+    const res = await ipcRenderer.invoke('plan:rename', { planFile: plan.file, planName: v }).catch(() => null);
+    if (res?.ok) {
+      setRenaming(false);
+      setNameErr(null);
+    } else {
+      setNameErr(res?.error || 'Rename failed');
+    }
   };
 
   return (
@@ -191,22 +198,28 @@ function PlanCard({ plan, onContinue, onRun, onCancelRun, onDelete, runState }: 
       <div style={{ display: 'flex', alignItems: 'center', gap: 7, minWidth: 0 }}>
         <span style={{ fontSize: '0.8rem', flexShrink: 0, color: meta.color, display: 'flex' }}><meta.Icon /></span>
         {renaming ? (
+          <div style={{ flex: 1, minWidth: 0 }}>
           <input
             autoFocus
             value={nameDraft}
             onChange={e => setNameDraft(e.target.value)}
             onBlur={_commitRename}
-            onKeyDown={e => { if (e.key === 'Enter') _commitRename(); if (e.key === 'Escape') setRenaming(false); }}
+            onKeyDown={e => { if (e.key === 'Enter') _commitRename(); if (e.key === 'Escape') { setRenaming(false); setNameErr(null); } }}
             placeholder="history.project.plan"
             style={{
               flex: 1, minWidth: 0, background: 'rgba(255,255,255,0.06)',
-              border: '1px solid rgba(34,211,238,0.4)', borderRadius: 5,
+              border: `1px solid ${nameErr ? 'rgba(248,113,113,0.5)' : 'rgba(34,211,238,0.4)'}`, borderRadius: 5,
               color: '#e5e7eb', fontSize: '0.72rem', padding: '3px 6px', outline: 'none',
+              width: '100%', boxSizing: 'border-box',
             }}
           />
+          {nameErr && (
+            <div style={{ color: '#f87171', fontSize: '0.6rem', marginTop: 3 }}>{nameErr}</div>
+          )}
+          </div>
         ) : (
           <button
-            onClick={() => { setNameDraft(plan.name || ''); setRenaming(true); }}
+            onClick={() => { setNameDraft(plan.name || ''); setNameErr(null); setRenaming(true); }}
             title={plan.name ? `Rename ${plan.name}` : 'Click to name (dot-syntax)'}
             style={{
               flex: 1, minWidth: 0, textAlign: 'left', background: 'none', border: 'none',

@@ -94,6 +94,7 @@ contextBridge.exposeInMainWorld('electron', {
         'plan:approve',
         'plan:cancel',
         'plan:check:action',
+        'plan:task-review',
         'plan:new',
         'plan:rescan',
         'plan:open-editor',
@@ -141,6 +142,7 @@ contextBridge.exposeInMainWorld('electron', {
         'preflight:auth_continue',
         'preflight:auth_bypass',
         'plan:check:action',
+        'plan:task-review',
         'browser.agent:auth',
         'task:delete',
         'scan:cancel',
@@ -279,6 +281,7 @@ contextBridge.exposeInMainWorld('electron', {
         'plan:auth_required',
         'plan:check',
         'plan:question',
+        'plan:review',
       ];
       if (validChannels.includes(channel)) {
         const wrapped = (_event, ...args) => func(...args);
@@ -449,6 +452,7 @@ contextBridge.exposeInMainWorld('electron', {
         'plan:auth_required',
         'plan:check',
         'plan:question',
+        'plan:review',
         'results-window:show',
         'skills:update',
         'connections:update',
@@ -562,6 +566,7 @@ contextBridge.exposeInMainWorld('electron', {
         'plan:auth_required',
         'plan:check',
         'plan:question',
+        'plan:review',
       ];
       if (validChannels.includes(channel)) {
         // Legacy path: func-reference removal won't work across contextBridge.

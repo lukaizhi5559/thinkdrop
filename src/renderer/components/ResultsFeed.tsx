@@ -45,6 +45,7 @@ export type FeedEntry =
   | { id: string; ts: number; kind: 'proactive'; text: string; thoughtId?: string; pending?: boolean; exchangeId?: string; historic?: boolean }
   | { id: string; ts: number; kind: 'plan-check'; check: import('./PlanCheckCard').PlanCheckPayload; exchangeId?: string }
   | { id: string; ts: number; kind: 'plan-question'; planId: string | null; question: string; options: import('./QuestionCard').QuestionOption[]; answered?: string; exchangeId?: string }
+  | { id: string; ts: number; kind: 'plan-review'; review: { planId: string; taskNum: number; title?: string; prompt?: string; priorResults?: { taskNum: number; result: string }[]; resolved?: boolean; skipped?: boolean }; exchangeId?: string }
   | { id: string; ts: number; kind: 'system'; text: string; exchangeId?: string; historic?: boolean };
 
 interface ResultsFeedProps {
@@ -879,6 +880,80 @@ const FeedEntryRow = React.memo(function FeedEntryRow({
             check={check}
             onRun={() => sendAction('run')}
           />
+        </div>
+      );
+    }
+
+    case 'plan-review': {
+      // Mid-run commit gate — Approval:required task held for review.
+      const r = entry.review;
+      if (r.resolved) {
+        return (
+          <div style={{ margin: '6px 0', textAlign: 'center' }}>
+            <span style={{ color: '#6b7280', fontSize: '0.68rem', fontStyle: 'italic' }}>
+              Task {r.taskNum} — {r.skipped ? 'skipped' : 'approved'}
+            </span>
+          </div>
+        );
+      }
+      const sendReview = (action: string) =>
+        ipcRenderer?.send('plan:task-review', { planId: r.planId, taskNum: r.taskNum, action });
+      return (
+        <div className="feed-entry" style={{ margin: '4px 0 12px', position: 'relative', paddingBottom: 10 }}>
+          <div style={{
+            border: '1px solid rgba(255,255,255,0.09)', borderRadius: 10,
+            backgroundColor: 'rgba(255,255,255,0.03)', padding: '10px 12px',
+          }}>
+            {/* Amber banner — same pattern as AP's plan-review warning */}
+            <div style={{ marginBottom: 8, padding: '7px 10px', borderRadius: 8, backgroundColor: 'rgba(251,191,36,0.08)', border: '1px solid rgba(251,191,36,0.28)', display: 'flex', alignItems: 'center', gap: 8 }}>
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#fbbf24" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
+                <path d="M12 9v4"/><path d="M12 17h.01"/>
+                <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
+              </svg>
+              <span style={{ color: '#fcd34d', fontSize: '0.72rem', fontWeight: 600 }}>
+                This task makes a real change — review what was gathered, then approve to continue.
+              </span>
+            </div>
+            <div className="flex items-center gap-2" style={{ marginBottom: 6 }}>
+              <div className="flex-shrink-0 w-3 h-3 rounded-full" style={{ backgroundColor: '#f59e0b' }} />
+              <span style={{ color: '#fcd34d', fontSize: '0.76rem', fontWeight: 600 }}>
+                Review — Task {r.taskNum}
+              </span>
+            </div>
+            <div style={{ color: '#e5e7eb', fontSize: '0.74rem', fontWeight: 600 }}>
+              {r.title || `Task ${r.taskNum}`}
+            </div>
+            <div style={{ color: '#9ca3af', fontSize: '0.7rem', marginTop: 4, lineHeight: 1.45 }}>
+              {String(r.prompt || '').slice(0, 220)}
+            </div>
+            {(r.priorResults || []).length > 0 && (
+              <div style={{ marginTop: 8, borderTop: '1px solid rgba(255,255,255,0.08)', paddingTop: 7 }}>
+                <div style={{ color: '#6b7280', fontSize: '0.64rem', marginBottom: 4 }}>Gathered results</div>
+                {(r.priorResults || []).map(pr => (
+                  <div key={pr.taskNum} style={{ color: '#abafb8', fontSize: '0.68rem', lineHeight: 1.4, marginBottom: 3 }}>
+                    <span style={{ color: '#6b7280' }}>Task {pr.taskNum}:</span> {String(pr.result).slice(0, 180)}
+                  </div>
+                ))}
+              </div>
+            )}
+            <div className="flex" style={{ gap: 8, marginTop: 12, borderTop: '1px solid rgba(255,255,255,0.07)', paddingTop: 10 }}>
+              <button
+                onClick={() => sendReview('approve')}
+                style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '6px 16px', borderRadius: 7, cursor: 'pointer', backgroundColor: 'rgba(59,130,246,0.18)', border: '1px solid rgba(59,130,246,0.45)', color: '#93c5fd', fontSize: '0.75rem', fontWeight: 600 }}
+                onMouseEnter={e => (e.currentTarget.style.backgroundColor = 'rgba(59,130,246,0.30)')}
+                onMouseLeave={e => (e.currentTarget.style.backgroundColor = 'rgba(59,130,246,0.18)')}
+              >
+                <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+                Approve &amp; Run
+              </button>
+              <button
+                onClick={() => sendReview('skip')}
+                style={{ padding: '6px 14px', borderRadius: 7, cursor: 'pointer', backgroundColor: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.25)', color: '#f87171', fontSize: '0.75rem', fontWeight: 500 }}
+                onMouseEnter={e => (e.currentTarget.style.backgroundColor = 'rgba(239,68,68,0.18)')}
+                onMouseLeave={e => (e.currentTarget.style.backgroundColor = 'rgba(239,68,68,0.08)')}
+              >Skip task</button>
+            </div>
+          </div>
         </div>
       );
     }

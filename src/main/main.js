@@ -2595,6 +2595,8 @@ function _triggerPlanRun(metadata) {
 let _pendingPlanCheck = null;
 /** @type {{planId:string|null, question:string, options:Array}|null} */
 let _pendingChoices = null;
+/** @type {Map<string, {planId:string, taskNum:number, title:string, prompt:string, priorResults:Array, acked:boolean, fallbackTimer:any}>} key = planId:taskNum */
+const _pendingPlanReviews = new Map();
 
 /** Mark the preflight auth ledger — same file/shape planPreflight reads. */
 function _markPlanAuthLedger(agentId) {
@@ -2652,6 +2654,17 @@ async function _emitPlanCheck(planId, planFile, { autoStart = false, bypassed } 
 function _matchPlanCheckAction(text) {
   const t = String(text || '').trim().toLowerCase();
   if (!t) return null;
+  // Mid-run review gate — a held commit task waiting for approval wins over
+  // everything else while it's pending (voice "go ahead" / "skip it").
+  if (_pendingPlanReviews.size) {
+    const [key, review] = _pendingPlanReviews.entries().next().value;
+    if (APPROVAL_CONFIRM_RE.test(t)) {
+      return { action: 'approve-task', planId: review.planId, taskNum: review.taskNum };
+    }
+    if (/^skip\b/.test(t)) {
+      return { action: 'skip-task', planId: review.planId, taskNum: review.taskNum };
+    }
+  }
   // Choices card: "option 2" / "pick 2" / "2" selects deterministically.
   if (_pendingChoices && _pendingChoices.options.length) {
     const m = t.match(/^(?:option|pick|choose|number)?\s*(\d+)$/);
@@ -2667,7 +2680,7 @@ function _matchPlanCheckAction(text) {
     return null; // free-form answers ride the normal lane
   }
   const pc = _pendingPlanCheck;
-  if (!pc || !pc.items.some(i => i.status === 'issue')) return null;
+  if (!pc || !pc.items.some(i => i.status === 'issue' || i.kind === 'missing-steps')) return null;
   const issues = pc.items.filter(i => i.status === 'issue');
   const forAgent = (re) => {
     const m = t.match(re);
@@ -2690,6 +2703,14 @@ function _matchPlanCheckAction(text) {
   if (/^find\s+(options|services|alternatives)/.test(t)) {
     const i = issues.find(x => x.kind === 'unknown-agent' || x.kind === 'no-capability') || issues[0];
     return { action: 'find-options', itemId: i.id };
+  }
+  if (/^(retry|regenerate|try again)(\s+(the\s+)?steps?)?/.test(t)) {
+    const i = issues.find(x => x.kind === 'steps-failed')
+      || pc.items.find(x => x.kind === 'missing-steps' || x.kind === 'steps-failed');
+    if (i) return { action: 'retry-steps', itemId: i.id };
+  }
+  if (/^(run|start|go)(\s+(the\s+)?plan)?$/.test(t)) {
+    return { action: 'run', itemId: issues[0]?.id };
   }
   return null;
 }
@@ -2851,9 +2872,26 @@ async function _handlePlanCheckAction({ planId, itemId, action, value, envName }
       }
       break;
     }
+    case 'retry-steps': {
+      // Failed step generation — ask comms-graph's planning lane to regenerate,
+      // then recheck once it has had time to land.
+      if (item?.taskNum) {
+        const payload = JSON.stringify({ planId: pc.planId, taskNum: item.taskNum });
+        await new Promise((resolve) => {
+          const req = require('http').request(
+            { hostname: '127.0.0.1', port: COMMS_GRAPH_PORT, path: '/plan.retry-steps', method: 'POST',
+              headers: { 'Content-Type': 'application/json' } },
+            () => resolve());
+          req.on('error', () => resolve());
+          req.write(payload); req.end();
+        });
+        setTimeout(() => recheck().catch(() => {}), 6000);
+      }
+      break;
+    }
     case 'run': {
-      // Manual "Run plan" — allowed only once the checklist is all-clear.
-      if (!pc.items.every(i => i.status === 'pass')) break;
+      // Manual "Run plan" — 'warn' is advisory; only issues/pending block.
+      if (pc.items.some(i => i.status === 'issue' || i.status === 'pending')) break;
       const planRunner = require('./planRunner');
       const r = await planRunner.startPlan(pc.planFile, { sessionId: null, bypassAgents: [...pc.bypassed] });
       if (r?.ok) {
@@ -3115,6 +3153,32 @@ function initStateGraph() {
           onAuthRequired: (planId, blockers) => {
             console.log(`[PlanRunner] Plan ${planId} blocked on auth:`, blockers.map(b => b.agentId).join(', '));
             safeSendUnified('preflight:open-agents-tab', { planId, blockers });
+          },
+          onReview: (payload) => {
+            const key = `${payload.planId}:${payload.taskNum}`;
+            if (payload.resolved) {
+              const r = _pendingPlanReviews.get(key);
+              if (r?.fallbackTimer) clearTimeout(r.fallbackTimer);
+              _pendingPlanReviews.delete(key);
+              return;
+            }
+            const entry = { ...payload, acked: false, fallbackTimer: null };
+            // Stale-preload insurance: the renderer acks plan:review on receipt.
+            // No ack within 900ms → fall back to a plan:question card (already
+            // whitelisted on older builds); its option pick posts back as text
+            // which the _pendingPlanReviews intercept resolves anyway.
+            entry.fallbackTimer = setTimeout(() => {
+              if (!_pendingPlanReviews.has(key) || entry.acked) return;
+              safeSendUnified('plan:question', {
+                planId: payload.planId,
+                question: `Task ${payload.taskNum} is ready to commit — approve to run it?`,
+                options: [
+                  { label: 'Approve and run', description: payload.title || '' },
+                  { label: 'Skip this task', description: 'Mark the task skipped and continue the plan' },
+                ],
+              });
+            }, 900);
+            _pendingPlanReviews.set(key, entry);
           },
         });
         handoffRunner.setOnTaskComplete((taskId, status, result) => {
@@ -5307,8 +5371,14 @@ app.whenReady().then(async () => {
           console.log(`[PlanCheck] Voice/text pick → "${prompt.slice(0, 60)}"`);
         } else {
           console.log(`[PlanCheck] Voice/text action: ${hit.action}${hit.itemId ? ` (${hit.itemId})` : ''}`);
-          _handlePlanCheckAction({ planId: _pendingPlanCheck?.planId, itemId: hit.itemId, action: hit.action })
-            .catch(err => console.warn('[PlanCheck] voice action failed:', err.message));
+          if (hit.action === 'approve-task' || hit.action === 'skip-task') {
+            require('./planRunner')
+              .approvePlanTask(hit.planId, hit.taskNum, { skip: hit.action === 'skip-task' })
+              .catch(err => console.warn('[PlanReview] voice action failed:', err.message));
+          } else {
+            _handlePlanCheckAction({ planId: _pendingPlanCheck?.planId, itemId: hit.itemId, action: hit.action })
+              .catch(err => console.warn('[PlanCheck] voice action failed:', err.message));
+          }
           return true;
         }
       }
@@ -6118,12 +6188,27 @@ app.whenReady().then(async () => {
           // Normalize legacy/frontmatter drift so the tab's status buckets match.
           const _statusMap = { complete: 'done', completed: 'done', approved: 'ready', draft: 'drafting' };
           const rawStatus = String(fm.status || 'drafting').toLowerCase();
+          const planId = fm.id || file.replace(/\.md$/, '');
+          // Heal orphaned 'running' — a restart clears planRunner's in-memory
+          // runs but the file keeps the status; reset to 'ready' so the tab
+          // doesn't show a dead spinner forever.
+          let status = rawStatus;
+          if (rawStatus === 'running') {
+            try {
+              const planRunner = require('./planRunner');
+              if (!planRunner.getRun(planId)) {
+                fs.writeFileSync(filePath, pf.updateFrontmatterStatus(content, 'ready'), 'utf8');
+                status = 'ready';
+                console.log(`[PlanRunner] Healed orphaned running status: ${planId}`);
+              }
+            } catch (_) {}
+          }
           plans.push({
-            planId: fm.id || file.replace(/\.md$/, ''),
+            planId,
             file: filePath,
             title: titleM ? titleM[1].trim() : 'Untitled',
             name: fm.name || null,
-            status: _statusMap[rawStatus] || (['drafting','ready','running','done','failed','cancelled'].includes(rawStatus) ? rawStatus : 'drafting'),
+            status: _statusMap[status] || (['drafting','ready','running','done','failed','cancelled'].includes(status) ? status : 'drafting'),
             created: fm.created || fs.statSync(filePath).mtime.toISOString(),
             originalPrompt: fm.original_prompt || '',
             isTaskPlan: isTasks,
@@ -6177,6 +6262,20 @@ app.whenReady().then(async () => {
       console.warn('[PlanCheck] action failed:', err.message));
   });
 
+  // plan:task-review — approve/skip a held commit task at the review gate.
+  // 'ack' = renderer received the plan:review card (suppresses the fallback).
+  ipcMain.on('plan:task-review', (_e, { planId, taskNum, action } = {}) => {
+    if (action === 'ack') {
+      const r = _pendingPlanReviews.get(`${planId}:${taskNum}`);
+      if (r) { r.acked = true; if (r.fallbackTimer) clearTimeout(r.fallbackTimer); }
+      return;
+    }
+    const planRunner = require('./planRunner');
+    planRunner.approvePlanTask(planId, taskNum, { skip: action === 'skip' })
+      .then(r => { if (!r?.ok) console.warn('[PlanReview]', r?.error); })
+      .catch(err => console.warn('[PlanReview] action failed:', err.message));
+  });
+
   // plan:check — recompute + emit the checklist for a plan (e.g. after edits)
   ipcMain.handle('plan:check', async (_e, { planFile, planId } = {}) => {
     if (!planFile) return { ok: false, error: 'planFile required' };
@@ -6217,6 +6316,7 @@ app.whenReady().then(async () => {
       if (_planningMode.planId === require('path').basename(planFile, '.md')) {
         _setPlanningMode({ ..._planningMode, planName });
       }
+      safeSendUnified('plan:updated', { planId: require('path').basename(planFile, '.md') });
       return { ok: true, planName };
     } catch (err) { return { ok: false, error: err.message }; }
   });

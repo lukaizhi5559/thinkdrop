@@ -126,6 +126,8 @@ function parseTasks(content) {
       mode:      VALID_TASK_MODES.has((fields.mode || '').toLowerCase())
                    ? fields.mode.toLowerCase() : 'sequential',
       auth:      (fields.auth || 'unknown').trim(),
+      stepsStatus: (fields['steps status'] || '').trim() || null,
+      approval:  (fields.approval || '').trim().toLowerCase() === 'required' ? 'required' : null,
       doneWhen:  (fields['done when'] || '').trim() || null,
       status:    (fields.status || TASK_STATUS.PENDING).trim(),
       result:    (fields.result || '').replace(/^—$/, '').trim(),
@@ -173,6 +175,8 @@ function serializeTask(task) {
     lines.push(JSON.stringify(task.steps));
     lines.push('```');
   }
+  if (task.stepsStatus) lines.push(`- **Steps Status**: ${task.stepsStatus}`);
+  if (task.approval === 'required') lines.push('- **Approval**: required');
   lines.push(`- **Status**: ${task.status || TASK_STATUS.PENDING}`);
   lines.push(`- **Result**: ${task.result || '—'}`);
   return lines.join('\n');
@@ -254,6 +258,38 @@ function updateTaskAgents(content, taskNum, agents) {
   return String(content || '').replace(
     new RegExp(`(## Task ${taskNum}[^\\n]*\\n[\\s\\S]*?)(- \\*\\*Agents\\*\\*: )[^\\n]+(\\n)`, 'g'),
     (m, before, label, nl) => before + label + value + nl);
+}
+
+/**
+ * Insert or clear the `- **Steps Status**:` field on `## Task N`.
+ * `status=null` removes the line entirely.
+ */
+function updateTaskStepsStatus(content, taskNum, status) {
+  let updated = String(content || '');
+  const lineRe = new RegExp(
+    `(## Task ${taskNum}[^\\n]*\\n[\\s\\S]*?)- \\*\\*Steps Status\\*\\*: [^\\n]*\\n`, 'g');
+  updated = updated.replace(lineRe, '$1');
+  if (!status) return updated;
+  const insertRe = new RegExp(
+    `(## Task ${taskNum}[^\\n]*\\n[\\s\\S]*?)(- \\*\\*Status\\*\\*: )`, 'g');
+  return updated.replace(insertRe,
+    `$1- **Steps Status**: ${status}\n$2`);
+}
+
+/**
+ * Insert or clear the `- **Approval**:` field on `## Task N`.
+ * `value=null` removes the line entirely.
+ */
+function updateTaskApproval(content, taskNum, value) {
+  let updated = String(content || '');
+  const lineRe = new RegExp(
+    `(## Task ${taskNum}[^\\n]*\\n[\\s\\S]*?)- \\*\\*Approval\\*\\*: [^\\n]*\\n`, 'g');
+  updated = updated.replace(lineRe, '$1');
+  if (!value) return updated;
+  const insertRe = new RegExp(
+    `(## Task ${taskNum}[^\\n]*\\n[\\s\\S]*?)(- \\*\\*Status\\*\\*: )`, 'g');
+  return updated.replace(insertRe,
+    `$1- **Approval**: ${value}\n$2`);
 }
 
 function updateTaskAuth(content, taskNum, auth) {
@@ -344,6 +380,8 @@ module.exports = {
   updateTaskStatus,
   updateTaskAuth,
   updateTaskSteps,
+  updateTaskStepsStatus,
+  updateTaskApproval,
   updateTaskAgents,
   validateTaskPlan,
   isValidDotName,

@@ -126,6 +126,10 @@ export function UnifiedOverlay() {
   // Planning mode — pinned by the toggle chip or auto-entered when comms-graph
   // routes a prompt into the planning lane (metadata.planId → planning:state).
   const [planningMode, setPlanningMode] = useState<{ active: boolean; planId?: string | null; planName?: string | null; planFile?: string | null }>({ active: false });
+  // Ref mirror — once-registered IPC listeners close over stale state, so
+  // gates inside them (thought suppression during planning) must read this.
+  const planningModeRef = useRef(planningMode);
+  planningModeRef.current = planningMode;
   const historyLoading = useFeedStore(s => s.historyLoading);
   const hasMoreHistory = useFeedStore(s => s.hasMoreHistory);
   const liveRunHidden = useFeedStore(s => s.liveRunHidden);
@@ -2112,6 +2116,19 @@ export function UnifiedOverlay() {
       } else {
         feedStore.appendEntry({ id: entryId, ts: Date.now(), kind: 'plan-check', check: data } as any);
       }
+      // Text-level fallback — if the card can't render (stale bundle, render
+      // bug) the block is still visible as a plain line. Deduped per planId +
+      // issue count so rechecks don't spam.
+      if (data && data.allClear === false && !data.cancelled) {
+        const issues = (data.items || []).filter((i: any) => i.status === 'issue');
+        const sysId = `plancheck-blocked:${data.planId || 'unknown'}:${issues.length}`;
+        if (!feedStore.getState().entries.some(e => e.id === sysId)) {
+          feedStore.appendEntry({
+            id: sysId, ts: Date.now(), kind: 'system',
+            text: `Plan can't start yet — ${issues.length} issue${issues.length === 1 ? '' : 's'} need attention (see the checklist card below).`,
+          } as any);
+        }
+      }
     }, token);
     // Capability-discovery choices (<choices> from the planner) → QuestionCard.
     ipcRenderer.on('plan:question', (data: { planId: string | null; question: string; options: any[] }) => {
@@ -2119,6 +2136,29 @@ export function UnifiedOverlay() {
         id: `planq:${data?.planId || 'x'}:${Date.now()}`, ts: Date.now(), kind: 'plan-question',
         planId: data?.planId || null, question: data?.question || '', options: data?.options || [],
       } as any);
+    }, token);
+    // Mid-run commit gate — an Approval:required task is held until the user
+    // reviews what the gather tasks produced and approves (or skips).
+    ipcRenderer.on('plan:review', (data: { planId: string; taskNum: number; title?: string; prompt?: string; priorResults?: { taskNum: number; result: string }[]; resolved?: boolean; skipped?: boolean }) => {
+      // Ack receipt — suppresses main's stale-preload fallback (a plan:question
+      // card emitted when this listener can't run, e.g. contextBridge predates
+      // the whitelist).
+      if (data && !data.resolved) {
+        ipcRenderer.send('plan:task-review', { planId: data.planId, taskNum: data.taskNum, action: 'ack' });
+      }
+      const entryId = `planreview:${data?.planId}:${data?.taskNum}`;
+      const existing = feedStore.getState().entries.find(e => e.id === entryId);
+      if (existing) {
+        feedStore.patchEntry(entryId, { review: { ...(existing as any).review, ...data } } as any);
+      } else {
+        feedStore.appendEntry({ id: entryId, ts: Date.now(), kind: 'plan-review', review: data } as any);
+      }
+      if (data?.resolved) {
+        feedStore.appendEntry({
+          id: `${entryId}:res`, ts: Date.now(), kind: 'system',
+          text: `Task ${data.taskNum} ${data.skipped ? 'skipped' : 'approved — running'}.`,
+        } as any);
+      }
     }, token);
     ipcRenderer.on('is-streaming', (data: { isStreaming: boolean }) => {
       setIsStreaming(data.isStreaming);
@@ -2241,10 +2281,11 @@ export function UnifiedOverlay() {
       });
       // Badge the Brain tab — a proactive notification/approval request
       // deserves the unread dot (cleared when the user opens the tab).
-      setUnreadTabs(prev => new Set(prev).add('brain'));
-      // Proactive outreach (notify/question actions) → feed entries at the
-      // exchange tail — they open the window via the measured zone.
-      if (evt.kind === 'notify' || evt.kind === 'question') {
+      // During planning mode proactive nudges are noise: skip the badge and
+      // the feed injection entirely; the thought still lands in Brain state.
+      const planningActive = !!planningModeRef.current?.active;
+      if (!planningActive) setUnreadTabs(prev => new Set(prev).add('brain'));
+      if ((evt.kind === 'notify' || evt.kind === 'question') && !planningActive) {
         const text = String(t.summary || t.action?.payload?.text || 'ThinkDrop');
         const pendingId = `proactive-pending-${t.id}`;
         // A re-nudge replaces its pending line (deduped per thought).

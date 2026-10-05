@@ -39,12 +39,30 @@ function _isGenericAgent(agentId) {
   catch (_) { return false; }
 }
 
+// Degenerate background-generated step shape — the failure mode that sent the
+// wrong-recipient email: a single page flow split into per-field dom.act
+// micro-steps with no verification before synthesize. Each micro-step loses
+// cross-field context (the send step's executor invented a recipient from a
+// cached flow). Flagged plans dispatch deterministicPlan:null so planSkillsV2
+// live-plans instead — slower, never wrong.
+const _INTERACTIVE_STEP_SKILLS = new Set(['url.first.agent', 'dom.act', 'tab.map.agent', 'turn.loop.agent']);
+function _stepsLookDegenerate(task, steps) {
+  if (String(task.stepsStatus || '').toLowerCase() === 'failed') return 'steps-status-failed';
+  if (!steps.some(s => s && _INTERACTIVE_STEP_SKILLS.has(s.skill))) return null;
+  const domActs = steps.filter(s => s && s.skill === 'dom.act').length;
+  const hasVerify = steps.some(s => s && s.skill === 'turn.loop.agent'
+    && (s.args?.mode === 'verify' || /confirm|verif|check/i.test(`${s.args?.goal || ''} ${s.description || ''}`)));
+  if (domActs >= 3 && !hasVerify) return `${domActs} per-action dom.act steps, no verify step`;
+  return null;
+}
+
 const COMMS_GRAPH_PORT = parseInt(process.env.COMMS_GRAPH_PORT || '3015', 10);
 
 // ── Module state ──────────────────────────────────────────────────────────────
 
 let _ipcBroadcast = null;   // (channel, payload) — renderer events
 let _onAuthRequired = null; // (planId, blockers) — raise sign-in/bypass UI
+let _onReview = null;       // (payload) — main.js tracks pending review gates
 
 /** @type {Map<string, {planPath:string, planId:string, tasks:Array, results:Map<number,string>, dispatched:Map<number,string>, status:string, sessionId:string|null, bypassed:Set<string>, cancelled:boolean}>} */
 const _runs = new Map();
@@ -54,9 +72,10 @@ function _plansDir() {
     || path.join(os.homedir(), '.thinkdrop', 'plans');
 }
 
-function init({ ipcBroadcast, onAuthRequired } = {}) {
+function init({ ipcBroadcast, onAuthRequired, onReview } = {}) {
   _ipcBroadcast = ipcBroadcast || null;
   _onAuthRequired = onAuthRequired || null;
+  _onReview = onReview || null;
 }
 
 function _emit(channel, payload) {
@@ -178,6 +197,15 @@ async function _dispatchTask(run, task) {
     } catch (_) {}
   }
 
+  // Dispatch gate — degenerate step lists (per-field dom.act chains without a
+  // verify step, or generation that exhausted retries) fall back to live
+  // planning: deterministicPlan:null → planSkillsV2 plans with live context.
+  const degenerate = steps ? _stepsLookDegenerate(task, steps) : null;
+  if (degenerate) {
+    console.warn(`[PlanRunner] Task ${task.num} steps degenerate (${degenerate}) — dispatching deterministicPlan:null for live planning`);
+    steps = null;
+  }
+
   const resp = await _postToComms('/comms.proactive', {
     prompt,
     sessionId: run.sessionId,
@@ -219,6 +247,27 @@ async function _schedule(run) {
       continue;
     }
     if (!_depsDone(run, task)) continue;
+    // Approval gate — commit-type tasks (book/buy/send/…) hold here until the
+    // user reviews what the gather tasks produced and approves via the
+    // plan:review card / voice "go ahead". Held tasks are NOT stuck.
+    if (task.approval === 'required' && !run.approved.has(task.num)) {
+      if (!run.reviewRequested.has(task.num)) {
+        run.reviewRequested.add(task.num);
+        const priorResults = _effectiveDeps(run, task)
+          .map(dn => ({ taskNum: dn, result: run.results.get(dn)?.result || null }))
+          .filter(r => r.result);
+        const payload = {
+          planId: run.planId,
+          taskNum: task.num,
+          title: task.title,
+          prompt: task.prompt,
+          priorResults,
+        };
+        _emit('plan:review', payload);
+        if (_onReview) { try { _onReview(payload); } catch (_) {} }
+      }
+      continue;
+    }
     run.dispatched.set(task.num, null); // mark in-flight before await
     await _dispatchTask(run, task);
     dispatchedAny = true;
@@ -236,8 +285,11 @@ async function _schedule(run) {
     });
     _runs.delete(run.planId);
   } else if (!dispatchedAny && ![...run.dispatched.values()].length) {
-    // Cycle / unsatisfiable deps — fail loudly instead of hanging.
-    const stuck = run.tasks.filter(t => !run.results.has(t.num));
+    // Held-for-review tasks aren't stuck — only fail tasks that are neither
+    // resulted, dispatched, nor awaiting approval.
+    const stuck = run.tasks.filter(t =>
+      !run.results.has(t.num)
+      && !(t.approval === 'required' && !run.approved.has(t.num)));
     if (stuck.length) {
       for (const t of stuck) {
         _writeTaskStatus(run, t.num, planFormat.TASK_STATUS.FAILED, 'Unsatisfiable dependencies');
@@ -341,6 +393,8 @@ async function startPlan(planPath, opts = {}) {
     status: 'running',
     sessionId: opts.sessionId || plan.fm.plan_session_id || null,
     bypassed,
+    approved: new Set(),        // task nums the user approved at the review gate
+    reviewRequested: new Set(), // dedupe — one plan:review emit per task
     cancelled: false,
   };
   // Pre-fill results for tasks already done (restart/resume mid-run).
@@ -379,6 +433,29 @@ function cancelPlan(planId) {
   return true;
 }
 
+/**
+ * Review-gate resolution — called from main.js when the user approves or
+ * skips a held commit task. Approving schedules it for dispatch; skipping
+ * marks it skipped (dependents then skip via _depsFailed).
+ */
+async function approvePlanTask(planId, taskNum, { skip = false } = {}) {
+  const run = _runs.get(planId);
+  if (!run) return { ok: false, error: 'no active run for plan' };
+  const task = run.tasks.find(t => t.num === taskNum);
+  if (!task) return { ok: false, error: `no task ${taskNum}` };
+  run.reviewRequested.delete(taskNum);
+  if (skip) {
+    _writeTaskStatus(run, taskNum, planFormat.TASK_STATUS.SKIPPED, 'Skipped at review gate');
+    run.results.set(taskNum, { _status: 'skipped', result: 'skipped by user at review' });
+  } else {
+    run.approved.add(taskNum);
+  }
+  _emit('plan:review', { planId, taskNum, resolved: true, skipped: skip });
+  if (_onReview) { try { _onReview({ planId, taskNum, resolved: true }); } catch (_) {} }
+  await _schedule(run);
+  return { ok: true };
+}
+
 function getRun(planId) { return _runs.get(planId) || null; }
 function listRuns() {
   return [..._runs.values()].map(r => ({
@@ -387,4 +464,4 @@ function listRuns() {
   }));
 }
 
-module.exports = { init, startPlan, cancelPlan, getRun, listRuns, onTaskComplete, bindTaskId };
+module.exports = { init, startPlan, cancelPlan, getRun, listRuns, onTaskComplete, bindTaskId, approvePlanTask };
