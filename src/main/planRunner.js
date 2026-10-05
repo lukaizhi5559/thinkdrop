@@ -170,8 +170,8 @@ async function _dispatchTask(run, task) {
   let lockAgent = _canonicalAgent(task.agents?.[0]);
   if (steps) {
     try {
-      const { normalizeTaskSteps } = require('../../shared/plan-steps.cjs');
-      const norm = normalizeTaskSteps(task);
+      const { normalizeTaskStepsAsync } = require('../../shared/plan-steps.cjs');
+      const norm = await normalizeTaskStepsAsync(task);
       steps = norm.steps;
       const serviceAgent = norm.agents.find(a => !_isGenericAgent(a));
       if (serviceAgent) lockAgent = serviceAgent;

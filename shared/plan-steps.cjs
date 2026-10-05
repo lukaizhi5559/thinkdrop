@@ -23,30 +23,47 @@ const { canonicalAgent } = require('./agent-canonical.cjs');
 const skillIndex = require('./skill-index.cjs');
 const serviceMap = require('./service-map.cjs');
 
+async function normalizeTaskStepsAsync(task) {
+  // Resolve every step URL (with live discovery) up-front, then apply the same
+  // pass-1/pass-2 logic as the sync version.
+  const raw = Array.isArray(task.steps) ? task.steps : [];
+  const urls = raw.map(s => s && s.args && typeof s.args.url === 'string' ? s.args.url : null);
+  const svcs = await Promise.all(urls.map(u => u ? serviceMap.serviceForUrlAsync(u) : null));
+  const resFor = (i) => svcs[i] || null;
+  return _applyNormalization(task, resFor);
+}
+
 function normalizeTaskSteps(task) {
+  const raw = Array.isArray(task.steps) ? task.steps : [];
+  const resFor = (i) => {
+    const url = raw[i] && raw[i].args && typeof raw[i].args.url === 'string' ? raw[i].args.url : null;
+    return url ? serviceMap.serviceForUrl(url) : null;
+  };
+  return _applyNormalization(task, resFor);
+}
+
+function _applyNormalization(task, resFor) {
   const declared = (task.agents || []).map(a => canonicalAgent(a) || a).filter(Boolean);
   const taskAgent = declared[0] || null;
   const services = new Set();
 
-  // Pass 1 — resolve every URL step to its owning service agent first so the
-  // primary lane is known before assigning session-bound steps.
+  // Pass 1 — collect the services that own URL steps first so the primary
+  // lane is known before assigning session-bound steps.
   const raw = Array.isArray(task.steps) ? task.steps : [];
-  for (const s of raw) {
-    const url = s && s.args && typeof s.args.url === 'string' ? s.args.url : null;
-    if (!url) continue;
-    const svc = serviceMap.serviceForUrl(url);
+  raw.forEach((s, i) => {
+    const svc = resFor(i);
     if (svc) services.add(svc.canonicalAgent);
-  }
+  });
   const laneAgent = services.size ? [...services][0] : taskAgent;
 
   // Pass 2 — assign agentIds.
-  const steps = raw.map(s => {
+  const steps = raw.map((s, i) => {
     if (!s || typeof s !== 'object') return s;
     const out = { ...s, args: { ...(s.args || {}) } };
-    const url = typeof out.args.url === 'string' ? out.args.url : null;
-    if (url) {
-      const svc = serviceMap.serviceForUrl(url);
-      if (svc) { out.args.agentId = svc.canonicalAgent; return out; }
+    const svc = resFor(i);
+    if (svc && typeof out.args.url === 'string') {
+      out.args.agentId = svc.canonicalAgent;
+      return out;
     }
     // Session-bound steps ride one window: the service lane when the task
     // touches a service, else the task's declared agent.
@@ -62,4 +79,4 @@ function normalizeTaskSteps(task) {
   return { steps, agents, services: [...services] };
 }
 
-module.exports = { normalizeTaskSteps };
+module.exports = { normalizeTaskSteps, normalizeTaskStepsAsync };
