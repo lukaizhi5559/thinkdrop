@@ -2617,7 +2617,7 @@ export function UnifiedOverlay() {
           {/* Plans Tab — planning-mode plan list + run/continue */}
           <div
             ref={plansTabRef}
-            className="overflow-y-auto overflow-x-hidden p-4"
+            className="overflow-y-auto overflow-x-hidden px-4 pb-4"
             style={{ display: deferredTab === 'plans' ? 'block' : 'none', height: 'auto', maxHeight: '100%' }}
           >
               {visitedTabs.has('plans') && <PlansTab

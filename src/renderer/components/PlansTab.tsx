@@ -421,7 +421,7 @@ export function PlansTab({ onContinuePlanning }: {
     <div style={{ display: 'flex', flexDirection: 'column', gap: 0 }}>
       {/* Sticky filter bar — same structure as QueueTaskCard.QueueFilterBar */}
       <div style={{
-        position: 'sticky', top: 0, zIndex: 6, margin: '-16px -16px 0',
+        position: 'sticky', top: 0, zIndex: 6, margin: '0 -16px',
         backgroundColor: 'rgba(23,23,23,0.96)',
         borderBottom: '1px solid rgba(255,255,255,0.06)',
         display: 'flex', flexDirection: 'column', gap: 6, padding: '4px 16px 6px',

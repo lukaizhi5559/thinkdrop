@@ -31,6 +31,14 @@ const path = require('path');
 const planFormat = require('../../shared/plan-format.cjs');
 const { canonicalAgent: _canonicalAgent } = require('../../shared/agent-canonical.cjs');
 
+// Generic = a command-service skill (browser.agent, web.agent, turn.loop.agent)
+// — generic lanes never gate auth; prefer a real service agent as the lock key
+// when steps resolved to one.
+function _isGenericAgent(agentId) {
+  try { return require('../../shared/skill-index.cjs').skillExists(agentId); }
+  catch (_) { return false; }
+}
+
 const COMMS_GRAPH_PORT = parseInt(process.env.COMMS_GRAPH_PORT || '3015', 10);
 
 // ── Module state ──────────────────────────────────────────────────────────────
@@ -118,15 +126,27 @@ function _writePlanStatus(run, status) {
 
 // ── Scheduling ────────────────────────────────────────────────────────────────
 
+// A task's effective dependencies: explicit `dependsOn` plus — when Mode is
+// sequential — the previous task number, so "sequential" chains 1→2→3 even
+// without explicit Depends on fields.
+function _effectiveDeps(run, task) {
+  const deps = new Set(task.dependsOn || []);
+  if (String(task.mode || '').toLowerCase() === 'sequential') {
+    const prev = run.tasks.filter(t => t.num < task.num).map(t => t.num).pop();
+    if (prev !== undefined) deps.add(prev);
+  }
+  return [...deps];
+}
+
 function _depsDone(run, task) {
-  return (task.dependsOn || []).every(dep => {
+  return _effectiveDeps(run, task).every(dep => {
     const r = run.results.get(dep);
     return r !== undefined && r._status === 'done';
   });
 }
 
 function _depsFailed(run, task) {
-  return (task.dependsOn || []).some(dep => {
+  return _effectiveDeps(run, task).some(dep => {
     const r = run.results.get(dep);
     return r !== undefined && r._status !== 'done';
   });
@@ -135,12 +155,27 @@ function _depsFailed(run, task) {
 async function _dispatchTask(run, task) {
   let prompt = task.prompt || task.title;
   // Inject upstream results so "the doc I just made" resolves in the child run.
-  const depBits = (task.dependsOn || [])
+  const depBits = _effectiveDeps(run, task)
     .map(dep => run.results.get(dep))
     .filter(r => r && r._status === 'done' && r.result)
     .map((r, i) => `Result of earlier step ${i + 1}: ${String(r.result).slice(0, 300)}`);
   if (depBits.length) {
     prompt = `[Prior step results — context only]\n${depBits.join('\n')}\n\n[Your task]\n${prompt}`;
+  }
+
+  // Re-normalize steps at dispatch — heals plans generated before the
+  // service-resolution fix (stale web.agent docs.new steps → google.agent),
+  // and produces the lock agent: first non-generic (service) canonical agent.
+  let steps = Array.isArray(task.steps) && task.steps.length ? task.steps : null;
+  let lockAgent = _canonicalAgent(task.agents?.[0]);
+  if (steps) {
+    try {
+      const { normalizeTaskSteps } = require('../../shared/plan-steps.cjs');
+      const norm = normalizeTaskSteps(task);
+      steps = norm.steps;
+      const serviceAgent = norm.agents.find(a => !_isGenericAgent(a));
+      if (serviceAgent) lockAgent = serviceAgent;
+    } catch (_) {}
   }
 
   const resp = await _postToComms('/comms.proactive', {
@@ -150,12 +185,15 @@ async function _dispatchTask(run, task) {
     // (google_docs/calendar/sheets → google.agent). Same-service "parallel"
     // tasks cannot run side-by-side — they would collide on the profile's
     // single browser window; different services still parallelize.
-    agentId: _canonicalAgent(task.agents?.[0]),
+    agentId: lockAgent,
     userApproved: true,          // plan was approved by the user at run time
     planId: run.planId,
     planTaskNum: task.num,
     planTask: true,              // → stategraph _planTask short-circuit
     preflightAuthBypass: run.bypassed.size ? [...run.bypassed] : null,
+    // Steps pre-generated during planning → stategraph adopts them as
+    // _deterministicPlan and skips the LLM planning pass entirely.
+    deterministicPlan: steps,
     source: 'plan',
   });
   if (!resp || !resp.taskId) {
@@ -319,13 +357,23 @@ function cancelPlan(planId) {
   const run = _runs.get(planId);
   if (!run) return false;
   run.cancelled = true;
-  // Cancel in-flight journal tasks through handoffRunner.
+  // One atomic plan-scoped cancel: marks every plan task 'cancelled' in the
+  // journal first, then removes each — parked ('waiting-for-agent') tasks can
+  // never be resumed by a sibling's lock release.
+  _postToComms('/comms.cancel', { planId }).catch(() => {});
+  // Kill anything already spawned in main.
   try {
     const handoffRunner = require('./handoffRunner');
     for (const taskId of run.dispatched.values()) {
       if (taskId) try { handoffRunner.cancel(taskId); } catch (_) {}
     }
   } catch (_) {}
+  // Undispatched tasks never started — mark them skipped in the plan file.
+  for (const task of run.tasks) {
+    if (!run.results.has(task.num) && !run.dispatched.has(task.num)) {
+      _writeTaskStatus(run, task.num, planFormat.TASK_STATUS.SKIPPED || 'skipped', 'Plan cancelled');
+    }
+  }
   _writePlanStatus(run, 'cancelled');
   _runs.delete(planId);
   return true;

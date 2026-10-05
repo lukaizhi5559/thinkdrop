@@ -1299,7 +1299,7 @@ function startOverlayControlServer() {
       req.on('data', chunk => { body += chunk; });
       req.on('end', () => {
         try {
-          const { taskId, prompt, agentId, source, originalPrompt, guessedIntent, sessionId: handoffSessionId, userApproved, thoughtContext, planId, planTaskNum, planTask, preflightAuthBypass } = JSON.parse(body || '{}');
+          const { taskId, prompt, agentId, source, originalPrompt, guessedIntent, sessionId: handoffSessionId, userApproved, thoughtContext, planId, planTaskNum, planTask, preflightAuthBypass, deterministicPlan } = JSON.parse(body || '{}');
           console.log(`[CommsGraph] Handoff received — task=${taskId} agent=${agentId || 'auto'} source=${source} guessedIntent=${guessedIntent || 'null'} session=${handoffSessionId || 'none'}${thoughtContext?.id ? ` thought=${thoughtContext.id}` : ''}`);
 
           // Emit task:created BEFORE starting the stategraph run so the queue card
@@ -1332,6 +1332,10 @@ function startOverlayControlServer() {
             guessedIntent: guessedIntent ?? null,
             planTask: planTask === true,
             preflightAuthBypass: preflightAuthBypass || null,
+            // Pre-generated task steps → stategraph _deterministicPlan skips
+            // the LLM planning pass (planning.cjs generated them at draft time).
+            _deterministicPlan: Array.isArray(deterministicPlan) && deterministicPlan.length ? deterministicPlan : null,
+            _deterministicTemplate: Array.isArray(deterministicPlan) && deterministicPlan.length ? 'plan_task' : null,
           }).catch(err => {
             console.error(`[CommsGraph] Handoff ${taskId} error:`, err.message);
           });
@@ -1339,6 +1343,23 @@ function startOverlayControlServer() {
           res.writeHead(200).end(JSON.stringify({ ok: true, taskId }));
         } catch (err) {
           console.error('[CommsGraph] Handoff error:', err.message);
+          res.writeHead(500).end(JSON.stringify({ error: err.message }));
+        }
+      });
+      return;
+    }
+
+    // ── POST /plan.updated — comms-graph planning lane streamed task steps
+    // (or other background mutations) into a plan file — refresh the tab.
+    if (req.url === '/plan.updated') {
+      let body = '';
+      req.on('data', chunk => { body += chunk; });
+      req.on('end', () => {
+        try {
+          const evt = JSON.parse(body || '{}');
+          safeSendUnified('plan:updated', { planId: evt.planId || null });
+          res.writeHead(200).end(JSON.stringify({ ok: true }));
+        } catch (err) {
           res.writeHead(500).end(JSON.stringify({ error: err.message }));
         }
       });
@@ -5739,6 +5760,7 @@ app.whenReady().then(async () => {
           const tasks = isTasks ? pf.parseTasks(content).map(t => ({
             num: t.num, title: t.title, status: t.status, mode: t.mode,
             auth: t.auth, agents: t.agents, doneWhen: t.doneWhen, result: t.result,
+            steps: Array.isArray(t.steps) ? t.steps : null,
           })) : [];
           // Normalize legacy/frontmatter drift so the tab's status buckets match.
           const _statusMap = { complete: 'done', completed: 'done', approved: 'ready', draft: 'drafting' };

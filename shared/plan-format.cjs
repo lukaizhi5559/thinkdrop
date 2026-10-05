@@ -120,6 +120,7 @@ function parseTasks(content) {
       num,
       title,
       prompt:    (fields.prompt || '').trim(),
+      steps:     _parseStepsBlock(body),
       agents:    _parseAgents(fields.agents),
       dependsOn: _parseDependsOn(fields['depends on']),
       mode:      VALID_TASK_MODES.has((fields.mode || '').toLowerCase())
@@ -132,6 +133,22 @@ function parseTasks(content) {
     });
   }
   return tasks;
+}
+
+/**
+ * Parse the `**Steps**` fenced JSON block inside a task body.
+ * Shape: `- **Steps**:` then a ```json [{skill,args,description},…] ``` fence.
+ * @returns {Array|null} parsed steps, or null when absent/malformed.
+ */
+function _parseStepsBlock(body) {
+  const m = String(body || '').match(/- \*\*Steps\*\*:[^\n]*\n\s*```(?:json)?\s*\n([\s\S]*?)```/);
+  if (!m) return null;
+  try {
+    const parsed = JSON.parse(m[1]);
+    return Array.isArray(parsed) && parsed.length ? parsed : null;
+  } catch (_) {
+    return null;
+  }
 }
 
 /** True when plan content uses the v2 `## Task` layout (vs v1 `## Steps`). */
@@ -150,6 +167,12 @@ function serializeTask(task) {
   lines.push(`- **Mode**: ${task.mode || 'sequential'}`);
   lines.push(`- **Auth**: ${task.auth || 'unknown'}`);
   if (task.doneWhen) lines.push(`- **Done when**: ${task.doneWhen}`);
+  if (Array.isArray(task.steps) && task.steps.length) {
+    lines.push('- **Steps**:');
+    lines.push('```json');
+    lines.push(JSON.stringify(task.steps));
+    lines.push('```');
+  }
   lines.push(`- **Status**: ${task.status || TASK_STATUS.PENDING}`);
   lines.push(`- **Result**: ${task.result || '—'}`);
   return lines.join('\n');
@@ -206,6 +229,31 @@ function updateTaskStatus(content, taskNum, status, result) {
       before + label + (snippet || '(no result)') + nl);
   }
   return updated;
+}
+
+/**
+ * Insert or replace the `**Steps**` fenced block on `## Task N` in place.
+ * Keeps user edits to other fields intact; replaces only the steps block.
+ */
+function updateTaskSteps(content, taskNum, steps) {
+  let updated = String(content || '');
+  const block = `- **Steps**:\n\`\`\`json\n${JSON.stringify(steps)}\n\`\`\`\n`;
+  const taskRe = new RegExp(`(## Task ${taskNum}[^\\n]*\\n)([\\s\\S]*?)(?=## Task \\d+|## |\\n#[^#]|$)`);
+  updated = updated.replace(taskRe, (m, head, body) => {
+    if (/- \*\*Steps\*\*:[^\n]*\n\s*```(?:json)?\s*\n[\s\S]*?```\n?/.test(body)) {
+      return head + body.replace(/- \*\*Steps\*\*:[^\n]*\n\s*```(?:json)?\s*\n[\s\S]*?```\n?/, block);
+    }
+    // No steps block yet — insert before the **Status** line.
+    return head + body.replace(/(- \*\*Status\*\*:)/, `${block}$1`);
+  });
+  return updated;
+}
+
+function updateTaskAgents(content, taskNum, agents) {
+  const value = (agents && agents.length ? agents.join(' | ') : '—');
+  return String(content || '').replace(
+    new RegExp(`(## Task ${taskNum}[^\\n]*\\n[\\s\\S]*?)(- \\*\\*Agents\\*\\*: )[^\\n]+(\\n)`, 'g'),
+    (m, before, label, nl) => before + label + value + nl);
 }
 
 function updateTaskAuth(content, taskNum, auth) {
@@ -271,6 +319,14 @@ function validateTaskPlan(content) {
     for (const dep of t.dependsOn) {
       if (dep >= t.num) warnings.push(`Task ${t.num}: depends on Task ${dep} which does not precede it`);
     }
+    if (/- \*\*Steps\*\*:/.test(t.body)) {
+      if (!Array.isArray(t.steps)) warnings.push(`Task ${t.num}: **Steps** block is not valid JSON`);
+      else for (const s of t.steps) {
+        if (!s || typeof s.skill !== 'string' || !s.skill) {
+          warnings.push(`Task ${t.num}: step missing "skill"`); break;
+        }
+      }
+    }
   }
   return { valid: errors.length === 0, errors, warnings };
 }
@@ -287,6 +343,8 @@ module.exports = {
   newPlanContent,
   updateTaskStatus,
   updateTaskAuth,
+  updateTaskSteps,
+  updateTaskAgents,
   validateTaskPlan,
   isValidDotName,
   deriveDotName,
