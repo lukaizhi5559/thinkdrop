@@ -235,7 +235,15 @@ function _notifyProgress(taskId, agentId, progress) {
   return _postToComms('/comms.progress', { taskId, agentId, progress });
 }
 
+// Plan-runner completion listener — set via setOnTaskComplete(). Fired for
+// every journal status transition; the runner filters to terminal states.
+let _onTaskCompleteFn = null;
+function setOnTaskComplete(fn) { _onTaskCompleteFn = fn || null; }
+
 function _notifyComplete(taskId, agentId, status, result, items, sessionId = null, planFile = null, trace = null, artifacts = null) {
+  if (_onTaskCompleteFn) {
+    try { _onTaskCompleteFn(taskId, status, result); } catch (_) {}
+  }
   return _postToComms('/comms.complete', { taskId, agentId, status, result, items: items || null, sessionId, planFile, trace, artifacts });
 }
 
@@ -358,7 +366,7 @@ function _makeProgressCallback(taskId, agentId) {
  * @param {string[]|null} [args.preflightAuthBypass] - Agent IDs to treat as authed for this run only
  * @param {Object|null}  [args._resumeState] - Paused finalState to resume from (ask_user answer)
  */
-async function execute({ taskId, prompt, agentId, source, originalPrompt, sessionId, planFile, preflightAuthBypass, userApproved, thoughtContext, guessedIntent, _resumeState, _deterministicPlan, _deterministicTemplate, _deterministicLowRisk, _deterministicExternal, _deterministicServiceAgent, _resumeMultiIntent, _resumeIntentQueue, _resumeIntentResults, _resumeDataContext }) {
+async function execute({ taskId, prompt, agentId, source, originalPrompt, sessionId, planFile, preflightAuthBypass, userApproved, thoughtContext, guessedIntent, planTask, _resumeState, _deterministicPlan, _deterministicTemplate, _deterministicLowRisk, _deterministicExternal, _deterministicServiceAgent, _resumeMultiIntent, _resumeIntentQueue, _resumeIntentResults, _resumeDataContext }) {
   if (!_mcpAdapter || !_llmBackend) {
     console.error('[HandoffRunner] Not initialized — call init() first');
     _notifyComplete(taskId, agentId, 'failed', 'HandoffRunner not initialized', null, sessionId);
@@ -473,6 +481,9 @@ async function execute({ taskId, prompt, agentId, source, originalPrompt, sessio
           // Proactive dispatch whose thought was already approved in the Brain —
           // planSkillsV2 skips the duplicate Queue plan-approval gate for it.
           ...(userApproved ? { userApproved: true } : {}),
+          // Plan-runner task — skip checkPlanCache hijack + gather/re-plan so
+          // the already-approved Task executes exactly as written.
+          ...(planTask ? { _planTask: true, _bypassGatherPlan: true } : {}),
           // Reply to a proactive Thought card — resolveReferencesV2 splits the
           // card from the message, injects it as a labeled turn, and reports
           // the lifecycle outcome back to the thought engine.
@@ -1231,4 +1242,4 @@ function getLiveRun(taskId) {
   return _activeRuns.get(taskId) || null;
 }
 
-module.exports = { init, execute, resume, answerQuestion, hasPendingQuestion, getPendingPlanApprovals, cancel, getActiveCount, getActiveTaskIds, getProgressCallback, getLiveRun, setGatherAnswerCallback };
+module.exports = { init, execute, resume, answerQuestion, hasPendingQuestion, getPendingPlanApprovals, cancel, getActiveCount, getActiveTaskIds, getProgressCallback, getLiveRun, setGatherAnswerCallback, setOnTaskComplete };

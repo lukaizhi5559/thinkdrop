@@ -1272,11 +1272,15 @@ function startOverlayControlServer() {
           try {
             const r = await _postJson(
               new URL('/comms.process', `http://127.0.0.1:${commsPort}`),
-              { text: instruction, source: 'voice', sessionId: currentSessionId, selectedText: toolSelectedText || undefined },
+              { text: instruction, source: 'voice', sessionId: currentSessionId, selectedText: toolSelectedText || undefined, planning: _planningMode && _planningMode.active ? _planningMode : undefined },
               15000
             );
             if (r?.ok && r?.data?.text) output = r.data.text;
             else promptQueue.enqueue(instruction, { selectedText: toolSelectedText, sessionId: currentSessionId });
+            // <plan_run/> confirmed via voice — dispatch the draft plan.
+            if (r?.data?.metadata?.runPlan && r.data.metadata.planFile) {
+              _triggerPlanRun(r.data.metadata);
+            }
           } catch (_) {
             promptQueue.enqueue(instruction, { selectedText: toolSelectedText, sessionId: currentSessionId });
           }
@@ -1295,7 +1299,7 @@ function startOverlayControlServer() {
       req.on('data', chunk => { body += chunk; });
       req.on('end', () => {
         try {
-          const { taskId, prompt, agentId, source, originalPrompt, guessedIntent, sessionId: handoffSessionId, userApproved, thoughtContext } = JSON.parse(body || '{}');
+          const { taskId, prompt, agentId, source, originalPrompt, guessedIntent, sessionId: handoffSessionId, userApproved, thoughtContext, planId, planTaskNum, planTask, preflightAuthBypass } = JSON.parse(body || '{}');
           console.log(`[CommsGraph] Handoff received — task=${taskId} agent=${agentId || 'auto'} source=${source} guessedIntent=${guessedIntent || 'null'} session=${handoffSessionId || 'none'}${thoughtContext?.id ? ` thought=${thoughtContext.id}` : ''}`);
 
           // Emit task:created BEFORE starting the stategraph run so the queue card
@@ -1326,6 +1330,8 @@ function startOverlayControlServer() {
             userApproved: userApproved === true,
             thoughtContext: thoughtContext || null,
             guessedIntent: guessedIntent ?? null,
+            planTask: planTask === true,
+            preflightAuthBypass: preflightAuthBypass || null,
           }).catch(err => {
             console.error(`[CommsGraph] Handoff ${taskId} error:`, err.message);
           });
@@ -2538,6 +2544,41 @@ let activeScheduleCountdown = null; // { id, targetTime, label }
 // { active: bool, app: string|null, enteredAt: ISO }
 let appControlMode = { active: false, app: null, enteredAt: null };
 
+// Planning mode — active plan-drafting session.
+// { active: bool, planId: string|null, planName: string|null, planFile: string|null }
+// Set via renderer `planning:set` IPC, or auto-populated when comms-graph
+// routes a prompt into the planning lane (intent 6 metadata.planId).
+let _planningMode = { active: false, planId: null, planName: null, planFile: null };
+
+function _setPlanningMode(mode) {
+  _planningMode = { active: !!mode?.active, planId: mode?.planId || null, planName: mode?.planName || null, planFile: mode?.planFile || null };
+  safeSendUnified('planning:state', _planningMode);
+}
+
+// User confirmed execution inside the planning lane (<plan_run/> →
+// metadata.runPlan). Dispatch the draft through planRunner; blocked runs
+// surface sign-in UI via planRunner's onAuthRequired hook + a chat message.
+function _triggerPlanRun(metadata) {
+  const planFile = metadata.planFile;
+  console.log(`[PlanRunner] Conversational run trigger — ${planFile}`);
+  try {
+    const planRunner = require('./planRunner');
+    planRunner.startPlan(planFile, { sessionId: null }).then(r => {
+      if (r?.ok) {
+        _setPlanningMode({ active: false });
+      } else {
+        const blocked = r?.blockers?.length
+          ? `Plan blocked — sign in needed for ${r.blockers.map(b => b.agentId).join(', ')}.`
+          : `Plan could not start: ${r?.error || 'unknown error'}`;
+        safeSendUnified('ws-bridge:message', { type: 'chunk', text: blocked, taskId: null, isPlaceholder: false });
+        safeSendUnified('ws-bridge:message', { type: 'done', taskId: null });
+      }
+    }).catch(err => console.warn('[PlanRunner] run trigger failed:', err.message));
+  } catch (err) {
+    console.warn('[PlanRunner] run trigger error:', err.message);
+  }
+}
+
 // Tracks whether the user has manually dragged the unified panel.
 // When true, resize handlers preserve the current Y position instead of reanchoring to screen bottom.
 
@@ -2772,6 +2813,25 @@ function initStateGraph() {
         closeBrowserSessions: (reason) => closeActiveBrowserSessions(reason),
       });
       console.log('✅ [HandoffRunner] Initialized for comms-graph concurrent handoffs');
+
+      // Plan runner — dispatches approved `## Task` plans through the same
+      // handoff path; handoffRunner completion events advance the scheduler.
+      try {
+        const planRunner = require('./planRunner');
+        planRunner.init({
+          ipcBroadcast: (channel, data) => safeSendUnified(channel, data),
+          onAuthRequired: (planId, blockers) => {
+            console.log(`[PlanRunner] Plan ${planId} blocked on auth:`, blockers.map(b => b.agentId).join(', '));
+            safeSendUnified('preflight:open-agents-tab', { planId, blockers });
+          },
+        });
+        handoffRunner.setOnTaskComplete((taskId, status, result) => {
+          try { planRunner.onTaskComplete(taskId, status, result); } catch (_) {}
+        });
+        console.log('✅ [PlanRunner] Initialized');
+      } catch (err) {
+        console.error('⚠️ [PlanRunner] Failed to initialize:', err.message);
+      }
     } catch (err) {
       console.error('⚠️ [HandoffRunner] Failed to initialize:', err.message);
     }
@@ -4944,7 +5004,7 @@ app.whenReady().then(async () => {
 
     const commsPort = parseInt(process.env.COMMS_GRAPH_PORT || '3015', 10);
     console.log(`🧠 [CommsGraph] Routing prompt through comms-graph (source=${source}):`, prompt.substring(0, 80));
-    const commsBody = JSON.stringify({ text: prompt, source, language: responseLanguage || null, sessionId: sessionId || null, thoughtContext: thoughtContext || null, selectedText: selectedText || null });
+    const commsBody = JSON.stringify({ text: prompt, source, language: responseLanguage || null, sessionId: sessionId || null, thoughtContext: thoughtContext || null, selectedText: selectedText || null, planning: _planningMode && _planningMode.active ? _planningMode : undefined });
     const commsReq = http.request({
       hostname: '127.0.0.1',
       port: commsPort,
@@ -4974,6 +5034,39 @@ app.whenReady().then(async () => {
             safeSendUnified('unified:set-prompt', prompt);
             safeSendUnified('ws-bridge:message', { type: 'chunk', text: responseText, taskId, isPlaceholder });
             safeSendUnified('ws-bridge:message', { type: 'done', taskId });
+
+            // Planning lane — comms-graph created/updated a plan draft. Pin
+            // planning mode so follow-ups stay in the lane, and tell the
+            // renderer so the cyan chip + Plans tab refresh immediately.
+            if ((intent === 6 || metadata?.planId) && metadata?.planId) {
+              _setPlanningMode({
+                active: true,
+                planId: metadata.planId,
+                planName: metadata.planName || null,
+                planFile: metadata.planFile || null,
+              });
+              if (metadata.movedToPlanning) {
+                safeSendUnified('planning:moved', {
+                  planId: metadata.planId,
+                  reason: metadata.planningReason || 'classifier',
+                  planStatus: metadata.planStatus || 'drafting',
+                });
+              }
+              safeSendUnified('plan:updated', {
+                planId: metadata.planId,
+                planFile: metadata.planFile || null,
+                planStatus: metadata.planStatus || 'drafting',
+                planName: metadata.planName || null,
+                taskCount: metadata.taskCount || 0,
+                authRequired: metadata.authRequired || [],
+              });
+            }
+
+            // <plan_run/> — user confirmed execution in the planning lane
+            // ("let's do it"). Dispatch the draft through planRunner now.
+            if (metadata?.runPlan && metadata?.planFile) {
+              _triggerPlanRun(metadata);
+            }
 
             // If it was a handoff, the task is already being dispatched by comms-graph
             // via /comms.handoff — no need to enqueue in promptQueue.
@@ -5618,6 +5711,134 @@ app.whenReady().then(async () => {
       });
     }
   });
+
+  // ── Planning Mode (multi-Task plans) ────────────────────────────────────────
+  const _plansDirMain = () => require('path').join(require('os').homedir(), '.thinkdrop', 'plans');
+  const _planFormatMain = () => require('../../shared/plan-format.cjs');
+
+  // plan:list — enumerate ~/.thinkdrop/plans for the Plans tab
+  ipcMain.handle('plan:list', async () => {
+    try {
+      const fs = require('fs'), path = require('path');
+      const dir = _plansDirMain();
+      if (!fs.existsSync(dir)) return { plans: [] };
+      const pf = _planFormatMain();
+      const files = fs.readdirSync(dir).filter(f => f.endsWith('.md') && f.startsWith('plan'));
+      const plans = [];
+      for (const file of files) {
+        try {
+          const filePath = path.join(dir, file);
+          const content = fs.readFileSync(filePath, 'utf8');
+          const fm = pf.parseFrontmatter(content) || {};
+          const isTasks = pf.isTaskPlan(content);
+          // Only planning-lane plans belong in the tab — plan_* files written
+          // by the stategraph's internal plan cache (## Steps, kind unset)
+          // would flood the list with hundreds of artifacts.
+          if (fm.kind !== 'task_plan' && !isTasks) continue;
+          const titleM = content.match(/^# Plan:\s*(.+)$/m);
+          const tasks = isTasks ? pf.parseTasks(content).map(t => ({
+            num: t.num, title: t.title, status: t.status, mode: t.mode,
+            auth: t.auth, agents: t.agents, doneWhen: t.doneWhen, result: t.result,
+          })) : [];
+          // Normalize legacy/frontmatter drift so the tab's status buckets match.
+          const _statusMap = { complete: 'done', completed: 'done', approved: 'ready', draft: 'drafting' };
+          const rawStatus = String(fm.status || 'drafting').toLowerCase();
+          plans.push({
+            planId: fm.id || file.replace(/\.md$/, ''),
+            file: filePath,
+            title: titleM ? titleM[1].trim() : 'Untitled',
+            name: fm.name || null,
+            status: _statusMap[rawStatus] || (['drafting','ready','running','done','failed','cancelled'].includes(rawStatus) ? rawStatus : 'drafting'),
+            created: fm.created || fs.statSync(filePath).mtime.toISOString(),
+            originalPrompt: fm.original_prompt || '',
+            isTaskPlan: isTasks,
+            tasks,
+          });
+        } catch (_) {}
+      }
+      plans.sort((a, b) => String(b.created).localeCompare(String(a.created)));
+      return { plans };
+    } catch (err) {
+      return { plans: [], error: err.message };
+    }
+  });
+
+  // plan:get — full content + parsed tasks for expand view
+  ipcMain.handle('plan:get', async (_e, { planFile } = {}) => {
+    try {
+      const fs = require('fs');
+      const content = fs.readFileSync(planFile, 'utf8');
+      const pf = _planFormatMain();
+      return {
+        content,
+        frontmatter: pf.parseFrontmatter(content),
+        isTaskPlan: pf.isTaskPlan(content),
+        tasks: pf.parseTasks(content),
+        validation: pf.validateTaskPlan(content),
+      };
+    } catch (err) { return { error: err.message }; }
+  });
+
+  // plan:run — dispatch a task-plan through planRunner
+  ipcMain.handle('plan:run', async (_e, { planFile, bypassAgents = [], sessionId = null } = {}) => {
+    try {
+      const planRunner = require('./planRunner');
+      const r = await planRunner.startPlan(planFile, { bypassAgents, sessionId });
+      if (r.ok) _setPlanningMode({ active: false });
+      return r;
+    } catch (err) { return { ok: false, error: err.message }; }
+  });
+
+  // plan:run-cancel — stop a running plan
+  ipcMain.handle('plan:run-cancel', async (_e, { planId } = {}) => {
+    const planRunner = require('./planRunner');
+    return { ok: planRunner.cancelPlan(planId) };
+  });
+
+  // plan:runs — in-flight plan runner state (for tab refresh)
+  ipcMain.handle('plan:runs', async () => {
+    const planRunner = require('./planRunner');
+    return { runs: planRunner.listRuns() };
+  });
+
+  // plan:delete — remove a plan file (user-confirmed in the renderer)
+  ipcMain.handle('plan:delete', async (_e, { planFile, planId } = {}) => {
+    try {
+      const fs = require('fs');
+      const planRunner = require('./planRunner');
+      if (planId) planRunner.cancelPlan(planId);
+      if (planFile && fs.existsSync(planFile)) fs.unlinkSync(planFile);
+      if (_planningMode.planId && planId && _planningMode.planId === planId) {
+        _setPlanningMode({ active: false });
+      }
+      return { ok: true };
+    } catch (err) { return { ok: false, error: err.message }; }
+  });
+
+  // plan:rename — set dot-syntax name on a plan file (Untitled → named)
+  ipcMain.handle('plan:rename', async (_e, { planFile, planName } = {}) => {
+    const pf = _planFormatMain();
+    if (!pf.isValidDotName(planName)) {
+      return { ok: false, error: 'Invalid name — use dot-syntax: e.g. history.project.plan' };
+    }
+    try {
+      const fs = require('fs');
+      const content = fs.readFileSync(planFile, 'utf8');
+      fs.writeFileSync(planFile, pf.setFrontmatterField(content, 'name', planName), 'utf8');
+      if (_planningMode.planId === require('path').basename(planFile, '.md')) {
+        _setPlanningMode({ ..._planningMode, planName });
+      }
+      return { ok: true, planName };
+    } catch (err) { return { ok: false, error: err.message }; }
+  });
+
+  // planning:set — renderer pins/unpins planning mode (toggle, continue, exit)
+  ipcMain.on('planning:set', (_e, mode = {}) => {
+    _setPlanningMode(mode);
+  });
+
+  // planning:get — current mode (renderer mount)
+  ipcMain.handle('planning:get', async () => _planningMode);
 
   // (closeActiveBrowserSessions hoisted to module scope — used by the serial
   // cancel paths and passed to handoffRunner.init for comms-graph parity.)

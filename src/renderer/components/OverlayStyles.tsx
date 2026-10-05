@@ -97,6 +97,31 @@ export function OverlayStyles() {
         pointer-events: none;
         animation: prompt-border-sweep 2.8s linear infinite, think-breathe 2.4s ease-in-out infinite;
       }
+      /* Planning mode active — cyan sweep+breathe. Same visual grammar as
+         .selection (context pinned) but distinctly blue-green so "drafting a
+         plan" never reads as orange "paste context" or violet "thinking". */
+      .prompt-glow-ring.planning {
+        background: conic-gradient(from var(--prompt-angle), transparent 55%, #06b6d4 74%, #67e8f9 84%, #22d3ee 90%, #06b6d4 96%, transparent);
+        animation: prompt-border-sweep 3.0s linear infinite, think-breathe 2.6s ease-in-out infinite;
+        opacity: 1;
+      }
+      /* Planning chip — pulses at the selection-pending cadence. */
+      .planning-chip {
+        animation: selection-pending-pulse 1.8s ease-in-out infinite;
+      }
+      /* Planning toggle orbit — mirrors .selection-paste-ring in cyan. */
+      .planning-toggle-ring {
+        position: absolute;
+        inset: -2px;
+        border-radius: 8px;
+        padding: 2px;
+        background: conic-gradient(from var(--prompt-angle), transparent 55%, #06b6d4 74%, #67e8f9 84%, #22d3ee 90%, #06b6d4 96%, transparent);
+        -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+        -webkit-mask-composite: xor;
+        mask-composite: exclude;
+        pointer-events: none;
+        animation: prompt-border-sweep 3.0s linear infinite, think-breathe 2.6s ease-in-out infinite;
+      }
       /* Cancel button hover glow - red variant */
       .cancel-glow-ring {
         position: absolute;

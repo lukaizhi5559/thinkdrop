@@ -18,6 +18,7 @@ import {
   type ThoughtItem,
 } from './TabComponents';
 import { QueueTaskList } from './QueueTaskCard';
+import { PlansTab } from './PlansTab';
 import { SlideoutDrawer } from './SlideoutDrawer';
 import { SettingsTab } from './SettingsTab';
 import { RulesManagementPanel } from './RulesManagementPanel';
@@ -122,6 +123,9 @@ export function UnifiedOverlay() {
   const isSubmitting = useFeedStore(s => s.isSubmitting);
   const isTaskWorking = useFeedStore(s => s.isTaskWorking);
   const isGlowActive = useFeedStore(s => s.isGlowActive);
+  // Planning mode — pinned by the toggle chip or auto-entered when comms-graph
+  // routes a prompt into the planning lane (metadata.planId → planning:state).
+  const [planningMode, setPlanningMode] = useState<{ active: boolean; planId?: string | null; planName?: string | null; planFile?: string | null }>({ active: false });
   const historyLoading = useFeedStore(s => s.historyLoading);
   const hasMoreHistory = useFeedStore(s => s.hasMoreHistory);
   const liveRunHidden = useFeedStore(s => s.liveRunHidden);
@@ -246,6 +250,7 @@ export function UnifiedOverlay() {
 
   // --- Tab Content Refs for Dynamic Height ---
   const queueTabRef = useRef<HTMLDivElement>(null);
+  const plansTabRef = useRef<HTMLDivElement>(null);
   const cronTabRef = useRef<HTMLDivElement>(null);
   const agentsTabRef = useRef<HTMLDivElement>(null);
   const skillsTabRef = useRef<HTMLDivElement>(null);
@@ -318,6 +323,7 @@ export function UnifiedOverlay() {
   const contentRefs = useMemo(() => ({
     results: resultsMeasureRef,
     queue: queueTabRef,
+    plans: plansTabRef,
     cron: cronTabRef,
     agents: agentsTabRef,
     skills: skillsTabRef,
@@ -2073,6 +2079,23 @@ export function UnifiedOverlay() {
       isDraggingRef.current = false;
       document.body.classList.remove('td-dragging');
     }, token);
+    // Planning mode — main owns the canonical state; mirror it for the chip/glow.
+    ipcRenderer.on('planning:state', (data: any) => {
+      setPlanningMode({
+        active: !!data?.active,
+        planId: data?.planId || null,
+        planName: data?.planName || null,
+        planFile: data?.planFile || null,
+      });
+    }, token);
+    // Auto-entered planning (phrase guard / complexity / intent 6) — dot the
+    // Plans tab so the reroute is visible, never silent.
+    ipcRenderer.on('planning:moved', (_data: any) => {
+      setUnreadTabs(prev => new Set(prev).add('plans'));
+    }, token);
+    ipcRenderer.invoke?.('planning:get').then((mode: any) => {
+      if (mode?.active) setPlanningMode(mode);
+    }).catch(() => {});
     ipcRenderer.on('voice:session', handleVoiceSession, token);
     ipcRenderer.on('voice:state', handleVoiceState, token);
     ipcRenderer.on('voice:interim', handleVoiceInterim, token);
@@ -2102,7 +2125,7 @@ export function UnifiedOverlay() {
     // Generic tab navigation (notification clicks, alert cards)
     ipcRenderer.on('ui:switch-tab', (data: { tab?: string }) => {
       const tab = data?.tab;
-      if (tab === 'results' || tab === 'queue' || tab === 'cron' || tab === 'agents' || tab === 'skills' || tab === 'store' || tab === 'connections' || tab === 'brain') {
+      if (tab === 'results' || tab === 'queue' || tab === 'cron' || tab === 'agents' || tab === 'skills' || tab === 'store' || tab === 'connections' || tab === 'brain' || tab === 'plans') {
         setActiveTab(tab);
         setUnreadTabs(prev => { const next = new Set(prev); next.delete(tab as TabId); return next; });
       }
@@ -2430,7 +2453,7 @@ export function UnifiedOverlay() {
       {/* Glow effect for automation mode */}
       <OverlayStyles />
       <div ref={dragGlowRingRef} className="drag-glow-ring" />
-      <div className={`prompt-glow-ring${isGlowActive ? ' active' : isThinking ? ' thinking' : selectionArmed ? ' selection' : ''}`} />
+      <div className={`prompt-glow-ring${isGlowActive ? ' active' : isThinking ? ' thinking' : planningMode?.active ? ' planning' : selectionArmed ? ' selection' : ''}`} />
 
       {/* Main Container */}
       <div
@@ -2591,6 +2614,21 @@ export function UnifiedOverlay() {
               />}
             </div>
 
+          {/* Plans Tab — planning-mode plan list + run/continue */}
+          <div
+            ref={plansTabRef}
+            className="overflow-y-auto overflow-x-hidden p-4"
+            style={{ display: deferredTab === 'plans' ? 'block' : 'none', height: 'auto', maxHeight: '100%' }}
+          >
+              {visitedTabs.has('plans') && <PlansTab
+                onContinuePlanning={(_plan) => {
+                  // Continue-planning pins the lane via planning:set (sent by
+                  // the card itself) — switching to results shows the thread.
+                  setActiveTab('results');
+                }}
+              />}
+            </div>
+
           {/* Cron Tab */}
           <div 
             ref={cronTabRef}
@@ -2744,6 +2782,8 @@ export function UnifiedOverlay() {
           threadContext={threadContext}
           onThreadContextClear={handleThreadContextClear}
           selectionPending={selectionArmed}
+          planning={planningMode}
+          onPlanningToggle={() => ipcRenderer?.send('planning:set', { active: !planningMode?.active })}
         />
       </div>
 

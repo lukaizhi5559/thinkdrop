@@ -97,6 +97,7 @@ contextBridge.exposeInMainWorld('electron', {
         'plan:rescan',
         'plan:open-editor',
         'plan:save_name',
+        'planning:set',
         'agents:list',
         'agents:create',
         'agents:learn',
@@ -267,6 +268,13 @@ contextBridge.exposeInMainWorld('electron', {
         'ghostlayer:display-nav',
         'ghostlayer:flash',
         'ghostlayer:unflash',
+        'planning:state',
+        'planning:moved',
+        'plan:updated',
+        'plan:status',
+        'plan:task_progress',
+        'plan:complete',
+        'plan:auth_required',
       ];
       if (validChannels.includes(channel)) {
         const wrapped = (_event, ...args) => func(...args);
@@ -428,6 +436,13 @@ contextBridge.exposeInMainWorld('electron', {
         'ghostlayer:display-nav',
         'results-window:display-error',
         'results-window:set-prompt',
+        'planning:state',
+        'planning:moved',
+        'plan:updated',
+        'plan:status',
+        'plan:task_progress',
+        'plan:complete',
+        'plan:auth_required',
         'results-window:show',
         'skills:update',
         'connections:update',
@@ -532,6 +547,13 @@ contextBridge.exposeInMainWorld('electron', {
         'agents:train-review-saved',
         'agents:train-review-error',
         'conversation:list',
+        'planning:state',
+        'planning:moved',
+        'plan:updated',
+        'plan:status',
+        'plan:task_progress',
+        'plan:complete',
+        'plan:auth_required',
       ];
       if (validChannels.includes(channel)) {
         // Legacy path: func-reference removal won't work across contextBridge.
@@ -575,6 +597,14 @@ contextBridge.exposeInMainWorld('electron', {
         'shell:execute',
         'prompt-history:save',
         'prompt-history:load',
+        'plan:list',
+        'plan:get',
+        'plan:run',
+        'plan:run-cancel',
+        'plan:runs',
+        'plan:delete',
+        'plan:rename',
+        'planning:get',
       ];
       if (validChannels.includes(channel)) {
         return ipcRenderer.invoke(channel, data);

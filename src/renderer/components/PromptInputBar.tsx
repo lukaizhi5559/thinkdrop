@@ -41,6 +41,11 @@ interface PromptInputBarProps {
    *  triggers the capture request on textarea focus. Prop-driven (never in
    *  highlightsStore) so it can't leak into submitted prompts. */
   selectionPending?: boolean;
+  /** Planning mode — active plan-drafting session pinned above the input.
+   *  planName is the dot-syntax name (or null → "plan-<id>" placeholder). */
+  planning?: { active: boolean; planId?: string | null; planName?: string | null } | null;
+  /** Toggle planning mode on/off (paperclip-adjacent button or chip ×). */
+  onPlanningToggle?: () => void;
 }
 
 // ── Chip icons (inline SVG — no emojis) ────────────────────────────────────────
@@ -115,6 +120,8 @@ function PromptInputBarImpl(
     threadContext,
     onThreadContextClear,
     selectionPending,
+    planning,
+    onPlanningToggle,
   }: PromptInputBarProps,
   ref: React.Ref<PromptInputBarHandle>,
 ) {
@@ -280,10 +287,36 @@ function PromptInputBarImpl(
 
   // --- Highlight chips ---
   const renderHighlightChips = () => {
-    if (!threadContext && !selectionPending && highlights.length === 0) return null;
+    if (!threadContext && !selectionPending && highlights.length === 0 && !planning?.active) return null;
 
     return (
       <div className="flex flex-wrap gap-2 mb-2">
+        {planning?.active && (
+          <div
+            className="planning-chip flex items-center gap-1 px-2 py-1 rounded-md text-xs"
+            title={`Planning mode${planning.planName ? `: ${planning.planName}` : ' — drafting a plan'}`}
+            style={{
+              backgroundColor: 'rgba(34, 211, 238, 0.14)',
+              border: '1px solid rgba(34, 211, 238, 0.35)',
+              color: '#67e8f9',
+            }}
+          >
+            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M9 4L3 6v14l6-2 6 2 6-2V4l-6 2-6-2z"/><polyline points="9 4 9 18"/><polyline points="15 6 15 20"/>
+            </svg>
+            <span className="truncate max-w-[180px]">
+              Planning{planning.planName ? `: ${planning.planName}` : ' mode'}
+            </span>
+            <button
+              onClick={onPlanningToggle}
+              className="ml-1 hover:opacity-70"
+              style={{ color: '#67e8f9' }}
+              title="Exit planning mode"
+            >
+              ×
+            </button>
+          </div>
+        )}
         {threadContext && (
           <div
             className="flex items-center gap-1 px-2 py-1 rounded-md text-xs"
@@ -456,6 +489,26 @@ function PromptInputBarImpl(
               <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48" />
             </svg>
           </button>
+
+          {/* Planning-mode toggle — orbiting cyan ring while active (same
+              affordance grammar as the paste-context button). */}
+          <div className="relative flex items-center">
+            {planning?.active && <span className="planning-toggle-ring" aria-hidden="true" />}
+            <button
+              onClick={onPlanningToggle}
+              className="relative flex items-center justify-center w-9 h-9 p-0 rounded-lg text-sm font-medium border transition-all"
+              style={{
+                backgroundColor: planning?.active ? 'rgba(34,211,238,0.15)' : 'rgba(255,255,255,0.05)',
+                color: planning?.active ? '#22d3ee' : '#9ca3af',
+                borderColor: planning?.active ? 'rgba(34,211,238,0.4)' : 'rgba(255,255,255,0.1)',
+              }}
+              title={planning?.active ? 'Exit planning mode' : 'Start a plan — multi-task prompts draft a plan first'}
+            >
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M9 4L3 6v14l6-2 6 2 6-2V4l-6 2-6-2z"/><polyline points="9 4 9 18"/><polyline points="15 6 15 20"/>
+              </svg>
+            </button>
+          </div>
 
           {/* Terminal Button */}
           {/* <button

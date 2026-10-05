@@ -3,7 +3,7 @@ import SkillStore from './SkillStore';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
-export type TabId = 'results' | 'queue' | 'cron' | 'agents' | 'skills' | 'store' | 'connections' | 'rules' | 'brain';
+export type TabId = 'results' | 'queue' | 'cron' | 'agents' | 'skills' | 'store' | 'connections' | 'rules' | 'brain' | 'plans';
 
 export interface ConnectionItem {
   provider: string;       // 'github' | 'google' | 'microsoft' etc.
@@ -270,6 +270,20 @@ export function AgentsIcon({ active }: { active: boolean }) {
   );
 }
 
+export function PlansIcon({ active }: { active: boolean }) {
+  const c = active ? '#22d3ee' : '#abafb8';
+  return (
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="none"
+      stroke={c} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      {/* Map / route — a plan: folded map with a path */}
+      <path d="M9 4L3 6v14l6-2 6 2 6-2V4l-6 2-6-2z"/>
+      <polyline points="9 4 9 18"/><polyline points="15 6 15 20"/>
+      <circle cx="7.5" cy="9" r="1" fill={c} stroke="none"/>
+      <circle cx="16.5" cy="15" r="1" fill={c} stroke="none"/>
+    </svg>
+  );
+}
+
 export function BrainIcon({ active }: { active: boolean }) {
   const c = active ? '#e879f9' : '#abafb8';
   return (
@@ -285,19 +299,20 @@ export function BrainIcon({ active }: { active: boolean }) {
 
 // ── Tab bar ───────────────────────────────────────────────────────────────────
 
-export function TabBar({ active, onSelect, queueCount, cronCount, unreadTabs }: {
+export function TabBar({ active, onSelect, queueCount, unreadTabs }: {
   active: TabId;
   onSelect: (tab: TabId) => void;
   queueCount: number;
-  cronCount: number;
+  cronCount?: number;
   unreadTabs?: Set<TabId>;
 }) {
   const tabs: { id: TabId; label: string; icon: React.ReactNode; badge?: number; activeColor: string }[] = [
     { id: 'results',     label: 'Results',  icon: <ResultsIcon     active={active === 'results'}     />, activeColor: '#60a5fa' },
-    { id: 'queue',       label: 'Queue',    icon: <QueueIcon       active={active === 'queue'}       />, badge: queueCount, activeColor: '#a78bfa' },
+    { id: 'plans',       label: 'Plans',    icon: <PlansIcon       active={active === 'plans'}       />, activeColor: '#22d3ee' },
     { id: 'agents',      label: 'Agents',   icon: <AgentsIcon      active={active === 'agents'}      />, activeColor: '#f59e0b' },
-    { id: 'cron',        label: 'Cron',     icon: <CronIcon        active={active === 'cron'}        />, badge: cronCount, activeColor: '#34d399' },
+    { id: 'queue',       label: 'Queue',    icon: <QueueIcon       active={active === 'queue'}       />, badge: queueCount, activeColor: '#a78bfa' },
     { id: 'brain',       label: 'Brain',    icon: <BrainIcon       active={active === 'brain'}       />, activeColor: '#e879f9' },
+    // Cron moved to the SlideoutDrawer — low-frequency surface; bar stays 5.
   ];
 
   return (
