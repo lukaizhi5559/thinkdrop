@@ -2265,6 +2265,63 @@ let _activeBrowserAgentSessionId = null; // Tracks browser session opened during
 let _gatherAuthSessionId = null; // Tracks browser session opened by GatherAuth sign-in (survives stategraph completion)
 let _gatherAuthInFlight = false; // Tracks whether a background browser.agent:auth request is currently running
 let _pendingPreflightPrompt = null; // { prompt, selectedText, responseLanguage, sessionId } — stored when preflight auth required, re-enqueued after auth succeeds
+
+// Prior browser turn metadata — injected unconditionally when a
+// Playwright session survives. resolveReferencesV2 decides whether this
+// prompt is a compatible follow-up and promotes it to
+// activeBrowserSessionId. Shared by the serial path (runPromptThroughStateGraph)
+// and the comms-graph path (handoffRunner.execute) via init callbacks.
+function buildPriorBrowserContext() {
+  return currentBrowserSessionId ? {
+    sessionId: currentBrowserSessionId,
+    url: currentBrowserUrl || null,
+    serviceKey: String(currentBrowserSessionId).replace(/_agent$/, ''),
+  } : null;
+}
+
+// Persist active browser session so follow-up prompts reuse the same Playwright
+// tab. If a node explicitly cleared it (browser was closed), reset so the next
+// prompt starts fresh. Key-absent is a no-op (partial/paused states).
+function persistBrowserSessionFromFinalState(finalState) {
+  if (!finalState) return;
+  if (finalState.activeBrowserSessionId) {
+    currentBrowserSessionId = finalState.activeBrowserSessionId;
+    currentBrowserUrl = finalState.activeBrowserUrl || currentBrowserUrl;
+    console.log(`[StateGraph] Persisted browser session: ${currentBrowserSessionId} @ ${currentBrowserUrl}`);
+  } else if ('activeBrowserSessionId' in finalState && finalState.activeBrowserSessionId === null) {
+    console.log(`[StateGraph] Browser session cleared (was: ${currentBrowserSessionId}) — next prompt will open a new tab`);
+    currentBrowserSessionId = null;
+    currentBrowserUrl = null;
+  }
+}
+
+// Close any active browser session opened by preflight auth or plan execution.
+// playwright-cli daemon keeps Chrome alive independently — must explicitly close it.
+// Module scope so both the serial path and handoffRunner.init can reach it.
+function closeActiveBrowserSessions(reason = 'cancel') {
+  const sessionsToClose = new Set();
+  if (_activeBrowserAgentSessionId) sessionsToClose.add(_activeBrowserAgentSessionId);
+  if (_gatherAuthSessionId && _gatherAuthSessionId !== _activeBrowserAgentSessionId) sessionsToClose.add(_gatherAuthSessionId);
+  if (currentBrowserSessionId && currentBrowserSessionId !== _activeBrowserAgentSessionId && currentBrowserSessionId !== _gatherAuthSessionId) sessionsToClose.add(currentBrowserSessionId);
+  for (const sid of sessionsToClose) {
+    console.log(`🛑 [Automation] Closing browser session (${reason}): ${sid}`);
+    const closeBody = JSON.stringify({ payload: { skill: 'browser.act', args: { action: 'close', sessionId: sid } } });
+    const closeReq = http.request({
+      hostname: '127.0.0.1', port: 3007, path: '/command.automate', method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(closeBody) },
+      timeout: 5000,
+    }, (res) => { res.resume(); });
+    closeReq.on('error', () => {});
+    closeReq.on('timeout', () => { closeReq.destroy(); });
+    closeReq.write(closeBody);
+    closeReq.end();
+  }
+  _activeBrowserAgentSessionId = null;
+  _gatherAuthSessionId = null;
+  _pendingPreflightPrompt = null;
+  currentBrowserSessionId = null;
+  currentBrowserUrl = null;
+}
 let _pendingPreflightPromptsByTask = new Map(); // Per-task pending preflight prompts for handoff tasks: taskId → { prompt, agentId, source, originalPrompt, sessionId }
 let _pendingNewlyBuiltAgents = new Set(); // Tracks newly built agents pending auth — retained on cancel for retry
 
@@ -2706,6 +2763,13 @@ function initStateGraph() {
         // Module-level gather callback — handoff tasks can ask the user too
         // (ambiguous file picker, clarifying questions) from app start.
         gatherAnswerCallback,
+        // Browser-session bridge — handoff tasks share the same cross-prompt
+        // session continuity as the serial path: inject prior context into the
+        // initial state and persist finalState's session on completion, so
+        // follow-up prompts (and plan-level close-all protection) see it.
+        getPriorBrowserContext: () => buildPriorBrowserContext(),
+        persistBrowserSession: (finalState) => persistBrowserSessionFromFinalState(finalState),
+        closeBrowserSessions: (reason) => closeActiveBrowserSessions(reason),
       });
       console.log('✅ [HandoffRunner] Initialized for comms-graph concurrent handoffs');
     } catch (err) {
@@ -5555,32 +5619,8 @@ app.whenReady().then(async () => {
     }
   });
 
-  // Close any active browser session opened by preflight auth or plan execution.
-  // playwright-cli daemon keeps Chrome alive independently — must explicitly close it.
-  function closeActiveBrowserSessions(reason = 'cancel') {
-    const sessionsToClose = new Set();
-    if (_activeBrowserAgentSessionId) sessionsToClose.add(_activeBrowserAgentSessionId);
-    if (_gatherAuthSessionId && _gatherAuthSessionId !== _activeBrowserAgentSessionId) sessionsToClose.add(_gatherAuthSessionId);
-    if (currentBrowserSessionId && currentBrowserSessionId !== _activeBrowserAgentSessionId && currentBrowserSessionId !== _gatherAuthSessionId) sessionsToClose.add(currentBrowserSessionId);
-    for (const sid of sessionsToClose) {
-      console.log(`🛑 [Automation] Closing browser session (${reason}): ${sid}`);
-      const closeBody = JSON.stringify({ payload: { skill: 'browser.act', args: { action: 'close', sessionId: sid } } });
-      const closeReq = http.request({
-        hostname: '127.0.0.1', port: 3007, path: '/command.automate', method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(closeBody) },
-        timeout: 5000,
-      }, (res) => { res.resume(); });
-      closeReq.on('error', () => {});
-      closeReq.on('timeout', () => { closeReq.destroy(); });
-      closeReq.write(closeBody);
-      closeReq.end();
-    }
-    _activeBrowserAgentSessionId = null;
-    _gatherAuthSessionId = null;
-    _pendingPreflightPrompt = null;
-    currentBrowserSessionId = null;
-    currentBrowserUrl = null;
-  }
+  // (closeActiveBrowserSessions hoisted to module scope — used by the serial
+  // cancel paths and passed to handoffRunner.init for comms-graph parity.)
 
   // ─── Automation: Cancel active run ───────────────────────────────────────
   ipcMain.on('automation:cancel', () => {
@@ -7829,11 +7869,7 @@ app.whenReady().then(async () => {
         // activeBrowserSessionId; the old isBrowserContinuationCommand regex gate
         // missed implicit continuations ("now add Y to my cart", "scroll to the
         // bottom of this page" — "this page" isn't in its patterns).
-        const priorBrowserContext = currentBrowserSessionId ? {
-          sessionId: currentBrowserSessionId,
-          url: currentBrowserUrl || null,
-          serviceKey: String(currentBrowserSessionId).replace(/_agent$/, ''),
-        } : null;
+        const priorBrowserContext = buildPriorBrowserContext();
         
         // ── Session routing ──────────────────────────────────────────────────
         // session.route (in resolveReferencesV2) is the single routing entry point.
@@ -7962,15 +7998,7 @@ app.whenReady().then(async () => {
 
       // Persist active browser session so follow-up prompts reuse the same Playwright tab.
       // If recovery handler cleared it (browser was closed), reset so next prompt starts fresh.
-      if (finalState.activeBrowserSessionId) {
-        currentBrowserSessionId = finalState.activeBrowserSessionId;
-        currentBrowserUrl = finalState.activeBrowserUrl || currentBrowserUrl;
-        console.log(`[StateGraph] Persisted browser session: ${currentBrowserSessionId} @ ${currentBrowserUrl}`);
-      } else if ('activeBrowserSessionId' in finalState && finalState.activeBrowserSessionId === null) {
-        console.log(`[StateGraph] Browser session cleared (was: ${currentBrowserSessionId}) — next prompt will open a new tab`);
-        currentBrowserSessionId = null;
-        currentBrowserUrl = null;
-      }
+      persistBrowserSessionFromFinalState(finalState);
 
       // Persist last opened file path so "close it" / "close the file" always targets the right file.
       if (finalState.lastOpenedFilePath) {

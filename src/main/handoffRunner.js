@@ -170,13 +170,23 @@ let _setPendingPreflightPrompt = null;
 // concurrent handoff tasks cannot ask the user clarifying questions.
 let _gatherAnswerCallback = null;
 
-function init({ mcpClient, mcpAdapter, llmBackend, ipcBroadcast, setPendingPreflightPrompt, gatherAnswerCallback }) {
+// Browser-session bridge — main.js owns the cross-prompt session vars; the
+// comms-graph path must inject prior context into initialState and persist the
+// run's final session, or promotion and close-all protection see nothing.
+let _getPriorBrowserContext = null;
+let _persistBrowserSession = null;
+let _closeBrowserSessions = null;
+
+function init({ mcpClient, mcpAdapter, llmBackend, ipcBroadcast, setPendingPreflightPrompt, gatherAnswerCallback, getPriorBrowserContext, persistBrowserSession, closeBrowserSessions }) {
   _mcpClient = mcpClient;
   _mcpAdapter = mcpAdapter;
   _llmBackend = llmBackend;
   _ipcBroadcast = ipcBroadcast;
   _setPendingPreflightPrompt = setPendingPreflightPrompt;
   if (gatherAnswerCallback) _gatherAnswerCallback = gatherAnswerCallback;
+  _getPriorBrowserContext = getPriorBrowserContext || null;
+  _persistBrowserSession = persistBrowserSession || null;
+  _closeBrowserSessions = closeBrowserSessions || null;
 }
 
 function setGatherAnswerCallback(cb) {
@@ -414,6 +424,9 @@ async function execute({ taskId, prompt, agentId, source, originalPrompt, sessio
           gatherAnswerCallback: _taskGatherCallback(taskId),
           _handoffTaskId: taskId,
           _handoffSource: source,
+          // Live value wins — a session may have been born/died while the task
+          // was paused; resolveReferencesV2 re-validates compatibility anyway.
+          priorBrowserContext: _getPriorBrowserContext?.() || _resumeState?.priorBrowserContext || null,
         }
       : {
           message: prompt,
@@ -468,6 +481,10 @@ async function execute({ taskId, prompt, agentId, source, originalPrompt, sessio
           // uses it as a prior and as the parse-failure fallback instead of
           // defaulting to command_automate.
           ...(guessedIntent ? { _carriedHint: guessedIntent } : {}),
+          // Same cross-prompt session continuity as the serial path — without
+          // this the promotion matrix in resolveReferencesV2 never sees the
+          // prior browser session and plan-level close-all runs unprotected.
+          priorBrowserContext: _getPriorBrowserContext?.() || null,
         };
 
     // Always normalize to a mutable array — main.js pushes mid-run
@@ -490,6 +507,11 @@ async function execute({ taskId, prompt, agentId, source, originalPrompt, sessio
       stateGraph.execute(initialState, null, abortController.signal),
       _stallPromise,
     ]);
+
+    // Persist/clear the browser session for the next prompt — the serial path
+    // does this after stateGraph.execute; handoff tasks must do the same or the
+    // session is invisible to follow-up prompts.
+    try { _persistBrowserSession?.(finalState); } catch (_) {}
 
     // Pure-interaction plans (open/focus/click steps) often leave
     // finalState.answer empty — the step outputs ("Notes already open and
@@ -1176,6 +1198,9 @@ function cancel(taskId) {
     return hadPendingPlan;
   }
   run.abortController.abort();
+  // Parity with the serial path's automation:cancel — closing the task must not
+  // leak its Playwright window.
+  try { _closeBrowserSessions?.('handoff cancel'); } catch (_) {}
   console.log(`[HandoffRunner] Cancelled task ${taskId}`);
   return true;
 }
