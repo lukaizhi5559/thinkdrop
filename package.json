@@ -16,7 +16,7 @@
     "restart:services": "yarn stop:services && sleep 2 && yarn start:services",
     "sync:stategraph": "rsync -av --delete stategraph-module/src/ node_modules/@thinkdrop/stategraph/src/",
     "dev:synced": "yarn sync:stategraph && yarn dev",
-    "rebuild:native": "electron-rebuild -f -w keytar"
+    "rebuild:native": "electron-rebuild -f -w uiohook-napi"
   },
   "keywords": [
     "electron",
@@ -58,7 +58,6 @@
     "docx": "9.6.1",
     "duckdb-async": "^1.2.2",
     "jsonrepair": "^3.13.3",
-    "keytar": "^7.9.0",
     "kokoro-js": "^1.2.1",
     "lucide-react": "^0.263.0",
     "node-fetch": "^2.7.0",
@@ -95,7 +94,6 @@
     },
     "electronRebuild": {
       "onlyModules": [
-        "keytar",
         "uiohook-napi"
       ]
     }

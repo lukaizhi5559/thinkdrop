@@ -1325,7 +1325,7 @@ function SkillItemCard({ item, onSaveSecret, onOpenCode, onOAuthConnect, onScope
           {item.secrets.length > 0 && (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
               <div style={{ fontSize: '0.58rem', color: '#4b5563' }}>
-                API keys — stored securely in keytar, never on disk as plain text.
+                API keys — stored encrypted (safeStorage), never on disk as plain text.
               </div>
               {item.secrets.map(secret => {
                 const isSaved = savedKeys.has(secret.key);

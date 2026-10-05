@@ -2103,6 +2103,23 @@ export function UnifiedOverlay() {
     ipcRenderer.on('voice:level', handleVoiceLevel, token);
     ipcRenderer.on('unified:clear', handleClear, token);
     ipcRenderer.on('automation:progress', handleAutomationProgress, token);
+    // Plan-check card — repeated emits for a planId patch the same feed entry.
+    ipcRenderer.on('plan:check', (data: { planId: string | null; items: any[]; allClear: boolean; authOpened?: string; cancelled?: boolean; error?: string }) => {
+      const entryId = `plancheck:${data?.planId || 'unknown'}`;
+      const existing = feedStore.getState().entries.find(e => e.id === entryId);
+      if (existing) {
+        feedStore.patchEntry(entryId, { check: data } as any);
+      } else {
+        feedStore.appendEntry({ id: entryId, ts: Date.now(), kind: 'plan-check', check: data } as any);
+      }
+    }, token);
+    // Capability-discovery choices (<choices> from the planner) → QuestionCard.
+    ipcRenderer.on('plan:question', (data: { planId: string | null; question: string; options: any[] }) => {
+      feedStore.appendEntry({
+        id: `planq:${data?.planId || 'x'}:${Date.now()}`, ts: Date.now(), kind: 'plan-question',
+        planId: data?.planId || null, question: data?.question || '', options: data?.options || [],
+      } as any);
+    }, token);
     ipcRenderer.on('is-streaming', (data: { isStreaming: boolean }) => {
       setIsStreaming(data.isStreaming);
       if (data.isStreaming) {

@@ -2577,26 +2577,297 @@ function _setPlanningMode(mode) {
 }
 
 // User confirmed execution inside the planning lane (<plan_run/> →
-// metadata.runPlan). Dispatch the draft through planRunner; blocked runs
-// surface sign-in UI via planRunner's onAuthRequired hook + a chat message.
+// metadata.runPlan). The plan-check card gates the run: when every checklist
+// item passes it starts immediately; unresolved issues render inline actions
+// in the feed instead of the old "Plan blocked" blob.
 function _triggerPlanRun(metadata) {
   const planFile = metadata.planFile;
-  console.log(`[PlanRunner] Conversational run trigger — ${planFile}`);
+  console.log(`[PlanRunner] Conversational run trigger — ${planFile} (via plan check)`);
+  _emitPlanCheck(metadata.planId || null, planFile, { autoStart: true })
+    .catch(err => console.warn('[PlanRunner] run trigger failed:', err.message));
+}
+
+// ─── Plan check — deterministic readiness checklist + inline issue actions ───
+// The card is the single source of truth for "can this plan start": one card
+// per plan, patched as issues resolve. Voice/typed card commands are matched
+// by _matchPlanCheckAction before prompts reach comms-graph.
+/** @type {{planId:string|null, planFile:string, items:Array, bypassed:Set<string>, autoStart:boolean}|null} */
+let _pendingPlanCheck = null;
+/** @type {{planId:string|null, question:string, options:Array}|null} */
+let _pendingChoices = null;
+
+/** Mark the preflight auth ledger — same file/shape planPreflight reads. */
+function _markPlanAuthLedger(agentId) {
   try {
-    const planRunner = require('./planRunner');
-    planRunner.startPlan(planFile, { sessionId: null }).then(r => {
+    const file = path.join(os.homedir(), '.thinkdrop', 'preflight-auth-cache.json');
+    const cache = fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, 'utf8')) : {};
+    cache[String(agentId).toLowerCase()] = { ts: Date.now(), authed: true };
+    const tmp = `${file}.tmp`;
+    fs.writeFileSync(tmp, JSON.stringify(cache, null, 2), 'utf8');
+    fs.renameSync(tmp, file);
+    console.log(`[PlanCheck] Ledger marked authed: ${agentId}`);
+  } catch (err) {
+    console.warn(`[PlanCheck] Ledger write failed for ${agentId}:`, err.message);
+  }
+}
+
+/**
+ * Compute the plan checklist and emit `plan:check` to the renderer.
+ * With autoStart, an all-clear plan dispatches through planRunner directly.
+ * @returns {Promise<boolean>} allClear
+ */
+async function _emitPlanCheck(planId, planFile, { autoStart = false, bypassed } = {}) {
+  try {
+    const planFormat = require('../../shared/plan-format.cjs');
+    const { computePlanCheck } = require('../../shared/plan-check.cjs');
+    const content = fs.readFileSync(planFile, 'utf8');
+    const tasks = planFormat.parseTasks(content);
+    const bypass = bypassed || _pendingPlanCheck?.bypassed || new Set();
+    const { items, allClear } = await computePlanCheck(tasks, { bypassed: bypass });
+    _pendingPlanCheck = { planId, planFile, items, bypassed: bypass, autoStart };
+    safeSendUnified('plan:check', { planId, items, allClear });
+    console.log(`[PlanCheck] ${planId || planFile}: ${items.filter(i => i.status === 'issue').length} issue(s), allClear=${allClear}`);
+    if (allClear && autoStart) {
+      const planRunner = require('./planRunner');
+      const r = await planRunner.startPlan(planFile, { sessionId: null, bypassAgents: [...bypass] });
       if (r?.ok) {
+        _pendingPlanCheck = null;
         _setPlanningMode({ active: false });
       } else {
-        const blocked = r?.blockers?.length
-          ? `Plan blocked — sign in needed for ${r.blockers.map(b => b.agentId).join(', ')}.`
-          : `Plan could not start: ${r?.error || 'unknown error'}`;
-        safeSendUnified('ws-bridge:message', { type: 'chunk', text: blocked, taskId: null, isPlaceholder: false });
-        safeSendUnified('ws-bridge:message', { type: 'done', taskId: null });
+        safeSendUnified('plan:check', { planId, items, allClear: false, error: r?.error || 'run failed' });
       }
-    }).catch(err => console.warn('[PlanRunner] run trigger failed:', err.message));
+    }
+    return allClear;
   } catch (err) {
-    console.warn('[PlanRunner] run trigger error:', err.message);
+    console.warn('[PlanCheck] compute failed:', err.message);
+    return false;
+  }
+}
+
+/**
+ * Map spoken/typed text to a pending card action. Returns the dispatched
+ * action descriptor when consumed, null when the text should pass through
+ * to the planning LLM as a normal message.
+ */
+function _matchPlanCheckAction(text) {
+  const t = String(text || '').trim().toLowerCase();
+  if (!t) return null;
+  // Choices card: "option 2" / "pick 2" / "2" selects deterministically.
+  if (_pendingChoices && _pendingChoices.options.length) {
+    const m = t.match(/^(?:option|pick|choose|number)?\s*(\d+)$/);
+    if (m) {
+      const idx = parseInt(m[1], 10) - 1;
+      const opt = _pendingChoices.options[idx];
+      if (opt) {
+        const label = opt.label || opt.value || String(idx + 1);
+        _pendingChoices = null;
+        return { prompt: label }; // pass through as the planning answer
+      }
+    }
+    return null; // free-form answers ride the normal lane
+  }
+  const pc = _pendingPlanCheck;
+  if (!pc || !pc.items.some(i => i.status === 'issue')) return null;
+  const issues = pc.items.filter(i => i.status === 'issue');
+  const forAgent = (re) => {
+    const m = t.match(re);
+    return issues.find(i => i.agentId && (t.includes(i.agentId.replace('.agent', '').toLowerCase()) || (m && i.agentId.toLowerCase().includes(m[0]))));
+  };
+  if (/^cancel(\s+(the\s+)?plan)?$/.test(t) || /^cancel plan/.test(t)) return { action: 'cancel' };
+  if (/^sign[\s-]?in|^log[\s-]?in|^authenticate/.test(t)) {
+    const i = forAgent() || issues.find(x => x.kind === 'signin') || issues[0];
+    return { action: 'signin', itemId: i.id };
+  }
+  if (/^bypass/.test(t)) {
+    const i = forAgent() || issues[0];
+    return { action: 'bypass', itemId: i.id };
+  }
+  const um = t.match(/^use\s+([a-z0-9_.-]+)/);
+  if (um) {
+    const i = issues.find(x => x.kind === 'unknown-agent' && x.suggested && um[1].includes(x.suggested.replace('.agent', '')));
+    if (i) return { action: 'use-agent', itemId: i.id };
+  }
+  if (/^find\s+(options|services|alternatives)/.test(t)) {
+    const i = issues.find(x => x.kind === 'unknown-agent' || x.kind === 'no-capability') || issues[0];
+    return { action: 'find-options', itemId: i.id };
+  }
+  return null;
+}
+
+// ── Secret store — the ONLY secret-write path going forward ──────────────────
+// main.js holds safeStorage in-process, so it writes SAFE:<b64> refs straight
+// into user-memory profile rows; profile.get decrypts them transparently via
+// the crypto bridge (this same process). No keytar, no plaintext at rest.
+async function _secretSet(key, value) {
+  const k = String(key).toLowerCase();
+  try {
+    if (safeStorage.isEncryptionAvailable() && mcpAdapter) {
+      const valueRef = `SAFE:${safeStorage.encryptString(String(value)).toString('base64')}`;
+      const r = await mcpAdapter.callService('user-memory', 'profile.set', { key: k, valueRef }, { timeoutMs: 4000 }).catch(() => null);
+      if (r !== null) return true;
+    }
+    // Bridge unavailable — macOS keychain + KEYTAR: ref (profile.get resolves it).
+    const { spawnSync } = require('child_process');
+    const pr = spawnSync('security', ['add-generic-password', '-s', 'thinkdrop', '-a', k, '-w', String(value), '-U'], { encoding: 'utf8' });
+    if (pr.status !== 0) return false;
+    if (mcpAdapter) await mcpAdapter.callService('user-memory', 'profile.set', { key: k, valueRef: `KEYTAR:${k}` }, { timeoutMs: 4000 }).catch(() => {});
+    return true;
+  } catch (err) {
+    console.warn(`[Secrets] set failed for ${k}:`, err.message);
+    return false;
+  }
+}
+
+/** profile.get → plaintext (SAFE: decrypts through the bridge; KEYTAR: via keychain).
+ *  store_secret rows live under `<key>_ref`; plain rows under `<key>`. */
+async function _secretGet(key) {
+  try {
+    if (!mcpAdapter) return null;
+    const k = String(key).toLowerCase();
+    for (const probe of [k, `${k}_ref`]) {
+      const r = await mcpAdapter.callService('user-memory', 'profile.get', { key: probe }, { timeoutMs: 4000 }).catch(() => null);
+      const v = r?.data?.valueRef ?? r?.valueRef ?? null;
+      // An undecrypted SAFE:/KEYTAR: ref means the backing store couldn't resolve —
+      // treat as missing rather than leaking the ref string to callers.
+      if (typeof v === 'string' && v.length && !v.startsWith('SAFE:') && !v.startsWith('KEYTAR:')) return v;
+    }
+    return null;
+  } catch (_) { return null; }
+}
+
+/** Delete = remove the row and its `_ref` twin via profile.delete. */
+async function _secretDelete(key) {
+  try {
+    if (!mcpAdapter) return false;
+    const k = String(key).toLowerCase();
+    const a = await mcpAdapter.callService('user-memory', 'profile.delete', { key: k }, { timeoutMs: 4000 }).catch(() => null);
+    const b = await mcpAdapter.callService('user-memory', 'profile.delete', { key: `${k}_ref` }, { timeoutMs: 4000 }).catch(() => null);
+    return a?.status === 'ok' || a?.ok === true || b?.status === 'ok' || b?.ok === true;
+  } catch (_) { return false; }
+}
+
+/** profile.list keys under a prefix — replaces keytar.findCredentials scans. */
+async function _secretList(prefix) {
+  try {
+    if (!mcpAdapter) return [];
+    const r = await mcpAdapter.callService('user-memory', 'profile.list', {}, { timeoutMs: 5000 }).catch(() => null);
+    const entries = r?.data?.entries || [];
+    return entries.map(e => e.key).filter(k => typeof k === 'string' && k.startsWith(String(prefix).toLowerCase()));
+  } catch (_) { return []; }
+}
+
+/** Resolve a plan:check:action into the card's next state. */
+async function _handlePlanCheckAction({ planId, itemId, action, value, envName } = {}) {
+  const pc = _pendingPlanCheck;
+  if (!pc) return;
+  const item = pc.items.find(i => i.id === itemId) || pc.items.find(i => i.status === 'issue');
+  const recheck = () => _emitPlanCheck(pc.planId, pc.planFile, { autoStart: pc.autoStart });
+  switch (action) {
+    case 'signin':
+      if (item?.agentId) {
+        // Same emit the gather card uses — opens the headed sign-in browser.
+        ipcMain.emit('browser.agent:auth', null, { agentId: item.agentId, taskId: null });
+        // Signal the renderer the flow started so the row shows "verify".
+        safeSendUnified('plan:check', { planId: pc.planId, items: pc.items, allClear: false, authOpened: item.agentId });
+      }
+      break;
+    case 'i-signed-in': {
+      // User confirmed — tell the waiting browser.agent verify loop now.
+      try {
+        const payload = JSON.stringify({});
+        await new Promise((resolve) => {
+          const req = require('http').request(
+            { hostname: '127.0.0.1', port: 3007, path: '/browser.auth_complete', method: 'POST', headers: { 'Content-Type': 'application/json' } },
+            () => resolve());
+          req.on('error', () => resolve());
+          req.write(payload); req.end();
+        });
+      } catch (_) {}
+      break;
+    }
+    case 'submit-key': {
+      if (item?.agentId && envName && value) {
+        const { storeAgentSecret } = require('../../shared/secret-resolve.cjs');
+        const ok = await storeAgentSecret(item.agentId, envName, value);
+        console.log(`[PlanCheck] submit-key ${item.agentId} ${envName}: ${ok ? 'stored' : 'FAILED'}`);
+        // Mirror under the legacy <agent>_<key> shape so AgentsTab's
+        // get-stored-secrets (profile.list prefix scan) sees it too.
+        try {
+          const agent = item.agentId.replace('.agent', '').toLowerCase();
+          await _secretSet(`${agent}_${envName}`, value);
+        } catch (_) {}
+      }
+      await recheck();
+      break;
+    }
+    case 'cli-login': {
+      if (item?.agentId) {
+        const tool = item.agentId.replace('.agent', '');
+        _cmdHttp('/agent.run', { agentId: item.agentId, task: `authenticate ${tool} — run the login command` }).catch(() => {});
+      }
+      break;
+    }
+    case 'use-agent': {
+      if (item?.agentId && item.suggested && item.taskNum) {
+        try {
+          const planFormat = require('../../shared/plan-format.cjs');
+          const content = fs.readFileSync(pc.planFile, 'utf8');
+          const tasks = planFormat.parseTasks(content);
+          const task = tasks.find(t => t.num === item.taskNum);
+          if (task) {
+            const nextAgents = (task.agents || []).map(a =>
+              (a === item.agentId || a === item.agentId.replace('.agent', '')) ? item.suggested : a);
+            fs.writeFileSync(pc.planFile, planFormat.updateTaskAgents(content, item.taskNum, nextAgents), 'utf8');
+            console.log(`[PlanCheck] Task ${item.taskNum}: ${item.agentId} → ${item.suggested}`);
+          }
+        } catch (err) { console.warn('[PlanCheck] use-agent rewrite failed:', err.message); }
+      }
+      await recheck();
+      break;
+    }
+    case 'find-options': {
+      // Route back into the planning lane as a discovery request — the planner
+      // web.searches and emits a <choices> card.
+      const taskBit = item?.taskNum ? `task ${item.taskNum}` : 'this plan';
+      _routeViaCommsGraph?.(
+        `For ${taskBit}: no registered agent covers this need. Search for candidate services (web app, CLI, API, or MCP) and present options.`,
+        { sessionId: currentSessionId });
+      break;
+    }
+    case 'bypass': {
+      if (item?.agentId) {
+        pc.bypassed.add(item.agentId);
+        try {
+          const planFormat = require('../../shared/plan-format.cjs');
+          const content = fs.readFileSync(pc.planFile, 'utf8');
+          const fm = planFormat.parseFrontmatter(content) || {};
+          const existing = Array.isArray(fm.auth_bypass) ? fm.auth_bypass
+            : (() => { try { return JSON.parse(fm.auth_bypass || '[]'); } catch (_) { return []; } })();
+          if (!existing.includes(item.agentId)) existing.push(item.agentId);
+          fs.writeFileSync(pc.planFile,
+            planFormat.setFrontmatterField(content, 'auth_bypass', JSON.stringify(existing)), 'utf8');
+        } catch (_) {}
+        await recheck();
+      }
+      break;
+    }
+    case 'run': {
+      // Manual "Run plan" — allowed only once the checklist is all-clear.
+      if (!pc.items.every(i => i.status === 'pass')) break;
+      const planRunner = require('./planRunner');
+      const r = await planRunner.startPlan(pc.planFile, { sessionId: null, bypassAgents: [...pc.bypassed] });
+      if (r?.ok) {
+        _pendingPlanCheck = null;
+        _setPlanningMode({ active: false });
+      } else {
+        safeSendUnified('plan:check', { planId: pc.planId, items: pc.items, allClear: false, error: r?.error || 'run failed' });
+      }
+      break;
+    }
+    case 'cancel':
+      _pendingPlanCheck = null;
+      safeSendUnified('plan:check', { planId: pc.planId, items: pc.items, allClear: false, cancelled: true });
+      break;
   }
 }
 
@@ -5023,22 +5294,90 @@ app.whenReady().then(async () => {
   function routeThroughCommsGraph(prompt, { selectedText = '', responseLanguage = null, sessionId = null, source = 'text', thoughtContext = null } = {}) {
     if (process.env.COMMS_GRAPH_ENABLED !== 'true') return false;
 
+    // ── Pending-card intercept (voice + typed) ──────────────────────────────
+    // A plan-check or choices card owns short action phrases while it's up —
+    // "sign in", "bypass", "cancel plan", "option 2" dispatch the same handler
+    // the button would, before the text ever reaches the planning LLM.
+    try {
+      const hit = _matchPlanCheckAction(prompt);
+      if (hit) {
+        if (hit.prompt) {
+          // Choice pick — pass the selected label through as the answer.
+          prompt = hit.prompt;
+          console.log(`[PlanCheck] Voice/text pick → "${prompt.slice(0, 60)}"`);
+        } else {
+          console.log(`[PlanCheck] Voice/text action: ${hit.action}${hit.itemId ? ` (${hit.itemId})` : ''}`);
+          _handlePlanCheckAction({ planId: _pendingPlanCheck?.planId, itemId: hit.itemId, action: hit.action })
+            .catch(err => console.warn('[PlanCheck] voice action failed:', err.message));
+          return true;
+        }
+      }
+    } catch (_) {}
+
     const commsPort = parseInt(process.env.COMMS_GRAPH_PORT || '3015', 10);
     console.log(`🧠 [CommsGraph] Routing prompt through comms-graph (source=${source}):`, prompt.substring(0, 80));
-    const commsBody = JSON.stringify({ text: prompt, source, language: responseLanguage || null, sessionId: sessionId || null, thoughtContext: thoughtContext || null, selectedText: selectedText || null, planning: _planningMode && _planningMode.active ? _planningMode : undefined });
+    const commsBody = JSON.stringify({ text: prompt, source, language: responseLanguage || null, sessionId: sessionId || null, thoughtContext: thoughtContext || null, selectedText: selectedText || null, planning: _planningMode && _planningMode.active ? _planningMode : undefined, stream: true });
+    // Painted-chunk flag shared between the SSE parser and the error paths —
+    // once tokens are on screen a mid-stream failure must not re-enqueue the
+    // prompt (that would run the whole pipeline twice).
+    let streamedAny = false;
+    let doneHandled = false;
+    let sseBuffer = '';
+    let streamedText = '';
     const commsReq = http.request({
       hostname: '127.0.0.1',
       port: commsPort,
       path: '/comms.process',
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(commsBody) },
-      timeout: 15000,
+      // SSE keeps the socket active mid-generation; planning turns with tool
+      // rounds can exceed the old 15s — 90s of *inactivity* is the real bound.
+      timeout: 90000,
     }, (commsRes) => {
+      const isSSE = (commsRes.headers['content-type'] || '').includes('text/event-stream');
       let commsRaw = '';
-      commsRes.on('data', c => { commsRaw += c; });
+      commsRes.on('data', c => {
+        if (!isSSE) { commsRaw += c; return; }
+        sseBuffer += c.toString();
+        const lines = sseBuffer.split('\n');
+        sseBuffer = lines.pop();
+        for (const line of lines) {
+          const trimmed = line.trim();
+          if (!trimmed.startsWith('data:')) continue;
+          let evt;
+          try { evt = JSON.parse(trimmed.slice(5).trim()); } catch (_) { continue; }
+          if (evt.type === 'chunk' && evt.text) {
+            if (!streamedAny) safeSendUnified('unified:set-prompt', prompt);
+            streamedAny = true;
+            streamedText += evt.text;
+            safeSendUnified('ws-bridge:message', { type: 'chunk', text: evt.text });
+          } else if (evt.type === 'done') {
+            doneHandled = true;
+            handleCommsData(evt.data || {});
+          }
+        }
+      });
       commsRes.on('end', () => {
+        if (isSSE) {
+          // Stream ended without a done event — treat painted text as final.
+          if (!doneHandled) {
+            if (streamedAny) safeSendUnified('ws-bridge:message', { type: 'done' });
+            else promptQueue.enqueue(prompt.trim(), { selectedText: selectedText || '', responseLanguage: responseLanguage || null, sessionId: sessionId || currentSessionId });
+          }
+          return;
+        }
         try {
           const commsData = JSON.parse(commsRaw);
+          handleCommsData(commsData);
+        } catch (_) {
+          console.log('[CommsGraph] Malformed response — falling back to serial queue');
+          promptQueue.enqueue(prompt.trim(), { selectedText: selectedText || '', responseLanguage: responseLanguage || null, sessionId: sessionId || currentSessionId });
+        }
+      });
+
+      // Shared result handling for JSON and SSE done-payload paths.
+      function handleCommsData(commsData) {
+        try {
           if (commsData.ok && commsData.data) {
             const { text: responseText, intent, intentName, metadata } = commsData.data;
             const guessedIntent = metadata?.guessedIntent || null;
@@ -5052,9 +5391,17 @@ app.whenReady().then(async () => {
             // For direct answers (general_quick, memory_quick), the response IS the
             // answer — isPlaceholder must be false so the water-drip sound plays.
             const isPlaceholder = intent === 0;
-            safeSendUnified('unified:set-prompt', prompt);
-            safeSendUnified('ws-bridge:message', { type: 'chunk', text: responseText, taskId, isPlaceholder });
-            safeSendUnified('ws-bridge:message', { type: 'done', taskId });
+            if (streamedAny) {
+              // Tokens already painted via SSE — close the stream only.
+              safeSendUnified('ws-bridge:message', { type: 'done', taskId });
+            } else {
+              safeSendUnified('unified:set-prompt', prompt);
+              safeSendUnified('ws-bridge:message', { type: 'chunk', text: responseText, taskId, isPlaceholder });
+              safeSendUnified('ws-bridge:message', { type: 'done', taskId });
+            }
+            // Voice TTS uses the painted stream text when the response echoed
+            // the stream verbatim; else the authoritative responseText.
+            const spokenText = streamedText || responseText;
 
             // Planning lane — comms-graph created/updated a plan draft. Pin
             // planning mode so follow-ups stay in the lane, and tell the
@@ -5081,6 +5428,23 @@ app.whenReady().then(async () => {
                 taskCount: metadata.taskCount || 0,
                 authRequired: metadata.authRequired || [],
               });
+              // Proactive checklist — a plan that just flipped 'ready' gets
+              // its card before the user ever presses Run.
+              if (metadata.planStatus === 'ready' && metadata.planFile && _pendingPlanCheck?.planId !== metadata.planId) {
+                _emitPlanCheck(metadata.planId, metadata.planFile, { autoStart: false })
+                  .catch(err => console.warn('[PlanCheck] proactive emit failed:', err.message));
+              }
+            }
+
+            // <choices> — capability-gap options from the planner →
+            // QuestionCard feed entry; the pick rides back as a normal message.
+            if (metadata?.choices && Array.isArray(metadata.choices.options)) {
+              _pendingChoices = { planId: metadata.planId || null, ...metadata.choices };
+              safeSendUnified('plan:question', {
+                planId: metadata.planId || null,
+                question: metadata.choices.question,
+                options: metadata.choices.options,
+              });
             }
 
             // <plan_run/> — user confirmed execution in the planning lane
@@ -5106,17 +5470,27 @@ app.whenReady().then(async () => {
             // this is the short ack phrase; the real answer is spoken on
             // task:complete via the ipcBroadcast hook in handoffRunner.init.
             if (source === 'voice' && _voiceSessionActive) {
-              _voiceSay(responseText, responseLanguage);
+              _voiceSay(spokenText, responseLanguage);
             }
             return;
           }
         } catch (_) {}
-        // Fallback to serial queue if comms-graph response was malformed
+        // Fallback to serial queue if comms-graph response was malformed —
+        // never re-run the pipeline once tokens are already painted.
+        if (streamedAny) {
+          safeSendUnified('ws-bridge:message', { type: 'done' });
+          return;
+        }
         console.log('[CommsGraph] Malformed response — falling back to serial queue');
         promptQueue.enqueue(prompt.trim(), { selectedText: selectedText || '', responseLanguage: responseLanguage || null, sessionId: sessionId || currentSessionId });
-      });
+      }
     });
     commsReq.on('error', (err) => {
+      if (streamedAny) {
+        // Mid-stream socket death — close the renderer stream; do not re-run.
+        safeSendUnified('ws-bridge:message', { type: 'done' });
+        return;
+      }
       if (err?.code === 'ECONNREFUSED') {
         console.log(`[CommsGraph] ECONNREFUSED on 127.0.0.1:${commsPort} — is the comms-graph service running? Falling back to serial promptQueue.`);
       } else {
@@ -5126,7 +5500,11 @@ app.whenReady().then(async () => {
     });
     commsReq.on('timeout', () => {
       commsReq.destroy();
-      console.log(`[CommsGraph] Timeout (15s) to 127.0.0.1:${commsPort} — falling back to serial promptQueue.`);
+      if (streamedAny) {
+        safeSendUnified('ws-bridge:message', { type: 'done' });
+        return;
+      }
+      console.log(`[CommsGraph] Timeout to 127.0.0.1:${commsPort} — falling back to serial promptQueue.`);
       promptQueue.enqueue(prompt.trim(), { selectedText: selectedText || '', responseLanguage: responseLanguage || null, sessionId: sessionId || currentSessionId });
     });
     commsReq.write(commsBody);
@@ -5510,21 +5888,7 @@ app.whenReady().then(async () => {
           console.log(`[Plan] Detected ${secrets.size} new sensitive value(s) — storing and sanitizing`);
           try {
             await planScanner.storeSecrets(secrets, {
-              keytarSet: async (svc, key, val) => {
-                // Prefer safeStorage through the crypto bridge; fall back to keytar if unavailable
-                if (safeStorage.isEncryptionAvailable()) {
-                  const encrypted = safeStorage.encryptString(String(val));
-                  // Store encrypted blob in profile via mcpAdapter
-                  await mcpAdapter.callService('user-memory', 'profile.set', {
-                    key: `credential:${key.toLowerCase()}`,
-                    valueRef: `SAFE:${encrypted.toString('base64')}`,
-                  }, { timeoutMs: 4000 }).catch(() => {});
-                } else {
-                  // Fallback: macOS keychain
-                  const { spawnSync } = require('child_process');
-                  spawnSync('security', ['add-generic-password', '-s', svc, '-a', key, '-w', String(val), '-U'], { encoding: 'utf8' });
-                }
-              },
+              keytarSet: async (svc, key, val) => { await _secretSet(key, val); },
               mcpAdapter,
               userId: pendingPlanContext?.userId || 'local_user',
               logger: console,
@@ -5701,18 +6065,7 @@ app.whenReady().then(async () => {
     if (secrets.size > 0) {
       try {
         await planScanner.storeSecrets(secrets, {
-          keytarSet: async (svc, key, val) => {
-            if (safeStorage.isEncryptionAvailable()) {
-              const encrypted = safeStorage.encryptString(String(val));
-              await mcpAdapter.callService('user-memory', 'profile.set', {
-                key: `credential:${key.toLowerCase()}`,
-                valueRef: `SAFE:${encrypted.toString('base64')}`,
-              }, { timeoutMs: 4000 }).catch(() => {});
-            } else {
-              const { spawnSync } = require('child_process');
-              spawnSync('security', ['add-generic-password', '-s', svc, '-a', key, '-w', String(val), '-U'], { encoding: 'utf8' });
-            }
-          },
+          keytarSet: async (svc, key, val) => { await _secretSet(key, val); },
           mcpAdapter,
           userId: pendingPlanContext?.userId || 'local_user',
           logger: console,
@@ -5815,6 +6168,20 @@ app.whenReady().then(async () => {
   ipcMain.handle('plan:run-cancel', async (_e, { planId } = {}) => {
     const planRunner = require('./planRunner');
     return { ok: planRunner.cancelPlan(planId) };
+  });
+
+  // plan:check:action — card button/voice actions (signin, submit-key,
+  // cli-login, use-agent, find-options, bypass, cancel, i-signed-in).
+  ipcMain.on('plan:check:action', (_e, payload = {}) => {
+    _handlePlanCheckAction(payload).catch(err =>
+      console.warn('[PlanCheck] action failed:', err.message));
+  });
+
+  // plan:check — recompute + emit the checklist for a plan (e.g. after edits)
+  ipcMain.handle('plan:check', async (_e, { planFile, planId } = {}) => {
+    if (!planFile) return { ok: false, error: 'planFile required' };
+    const allClear = await _emitPlanCheck(planId || null, planFile, { autoStart: false });
+    return { ok: true, allClear };
   });
 
   // plan:runs — in-flight plan runner state (for tab refresh)
@@ -6928,6 +7295,10 @@ app.whenReady().then(async () => {
           key: normalizedKey,
         }, { timeoutMs: 3000 }).catch(() => null);
         if (profileResult?.data?.valueRef) return { found: true };
+        const refResult = await mcpAdapter.callService('user-memory', 'profile.get', {
+          key: `${normalizedKey}_ref`,
+        }, { timeoutMs: 3000 }).catch(() => null);
+        if (refResult?.data?.valueRef) return { found: true };
         // Fallback: legacy keychain check
         const { spawnSync } = require('child_process');
         const proc = spawnSync('security', ['find-generic-password', '-s', 'thinkdrop', '-a', normalizedKey, '-w'], { encoding: 'utf8' });
@@ -6956,16 +7327,14 @@ app.whenReady().then(async () => {
         const handleConnect = async (_event, { provider: p, tokenKey: tk, scopes, skillName }) => {
           if (p !== provider) return; // not our provider
           console.log(`[GatherOAuth] OAuth connect requested for ${p}, delegating to skills:oauth-connect`);
-          // Delegate to the existing OAuth flow — it handles everything including keytar storage
+          // Delegate to the existing OAuth flow — it stores the token asynchronously
           ipcMain.emit('skills:oauth-connect', null, { skillName: skillName || p, provider: p, tokenKey: tk, scopes });
-          // Poll keytar until the token appears (the OAuth flow stores it asynchronously)
-          const kt = (() => { try { return require('keytar'); } catch(_) { return null; } })();
-          if (!kt) { settle({ connected: false }); return; }
+          // Poll the secret store until the token appears
           let attempts = 0;
           const poll = setInterval(async () => {
             attempts++;
             try {
-              const val = await kt.getPassword('thinkdrop', tk);
+              const val = await _secretGet(tk);
               if (val) {
                 clearInterval(poll);
                 console.log(`[GatherOAuth] Token stored for ${p} at ${tk}`);
@@ -9917,8 +10286,6 @@ app.whenReady().then(async () => {
         }).filter(Boolean);
       }
 
-      const keytar = (() => { try { return require('keytar'); } catch(_) { return null; } })();
-
       // Merge user-memory rows with local fallback (local wins if name not in memory)
       const memNames = new Set((listRows || []).map(r => r.name));
       const localRows = scanLocalSkills().filter(r => !memNames.has(r.name));
@@ -10055,9 +10422,9 @@ app.whenReady().then(async () => {
         });
 
         // Pre-pass: auto-populate skill secrets from global OAuth token
-        if (keytar && oauthProviders.length > 0) {
+        if (oauthProviders.length > 0) {
           for (const prov of oauthProviders) {
-            const gRaw = await keytar.getPassword('thinkdrop', `oauth:${prov}`).catch(() => null);
+            const gRaw = await _secretGet(`oauth:${prov}`);
             if (!gRaw) continue;
             let gTok; try { gTok = JSON.parse(gRaw); } catch(_) { continue; }
             const provUpper = prov.toUpperCase();
@@ -10065,22 +10432,21 @@ app.whenReady().then(async () => {
               const sKey = `skill:${row.name}:${sec}`;
               // Always overwrite token entries — they expire. Only skip stable creds.
               const isTokenKey = /(ACCESS_TOKEN|REFRESH_TOKEN|ID_TOKEN)$/i.test(sec);
-              if (!isTokenKey && await keytar.getPassword('thinkdrop', sKey).catch(() => null)) continue;
+              if (!isTokenKey && await _secretGet(sKey)) continue;
               const sl = sec.toLowerCase();
               let av = null;
               if (sl === 'refresh_token' && gTok.refresh_token) av = gTok.refresh_token;
               else if (sl === 'access_token' && gTok.access_token) av = gTok.access_token;
               else if (sl === 'client_id') av = process.env[`${provUpper}_CLIENT_ID`] || (prov === 'google' ? process.env.GOOGLE_CLOUD_CLIENT_ID : null);
               else if (sl === 'client_secret') av = process.env[`${provUpper}_CLIENT_SECRET`] || (prov === 'google' ? process.env.GOOGLE_CLOUD_CLIENT_SECRET : null);
-              if (av) { await keytar.setPassword('thinkdrop', sKey, av); console.log(`[Skills] Auto-populated ${sKey} from global oauth:${prov}`); }
+              if (av) { await _secretSet(sKey, av); console.log(`[Skills] Auto-populated ${sKey} from global oauth:${prov}`); }
             }
-            // Always write ACCESS_TOKEN + REFRESH_TOKEN under skill:<name>:* so shell scripts
-            // using `security find-generic-password -a "skill:<name>:ACCESS_TOKEN"` work.
+            // Always write ACCESS_TOKEN + REFRESH_TOKEN under skill:<name>:*
             if (gTok.access_token) {
-              await keytar.setPassword('thinkdrop', `skill:${row.name}:ACCESS_TOKEN`, gTok.access_token).catch(() => {});
+              await _secretSet(`skill:${row.name}:ACCESS_TOKEN`, gTok.access_token);
             }
             if (gTok.refresh_token) {
-              await keytar.setPassword('thinkdrop', `skill:${row.name}:REFRESH_TOKEN`, gTok.refresh_token).catch(() => {});
+              await _secretSet(`skill:${row.name}:REFRESH_TOKEN`, gTok.refresh_token);
             }
           }
         }
@@ -10088,23 +10454,21 @@ app.whenReady().then(async () => {
         const secrets = await Promise.all(USER_SECRET_KEYS.map(async (key) => {
           let stored = false;
           let preview = undefined;
-          if (keytar) {
-            try {
-              const prefixedKey = `skill:${row.name}:${key}`;
-              let val = await keytar.getPassword('thinkdrop', prefixedKey);
-              if (!val) {
-                // Check bare key fallback — auto-migrate to prefixed if found
-                const bareVal = await keytar.getPassword('thinkdrop', key);
-                if (bareVal) {
-                  await keytar.setPassword('thinkdrop', prefixedKey, bareVal);
-                  console.log(`[Skills] Auto-migrated bare key "${key}" → "${prefixedKey}"`);
-                  val = bareVal;
-                }
+          try {
+            const prefixedKey = `skill:${row.name}:${key}`;
+            let val = await _secretGet(prefixedKey);
+            if (!val) {
+              // Check bare key fallback — auto-migrate to prefixed if found
+              const bareVal = await _secretGet(key);
+              if (bareVal) {
+                await _secretSet(prefixedKey, bareVal);
+                console.log(`[Skills] Auto-migrated bare key "${key}" → "${prefixedKey}"`);
+                val = bareVal;
               }
-              stored = !!val;
-              if (val && val.length >= 4) preview = val.slice(0, 8);
-            } catch(_) {}
-          }
+            }
+            stored = !!val;
+            if (val && val.length >= 4) preview = val.slice(0, 8);
+          } catch(_) {}
           return { key, stored, preview };
         }));
 
@@ -10118,12 +10482,12 @@ app.whenReady().then(async () => {
           let accountHint;
           let usedGlobal = false;
           let tokenData = null;
-          if (keytar) {
+          {
             try {
               // Check per-skill token first, then fall back to global Connections token
-              let raw = await keytar.getPassword('thinkdrop', perSkillKey);
+              let raw = await _secretGet(perSkillKey);
               if (!raw) {
-                raw = await keytar.getPassword('thinkdrop', globalKey);
+                raw = await _secretGet(globalKey);
                 if (raw) usedGlobal = true;
               }
               if (raw) {
@@ -10383,6 +10747,32 @@ app.whenReady().then(async () => {
                 taskId: _pendingTaskId || undefined,
                 message: result?.data?.error || 'Background auth check did not confirm login.',
               });
+            }
+            // ── Plan-check path — a card-initiated sign-in has no pending    ──
+            // task/prompt. On verify: mark the preflight ledger (the gate's
+            // own source of truth — AgentsTab sign-ins previously missed it),
+            // update authed_at, and re-run the checklist; autoStart resumes.
+            if (result?.data?.ok && result?.data?.authVerified === true && _pendingPlanCheck) {
+              _markPlanAuthLedger(normalizedAgentId);
+              try {
+                await _cmdHttp('/agent.update', {
+                  id: normalizedAgentId,
+                  authed_at: new Date().toISOString(),
+                  auth_expires_at: new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString(),
+                });
+              } catch (err) {
+                console.warn(`[PlanCheck] authed_at update failed for ${normalizedAgentId}:`, err.message);
+              }
+              safeSendUnified('automation:progress', {
+                type: 'preflight:auth_succeeded',
+                agentId: normalizedAgentId,
+                message: 'Sign-in verified — rechecking plan...',
+              });
+              const pc = _pendingPlanCheck;
+              if (pc) {
+                await _emitPlanCheck(pc.planId, pc.planFile, { autoStart: pc.autoStart })
+                  .catch(err => console.warn('[PlanCheck] post-auth recheck failed:', err.message));
+              }
             }
           } catch (_) {}
         });
@@ -12372,26 +12762,16 @@ app.whenReady().then(async () => {
         return { ok: false, error: buildResult?.error || 'build_agent failed' };
       }
       const agentId = buildResult.agentId || `${service.toLowerCase().trim()}.agent`;
-      // Store credentials via user-memory MCP (same as cli-agents:store-credential)
+      // Store credentials in the encrypted profile store — never plaintext kv.
       if (Array.isArray(credentials) && credentials.length > 0) {
-        const http = require('http');
-        const memApiKey = process.env.MCP_USER_MEMORY_API_KEY || process.env.USER_MEMORY_API_KEY || process.env.MCP_API_KEY || '';
-        const storeReqs = credentials.map(({ key, value }) => new Promise((resolve) => {
-          if (!key || !value) return resolve({ ok: true });
-          const credKey = `credential:${agentId}:${key}`;
-          const body = JSON.stringify({ key: credKey, value });
-          const req = http.request({
-            hostname: '127.0.0.1', port: 3001, path: '/kv.set', method: 'POST',
-            headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body), ...(memApiKey ? { 'x-api-key': memApiKey } : {}) },
-          }, (res) => {
-            let d = '';
-            res.on('data', c => { d += c; });
-            res.on('end', () => resolve({ ok: true }));
-          });
-          req.on('error', () => resolve({ ok: false }));
-          req.write(body); req.end();
-        }));
-        await Promise.all(storeReqs).catch(() => {});
+        try {
+          const { storeAgentSecret } = require('../../shared/secret-resolve.cjs');
+          await Promise.all(credentials
+            .filter(({ key, value }) => key && value)
+            .map(({ key, value }) => storeAgentSecret(agentId, key, value, service)));
+        } catch (credErr) {
+          console.warn('[CLI-Agents] credential store failed:', credErr.message);
+        }
       }
       console.log(`[CLI-Agents] cli-agents:create: created ${agentId}`);
       await new Promise(r => setTimeout(r, 300));
@@ -12434,66 +12814,19 @@ app.whenReady().then(async () => {
     }
   });
 
-  // ─── CLI Agents: credential storage (safeStorage via user-memory) ───────
+  // ─── CLI Agents: credential storage — canonical encrypted profile store ───
+  // Writes `credential:<agent>:<KEY>` via profile.store_secret (SAFE: refs)
+  // plus the legacy `<service>_<key>` row AgentsTab's list view scans.
   ipcMain.handle('cli-agents:store-credential', async (_event, { agentId, key, value, service }) => {
     try {
-      const http = require('http');
-      const memApiKey = process.env.MCP_USER_MEMORY_API_KEY || process.env.USER_MEMORY_API_KEY || process.env.MCP_API_KEY || '';
-
-      const memoryHttpPost = (action, payload) => new Promise((resolve, reject) => {
-        const body = JSON.stringify({
-          version: 'mcp.v1',
-          service: 'user-memory',
-          action,
-          payload,
-          requestId: `cli_${action}_${Date.now()}`,
-        });
-        const req = http.request(
-          {
-            hostname: '127.0.0.1',
-            port: 3001,
-            path: `/${action}`,
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              'Content-Length': Buffer.byteLength(body),
-              ...(memApiKey ? { 'Authorization': `Bearer ${memApiKey}` } : {}),
-            },
-          },
-          (res) => {
-            let data = '';
-            res.on('data', chunk => data += chunk);
-            res.on('end', () => {
-              try {
-                const result = JSON.parse(data);
-                resolve(result);
-              } catch (e) {
-                resolve(data);
-              }
-            });
-          }
-        );
-        req.on('error', reject);
-        req.setTimeout(5000, () => reject(new Error('Timeout')));
-        req.end(body);
-      });
-
-      // Store via user-memory MCP profile.store_secret (handles encryption automatically)
+      const { storeAgentSecret } = require('../../shared/secret-resolve.cjs');
+      const ok = await storeAgentSecret(agentId, key, value, service);
+      if (!ok) throw new Error('profile.store_secret failed');
+      // Legacy mirror — keeps cli-agents:get-stored-secrets working.
       const profileKey = `${service || agentId}_${key}`.toLowerCase();
-      const result = await memoryHttpPost('profile.store_secret', {
-        keytarKey: profileKey,
-        value: value,
-        service: service || agentId,
-        label: `Credential for ${agentId} (${key})`,
-      });
-
-      console.log('[CLI-Agents] store-credential result:', JSON.stringify(result));
-      if (result?.status === 'ok') {
-        console.log(`[CLI-Agents] Stored credential for ${agentId}:${key}`);
-        return { ok: true, key: profileKey };
-      } else {
-        throw new Error(result?.error || result?.message || JSON.stringify(result) || 'Failed to store credential');
-      }
+      await _secretSet(profileKey, value);
+      console.log(`[CLI-Agents] Stored credential for ${agentId}:${key}`);
+      return { ok: true, key: `credential:${String(agentId).replace('.agent', '').toLowerCase()}:${key.toLowerCase()}` };
     } catch (e) {
       const errorMsg = e?.message || (typeof e === 'object' ? JSON.stringify(e) : String(e));
       console.error('[CLI-Agents] cli-agents:store-credential failed:', errorMsg);
@@ -12744,10 +13077,9 @@ app.whenReady().then(async () => {
 
   ipcMain.on('skills:save-secret', async (_event, { skillName, key, value }) => {
     try {
-      const keytar = require('keytar');
       // Always store under skill:<name>:<key> so external.skill can find it
       const keytarKey = `skill:${skillName}:${key}`;
-      await keytar.setPassword('thinkdrop', keytarKey, value);
+      await _secretSet(keytarKey, value);
       console.log(`[Skills] Stored secret ${keytarKey}`);
       // Refresh skills list so stored badges update
       if (resultsWindow && !resultsWindow.isDestroyed()) {
@@ -12760,9 +13092,8 @@ app.whenReady().then(async () => {
 
   ipcMain.on('skills:reveal-secret', async (event, { skillName, key }) => {
     try {
-      const keytar = require('keytar');
-      const val = (await keytar.getPassword('thinkdrop', `skill:${skillName}:${key}`)) ||
-                  (await keytar.getPassword('thinkdrop', key));
+      const val = (await _secretGet(`skill:${skillName}:${key}`)) ||
+                  (await _secretGet(key));
       if (resultsWindow && !resultsWindow.isDestroyed()) {
         safeSend(resultsWindow, 'skills:secret-revealed', { skillName, key, value: val || '' });
       }
@@ -12780,7 +13111,6 @@ app.whenReady().then(async () => {
       const pathMod = require('path');
       const osMod   = require('os');
       const http    = require('http');
-      let keytar; try { keytar = require('keytar'); } catch(_) {}
 
       // 1. Delete skill file from ~/.thinkdrop/skills/<name>/
       const skillDir = pathMod.join(osMod.homedir(), '.thinkdrop', 'skills', skillName);
@@ -12827,14 +13157,14 @@ app.whenReady().then(async () => {
         unschedReq.end();
       });
 
-      // 4. Clean up keytar secrets for this skill
+      // 4. Clean up secrets for this skill in the profile store
       try {
-        const kt = require('keytar');
-        const allCreds = await kt.findCredentials('thinkdrop');
         const prefix = `skill:${skillName}:`;
-        await Promise.all(allCreds
-          .filter(c => c.account.startsWith(prefix) || c.account.startsWith(`oauth:`) && c.account.endsWith(`:${skillName}`))
-          .map(c => kt.deletePassword('thinkdrop', c.account).catch(() => {})));
+        const keys = [
+          ...(await _secretList(prefix)),
+          ...(await _secretList(`oauth:`)).filter(k => k.endsWith(`:${skillName}`)),
+        ];
+        await Promise.all(keys.map(k => _secretDelete(k)));
       } catch (_) {}
 
       // 5. Remove any pending bridge.md blocks for this skill (prevents re-firing on restart)
@@ -12961,7 +13291,6 @@ app.whenReady().then(async () => {
     const https = require('https');
     const http  = require('http');
     const crypto = require('crypto');
-    const keytar = (() => { try { return require('keytar'); } catch(_) { return null; } })();
 
     // ── Per-provider OAuth config ──────────────────────────────────────────
     // redirectPort range: 9742-9759 (one unique port per provider)
@@ -13107,20 +13436,19 @@ app.whenReady().then(async () => {
     let clientSecret = process.env[`${providerUpper}_CLIENT_SECRET`]
                     || (provider === 'google' ? process.env.GOOGLE_CLOUD_CLIENT_SECRET : undefined);
 
-    // Fallback priority: global oauth:<provider> keytar blob (seeded at startup via seedOAuthCredentials)
-    // → skill-specific keytar keys (manual entry). Checking the global blob first ensures
-    // we always find client_id/secret even when the user hasn't stored skill-specific creds.
-    if ((!clientId || !clientSecret) && keytar) {
+    // Fallback priority: global oauth:<provider> blob (seeded at startup via
+    // seedOAuthCredentials) → skill-specific keys (manual entry).
+    if (!clientId || !clientSecret) {
       try {
-        const globalRaw = await keytar.getPassword('thinkdrop', `oauth:${provider}`).catch(() => null);
+        const globalRaw = await _secretGet(`oauth:${provider}`);
         if (globalRaw) {
           const globalBlob = JSON.parse(globalRaw);
           clientId     = clientId     || globalBlob.client_id;
           clientSecret = clientSecret || globalBlob.client_secret;
         }
       } catch (_) {}
-      clientId     = clientId     || await keytar.getPassword('thinkdrop', cfg.clientIdKey).catch(() => null);
-      clientSecret = clientSecret || await keytar.getPassword('thinkdrop', cfg.clientSecretKey).catch(() => null);
+      clientId     = clientId     || await _secretGet(cfg.clientIdKey);
+      clientSecret = clientSecret || await _secretGet(cfg.clientSecretKey);
     }
 
     if (!clientId || !clientSecret) {
@@ -13342,17 +13670,16 @@ app.whenReady().then(async () => {
         } catch(_) {}
       }
 
-      // Store token in keytar — include grantedScopes so skills:list can do scope-aware connected checks
+      // Store token — include grantedScopes so skills:list can do scope-aware connected checks
       const tokenJson = JSON.stringify({ ...tokenData, email, grantedScopes: scopeStr, storedAt: new Date().toISOString(), issued_at: Math.floor(Date.now() / 1000) });
-      if (keytar) await keytar.setPassword('thinkdrop', tokenKey, tokenJson);
+      await _secretSet(tokenKey, tokenJson);
       console.log(`[OAuth] Stored ${provider} token for skill ${skillName} → ${tokenKey}${email ? ' (' + email + ')' : ''}`);
 
-      // Also write per-skill token entries so shell scripts can look them up via:
-      //   security find-generic-password -s thinkdrop -a "skill:<name>:ACCESS_TOKEN"
-      if (keytar && tokenData.access_token) {
-        await keytar.setPassword('thinkdrop', `skill:${skillName}:ACCESS_TOKEN`, tokenData.access_token).catch(() => {});
+      // Also write per-skill token entries for resolver lookups
+      if (tokenData.access_token) {
+        await _secretSet(`skill:${skillName}:ACCESS_TOKEN`, tokenData.access_token);
         if (tokenData.refresh_token) {
-          await keytar.setPassword('thinkdrop', `skill:${skillName}:REFRESH_TOKEN`, tokenData.refresh_token).catch(() => {});
+          await _secretSet(`skill:${skillName}:REFRESH_TOKEN`, tokenData.refresh_token);
         }
         console.log(`[OAuth] Wrote skill-scoped tokens for ${skillName}: skill:${skillName}:ACCESS_TOKEN`);
       }
@@ -13398,14 +13725,13 @@ app.whenReady().then(async () => {
   ];
 
   const sendConnectionsUpdate = async () => {
-    const keytar = (() => { try { return require('keytar'); } catch(_) { return null; } })();
     const items = await Promise.all(ALL_PROVIDERS.map(async (p) => {
       const tokenKey = `oauth:${p.provider}`;
       let connected = false;
       let accountHint;
-      if (keytar) {
+      {
         try {
-          const raw = await keytar.getPassword('thinkdrop', tokenKey);
+          const raw = await _secretGet(tokenKey);
           if (raw) {
             connected = true;
             try {
@@ -13432,15 +13758,13 @@ app.whenReady().then(async () => {
       tokenKey: tokenKey || `oauth:${provider}`,
       scopes,
     });
-    // Watch keytar for the token to land, then push an update
-    const keytar = (() => { try { return require('keytar'); } catch(_) { return null; } })();
-    if (!keytar) return;
+    // Watch the store for the token to land, then push an update
     const tk = tokenKey || `oauth:${provider}`;
     let attempts = 0;
     const poll = setInterval(async () => {
       attempts++;
       try {
-        const val = await keytar.getPassword('thinkdrop', tk);
+        const val = await _secretGet(tk);
         if (val) {
           clearInterval(poll);
           await sendConnectionsUpdate();
@@ -13451,11 +13775,9 @@ app.whenReady().then(async () => {
   });
 
   ipcMain.on('connections:disconnect', async (_event, { provider, tokenKey }) => {
-    const keytar = (() => { try { return require('keytar'); } catch(_) { return null; } })();
-    if (!keytar) return;
     const tk = tokenKey || `oauth:${provider}`;
     try {
-      await keytar.deletePassword('thinkdrop', tk);
+      await _secretDelete(tk);
       console.log(`[Connections] Disconnected ${provider} (deleted ${tk})`);
     } catch(e) {
       console.warn(`[Connections] Failed to delete ${tk}: ${e.message}`);
@@ -14194,8 +14516,7 @@ app.whenReady().then(async () => {
                 const _bridgeOauthProvider = _skillFm.oauth || null;
                 const _bridgeOauthTokenKey = _bridgeOauthProvider ? `oauth:${_bridgeOauthProvider}` : null;
                 if (_bridgeOauthProvider && _bridgeOauthTokenKey) {
-                  const _kt = (() => { try { return require('keytar'); } catch(_) { return null; } })();
-                  const _existingToken = _kt ? await _kt.getPassword('thinkdrop', _bridgeOauthTokenKey).catch(() => null) : null;
+                  const _existingToken = await _secretGet(_bridgeOauthTokenKey);
                   if (!_existingToken) {
                     console.log(`[Bridge Listener] OAuth token missing for ${_bridgeOauthProvider} — surfacing connect card`);
                     if (resultsWindow && !resultsWindow.isDestroyed()) {
@@ -14215,12 +14536,11 @@ app.whenReady().then(async () => {
                         if (p !== _bridgeOauthProvider) return;
                         ipcMain.emit('skills:oauth-connect', null, { skillName: sn || p, provider: p, tokenKey: tk, scopes });
                         // Poll until token lands then notify the UI
-                        const _pollKt = (() => { try { return require('keytar'); } catch(_) { return null; } })();
                         let _attempts = 0;
                         const _poll = setInterval(async () => {
                           _attempts++;
                           try {
-                            const _val = _pollKt && await _pollKt.getPassword('thinkdrop', tk);
+                            const _val = await _secretGet(tk);
                             if (_val) {
                               clearInterval(_poll);
                               if (resultsWindow && !resultsWindow.isDestroyed()) {

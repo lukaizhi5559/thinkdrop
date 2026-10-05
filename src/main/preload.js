@@ -93,6 +93,7 @@ contextBridge.exposeInMainWorld('electron', {
         'edit:apply',
         'plan:approve',
         'plan:cancel',
+        'plan:check:action',
         'plan:new',
         'plan:rescan',
         'plan:open-editor',
@@ -139,6 +140,7 @@ contextBridge.exposeInMainWorld('electron', {
         'preflight:recheck',
         'preflight:auth_continue',
         'preflight:auth_bypass',
+        'plan:check:action',
         'browser.agent:auth',
         'task:delete',
         'scan:cancel',
@@ -275,6 +277,8 @@ contextBridge.exposeInMainWorld('electron', {
         'plan:task_progress',
         'plan:complete',
         'plan:auth_required',
+        'plan:check',
+        'plan:question',
       ];
       if (validChannels.includes(channel)) {
         const wrapped = (_event, ...args) => func(...args);
@@ -443,6 +447,8 @@ contextBridge.exposeInMainWorld('electron', {
         'plan:task_progress',
         'plan:complete',
         'plan:auth_required',
+        'plan:check',
+        'plan:question',
         'results-window:show',
         'skills:update',
         'connections:update',
@@ -554,6 +560,8 @@ contextBridge.exposeInMainWorld('electron', {
         'plan:task_progress',
         'plan:complete',
         'plan:auth_required',
+        'plan:check',
+        'plan:question',
       ];
       if (validChannels.includes(channel)) {
         // Legacy path: func-reference removal won't work across contextBridge.
@@ -605,6 +613,7 @@ contextBridge.exposeInMainWorld('electron', {
         'plan:delete',
         'plan:rename',
         'planning:get',
+        'plan:check',
       ];
       if (validChannels.includes(channel)) {
         return ipcRenderer.invoke(channel, data);

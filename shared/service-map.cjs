@@ -81,11 +81,23 @@ function _scan() {
       try { src = fs.readFileSync(path.join(dir, file), 'utf8'); } catch (_) { continue; }
       const idM = src.match(/^id:\s*(\S+)\s*$/m);
       const svcM = src.match(/^service:\s*(\S+)\s*$/m);
+      const typeM = src.match(/^type:\s*(\S+)\s*$/m);
+      const cliM = src.match(/^cli_tool:\s*(\S+)\s*$/m);
+      const secM = src.match(/^secrets:\s*\n((?:\s+-\s*\S+\s*\n?)*)/m)
+        || src.match(/^secrets:\s*\[([^\]]*)\]/m);
+      const secrets = secM
+        ? (secM[1].includes('\n')
+            ? secM[1].split('\n').map(l => l.trim().replace(/^-\s*/, '')).filter(Boolean)
+            : secM[1].split(',').map(s => s.trim().replace(/['"]/g, '')).filter(Boolean))
+        : [];
       const stem = file.replace(/\.agent\.md$/, '');
       const entry = {
         src,
         agentId: idM ? idM[1].trim() : `${stem}.agent`,
         service: svcM ? svcM[1].trim() : stem,
+        type: typeM ? typeM[1].trim() : 'browser',
+        cliTool: cliM ? cliM[1].trim() : null,
+        secrets,
         urlM: src.match(/^start_url:\s*(https?:\/\/\S+)\s*$/m),
         signM: src.match(/^sign_in_url:\s*(https?:\/\/\S+)\s*$/m),
       };
@@ -194,6 +206,63 @@ function isServiceAgent(agentId) {
   const idx = _scan();
   const name = String(agentId).replace(/\.agent$/, '');
   return idx.byName.has(name);
+}
+
+/**
+ * All registered agent ids (canonical `.agent` form) with metadata —
+ * the catalog injected into the planning directive so the LLM only
+ * names agents that actually exist.
+ * @returns {Array<{agentId:string, service:string, type:string, cliTool:string|null, secrets:string[]}>}
+ */
+function listAgentNames() {
+  const idx = _scan();
+  const seen = new Set();
+  const out = [];
+  for (const [stem, entry] of idx.byName) {
+    if (seen.has(entry.agentId)) continue;
+    seen.add(entry.agentId);
+    out.push({
+      agentId: entry.agentId,
+      service: entry.service,
+      type: entry.type || 'browser',
+      cliTool: entry.cliTool || null,
+      secrets: entry.secrets || [],
+    });
+  }
+  return out.sort((a, b) => a.agentId.localeCompare(b.agentId));
+}
+
+/**
+ * Suggest the registered agent an unregistered name probably meant —
+ * exact stem/service match first, then a UNIQUE substring match
+ * ('doc' → 'google_docs'). Returns null when ambiguous or no match.
+ */
+function suggestAgent(name) {
+  if (!name) return null;
+  const idx = _scan();
+  const clean = String(name).replace(/\.agent$/, '').toLowerCase();
+  const exact = idx.byName.get(clean);
+  if (exact) return exact.agentId;
+  const hits = [];
+  const seen = new Set();
+  for (const [stem, entry] of idx.byName) {
+    if (seen.has(entry.agentId)) continue;
+    if (stem.includes(clean) || clean.includes(stem)) {
+      seen.add(entry.agentId);
+      hits.push(entry.agentId);
+    }
+  }
+  return hits.length === 1 ? hits[0] : null;
+}
+
+/** Frontmatter metadata for one registered agent, or null if unregistered. */
+function describeAgent(agentId) {
+  if (!agentId) return null;
+  const idx = _scan();
+  const entry = idx.byName.get(String(agentId).replace(/\.agent$/, ''));
+  return entry
+    ? { agentId: entry.agentId, service: entry.service, type: entry.type || 'browser', cliTool: entry.cliTool || null, secrets: entry.secrets || [] }
+    : null;
 }
 
 // ── Async discovery ──────────────────────────────────────────────────────────
@@ -315,4 +384,4 @@ async function serviceForUrlAsync(url) {
   return p;
 }
 
-module.exports = { serviceForUrl, serviceForUrlAsync, isServiceAgent, _agentsDir };
+module.exports = { serviceForUrl, serviceForUrlAsync, isServiceAgent, listAgentNames, suggestAgent, describeAgent, _agentsDir };

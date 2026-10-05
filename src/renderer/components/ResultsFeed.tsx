@@ -11,7 +11,11 @@ import type { RunSummary } from './AutomationProgress';
 import { QueueTaskCard, BrainIcon } from './QueueTaskCard';
 import type { CommsTask } from './QueueTaskCard';
 import type { WebResultItem } from './rich-content/WebResultCard';
-import { deriveRunDrafts } from '../state/feedStore.mts';
+import { deriveRunDrafts, feedStore } from '../state/feedStore.mts';
+import { PlanCheckCard } from './PlanCheckCard';
+import { QuestionCard } from './QuestionCard';
+
+const ipcRenderer = (window as any).electron?.ipcRenderer;
 
 // ── Feed entry model ─────────────────────────────────────────────────────────
 // One item per row in the conversation feed. `ts` drives day dividers.
@@ -39,6 +43,8 @@ export type FeedEntry =
   | { id: string; ts: number; kind: 'assistant'; text: string; items?: WebResultItem[]; sources?: { url: string; hostname: string; title?: string }[]; taskId?: string; pending?: boolean; prompt?: string; isError?: boolean; errorRaw?: string; exchangeId?: string; historic?: boolean; files?: string[]; drafts?: FeedDraft[]; steps?: { title: string; status: string; skill?: string; output?: string; savedFilePath?: string; draftPath?: string; openIn?: string[]; diff?: string | null }[] }
   | { id: string; ts: number; kind: 'run'; title: string; status: FeedRunStatus; steps?: { title: string; status: string; skill?: string; output?: string; savedFilePath?: string; draftPath?: string; openIn?: string[]; diff?: string | null }[]; savedFilePaths?: string[]; drafts?: FeedDraft[]; error?: string | null; taskId?: string; planFile?: string | null; durationMs?: number | null; prompt?: string; exchangeId?: string; historic?: boolean }
   | { id: string; ts: number; kind: 'proactive'; text: string; thoughtId?: string; pending?: boolean; exchangeId?: string; historic?: boolean }
+  | { id: string; ts: number; kind: 'plan-check'; check: import('./PlanCheckCard').PlanCheckPayload; exchangeId?: string }
+  | { id: string; ts: number; kind: 'plan-question'; planId: string | null; question: string; options: import('./QuestionCard').QuestionOption[]; answered?: string; exchangeId?: string }
   | { id: string; ts: number; kind: 'system'; text: string; exchangeId?: string; historic?: boolean };
 
 interface ResultsFeedProps {
@@ -862,6 +868,56 @@ const FeedEntryRow = React.memo(function FeedEntryRow({
           {!entry.pending && hoverActions({ id: entry.id, text: entry.text })}
         </div>
       );
+
+    case 'plan-check': {
+      const check = entry.check;
+      const sendAction = (action: string, itemId?: string, extra: Record<string, string> = {}) =>
+        ipcRenderer?.send('plan:check:action', { planId: check.planId, itemId, action, ...extra });
+      return (
+        <div className="feed-entry" style={{ margin: '4px 0 12px', position: 'relative', paddingBottom: 10 }}>
+          <PlanCheckCard
+            check={check}
+            onRun={() => sendAction('run')}
+          />
+        </div>
+      );
+    }
+
+    case 'plan-question': {
+      // Capability-discovery choices (<choices> from the planner). The pick —
+      // clicked, typed, or spoken — rides back as a normal planning message.
+      if (entry.answered) {
+        return (
+          <div style={{ margin: '6px 0', textAlign: 'center' }}>
+            <span style={{ color: '#6b7280', fontSize: '0.68rem', fontStyle: 'italic' }}>
+              {entry.question} → {entry.answered}
+            </span>
+          </div>
+        );
+      }
+      const submitChoice = (answers: Record<string, string>) => {
+        const answer = Object.values(answers)[0] || '';
+        if (answer.trim()) {
+          ipcRenderer?.send('prompt-queue:submit', { prompt: answer.trim(), selectedText: '' });
+          feedStore.patchEntry(entry.id, { answered: answer.trim().slice(0, 80) } as any);
+        }
+      };
+      return (
+        <div className="feed-entry" style={{ margin: '4px 0 12px', position: 'relative', paddingBottom: 10 }}>
+          <QuestionCard
+            batch={{
+              batchId: entry.id,
+              questions: [{
+                id: 'q1', text: entry.question || 'No registered agent covers this — pick an option:',
+                type: 'choice', options: entry.options, freeText: true,
+              }],
+            }}
+            onSubmit={submitChoice}
+            onCancel={() => submitChoice({ q1: 'None of these — keep planning / adjust the plan.' })}
+          />
+        </div>
+      );
+    }
 
     case 'system':
       return (
