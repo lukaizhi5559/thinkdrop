@@ -83,6 +83,8 @@ function _scan() {
       const svcM = src.match(/^service:\s*(\S+)\s*$/m);
       const typeM = src.match(/^type:\s*(\S+)\s*$/m);
       const cliM = src.match(/^cli_tool:\s*(\S+)\s*$/m);
+      const mcpM = src.match(/^mcp_server:\s*(\S+)\s*$/m);
+      const statusM = src.match(/^status:\s*(\S+)\s*$/m);
       const secM = src.match(/^secrets:\s*\n((?:\s+-\s*\S+\s*\n?)*)/m)
         || src.match(/^secrets:\s*\[([^\]]*)\]/m);
       const secrets = secM
@@ -97,6 +99,8 @@ function _scan() {
         service: svcM ? svcM[1].trim() : stem,
         type: typeM ? typeM[1].trim() : 'browser',
         cliTool: cliM ? cliM[1].trim() : null,
+        mcpServer: mcpM ? mcpM[1].trim() : null,
+        status: statusM ? statusM[1].trim() : 'active',
         secrets,
         urlM: src.match(/^start_url:\s*(https?:\/\/\S+)\s*$/m),
         signM: src.match(/^sign_in_url:\s*(https?:\/\/\S+)\s*$/m),
@@ -261,7 +265,7 @@ function describeAgent(agentId) {
   const idx = _scan();
   const entry = idx.byName.get(String(agentId).replace(/\.agent$/, ''));
   return entry
-    ? { agentId: entry.agentId, service: entry.service, type: entry.type || 'browser', cliTool: entry.cliTool || null, secrets: entry.secrets || [] }
+    ? { agentId: entry.agentId, service: entry.service, type: entry.type || 'browser', cliTool: entry.cliTool || null, mcpServer: entry.mcpServer || null, status: entry.status || 'active', secrets: entry.secrets || [] }
     : null;
 }
 

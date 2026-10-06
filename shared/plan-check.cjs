@@ -109,6 +109,26 @@ async function computePlanCheck(tasks, opts = {}) {
 
       // ── Non-browser (cli / api / mcp) agents ────────────────────────
       if (desc.type && desc.type !== 'browser') {
+        // Draft descriptor — selected via capability.select but not built/
+        // installed yet. Actionable setup row instead of a dead unknown-agent.
+        if (desc.status === 'draft' || desc.status === 'pending') {
+          items.push({
+            id: `t${n}-${desc.agentId}`,
+            taskNum: n, agentId: desc.agentId,
+            label: `${desc.agentId} — needs setup`,
+            detail: desc.cliTool
+              ? `will build the ${desc.cliTool} agent (install + connect)`
+              : (desc.mcpServer ? `will install the ${desc.mcpServer} MCP server` : 'will be set up before run'),
+            status: 'issue',
+            kind: 'cli-setup',
+            envNames: desc.secrets || [],
+            serviceType: desc.type,
+            cliTool: desc.cliTool || null,
+            mcpServer: desc.mcpServer || null,
+            bypassed: authState === 'bypassed',
+          });
+          continue;
+        }
         if (Array.isArray(desc.secrets) && desc.secrets.length) {
           let missing = desc.secrets;
           try {

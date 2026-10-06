@@ -572,7 +572,7 @@ const http = require('http');
 const THINKDROP_VERBOSE = process.env.THINKDROP_VERBOSE === '1';
 
 // Helper: POST to command-service (port 3007) — sole owner of agents.db
-async function _cmdHttp(urlPath, body = {}) {
+async function _cmdHttp(urlPath, body = {}, opts = {}) {
   return new Promise((resolve, reject) => {
     const payload = JSON.stringify(body);
     const req = http.request(
@@ -585,7 +585,7 @@ async function _cmdHttp(urlPath, body = {}) {
       }
     );
     req.on('error', reject);
-    req.setTimeout(8000, () => reject(new Error('cmdHttp timeout')));
+    req.setTimeout(opts.timeoutMs || 8000, () => reject(new Error('cmdHttp timeout')));
     req.end(payload);
   });
 }
@@ -2629,7 +2629,11 @@ async function _emitPlanCheck(planId, planFile, { autoStart = false, bypassed } 
     _pendingPlanCheck = { planId, planFile, items, bypassed: bypass, autoStart };
     safeSendUnified('plan:check', { planId, items, allClear });
     console.log(`[PlanCheck] ${planId || planFile}: ${items.filter(i => i.status === 'issue').length} issue(s), allClear=${allClear}`);
-    if (allClear && autoStart) {
+    // Approval-gated plans never auto-start — the readiness card waits for
+    // "Review plan", and the approval gate emits the review card mid-run.
+    // Auto-start is only the fast path for plans with nothing to approve.
+    const needsReview = items.some(i => i.kind === 'approval-required');
+    if (allClear && autoStart && !needsReview) {
       const planRunner = require('./planRunner');
       const r = await planRunner.startPlan(planFile, { sessionId: null, bypassAgents: [...bypass] });
       if (r?.ok) {
@@ -2828,6 +2832,28 @@ async function _handlePlanCheckAction({ planId, itemId, action, value, envName }
       }
       break;
     }
+    case 'cli-setup': {
+      // Draft agent selected via capability.select — build the real
+      // descriptor (cli-build registers + upgrades status:draft → active),
+      // install the declared tool, then recheck so cli-key rows surface.
+      if (item?.agentId) {
+        const service = item.agentId.replace(/\.agent$/, '');
+        (async () => {
+          try {
+            if (item.mcpServer) {
+              await _cmdHttp('/mcp.install', { name: item.mcpServer, agentId: item.agentId }, { timeoutMs: 60000 }).catch(() => {});
+            } else {
+              const built = await _cmdHttp('/agent.cli-build', { service, cliTool: item.cliTool || undefined }, { timeoutMs: 60000 }).catch(() => null);
+              await _cmdHttp('/agent.cli-install', { agentId: built?.agentId || item.agentId }, { timeoutMs: 120000 }).catch(() => {});
+            }
+          } catch (_) {}
+          await recheck();
+        })();
+        // Immediate UI feedback — row flips to pending while setup runs
+        safeSendUnified('plan:check', { planId: pc.planId, items: pc.items.map(i => i.id === item.id ? { ...i, label: `${item.agentId} — setting up…`, status: 'pending', kind: 'missing-steps' } : i), allClear: false });
+      }
+      break;
+    }
     case 'use-agent': {
       if (item?.agentId && item.suggested && item.taskNum) {
         try {
@@ -2889,6 +2915,9 @@ async function _handlePlanCheckAction({ planId, itemId, action, value, envName }
       }
       break;
     }
+    case 'recheck':
+      await recheck();
+      break;
     case 'run': {
       // Manual "Run plan" — 'warn' is advisory; only issues/pending block.
       if (pc.items.some(i => i.status === 'issue' || i.status === 'pending')) break;

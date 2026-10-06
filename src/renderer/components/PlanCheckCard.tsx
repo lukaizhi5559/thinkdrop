@@ -8,6 +8,7 @@
  *   signin        → [Sign in] [Bypass ⚠]      (browser service agents)
  *   cli-key       → per-secret text inputs + [Submit]
  *   cli-login     → [Run login]                (cli/api/mcp agents)
+ *   cli-setup     → [Set up]                   (draft agent — build+install)
  *   unknown-agent → [Use <suggested>] [Find options]
  *   steps-failed / missing-steps → [Retry generation] (advisory — warn/pending)
  *
@@ -21,7 +22,7 @@
  * "Cancel" button pair.
  */
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { StepIcon } from './AutomationProgress';
 
 const ipcRenderer = (window as any).electron?.ipcRenderer;
@@ -58,7 +59,7 @@ export interface PlanCheckItem {
   label: string;
   detail?: string;
   status: 'pass' | 'pending' | 'issue' | 'warn';
-  kind?: 'signin' | 'cli-key' | 'cli-login' | 'unknown-agent' | 'missing-steps' | 'steps-failed' | 'approval-required';
+  kind?: 'signin' | 'cli-key' | 'cli-login' | 'cli-setup' | 'unknown-agent' | 'missing-steps' | 'steps-failed' | 'approval-required';
   suggested?: string | null;
   envNames?: string[];
   serviceType?: string;
@@ -109,6 +110,10 @@ export function PlanCheckCard({ check, onRun }: PlanCheckCardProps) {
   const [confirmBypass, setConfirmBypass] = useState<string | null>(null);
   const [keyInputs, setKeyInputs] = useState<Record<string, string>>({});
   const [submitted, setSubmitted] = useState<Record<string, boolean>>({});
+  // 'all clear' / 'N issues' is a live refresh control — shows a transient
+  // "checking…" state until the re-emitted plan:check payload lands.
+  const [checking, setChecking] = useState(false);
+  useEffect(() => { setChecking(false); }, [check]);
 
   const issues = check.items.filter(i => i.status === 'issue');
   const warns = check.items.filter(i => i.status === 'warn');
@@ -140,11 +145,28 @@ export function PlanCheckCard({ check, onRun }: PlanCheckCardProps) {
             Plan readiness
           </span>
         </div>
-        <div style={{ color: COLORS.mutedText, fontSize: '0.69rem' }}>
-          {check.allClear
+        <button
+          type="button"
+          title="Re-run readiness checks"
+          disabled={checking}
+          onClick={() => { setChecking(true); _send(check.planId, undefined, 'recheck'); }}
+          onMouseEnter={e => { e.currentTarget.style.backgroundColor = 'rgba(255,255,255,0.07)'; }}
+          onMouseLeave={e => { e.currentTarget.style.backgroundColor = 'transparent'; }}
+          style={{
+            background: 'transparent',
+            border: 'none',
+            borderRadius: 4,
+            padding: '1px 6px',
+            color: COLORS.mutedText,
+            fontSize: '0.69rem',
+            cursor: checking ? 'default' : 'pointer',
+            opacity: checking ? 0.6 : 1,
+          }}
+        >
+          {checking ? 'checking…' : check.allClear
             ? (warns.length ? `${warns.length} warning${warns.length === 1 ? '' : 's'}` : 'all clear')
             : `${issues.length} issue${issues.length === 1 ? '' : 's'}`}
-        </div>
+        </button>
       </div>
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: 7 }}>
@@ -186,6 +208,11 @@ export function PlanCheckCard({ check, onRun }: PlanCheckCardProps) {
                   {item.kind === 'cli-login' && (
                     <button onClick={() => _send(check.planId, item.id, 'cli-login')} style={_rowBtn}>
                       Run login
+                    </button>
+                  )}
+                  {item.kind === 'cli-setup' && (
+                    <button onClick={() => _send(check.planId, item.id, 'cli-setup')} style={_rowBtn}>
+                      Set up
                     </button>
                   )}
                   {item.kind === 'unknown-agent' && (
