@@ -6318,9 +6318,10 @@ app.whenReady().then(async () => {
   // verbatim to the skill; allowlist + danger-scan live on the service side.
   ipcMain.handle('terminal:action', async (_e, payload = {}) => {
     try {
-      return await _cmdHttp('/command.automate',
-        { skill: 'terminal.agent', args: payload },
+      const res = await _cmdHttp('/command.automate',
+        { payload: { skill: 'terminal.agent', args: payload } },
         { timeoutMs: (payload.timeoutMs || 30000) + 2000 });
+      return res?.data ?? res;
     } catch (err) {
       return { ok: false, error: err.message };
     }

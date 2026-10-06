@@ -492,6 +492,10 @@ async function execute({ taskId, prompt, agentId, source, originalPrompt, sessio
           // uses it as a prior and as the parse-failure fallback instead of
           // defaulting to command_automate.
           ...(guessedIntent ? { _carriedHint: guessedIntent } : {}),
+          // Capability-gap pin — comms-graph matched the prompt to a ready
+          // registered agent (or a detectAgent regex). resolveAgent honors it
+          // before the local_system skip, verified against the registry.
+          ...(agentId ? { _pinnedAgentId: agentId } : {}),
           // Same cross-prompt session continuity as the serial path — without
           // this the promotion matrix in resolveReferencesV2 never sees the
           // prior browser session and plan-level close-all runs unprotected.
