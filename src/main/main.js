@@ -802,6 +802,34 @@ function _voiceSay(text, lang) {
     .catch(err => console.warn('[Voice] say failed:', err.message));
 }
 
+// ─── Generic settings store (~/.thinkdrop/settings.json) ─────────────────────
+// Top-level so non-IPC code paths (overlay control server, /thought.event gate)
+// can read settings too. The settings:get/set IPC handlers live under
+// app.whenReady below.
+const SETTINGS_FILE = path.join(require('os').homedir(), '.thinkdrop', 'settings.json');
+
+function _loadSettings() {
+  try {
+    if (fs.existsSync(SETTINGS_FILE)) {
+      return JSON.parse(fs.readFileSync(SETTINGS_FILE, 'utf8'));
+    }
+  } catch (_) {}
+  return {};
+}
+
+function _saveSetting(key, value) {
+  try {
+    const data = _loadSettings();
+    data[key] = value;
+    fs.mkdirSync(path.dirname(SETTINGS_FILE), { recursive: true });
+    fs.writeFileSync(SETTINGS_FILE, JSON.stringify(data, null, 2), 'utf8');
+    return true;
+  } catch (err) {
+    console.warn(`[Settings] Failed to save ${key}:`, err.message);
+    return false;
+  }
+}
+
 function startOverlayControlServer() {
   const server = http.createServer((req, res) => {
     // ── CORS — voice-bridge (:3006) relays worker events to /voice.event ────
@@ -1376,6 +1404,14 @@ function startOverlayControlServer() {
       req.on('end', () => {
         try {
           const evt = JSON.parse(body || '{}');
+          // Thoughts toggle off: acknowledge but drop proactive delivery —
+          // no feed card, no notification, no chime. Other lifecycle kinds
+          // still relay so the Brain tab stays in sync.
+          const _thoughtsOff = _loadSettings().thoughtsEnabled === false;
+          if (_thoughtsOff && (evt.kind === 'notify' || evt.kind === 'question')) {
+            res.writeHead(200).end(JSON.stringify({ ok: true, suppressed: 'thoughts_disabled' }));
+            return;
+          }
           safeSendUnified('thought:update', evt);
           // Proactive delivery (notify/question) — pop a real macOS notification
           // so the engine's outreach is visible even when the overlay is hidden.
@@ -6553,9 +6589,6 @@ app.whenReady().then(async () => {
   // Auto-scan system has been disabled. Skills are now created manually via the
   // trainer agent, not by automatic page scanning. These handlers remain as no-ops
   // for backward compatibility with any renderer code that might still call them.
-  const osMod = require('os');
-  const AUTO_SCAN_SETTINGS_FILE = path.join(osMod.homedir(), '.thinkdrop', 'settings.json');
-
   function _loadAutoScanSetting() {
     // Always returns false — auto-scan is permanently disabled
     return false;
@@ -6576,32 +6609,9 @@ app.whenReady().then(async () => {
   });
 
   // ─── Generic settings IPC handlers ─────────────────────────────────────────
-  // Read/write arbitrary keys in ~/.thinkdrop/settings.json.
-  // Used by SettingsTab UI and the executeSettings stategraph node.
-
-  function _loadSettings() {
-    try {
-      const fs = require('fs');
-      if (fs.existsSync(AUTO_SCAN_SETTINGS_FILE)) {
-        return JSON.parse(fs.readFileSync(AUTO_SCAN_SETTINGS_FILE, 'utf8'));
-      }
-    } catch (_) {}
-    return {};
-  }
-
-  function _saveSetting(key, value) {
-    try {
-      const fs = require('fs');
-      const data = _loadSettings();
-      data[key] = value;
-      fs.mkdirSync(path.dirname(AUTO_SCAN_SETTINGS_FILE), { recursive: true });
-      fs.writeFileSync(AUTO_SCAN_SETTINGS_FILE, JSON.stringify(data, null, 2), 'utf8');
-      return true;
-    } catch (err) {
-      console.warn(`[Settings] Failed to save ${key}:`, err.message);
-      return false;
-    }
-  }
+  // Read/write arbitrary keys in ~/.thinkdrop/settings.json — the store helpers
+  // (_loadSettings/_saveSetting/SETTINGS_FILE) are top-level near
+  // startOverlayControlServer so non-IPC paths can share them.
 
   ipcMain.handle('settings:get', async (_event, { key } = {}) => {
     const data = _loadSettings();
@@ -6612,6 +6622,8 @@ app.whenReady().then(async () => {
     if (!key) return;
     console.log(`[Settings] Set ${key}=${JSON.stringify(value)}`);
     _saveSetting(key, value);
+    // Live-update the overlay — features like Thoughts read settings without reload.
+    try { safeSendUnified('settings:changed', { key, value }); } catch (_) {}
   });
 
   // ─── Voice: IPC handlers for voice service integration ───────────────────

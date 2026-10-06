@@ -85,6 +85,7 @@ export interface FeedStore {
   removeEntry: (id: string) => void;
   resetEntries: () => void;
   upsertProactive: (thoughtId: string, pendingId: string) => void;
+  clearProactive: () => void;
   appendUserEntry: (text: string, attachments?: FeedAttachment[]) => string | null;
   ensureRunEntry: (taskId: string, prompt?: string | null) => void;
   exchangeForTask: (taskId?: string | null, prompt?: string | null) => string | undefined;
@@ -672,6 +673,11 @@ export function createFeedStore(now: () => number = () => Date.now()): FeedStore
         ...prev.filter(e => !(e.kind === 'proactive' && e.thoughtId === thoughtId)),
         { id: pendingId, ts: now(), kind: 'proactive', thoughtId, text: '', pending: true } as FeedEntry,
       ]);
+    },
+    // Thoughts disabled — drop every proactive card so a stale tail entry
+    // can't auto-attach to the next prompt.
+    clearProactive: () => {
+      setEntries(prev => prev.filter(e => e.kind !== 'proactive'));
     },
     appendUserEntry,
     ensureRunEntry,

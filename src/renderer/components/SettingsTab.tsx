@@ -9,6 +9,12 @@ interface ShortcutItem {
 
 type PlanApprovalMode = 'always' | 'multi_step' | 'auto';
 type VoiceMode = 'conversation' | 'pipeline';
+type ThoughtsMode = 'on' | 'off';
+
+const THOUGHTS_OPTIONS: { value: ThoughtsMode; label: string; desc: string }[] = [
+  { value: 'on',  label: 'Thoughts on',  desc: 'Proactive cards, notifications & nudges — ThinkDrop reaches out when it notices something' },
+  { value: 'off', label: 'Thoughts off', desc: 'Engine paused — nothing proactive; existing thoughts stay in the Brain tab' },
+];
 
 const VOICE_MODE_OPTIONS: { value: VoiceMode; label: string; desc: string }[] = [
   { value: 'conversation', label: 'Conversation (S2S)', desc: 'Natural realtime voice — falls back to the classic pipeline if it can\'t connect' },
@@ -31,6 +37,7 @@ export function _SettingsTab() {
 
   const [planApproval, setPlanApproval] = useState<PlanApprovalMode>('multi_step');
   const [voiceMode, setVoiceMode] = useState<VoiceMode>('conversation');
+  const [thoughts, setThoughts] = useState<ThoughtsMode>('on');
 
   useEffect(() => {
     // Request shortcuts from main process
@@ -58,6 +65,11 @@ export function _SettingsTab() {
       }
     });
 
+    // Load thoughts toggle (default on)
+    ipcRenderer?.invoke('settings:get', { key: 'thoughtsEnabled' }).then((res: any) => {
+      setThoughts(res?.value === false ? 'off' : 'on');
+    });
+
     return () => {
       ipcRenderer?.removeListener('settings:shortcuts', handleShortcuts);
     };
@@ -71,6 +83,11 @@ export function _SettingsTab() {
   const handleVoiceModeChange = (mode: VoiceMode) => {
     setVoiceMode(mode);
     ipcRenderer?.send('settings:set', { key: 'voiceMode', value: mode });
+  };
+
+  const handleThoughtsChange = (mode: ThoughtsMode) => {
+    setThoughts(mode);
+    ipcRenderer?.send('settings:set', { key: 'thoughtsEnabled', value: mode === 'on' });
   };
 
   return (
@@ -129,6 +146,39 @@ export function _SettingsTab() {
                 value={opt.value}
                 checked={planApproval === opt.value}
                 onChange={() => handlePlanApprovalChange(opt.value)}
+                className="mt-0.5"
+                style={{ accentColor: '#3b82f6' }}
+              />
+              <div>
+                <span className="text-sm text-gray-300 font-medium">{opt.label}</span>
+                <p className="text-xs text-gray-500 mt-0.5">{opt.desc}</p>
+              </div>
+            </label>
+          ))}
+        </div>
+      </div>
+
+      <div>
+        <h3 className="text-sm font-semibold text-gray-300 mb-3">Thoughts</h3>
+        <p className="text-xs text-gray-500 mb-3">
+          Proactive engine — cards and nudges about things it notices on your screen and in your day.
+        </p>
+        <div className="space-y-2">
+          {THOUGHTS_OPTIONS.map((opt) => (
+            <label
+              key={opt.value}
+              className="flex items-start gap-3 p-3 rounded-lg cursor-pointer transition-colors"
+              style={{
+                backgroundColor: thoughts === opt.value ? 'rgba(59, 130, 246, 0.12)' : 'rgba(255, 255, 255, 0.03)',
+                border: thoughts === opt.value ? '1px solid rgba(59, 130, 246, 0.35)' : '1px solid transparent',
+              }}
+            >
+              <input
+                type="radio"
+                name="thoughtsEnabled"
+                value={opt.value}
+                checked={thoughts === opt.value}
+                onChange={() => handleThoughtsChange(opt.value)}
                 className="mt-0.5"
                 style={{ accentColor: '#3b82f6' }}
               />

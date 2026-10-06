@@ -131,6 +131,9 @@ export function UnifiedOverlay() {
   // gates inside them (thought suppression during planning) must read this.
   const planningModeRef = useRef(planningMode);
   planningModeRef.current = planningMode;
+  // Thoughts on/off (Settings tab → ~/.thinkdrop/settings.json) — ref so the
+  // once-registered IPC listeners + submit path read the live value.
+  const thoughtsEnabledRef = useRef(true);
   const historyLoading = useFeedStore(s => s.historyLoading);
   const hasMoreHistory = useFeedStore(s => s.hasMoreHistory);
   const liveRunHidden = useFeedStore(s => s.liveRunHidden);
@@ -606,7 +609,8 @@ export function UnifiedOverlay() {
     // "what is this about" + a highlight asks about the highlight, not the
     // card, and thoughtContext would force a handoff in comms-graph.
     const hasHighlightCtx = selectionArmed || finalHighlights.some(h => !h.startsWith('[Thought:'));
-    const tailThought = !hasIsolatedContext && !hasHighlightCtx && tailEntry && tailEntry.kind === 'proactive' && !(tailEntry as any).pending && (tailEntry as any).text
+    const tailThought = thoughtsEnabledRef.current
+      && !hasIsolatedContext && !hasHighlightCtx && tailEntry && tailEntry.kind === 'proactive' && !(tailEntry as any).pending && (tailEntry as any).text
       && isThoughtReply(finalPromptText, (tailEntry as any).text)
       ? `[Thought: ${(tailEntry as any).text.replace(/\s+/g, ' ').trim()}]`
       : null;
@@ -2269,6 +2273,18 @@ export function UnifiedOverlay() {
     ipcRenderer.on('thoughts:list', (data: { thoughts?: ThoughtItem[] }) => {
       setBrainThoughts(Array.isArray(data?.thoughts) ? data.thoughts : []);
     }, token);
+    // Settings live-update — main broadcasts 'settings:changed' on every
+    // settings:set. The Thoughts toggle is the one the feed cares about.
+    ipcRenderer.invoke('settings:get', { key: 'thoughtsEnabled' }).then((res: any) => {
+      thoughtsEnabledRef.current = res?.value !== false;
+    }).catch(() => {});
+    ipcRenderer.on('settings:changed', ({ key, value }: { key?: string; value?: unknown }) => {
+      if (key !== 'thoughtsEnabled') return;
+      const on = value !== false;
+      thoughtsEnabledRef.current = on;
+      if (!on) feedStore.clearProactive(); // stale tail card must not auto-attach
+    }, token);
+
     // thought:update — incremental lifecycle event { kind, thought, outcomeText? }
     ipcRenderer.on('thought:update', (evt: { kind?: string; thought?: ThoughtItem; outcomeText?: string }) => {
       const t = evt?.thought;
@@ -2285,8 +2301,8 @@ export function UnifiedOverlay() {
       // During planning mode proactive nudges are noise: skip the badge and
       // the feed injection entirely; the thought still lands in Brain state.
       const planningActive = !!planningModeRef.current?.active;
-      if (!planningActive) setUnreadTabs(prev => new Set(prev).add('brain'));
-      if ((evt.kind === 'notify' || evt.kind === 'question') && !planningActive) {
+      if (!planningActive && thoughtsEnabledRef.current) setUnreadTabs(prev => new Set(prev).add('brain'));
+      if ((evt.kind === 'notify' || evt.kind === 'question') && !planningActive && thoughtsEnabledRef.current) {
         const text = String(t.summary || t.action?.payload?.text || 'ThinkDrop');
         const pendingId = `proactive-pending-${t.id}`;
         // A re-nudge replaces its pending line (deduped per thought).
@@ -2322,6 +2338,7 @@ export function UnifiedOverlay() {
       ipcRenderer.removeListenerByToken('queue:item-done', token);
       ipcRenderer.removeListenerByToken('cron:list', token);
       ipcRenderer.removeListenerByToken('cron:update', token);
+      ipcRenderer.removeListenerByToken('settings:changed', token);
       ipcRenderer.removeListenerByToken('skills:list', token);
       ipcRenderer.removeListenerByToken('agents:list', token);
       ipcRenderer.removeListenerByToken('agents:new', token);

@@ -266,6 +266,7 @@ contextBridge.exposeInMainWorld('electron', {
         'thought:update',
         'thoughts:list',
         'thought:decided',
+        'settings:changed',
         'conversation:list',
         'ghostlayer:display',
         'ghostlayer:display-clear',
