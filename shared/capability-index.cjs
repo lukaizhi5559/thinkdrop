@@ -53,6 +53,20 @@ const SETUP_SUMMARIES = {
   6: 'needs a paid account',
 };
 
+// Voice/UI-ready effort estimate per friction tier — the "what you're getting
+// into" line. Written in second person where the user must act.
+const SETUP_ETA = {
+  0: 'ready now',
+  1: 'ready now',
+  2: '~1 min — I handle the install',
+  3: '~2 min — you paste a key once',
+  4: '~2 min — you enter a short code',
+  5: '~5 min — a browser window opens and you sign in',
+  6: '~10+ min — you create an account/app in their console',
+};
+
+function _eta(friction) { return SETUP_ETA[friction] ?? 'setup required'; }
+
 // ── Zero-install platform affordances ──────────────────────────────────────
 // macOS built-ins reachable via allowlisted binaries — often the lowest-
 // friction answer to a user goal ("text my wife" → Messages via osascript).
@@ -146,7 +160,7 @@ function _summary(friction) { return SETUP_SUMMARIES[friction] ?? 'setup require
 
 function _candidate(base) {
   const friction = base.friction ?? 6;
-  return { platforms: ['darwin', 'win32', 'linux'], ...base, friction, setupSummary: base.setupSummary || _summary(friction) };
+  return { platforms: ['darwin', 'win32', 'linux'], ...base, friction, setupSummary: base.setupSummary || _summary(friction), eta: base.eta || _eta(friction) };
 }
 
 // ── Source scanners ────────────────────────────────────────────────────────
@@ -703,4 +717,4 @@ function stampDescriptor(agentId, patch = {}) {
   return { ok: true, file };
 }
 
-module.exports = { searchCapabilities, capabilityProbe, selectCapability, inferCapabilities, verbFit, stampDescriptor, whichCli, SETUP_SUMMARIES, PLATFORM_AFFORDANCES };
+module.exports = { searchCapabilities, capabilityProbe, selectCapability, inferCapabilities, verbFit, stampDescriptor, whichCli, SETUP_SUMMARIES, SETUP_ETA, PLATFORM_AFFORDANCES };
