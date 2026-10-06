@@ -647,6 +647,17 @@ const CONNECTOR_VERBS = new Set([
   'talk', 'communicate', 'work', 'hook', 'attach', 'access', 'control',
 ]);
 
+// Generic English/config verbs that appear inside capability slugs
+// (set_volume, get_device_info…) but never prove the user asked for this
+// tool — "send email and set calendar event" must not pin a media caster
+// just because its descriptor contains set_*. Only a NON-generic token
+// match (cast, play, scan, download, send…) counts as capability-fit.
+const GENERIC_VERB_TOKENS = new Set([
+  'set', 'get', 'add', 'remove', 'delete', 'clear', 'save', 'update',
+  'show', 'list', 'check', 'describe', 'info', 'view', 'load', 'help',
+  'use', 'do', 'make', 'put', 'take', 'give', 'find', 'work', 'turn',
+]);
+
 /**
  * @param {string} prompt  the user prompt
  * @param {object} candidate  a searchCapabilities/inferCapabilities result
@@ -667,7 +678,7 @@ function verbFit(prompt, candidate) {
   // No declared capabilities — fit can't be confirmed, so clarify rather
   // than pin a tool we can't prove does the asked thing.
   if (!capTokens.size) return 'clarify';
-  return leftovers.some(t => capTokens.has(t)) ? 'pin' : 'clarify';
+  return leftovers.some(t => capTokens.has(t) && !GENERIC_VERB_TOKENS.has(t)) ? 'pin' : 'clarify';
 }
 
 // ── stampDescriptor — write verified/status fields into agent frontmatter ──
