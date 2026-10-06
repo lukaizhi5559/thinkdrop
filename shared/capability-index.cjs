@@ -184,6 +184,8 @@ async function _scanRegisteredAgents() {
     out.push(_candidate({
       id: a.agentId, label: `${a.service} (${a.cliTool || kind})`, kind,
       service: a.service, tool: a.cliTool,
+      capabilities: a.capabilities || [],
+      verified: a.verified === true,
       keywords: [a.service, a.agentId, a.cliTool, ...(a.capabilities || []), ...(a.keywords || [])].filter(Boolean),
       authType: hasSecrets ? 'env' : 'none',
       installed, missingSecrets,
@@ -495,4 +497,199 @@ async function selectCapability(name, opts = {}) {
   }
 }
 
-module.exports = { searchCapabilities, capabilityProbe, selectCapability, whichCli, SETUP_SUMMARIES, PLATFORM_AFFORDANCES };
+// ── capability.infer — LLM proposes, code verifies ─────────────────────────
+// Deterministic search is vocabulary-bound: "mirror my overlay" misses catt
+// because 'mirror' isn't in its keywords. Rather than grow keyword lists by
+// hand, on a search miss we ask the LLM to name candidate tools, then VERIFY
+// each mechanically (which / npm view / brew info / seed match / --version
+// probe). Hallucinated names die at verification; only verified candidates
+// are returned, friction-ranked like search results.
+//
+// inferCapabilities(goal, { llmCaller }) — llmCaller is injected by the
+// caller (command-service wraps skill-llm askWithMessages); without it the
+// function returns an empty verified set rather than guessing itself.
+
+const INFER_MAX_CANDIDATES = 6;
+const INFER_VERIFY_TIMEOUT_MS = 8000;
+
+const INFER_PROMPT = `You name real, existing tools that could accomplish a user's goal. Respond with ONLY a JSON array of up to 6 objects:
+[{"name":"binary-or-server-name","kind":"cli|npm|mcp|api","package":"npm-or-brew-package-if-different","why":"one short phrase"}]
+
+Rules:
+- Only name tools you are confident actually exist (real binaries, npm packages, brew formulae, or MCP servers).
+- Prefer the simplest/least-setup option first.
+- If a service name was given (e.g. "slack", "twilio"), include its official CLI/SDK package if one exists.
+- If nothing plausible exists, return [].
+
+Goal: `;
+
+function _verifyCmd(cmd, args) {
+  try {
+    const r = spawnSync(cmd, args, {
+      timeout: INFER_VERIFY_TIMEOUT_MS,
+      stdio: ['ignore', 'pipe', 'pipe'],
+      encoding: 'utf8',
+    });
+    return { ok: r.status === 0, out: `${r.stdout || ''}\n${r.stderr || ''}`.slice(0, 2048) };
+  } catch (e) {
+    return { ok: false, error: e.message };
+  }
+}
+
+// Verify one LLM-proposed candidate. Returns { verified, evidence, installed }.
+// All checks are read-only lookups — nothing here installs or mutates.
+function _verifyCandidate(cand) {
+  const name = String(cand.name || '').trim();
+  const pkg = String(cand.package || name).trim();
+  if (!/^[a-zA-Z0-9_./@-]+$/.test(name)) return { verified: false, evidence: 'bad-name' };
+
+  // Already on PATH? Strongest signal — also confirms "no install needed".
+  const bin = whichCli(name) || (pkg !== name ? whichCli(pkg) : null);
+  if (bin) {
+    return { verified: true, evidence: `installed:${bin}`, installed: true, bin: name };
+  }
+  // MCP seed registry match.
+  try {
+    const seed = JSON.parse(fs.readFileSync(MCP_SEED_PATH, 'utf8'));
+    const s = (seed.servers || []).find(x => x.name === name || x.name === pkg || x.package === pkg);
+    if (s) return { verified: true, evidence: 'mcp-seed', installed: false, seed: s };
+  } catch (_) {}
+  // npm registry existence — kills hallucinated package names.
+  const npm = _verifyCmd('npm', ['view', pkg, 'name', '--json']);
+  if (npm.ok && npm.out.trim()) return { verified: true, evidence: 'npm', installed: false };
+  // brew — only if brew itself exists.
+  if (whichCli('brew')) {
+    const brew = _verifyCmd('brew', ['info', pkg]);
+    if (brew.ok) return { verified: true, evidence: 'brew', installed: false };
+  }
+  return { verified: false, evidence: 'unverifiable', installed: false };
+}
+
+function _installCmdFor(cand, verification) {
+  if (verification.seed) return [verification.seed.command, ...(verification.seed.args || [])].join(' ');
+  const pkg = cand.package || cand.name;
+  if (verification.evidence === 'npm') return `npm install -g ${pkg}`;
+  if (verification.evidence === 'brew') return `brew install ${pkg}`;
+  return null;
+}
+
+/**
+ * Semantic fallback for searchCapabilities. On a keyword miss, the LLM
+ * proposes candidate tools; every proposal is mechanically verified before
+ * it can reach the user or a plan. Returns { ok, candidates, rejected } —
+ * candidates carry { verified:true, evidence } and are friction-sorted.
+ */
+async function inferCapabilities(goal, opts = {}) {
+  const llmCaller = opts.llmCaller;
+  if (typeof llmCaller !== 'function') return { ok: false, error: 'no-llm-caller', candidates: [] };
+
+  let proposals = [];
+  try {
+    const raw = await llmCaller(INFER_PROMPT + JSON.stringify(String(goal || '').slice(0, 500)));
+    const m = String(raw || '').match(/\[[\s\S]*\]/);
+    proposals = m ? JSON.parse(m[0]) : [];
+  } catch (e) {
+    return { ok: false, error: `llm-parse:${e.message}`, candidates: [] };
+  }
+  if (!Array.isArray(proposals)) proposals = [];
+
+  const candidates = [];
+  const rejected = [];
+  const seen = new Set();
+  for (const p of proposals.slice(0, INFER_MAX_CANDIDATES)) {
+    const name = String(p?.name || '').trim();
+    if (!name || seen.has(name.toLowerCase())) continue;
+    seen.add(name.toLowerCase());
+    const v = _verifyCandidate(p);
+    if (!v.verified) { rejected.push({ name, why: v.evidence }); continue; }
+
+    if (v.installed) {
+      // Smoke check: binary answers --version (probe is verb-gated, read-only).
+      const pv = await capabilityProbe(v.bin, ['--version']);
+      candidates.push(_candidate({
+        id: `${name}.agent`, label: `${name} (installed)`, kind: p.kind === 'mcp' ? 'mcp' : 'cli',
+        service: name, tool: v.bin, keywords: [name],
+        authType: 'none', installed: true, verified: Boolean(pv.ok),
+        friction: 0, detail: `Inferred for "${goal}" — ${p.why || 'verified installed'}.`,
+        evidence: v.evidence,
+      }));
+    } else if (v.seed) {
+      candidates.push(_candidate({
+        id: `mcp.${v.seed.name}.agent`, label: `${v.seed.name} (MCP server)`, kind: 'mcp',
+        service: v.seed.name, keywords: [...(v.seed.keywords || []), v.seed.name, 'mcp'],
+        authType: v.seed.authType || 'none', installed: false,
+        installCmd: _installCmdFor(p, v), friction: v.seed.authType === 'env' ? 3 : 2,
+        detail: v.seed.description || p.why, evidence: v.evidence,
+      }));
+    } else {
+      candidates.push(_candidate({
+        id: `${name}.agent`, label: `${name} (${v.evidence} package)`, kind: 'cli',
+        service: name, tool: name, keywords: [name],
+        authType: 'none', installed: false,
+        installCmd: _installCmdFor(p, v), friction: 2,
+        detail: `Inferred for "${goal}" — ${p.why || 'verified package'}.`,
+        evidence: v.evidence,
+      }));
+    }
+  }
+  candidates.sort((a, b) => a.friction - b.friction);
+  return { ok: true, candidates, rejected };
+}
+
+// ── Verb-fit — does the asked action match what the candidate can do? ──────
+// "connect to my chromecast" is a connector verb — it says WHICH tool, not
+// WHAT to do with it. Such prompts route to planning to clarify intent. An
+// action verb that maps to the candidate's capabilities ("cast video.mp4")
+// pins directly.
+
+const CONNECTOR_VERBS = new Set([
+  'connect', 'use', 'setup', 'set', 'link', 'pair', 'integrate', 'sync',
+  'talk', 'communicate', 'work', 'hook', 'attach', 'access', 'control',
+]);
+
+/**
+ * @param {string} prompt  the user prompt
+ * @param {object} candidate  a searchCapabilities/inferCapabilities result
+ * @returns {'pin'|'clarify'} pin = action verb maps to a capability; clarify =
+ *   prompt only names the target (connector verbs / unknown intent).
+ */
+function verbFit(prompt, candidate) {
+  const capTokens = new Set();
+  for (const cap of candidate.capabilities || []) {
+    for (const t of _tokens(cap)) capTokens.add(t);
+  }
+  // Identity tokens (service/tool/agent id) name the TARGET, not the action —
+  // exclude them so "connect to chromecast" can't pin on 'chromecast' alone.
+  // Keywords stay IN scope: a keyword can be the action verb itself ("cast").
+  const targetTokens = new Set(_tokens(
+    [candidate.service, candidate.tool, candidate.id].filter(Boolean).join(' ')));
+  const leftovers = _tokens(prompt).filter(t => !targetTokens.has(t));
+  // No declared capabilities — fit can't be confirmed, so clarify rather
+  // than pin a tool we can't prove does the asked thing.
+  if (!capTokens.size) return 'clarify';
+  return leftovers.some(t => capTokens.has(t)) ? 'pin' : 'clarify';
+}
+
+// ── stampDescriptor — write verified/status fields into agent frontmatter ──
+// Post-install smoke results and mcp handshake results land here so the
+// index and plan-check can rank verified agents above unverified ones.
+
+function stampDescriptor(agentId, patch = {}) {
+  const id = String(agentId || '').replace(/\.agent$/, '');
+  if (!id || !/^[a-z0-9_-]+$/i.test(id)) return { ok: false, error: 'bad-agent-id' };
+  const file = path.join(_agentsDir(), `${id}.agent.md`);
+  let src;
+  try { src = fs.readFileSync(file, 'utf8'); } catch (e) { return { ok: false, error: e.message }; }
+  const m = src.match(/^---\n([\s\S]*?)\n---/);
+  if (!m) return { ok: false, error: 'no-frontmatter' };
+  let fm = m[1];
+  for (const [k, v] of Object.entries(patch)) {
+    const line = `${k}: ${v}`;
+    if (new RegExp(`^${k}:.*$`, 'm').test(fm)) fm = fm.replace(new RegExp(`^${k}:.*$`, 'm'), line);
+    else fm += `\n${line}`;
+  }
+  fs.writeFileSync(file, src.replace(m[0], `---\n${fm}\n---`), 'utf8');
+  return { ok: true, file };
+}
+
+module.exports = { searchCapabilities, capabilityProbe, selectCapability, inferCapabilities, verbFit, stampDescriptor, whichCli, SETUP_SUMMARIES, PLATFORM_AFFORDANCES };
