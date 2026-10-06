@@ -285,9 +285,22 @@ function _matchScore(candidate, tokens) {
  * Search all capability sources for `query`.
  * @returns {Promise<Array>} candidates sorted by friction asc, then match score desc.
  */
+// name → seed keywords, so installed/registered MCP candidates inherit the
+// seed's discoverability terms (a registered `mcp.memory.agent` descriptor
+// only carries its service name otherwise).
+function _seedKeywordMap() {
+  const map = new Map();
+  try {
+    const seed = JSON.parse(fs.readFileSync(MCP_SEED_PATH, 'utf8'));
+    for (const s of seed.servers || []) map.set(s.name, s.keywords || []);
+  } catch (_) {}
+  return map;
+}
+
 async function searchCapabilities(query, opts = {}) {
   const platform = process.platform;
   const tokens = _tokens(query);
+  const seedKw = _seedKeywordMap();
   const pools = [
     ...(await _scanRegisteredAgents()),
     ..._scanCliRegistry(opts.cliRegistryPath),
@@ -300,6 +313,8 @@ async function searchCapabilities(query, opts = {}) {
     if (!c.platforms.includes(platform)) continue;
     if (seen.has(c.id)) continue;
     seen.add(c.id);
+    const m = c.id.match(/^mcp\.([^.]+)\.agent$/);
+    if (m && seedKw.has(m[1])) c.keywords = [...new Set([...(c.keywords || []), ...seedKw.get(m[1])])];
     const match = _matchScore(c, tokens);
     if (match <= 0) continue;
     scored.push({ ...c, matchScore: match });

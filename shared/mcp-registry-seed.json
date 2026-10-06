@@ -1,0 +1,118 @@
+{
+  "comment": "Curated MCP server seeds — verified install commands only. capability.search offers these when a user goal needs an MCP server; mcp.agent install handshakes + registers them. Add entries as new servers are vetted.",
+  "servers": [
+    {
+      "name": "filesystem",
+      "description": "Read/write/search local files in allowed directories",
+      "command": "npx", "args": ["-y", "@modelcontextprotocol/server-filesystem", "{dirs}"],
+      "argsNote": "append allowed directories as trailing args",
+      "authType": "none",
+      "keywords": ["files", "filesystem", "read files", "search files", "folder"]
+    },
+    {
+      "name": "fetch",
+      "description": "Fetch and convert web pages to markdown (no browser needed)",
+      "command": "uvx", "args": ["mcp-server-fetch"],
+      "authType": "none",
+      "keywords": ["fetch", "url", "web page", "read page", "scrape", "download"]
+    },
+    {
+      "name": "memory",
+      "description": "Persistent knowledge-graph memory for the agent",
+      "command": "npx", "args": ["-y", "@modelcontextprotocol/server-memory"],
+      "authType": "none",
+      "keywords": ["memory", "remember", "knowledge", "notes", "recall"]
+    },
+    {
+      "name": "sequential-thinking",
+      "description": "Structured step-by-step reasoning tool for complex problems",
+      "command": "npx", "args": ["-y", "@modelcontextprotocol/server-sequential-thinking"],
+      "authType": "none",
+      "keywords": ["thinking", "reasoning", "plan", "analyze", "step by step"]
+    },
+    {
+      "name": "time",
+      "description": "Time, timezone conversion, and current time queries",
+      "command": "uvx", "args": ["mcp-server-time"],
+      "authType": "none",
+      "keywords": ["time", "timezone", "clock", "what time", "convert time", "date"]
+    },
+    {
+      "name": "github",
+      "description": "GitHub repos, issues, PRs, files, and search via the GitHub API",
+      "command": "npx", "args": ["-y", "@modelcontextprotocol/server-github"],
+      "env": { "GITHUB_PERSONAL_ACCESS_TOKEN": "${GITHUB_TOKEN}" },
+      "authType": "env", "authEnv": ["GITHUB_TOKEN"],
+      "keywords": ["github", "repo", "pull request", "issue", "commit", "repository"]
+    },
+    {
+      "name": "slack",
+      "description": "Post messages, list channels, read history via Slack API",
+      "command": "npx", "args": ["-y", "@modelcontextprotocol/server-slack"],
+      "env": { "SLACK_BOT_TOKEN": "${SLACK_BOT_TOKEN}", "SLACK_TEAM_ID": "${SLACK_TEAM_ID}" },
+      "authType": "env", "authEnv": ["SLACK_BOT_TOKEN", "SLACK_TEAM_ID"],
+      "keywords": ["slack", "slack message", "channel", "dm", "workspace"]
+    },
+    {
+      "name": "brave-search",
+      "description": "Web and local search via Brave Search API",
+      "command": "npx", "args": ["-y", "@modelcontextprotocol/server-brave-search"],
+      "env": { "BRAVE_API_KEY": "${BRAVE_API_KEY}" },
+      "authType": "env", "authEnv": ["BRAVE_API_KEY"],
+      "keywords": ["search", "web search", "google", "find", "look up"]
+    },
+    {
+      "name": "postgres",
+      "description": "Read-only queries against a PostgreSQL database",
+      "command": "npx", "args": ["-y", "@modelcontextprotocol/server-postgres", "{connection_string}"],
+      "argsNote": "append the postgres:// connection string",
+      "authType": "env", "authEnv": ["POSTGRES_URL"],
+      "keywords": ["postgres", "database", "sql", "query", "table", "db"]
+    },
+    {
+      "name": "sqlite",
+      "description": "Query and inspect SQLite databases",
+      "command": "uvx", "args": ["mcp-server-sqlite", "--db-path", "{db_path}"],
+      "argsNote": "append --db-path <file>",
+      "authType": "none",
+      "keywords": ["sqlite", "database", "sql", "query", "duckdb", "db"]
+    },
+    {
+      "name": "puppeteer",
+      "description": "Browser automation via Puppeteer (screenshots, scraping, forms)",
+      "command": "npx", "args": ["-y", "@modelcontextprotocol/server-puppeteer"],
+      "authType": "none",
+      "keywords": ["browser", "puppeteer", "screenshot", "scrape", "automation", "headless"]
+    },
+    {
+      "name": "google-maps",
+      "description": "Geocoding, places, directions, and distance via Google Maps API",
+      "command": "npx", "args": ["-y", "@modelcontextprotocol/server-google-maps"],
+      "env": { "GOOGLE_MAPS_API_KEY": "${GOOGLE_MAPS_API_KEY}" },
+      "authType": "env", "authEnv": ["GOOGLE_MAPS_API_KEY"],
+      "keywords": ["maps", "directions", "geocode", "address", "places", "nearby", "distance"]
+    },
+    {
+      "name": "everart",
+      "description": "Image generation via Everart models",
+      "command": "npx", "args": ["-y", "@modelcontextprotocol/server-everart"],
+      "env": { "EVERART_API_KEY": "${EVERART_API_KEY}" },
+      "authType": "env", "authEnv": ["EVERART_API_KEY"],
+      "keywords": ["image", "generate image", "picture", "art", "draw"]
+    },
+    {
+      "name": "gdrive",
+      "description": "Search and read files in Google Drive",
+      "command": "npx", "args": ["-y", "@modelcontextprotocol/server-gdrive"],
+      "authType": "oauth",
+      "keywords": ["google drive", "drive", "gdrive", "docs", "files"]
+    },
+    {
+      "name": "gmail",
+      "description": "Read and send mail via Gmail API",
+      "command": "npx", "args": ["-y", "@modelcontextprotocol/server-gmail"],
+      "authType": "oauth",
+      "keywords": ["gmail", "email", "mail", "send email", "inbox"]
+    }
+  ]
+}
