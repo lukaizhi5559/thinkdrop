@@ -384,6 +384,26 @@ async function startPlan(planPath, opts = {}) {
     } catch (_) {}
   }
 
+  // Heal stale per-task '🔄 running' — reachable only when no live run exists
+  // (_runs.has early-return above), so a disk 'running' marker is definitionally
+  // an orphan from a crashed/interrupted run. Without this, _schedule skips the
+  // task and a resumed plan fails it as 'Unsatisfiable dependencies'.
+  try {
+    const staleRunning = plan.tasks.filter(t => t.status === planFormat.TASK_STATUS.RUNNING);
+    if (staleRunning.length) {
+      let content = plan.content;
+      for (const t of staleRunning) {
+        content = planFormat.updateTaskStatus(content, t.num, planFormat.TASK_STATUS.PENDING, null);
+        t.status = planFormat.TASK_STATUS.PENDING;
+      }
+      fs.writeFileSync(planPath, content, 'utf8');
+      plan.content = content;
+      console.log(`[PlanRunner] Healed ${staleRunning.length} stale running task(s): ${planId}`);
+    }
+  } catch (err) {
+    console.warn(`[PlanRunner] Stale-running heal failed (proceeding): ${err.message}`);
+  }
+
   const run = {
     planId,
     planPath,
