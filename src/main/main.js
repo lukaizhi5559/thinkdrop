@@ -6312,6 +6312,20 @@ app.whenReady().then(async () => {
     return { ok: true, allClear };
   });
 
+  // terminal:action — renderer bridge to command-service terminal.agent.
+  // Payload: { action, sessionId?, text?, ctrl?, sensitive?, match?, lines?,
+  //   timeoutMs?, cwd?, cols?, rows?, label?, managedBy? } — forwarded
+  // verbatim to the skill; allowlist + danger-scan live on the service side.
+  ipcMain.handle('terminal:action', async (_e, payload = {}) => {
+    try {
+      return await _cmdHttp('/command.automate',
+        { skill: 'terminal.agent', args: payload },
+        { timeoutMs: (payload.timeoutMs || 30000) + 2000 });
+    } catch (err) {
+      return { ok: false, error: err.message };
+    }
+  });
+
   // plan:runs — in-flight plan runner state (for tab refresh)
   ipcMain.handle('plan:runs', async () => {
     const planRunner = require('./planRunner');

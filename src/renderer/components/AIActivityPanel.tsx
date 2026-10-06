@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect, useCallback, forwardRef, useImperativeHandle } from 'react';
+import { TerminalPane } from './TerminalPane';
 
 const { ipcRenderer } = window.electron;
 
@@ -25,6 +26,7 @@ interface LogEntry {
 export const AIActivityPanel = forwardRef<AIActivityPanelHandle, AIActivityPanelProps>(
   ({ isDebugMode, isRunning, currentOperation }, ref) => {
     const [isExpanded, setIsExpanded] = useState(false);
+    const [view, setView] = useState<'activity' | 'terminal'>('activity');
     const [logs, setLogs] = useState<LogEntry[]>([]);
     const [autoDebug, setAutoDebug] = useState(false);
     const [isCommandRunning, setIsCommandRunning] = useState(false);
@@ -349,6 +351,23 @@ export const AIActivityPanel = forwardRef<AIActivityPanelHandle, AIActivityPanel
             </svg>
           )}
           <span className="text-xs text-gray-400">{scheduledRunning ? 'Running scheduled automation...' : (currentOperation || (hasActivity ? 'Working...' : 'Ready'))}</span>
+
+          {/* Activity / Terminal tab toggle — only when expanded */}
+          {isExpanded && (
+            <div className="flex items-center gap-0.5 ml-2 rounded bg-white/5 p-0.5">
+              {(['activity', 'terminal'] as const).map(v => (
+                <button
+                  key={v}
+                  onClick={() => setView(v)}
+                  className={`px-2 py-0.5 text-[10px] rounded transition-colors ${
+                    view === v ? 'bg-blue-600/30 text-blue-300' : 'text-gray-500 hover:text-gray-300'
+                  }`}
+                >
+                  {v === 'activity' ? 'Activity' : 'Terminal'}
+                </button>
+              ))}
+            </div>
+          )}
         </div>
         
         <div className="flex items-center gap-1">
@@ -415,14 +434,20 @@ export const AIActivityPanel = forwardRef<AIActivityPanelHandle, AIActivityPanel
         </div>
       </div>
 
+      {/* Terminal view — live PTY pane */}
+      {view === 'terminal' && (
+        <TerminalPane visible={isExpanded && view === 'terminal'} />
+      )}
+
       {/* Terminal Output */}
-      <div 
+      <div
         ref={scrollRef}
         className="flex-1 overflow-y-auto px-3 pb-2 font-mono text-sm"
-        style={{ 
+        style={{
           fontFamily: 'Menlo, Monaco, "Courier New", monospace',
           fontSize: '13px',
-          minHeight: 0 // Important for flex child scrolling
+          minHeight: 0, // Important for flex child scrolling
+          display: view === 'terminal' ? 'none' : undefined,
         }}
       >
         {logs.length === 0 ? (

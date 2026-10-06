@@ -41,6 +41,7 @@ import { perfRender, perfGaugeIpcChannels } from '../utils/perfCounters';
 // conditional distributes over the union so each variant keeps its props.
 import { TeachMeDialog } from './TeachMeDialog';
 import type { AIActivityPanelHandle } from './AIActivityPanel';
+import { AIActivityPanel } from './AIActivityPanel';
 
 // --- Types (imported from TabComponents for compatibility) ---
 import type { QueueItem, CronItem, SkillItem, ConnectionItem, AgentItem } from './TabComponents';
@@ -2816,13 +2817,11 @@ export function UnifiedOverlay() {
         </div>
 
         {/* AI Activity Panel - visible on all tabs */}
-        {/* <AIActivityPanel
+        <AIActivityPanel
           ref={aiActivityPanelRef}
           isDebugMode={isDebugMode}
-          activeTab={activeTab}
           isRunning={isSubmitting || isStreaming || isThinking}
-          currentOperation={statusText}
-        /> */}
+        />
 
         {/* Bottom Input Bar */}
         <PromptInputBar

@@ -619,6 +619,7 @@ contextBridge.exposeInMainWorld('electron', {
         'plan:rename',
         'planning:get',
         'plan:check',
+        'terminal:action',
       ];
       if (validChannels.includes(channel)) {
         return ipcRenderer.invoke(channel, data);
