@@ -92,6 +92,15 @@ function _scan() {
             ? secM[1].split('\n').map(l => l.trim().replace(/^-\s*/, '')).filter(Boolean)
             : secM[1].split(',').map(s => s.trim().replace(/['"]/g, '')).filter(Boolean))
         : [];
+      // capabilities: / keywords: — discoverability terms for capability.search
+      const _listField = (name) => {
+        const m = src.match(new RegExp(`^${name}:\\s*\\n((?:\\s+-\\s*[^\\n]+\\n?)*)`, 'm'))
+          || src.match(new RegExp(`^${name}:\\s*\\[([^\\]]*)\\]`, 'm'));
+        if (!m) return [];
+        return m[1].includes('\n')
+          ? m[1].split('\n').map(l => l.trim().replace(/^-\s*/, '')).filter(Boolean)
+          : m[1].split(',').map(s => s.trim().replace(/['"]/g, '')).filter(Boolean);
+      };
       const stem = file.replace(/\.agent\.md$/, '');
       const entry = {
         src,
@@ -102,6 +111,8 @@ function _scan() {
         mcpServer: mcpM ? mcpM[1].trim() : null,
         status: statusM ? statusM[1].trim() : 'active',
         secrets,
+        capabilities: _listField('capabilities'),
+        keywords: _listField('keywords'),
         urlM: src.match(/^start_url:\s*(https?:\/\/\S+)\s*$/m),
         signM: src.match(/^sign_in_url:\s*(https?:\/\/\S+)\s*$/m),
       };
@@ -231,6 +242,8 @@ function listAgentNames() {
       type: entry.type || 'browser',
       cliTool: entry.cliTool || null,
       secrets: entry.secrets || [],
+      capabilities: entry.capabilities || [],
+      keywords: entry.keywords || [],
     });
   }
   return out.sort((a, b) => a.agentId.localeCompare(b.agentId));
@@ -265,7 +278,7 @@ function describeAgent(agentId) {
   const idx = _scan();
   const entry = idx.byName.get(String(agentId).replace(/\.agent$/, ''));
   return entry
-    ? { agentId: entry.agentId, service: entry.service, type: entry.type || 'browser', cliTool: entry.cliTool || null, mcpServer: entry.mcpServer || null, status: entry.status || 'active', secrets: entry.secrets || [] }
+    ? { agentId: entry.agentId, service: entry.service, type: entry.type || 'browser', cliTool: entry.cliTool || null, mcpServer: entry.mcpServer || null, status: entry.status || 'active', secrets: entry.secrets || [], capabilities: entry.capabilities || [], keywords: entry.keywords || [] }
     : null;
 }
 

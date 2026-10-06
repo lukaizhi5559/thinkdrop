@@ -184,7 +184,7 @@ async function _scanRegisteredAgents() {
     out.push(_candidate({
       id: a.agentId, label: `${a.service} (${a.cliTool || kind})`, kind,
       service: a.service, tool: a.cliTool,
-      keywords: [a.service, a.agentId, a.cliTool].filter(Boolean),
+      keywords: [a.service, a.agentId, a.cliTool, ...(a.capabilities || []), ...(a.keywords || [])].filter(Boolean),
       authType: hasSecrets ? 'env' : 'none',
       installed, missingSecrets,
       friction,
@@ -473,6 +473,7 @@ async function selectCapability(name, opts = {}) {
     isMcp ? `mcp_server: ${service}` : null,
     'status: draft',
     cand?.installCmd ? `install_cmd: ${cand.installCmd}` : null,
+    (cand?.keywords || []).length ? `keywords: [${[...new Set([service, ...(cand.keywords || [])])].join(', ')}]` : null,
     secrets.length ? 'secrets:' : null,
     ...secrets.map(s => `  - ${s}`),
     '---',
