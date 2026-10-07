@@ -19,9 +19,30 @@ const { app, BrowserWindow, ipcMain, screen, globalShortcut, clipboard, safeStor
 // console.log (uncaughtException → Electron error dialog) or via stream
 // 'error'. Swallow EPIPE in both paths; real errors still surface.
 const _isEpipe = (e) => !!e && (e.code === 'EPIPE' || /EPIPE/.test(e.message || ''));
+
+// ── main.log tee ───────────────────────────────────────────────────────────
+// Every other service writes logs/<name>.log via start-services.sh redirects;
+// Electron's output only reached the dev terminal — logs/main.log was manual
+// copy-paste. Tee console.* here so the file is real on every launch.
+// Truncates per launch (flags 'w'), matching the services' `>` semantics.
+const _mainLogStream = (() => {
+  try {
+    const fs = require('fs');
+    const logPath = require('path').join(__dirname, '..', '..', 'logs', 'main.log');
+    fs.mkdirSync(require('path').dirname(logPath), { recursive: true });
+    const s = fs.createWriteStream(logPath, { flags: 'w' });
+    s.on('error', () => {}); // never let logging kill the app
+    return s;
+  } catch (_) { return null; }
+})();
+const _utilFormat = (a) => { try { return require('util').format(...a); } catch (_) { return a.map(String).join(' '); } };
+
 for (const _m of ['log', 'info', 'warn', 'error', 'debug', 'trace', 'dir']) {
   const _orig = console[_m].bind(console);
-  console[_m] = (...a) => { try { _orig(...a); } catch (e) { if (!_isEpipe(e)) throw e; } };
+  console[_m] = (...a) => {
+    try { _orig(...a); } catch (e) { if (!_isEpipe(e)) throw e; }
+    try { if (_mainLogStream) _mainLogStream.write(_utilFormat(a) + '\n'); } catch (_) {}
+  };
 }
 for (const _s of [process.stdout, process.stderr]) {
   if (_s && typeof _s.on === 'function') {
