@@ -40,6 +40,7 @@ interface Step {
   draftPath?: string; // edit.agent draft — original untouched until applied
   openIn?: string[]; // processes holding the target file open (e.g. "TextEdit")
   diff?: string; // unified diff of the draft vs the original
+  narration?: string[]; // plain-English lines the agent wrote while working (probes, decisions)
 }
 
 export interface DraftRef {
@@ -2011,6 +2012,7 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
                     draftPath: data.draftPath || undefined,
                     openIn: Array.isArray(data.openIn) ? data.openIn : undefined,
                     guideInstruction: data.instruction || s.guideInstruction, 
+                    narration: Array.isArray(data.narration) ? data.narration : s.narration,
                     runGroup: data.runGroup || s.runGroup 
                   }
                 : s
@@ -2085,6 +2087,7 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
             return prev.map(s =>
               s.index === stepIdx
                 ? { ...s, status: 'failed', error: data.error, stderr: data.stderr,
+                    narration: Array.isArray(data.narration) ? data.narration : s.narration,
                     userAllowlistHint: data.userAllowlistHint || false,
                     commandName: data.commandName || null,
                     runGroup: data.runGroup || s.runGroup }
@@ -4691,6 +4694,20 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
                         </div>
                       );
                     })()}
+                    {/* ── narration — plain-English "what the agent did" for terminal-backed steps ── */}
+                    {(step.status === 'done' || step.status === 'failed') && !!step.narration?.length && (
+                      <div style={{ marginTop: 4, padding: '6px 9px', borderRadius: 6, background: 'rgba(96,165,250,0.06)', border: '1px solid rgba(96,165,250,0.14)' }}>
+                        <div style={{ fontSize: '9.5px', fontWeight: 600, letterSpacing: '0.04em', textTransform: 'uppercase', color: '#60a5fa', marginBottom: 3 }}>
+                          What the agent did
+                        </div>
+                        {step.narration.map((line, i) => (
+                          <div key={i} style={{ fontSize: '11px', color: '#9ca3af', lineHeight: '1.5', display: 'flex', gap: 5 }}>
+                            <span style={{ color: '#4b5563' }}>·</span>
+                            <span>{line}</span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
                     {/* ── shell.run goal-mode thinking — shown while _resolveGoalToCommand runs ── */}
                     {/* Suppress when agent step log has real progress entries (tier updates, Tab-Flow steps) */}
                     {step.status === 'running' && !!stepThinking.get(step.index) && !(agentStepLog.get(step.index) || []).length && (

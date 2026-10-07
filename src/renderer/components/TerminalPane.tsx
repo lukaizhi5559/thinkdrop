@@ -34,6 +34,8 @@ export function TerminalPane({ visible }: TerminalPaneProps) {
   const [prompt, setPrompt] = useState<string | null>(null);
   const [exited, setExited] = useState<number | null>(null);
   const [input, setInput] = useState('');
+  const [viewMode, setViewMode] = useState<'raw' | 'summary'>('raw');
+  const [narration, setNarration] = useState<string[]>([]);
   const [sensitive, setSensitive] = useState(false);
   const sensitiveRef = useRef(false);
   sensitiveRef.current = sensitive;
@@ -77,6 +79,7 @@ export function TerminalPane({ visible }: TerminalPaneProps) {
     if (r?.ok) {
       if (typeof r.offset === 'number') rawCursorRef.current[sid] = r.offset;
       if (r.data) termRef.current?.write(r.data);
+      if (Array.isArray(r.narration)) setNarration(r.narration.map((n: any) => typeof n === 'string' ? n : n.text).filter(Boolean));
       setPrompt(r.prompt || null);
       setExited(r.exited ? r.exitCode : null);
       setErr(null);
@@ -157,6 +160,7 @@ export function TerminalPane({ visible }: TerminalPaneProps) {
     activeIdRef.current = activeId;
     if (!activeId) return;
     termRef.current?.reset();
+    setNarration([]);
     delete rawCursorRef.current[activeId];
     refreshScreen();
     try {
@@ -216,6 +220,13 @@ export function TerminalPane({ visible }: TerminalPaneProps) {
           ))}
         </select>
         <button
+          onClick={() => setViewMode(v => v === 'raw' ? 'summary' : 'raw')}
+          className="px-2 py-1 text-xs rounded bg-white/5 text-gray-400 hover:bg-white/10 transition-colors whitespace-nowrap"
+          title={viewMode === 'raw' ? 'Switch to plain-English summary' : 'Switch to raw terminal view'}
+        >
+          {viewMode === 'raw' ? 'Summary' : 'Raw'}
+        </button>
+        <button
           onClick={openSession}
           className="px-2 py-1 text-xs rounded bg-emerald-600/20 text-emerald-400 hover:bg-emerald-600/30 transition-colors whitespace-nowrap"
           title="Open a new interactive terminal session"
@@ -247,7 +258,28 @@ export function TerminalPane({ visible }: TerminalPaneProps) {
           onClick={() => termRef.current?.focus()}
         >
           {activeId
-            ? <div ref={termHostRef} className="h-full w-full" />
+            ? (<>
+                <div ref={termHostRef} className="h-full w-full" style={viewMode === 'summary' ? { display: 'none' } : undefined} />
+                {viewMode === 'summary' && (
+                  <div className="h-full overflow-y-auto px-1 py-1" style={{ fontFamily: 'Menlo, monospace' }}>
+                    {narration.length === 0 ? (
+                      <div className="text-gray-500 text-xs">No narration yet — the agent annotates its work as it goes. Switch to Raw for the full stream.</div>
+                    ) : (
+                      <div className="flex flex-col gap-1">
+                        {narration.map((line, i) => (
+                          <div key={i} className="text-xs text-gray-300 flex gap-1.5" style={{ lineHeight: 1.5 }}>
+                            <span className="text-blue-400/60 shrink-0">·</span>
+                            <span>{line}</span>
+                          </div>
+                        ))}
+                        {exited !== null && (
+                          <div className="text-xs text-gray-500 mt-1">session ended (exit {exited})</div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </>)
             : <div className="px-1 py-1 text-gray-500 text-xs" style={{ fontFamily: 'Menlo, monospace' }}>No session — click "+ New" or start an agent task.</div>}
         </div>
 
