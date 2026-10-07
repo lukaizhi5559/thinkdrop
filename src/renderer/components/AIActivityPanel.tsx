@@ -44,6 +44,13 @@ export const AIActivityPanel = forwardRef<AIActivityPanelHandle, AIActivityPanel
     const [scheduledRunning, setScheduledRunning] = useState(false);
     const scheduledRunningRef = useRef(false);
     const scrollRef = useRef<HTMLDivElement>(null);
+    // Ticker — last terminal:activity line shown in the collapsed header row.
+    // The dot pulses while work is recent; the panel stays collapsed unless an
+    // event needs eyes (prompt wait, hard failure) or the user expands it.
+    const [activityLine, setActivityLine] = useState<string | null>(null);
+    const [activityBusy, setActivityBusy] = useState(false);
+    const busyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const manualCollapseRef = useRef(0);
 
     // Auto-expand when entering debug mode
     useEffect(() => {
@@ -174,6 +181,49 @@ export const AIActivityPanel = forwardRef<AIActivityPanelHandle, AIActivityPanel
         ipcRenderer.removeListenerByToken('automation:progress', 'AIActivityPanel-automation');
       };
     }, []); // mount once — reads ref, never stale
+
+    // Ticker — terminal:activity lines (step boundaries, diagnosis notes) and
+    // terminal:session events (auto-raise only when input is needed).
+    useEffect(() => {
+      const bump = () => {
+        setActivityBusy(true);
+        if (busyTimerRef.current) clearTimeout(busyTimerRef.current);
+        busyTimerRef.current = setTimeout(() => setActivityBusy(false), 4000);
+      };
+      const handleActivity = (evt: any) => {
+        const line = String(evt?.line || '').slice(0, 140);
+        if (!line) return;
+        setActivityLine(line);
+        bump();
+        setLogs(prev => [...prev.slice(-300), {
+          type: evt?.kind === 'fail' ? 'error' as const : 'output' as const,
+          content: `· ${line}`,
+          timestamp: Date.now(),
+        }]);
+        // Failures deserve eyes — raise unless the user just collapsed it.
+        if (evt?.kind === 'fail' && Date.now() - manualCollapseRef.current > 10000) {
+          setPanelHeight(h => (h > COLLAPSED_H + 16 ? h : DEFAULT_H));
+        }
+      };
+      const handleSession = (evt: any) => {
+        if (evt?.type === 'terminal:prompt_wait') {
+          setActivityLine(`input needed — ${String(evt.prompt || 'terminal is waiting for a response').slice(0, 100)}`);
+          bump();
+          if (Date.now() - manualCollapseRef.current > 10000) {
+            setPanelHeight(DEFAULT_H);
+          }
+        } else if (evt?.type === 'terminal:session_open' && evt?.label) {
+          setActivityLine(`terminal: ${String(evt.label).slice(0, 100)}`);
+          bump();
+        }
+      };
+      ipcRenderer.on('terminal:activity', handleActivity, 'AIActivityPanel-activity');
+      ipcRenderer.on('terminal:session', handleSession, 'AIActivityPanel-session');
+      return () => {
+        ipcRenderer.removeListenerByToken('terminal:activity', 'AIActivityPanel-activity');
+        ipcRenderer.removeListenerByToken('terminal:session', 'AIActivityPanel-session');
+      };
+    }, []);
 
     // Auto-scroll to bottom when new logs added
     useEffect(() => {
@@ -332,11 +382,15 @@ export const AIActivityPanel = forwardRef<AIActivityPanelHandle, AIActivityPanel
   // Show on all tabs when there's activity - no more hiding
   
   // Always show panel - compute activity state
-  const hasActivity = isRunning || currentOperation || isCommandRunning || scheduledRunning;
+  const hasActivity = isRunning || currentOperation || isCommandRunning || scheduledRunning || activityBusy;
 
   // Toggle handler for chevron / header-row click
   const handleToggle = () => {
-    setPanelHeight(h => (h > COLLAPSED_H + 16 ? COLLAPSED_H : DEFAULT_H));
+    setPanelHeight(h => {
+      const next = h > COLLAPSED_H + 16 ? COLLAPSED_H : DEFAULT_H;
+      if (next === COLLAPSED_H) manualCollapseRef.current = Date.now();
+      return next;
+    });
   };
 
   // Top-edge drag resize — live height during drag (transition off), snap
@@ -368,7 +422,11 @@ export const AIActivityPanel = forwardRef<AIActivityPanelHandle, AIActivityPanel
       setDragging(false);
       const d = dragRef.current;
       dragRef.current = null;
-      if (d) setPanelHeight(_snapHeight(Math.min(Math.max(d.startH + (d.startY - ev.clientY), COLLAPSED_H), _fullHeight())));
+      if (d) {
+        const snapped = _snapHeight(Math.min(Math.max(d.startH + (d.startY - ev.clientY), COLLAPSED_H), _fullHeight()));
+        if (snapped <= 80) manualCollapseRef.current = Date.now();
+        setPanelHeight(snapped);
+      }
     };
     window.addEventListener('mousemove', onMove);
     window.addEventListener('mouseup', onUp, { once: true });
@@ -419,7 +477,7 @@ export const AIActivityPanel = forwardRef<AIActivityPanelHandle, AIActivityPanel
               <line x1="12" y1="19" x2="20" y2="19" />
             </svg>
           )}
-          <span className="text-xs text-gray-400">{scheduledRunning ? 'Running scheduled automation...' : (currentOperation || (hasActivity ? 'Working...' : 'Ready'))}</span>
+          <span className="text-xs text-gray-400 truncate">{scheduledRunning ? 'Running scheduled automation...' : (activityLine || currentOperation || (hasActivity ? 'Working...' : 'Ready'))}</span>
         </div>
         
         <div className="flex items-center gap-1">

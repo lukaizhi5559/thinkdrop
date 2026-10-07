@@ -1890,7 +1890,7 @@ function startOverlayControlServer() {
           const _agentEventTypes = [
             'agent:turn_live', 'agent:turn', 'agent:complete', 'agent:thought', 'agent:thinking',
             'needs_login', 'task:auth_required', 'task:auth_resolved', 'agent:tier',
-            'terminal:session_open', 'terminal:prompt_wait',
+            'terminal:session_open', 'terminal:prompt_wait', 'terminal:activity',
             'tab_flow:computed', 'tab_flow:step_start', 'tab_flow:step_done', 'tab_flow:step_failed',
             'tab_map:plan', 'tab_map:step_start', 'tab_map:step_done',
             'app_flow:start', 'app_flow:focusing', 'app_flow:computed', 'app_flow:tier_selected',
@@ -1904,6 +1904,14 @@ function startOverlayControlServer() {
           // (and any watcher) sees agent-opened PTY sessions live.
           if (evt.type === 'terminal:session_open' || evt.type === 'terminal:prompt_wait') {
             safeSendUnified('terminal:session', evt);
+          }
+          // Ticker lines (step boundaries, diagnosis notes) — broadcast to the
+          // collapsed drawer header. Not routed to handoff callbacks; the
+          // activity line is global, not per-task.
+          if (evt.type === 'terminal:activity') {
+            safeSendUnified('terminal:activity', evt);
+            res.writeHead(200).end(JSON.stringify({ ok: true }));
+            return;
           }
           // OS-level alert when a browser sign-in window needs the user — the
           // in-app cards render silently in the queue; the window itself opens

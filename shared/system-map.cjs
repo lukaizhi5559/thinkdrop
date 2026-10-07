@@ -106,17 +106,79 @@ function listLogs() {
   } catch (_) { return []; }
 }
 
-function tailLog(name, n = 80) {
+// Private: sanitize name → {file, lines} | {error}
+function _readLog(name) {
   const safe = String(name || '').replace(/\.log$/i, '').replace(/[^\w-]/g, '');
-  if (!safe) return '(no log name given — try: ' + listLogs().slice(0, 6).map(l => l.file).join(', ') + ')';
+  if (!safe) return { error: '(no log name given — try: ' + listLogs().slice(0, 6).map(l => l.file).join(', ') + ')' };
   const file = path.join(logsDir(), safe + '.log');
   if (!fs.existsSync(file)) {
     const avail = listLogs().map(l => l.file).join(', ') || '(none)';
-    return `(no log "${safe}.log" — available: ${avail})`;
+    return { error: `(no log "${safe}.log" — available: ${avail})` };
   }
   const lines = fs.readFileSync(file, 'utf8').split('\n').filter(l => l.trim());
-  const tail = lines.slice(-Math.max(1, Math.min(n, 500)));
-  return tail.length ? tail.join('\n') : `(${safe}.log is empty)`;
+  return { file, safe, lines };
+}
+
+function tailLog(name, n = 80) {
+  const r = _readLog(name);
+  if (r.error) return r.error;
+  const tail = r.lines.slice(-Math.max(1, Math.min(n, 500)));
+  return tail.length ? tail.join('\n') : `(${r.safe}.log is empty)`;
+}
+
+// First N lines — startup/boot failures live here; tail never sees them.
+function headLog(name, n = 50) {
+  const r = _readLog(name);
+  if (r.error) return r.error;
+  const head = r.lines.slice(0, Math.max(1, Math.min(n, 500)));
+  return head.length ? head.join('\n') : `(${r.safe}.log is empty)`;
+}
+
+// Regex search with ±context lines and line numbers — the diagnostic
+// workhorse ("find EADDRINUSE and what happened around it"). Output capped.
+function grepLog(name, pattern, { context = 3, maxMatches = 25, ci = true } = {}) {
+  const r = _readLog(name);
+  if (r.error) return r.error;
+  let re;
+  try { re = new RegExp(pattern, ci ? 'i' : ''); }
+  catch (e) { return `(invalid pattern "${pattern}": ${e.message})`; }
+  const hits = [];
+  for (let i = 0; i < r.lines.length && hits.length < maxMatches; i++) {
+    if (re.test(r.lines[i])) hits.push(i);
+  }
+  if (!hits.length) return `(no "${pattern}" in ${r.safe}.log — file has ${r.lines.length} lines)`;
+  // Merge context windows
+  const windows = [];
+  for (const h of hits) {
+    const lo = Math.max(0, h - context), hi = Math.min(r.lines.length - 1, h + context);
+    const last = windows[windows.length - 1];
+    if (last && lo <= last.hi + 1) last.hi = Math.max(last.hi, hi);
+    else windows.push({ lo, hi });
+  }
+  const out = [];
+  let budget = 15000;
+  for (const w of windows) {
+    if (out.length && budget > 0) out.push('…');
+    for (let i = w.lo; i <= w.hi && budget > 0; i++) {
+      const line = `L${i + 1}: ${r.lines[i]}`;
+      out.push(line);
+      budget -= line.length;
+    }
+    if (budget <= 0) { out.push('(output capped)'); break; }
+  }
+  return out.join('\n');
+}
+
+// Lines[from..to] with line numbers — zoom into a region grep located.
+function logRange(name, from, to) {
+  const r = _readLog(name);
+  if (r.error) return r.error;
+  const lo = Math.max(1, parseInt(from, 10) || 1);
+  const hi = Math.min(r.lines.length, Math.min(lo + 399, parseInt(to, 10) || lo + 80));
+  if (lo > r.lines.length) return `(${r.safe}.log has ${r.lines.length} lines — ${from} is past the end)`;
+  const out = [];
+  for (let i = lo; i <= hi; i++) out.push(`L${i}: ${r.lines[i - 1]}`);
+  return out.join('\n');
 }
 
 // ── Rendered blocks for prompts ──────────────────────────────────────────────
@@ -132,6 +194,7 @@ function renderEnvironment() {
     '## ThinkDrop Environment',
     `Project root: ${projectRoot()}`,
     `Service logs: ${logsDir()}/ — main.log (Electron main), comms-graph.log (planning/routing/handoffs), command.log (this service), plus per-service <name>.log files. When a step fails for non-CLI reasons (dispatch, planning, an agent that never ran), pty_exec "tail -n 100 ${logsDir()}/<name>.log" BEFORE concluding — the real error is usually there.`,
+    `Log reads: tail -n 100 <file> for recent activity; grep -n -C3 '<pattern>' <file> for a specific error + context; head -n 50 <file> for startup/boot failures.`,
     `User data: ${THINKDROP_HOME}/ — plans/ (plan_*.md task plans with status frontmatter), agents/ (built agent descriptors), browser-profiles/ (OAuth sessions — a fresh profile means signed out), tokens/ (captured credentials).`,
     'Do not modify files under ~/.thinkdrop or logs/ — read-only diagnosis.',
   ].join('\n');
@@ -229,7 +292,7 @@ function resumablePlans() {
 module.exports = {
   THINKDROP_HOME, PLANS_DIR,
   LAYOUT, SERVICE_PORTS,
-  projectRoot, logsDir, listLogs, tailLog,
+  projectRoot, logsDir, listLogs, tailLog, headLog, grepLog, logRange,
   renderLayout, renderEnvironment,
   findPlans, resumablePlans,
 };
