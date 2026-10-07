@@ -52,6 +52,8 @@
     "@splidejs/splide": "4.1.4",
     "@thinkdrop/stategraph": "github:lukaizhi5559/thinkdrop-stategraph-module",
     "@types/react-syntax-highlighter": "^15.5.13",
+    "@xterm/addon-fit": "0.10.0",
+    "@xterm/xterm": "5.5.0",
     "animate.css": "4.1.1",
     "class-variance-authority": "^0.7.0",
     "clsx": "^2.0.0",

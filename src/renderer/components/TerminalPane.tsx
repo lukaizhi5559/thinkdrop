@@ -1,4 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
+import { Terminal } from '@xterm/xterm';
+import { FitAddon } from '@xterm/addon-fit';
+import '@xterm/xterm/css/xterm.css';
 
 const { ipcRenderer } = window.electron;
 
@@ -28,14 +31,20 @@ interface TerminalPaneProps {
 export function TerminalPane({ visible }: TerminalPaneProps) {
   const [sessions, setSessions] = useState<SessionMeta[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
-  const [screen, setScreen] = useState('');
   const [prompt, setPrompt] = useState<string | null>(null);
   const [exited, setExited] = useState<number | null>(null);
   const [input, setInput] = useState('');
   const [sensitive, setSensitive] = useState(false);
+  const sensitiveRef = useRef(false);
+  sensitiveRef.current = sensitive;
   const [err, setErr] = useState<string | null>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
-  const scrollRef = useRef<HTMLDivElement>(null);
+  const termHostRef = useRef<HTMLDivElement>(null);
+  const termRef = useRef<Terminal | null>(null);
+  const fitRef = useRef<FitAddon | null>(null);
+  // Per-session raw stream cursors — read mode:'raw' pages deltas via offset.
+  const rawCursorRef = useRef<Record<string, number>>({});
+  const activeIdRef = useRef<string | null>(null);
 
   const act = useCallback(async (payload: any) => {
     try {
@@ -61,25 +70,71 @@ export function TerminalPane({ visible }: TerminalPaneProps) {
   }, [act, activeId]);
 
   const refreshScreen = useCallback(async () => {
-    if (!activeId) return;
-    const r = await act({ action: 'read', sessionId: activeId });
+    const sid = activeIdRef.current;
+    if (!sid) return;
+    const cursor = rawCursorRef.current[sid] ?? null;
+    const r = await act({ action: 'read', sessionId: sid, mode: 'raw', cursor });
     if (r?.ok) {
-      setScreen(r.output || '');
+      if (typeof r.offset === 'number') rawCursorRef.current[sid] = r.offset;
+      if (r.data) termRef.current?.write(r.data);
       setPrompt(r.prompt || null);
       setExited(r.exited ? r.exitCode : null);
       setErr(null);
     } else {
       setErr(r?.error || null);
     }
-  }, [act, activeId]);
+  }, [act]);
 
   useEffect(() => {
     if (!visible) return;
     refreshSessions();
-    const t = setInterval(() => { refreshScreen(); }, 900);
+    const t = setInterval(() => { refreshScreen(); }, 400);
     const s = setInterval(refreshSessions, 5000);
     return () => { clearInterval(t); clearInterval(s); };
   }, [visible, refreshSessions, refreshScreen]);
+
+  // xterm lifecycle — create once; raw deltas stream in via refreshScreen.
+  useEffect(() => {
+    if (!visible || !termHostRef.current || termRef.current) return;
+    const term = new Terminal({
+      fontFamily: 'Menlo, Monaco, "Courier New", monospace',
+      fontSize: 12,
+      lineHeight: 1.25,
+      cursorBlink: true,
+      scrollback: 2000,
+      theme: {
+        background: '#0d0d0d',
+        foreground: '#e5e5e5',
+        cursor: '#60a5fa',
+        selectionBackground: 'rgba(96,165,250,0.3)',
+      },
+    });
+    const fit = new FitAddon();
+    term.loadAddon(fit);
+    term.open(termHostRef.current);
+    fit.fit();
+    termRef.current = term;
+    fitRef.current = fit;
+
+    // Direct keystrokes → PTY (arrows, Ctrl-C, TUI keys all work).
+    term.onData((d) => {
+      const sid = activeIdRef.current;
+      if (sid) act({ action: 'send', sessionId: sid, text: d, sensitive: sensitiveRef.current });
+    });
+
+    // Fit → PTY resize on container size change.
+    const ro = new ResizeObserver(() => {
+      try {
+        fit.fit();
+        const sid = activeIdRef.current;
+        if (sid) act({ action: 'resize', sessionId: sid, cols: term.cols, rows: term.rows });
+      } catch (_) {}
+    });
+    ro.observe(termHostRef.current);
+    return () => { ro.disconnect(); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // host div only exists once a session is selected — !activeId gates it
+  }, [visible, !!activeId]);
 
   // Agent sessions — when an agent opens a PTY (cli.agent pty_exec etc.) jump
   // straight to it so the pane shows the live work without manual selection.
@@ -96,15 +151,24 @@ export function TerminalPane({ visible }: TerminalPaneProps) {
     } catch (_) { return; }
   }, [refreshSessions]);
 
+  // Session switch — reset the emulator and replay the session's full
+  // buffered output (cursor null → rawSince returns everything).
   useEffect(() => {
-    if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
-  }, [screen]);
+    activeIdRef.current = activeId;
+    if (!activeId) return;
+    termRef.current?.reset();
+    delete rawCursorRef.current[activeId];
+    refreshScreen();
+    try {
+      const fit = fitRef.current, term = termRef.current;
+      if (fit && term) { fit.fit(); act({ action: 'resize', sessionId: activeId, cols: term.cols, rows: term.rows }); }
+    } catch (_) {}
+  }, [activeId, act, refreshScreen]);
 
   const openSession = async () => {
     const r = await act({ action: 'open', label: 'user terminal', managedBy: 'user' });
     if (r?.ok) {
       setActiveId(r.sessionId);
-      setScreen(r.screen || '');
       refreshSessions();
       inputRef.current?.focus();
     } else {
@@ -140,7 +204,7 @@ export function TerminalPane({ visible }: TerminalPaneProps) {
       <div className="flex items-center gap-2 px-2 pb-1">
         <select
           value={activeId || ''}
-          onChange={e => { setActiveId(e.target.value || null); setScreen(''); }}
+          onChange={e => { setActiveId(e.target.value || null); }}
           className="flex-1 bg-[#2a2a2a] text-gray-300 text-xs rounded px-2 py-1 border border-white/10 outline-none"
           style={{ fontFamily: 'Menlo, monospace' }}
         >
@@ -173,20 +237,13 @@ export function TerminalPane({ visible }: TerminalPaneProps) {
       <div
         className="flex-1 flex flex-col bg-black/40 rounded mx-2 overflow-hidden"
         style={{ minHeight: 0 }}
-        onClick={() => inputRef.current?.focus()}
+        onClick={() => termRef.current?.focus()}
       >
-        {/* Screen */}
-        <div
-          ref={scrollRef}
-          className="flex-1 overflow-auto px-3 py-1 cursor-text"
-          style={{ minHeight: 0 }}
-        >
-          <pre
-            className="text-gray-200 whitespace-pre-wrap break-all"
-            style={{ fontFamily: 'Menlo, Monaco, "Courier New", monospace', fontSize: 12, lineHeight: '15px', margin: 0 }}
-          >
-            {screen || (activeId ? '(waiting for output…)' : 'No session — click "+ New" or start an agent task.')}
-          </pre>
+        {/* Screen — xterm emulator fed by the session's raw ANSI stream */}
+        <div className="flex-1 px-2 py-1" style={{ minHeight: 0 }}>
+          {activeId
+            ? <div ref={termHostRef} className="h-full w-full" />
+            : <div className="px-1 py-1 text-gray-500 text-xs" style={{ fontFamily: 'Menlo, monospace' }}>No session — click "+ New" or start an agent task.</div>}
         </div>
 
         {/* Prompt banner */}
