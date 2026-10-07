@@ -1462,6 +1462,14 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
         });
       };
       switch (data.type) {
+        case 'plan:approve_failed':
+          // Approval click landed but the resume never started — undo the
+          // optimistic 'executing' phase and show the real error.
+          setPhase('failed');
+          setPlanMessage(`Approval failed: ${data.error || 'task could not be resumed'}`);
+          setIsSubmitting?.(false);
+          break;
+
         case 'preflight:start':
           setPhase('preflight');
           setPreflightAgents([]);

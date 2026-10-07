@@ -4932,6 +4932,26 @@ function checkNodeJs() {
   }
 }
 
+// ── Single instance ──────────────────────────────────────────────────────────
+// A second Electron process must not spawn: it fails to bind the overlay-control
+// port (:3010) and becomes an invisible zombie that still answers comms-graph
+// handoff notifications — tasks "dispatch" into the dead instance and nothing
+// ever runs. (Observed: stale 5h-old Electron held :3010 while a fresh one
+// couldn't bind; approved plan runs silently went nowhere.)
+if (!app.requestSingleInstanceLock()) {
+  console.error('[App] Another ThinkDrop instance is already running — quitting this one');
+  app.quit();
+}
+app.on('second-instance', () => {
+  // Focus the live instance instead of spawning a zombie.
+  try {
+    if (unifiedWindow && !unifiedWindow.isDestroyed()) {
+      if (!unifiedWindow.isVisible()) unifiedWindow.showInactive();
+      unifiedWindow.focus();
+    }
+  } catch (_) {}
+});
+
 app.whenReady().then(async () => {
   // ── Register custom protocol for serving cached images ───────────────────────
   const { protocol } = require('electron');
@@ -6190,8 +6210,21 @@ app.whenReady().then(async () => {
       const handoffRunner = require('./handoffRunner');
       console.log(`[Plan:DEBUG] plan:approve — handoff task ${taskId} resuming with plan ${planFile}`);
       safeSendUnified('automation:progress', { type: 'plan:approved', planFile, taskId });
-      handoffRunner.resume(taskId, planFile).catch(err => {
+      handoffRunner.resume(taskId, planFile).then(res => {
+        if (res && res.ok === false) {
+          // Resume couldn't even start (e.g. pending context lost in a stale
+          // instance) — tell the UI so it doesn't sit on "approved — running".
+          safeSendUnified('automation:progress', {
+            type: 'plan:approve_failed', planFile, taskId,
+            error: res.error || 'resume failed',
+          });
+        }
+      }).catch(err => {
         console.error(`[Plan] Handoff resume ${taskId} failed:`, err.message);
+        safeSendUnified('automation:progress', {
+          type: 'plan:approve_failed', planFile, taskId,
+          error: err.message,
+        });
       });
       return;
     }
