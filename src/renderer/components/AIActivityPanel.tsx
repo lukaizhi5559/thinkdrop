@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect, useCallback, forwardRef, useImperativeHandle } from 'react';
+import type { MouseEvent as ReactMouseEvent } from 'react';
 import { TerminalPane } from './TerminalPane';
 
 const { ipcRenderer } = window.electron;
@@ -25,7 +26,15 @@ interface LogEntry {
 
 export const AIActivityPanel = forwardRef<AIActivityPanelHandle, AIActivityPanelProps>(
   ({ isDebugMode, isRunning, currentOperation }, ref) => {
-    const [isExpanded, setIsExpanded] = useState(false);
+    // Panel height in px — drag-resizable. 40 = collapsed header row; default
+    // expanded 288; full snaps to ~85% of the window so the terminal can take
+    // over the feed area while the prompt bar stays visible.
+    const COLLAPSED_H = 40, DEFAULT_H = 288;
+    const _fullHeight = () => Math.max(DEFAULT_H, Math.round(window.innerHeight * 0.85));
+    const [panelHeight, setPanelHeight] = useState(COLLAPSED_H);
+    const [dragging, setDragging] = useState(false);
+    const dragRef = useRef<{ startY: number; startH: number } | null>(null);
+    const isExpanded = panelHeight > 80;
     const [view, setView] = useState<'activity' | 'terminal'>('terminal');
     const [logs, setLogs] = useState<LogEntry[]>([]);
     const [autoDebug, setAutoDebug] = useState(false);
@@ -39,7 +48,7 @@ export const AIActivityPanel = forwardRef<AIActivityPanelHandle, AIActivityPanel
     // Auto-expand when entering debug mode
     useEffect(() => {
       if (isDebugMode) {
-        setIsExpanded(true);
+        setPanelHeight(DEFAULT_H);
       }
     }, [isDebugMode]);
 
@@ -77,7 +86,7 @@ export const AIActivityPanel = forwardRef<AIActivityPanelHandle, AIActivityPanel
             scheduledRunningRef.current = true;
             setScheduledRunning(true);
             setLogs([{ type: 'status', content: `⏰ Reminder fired: "${data.label || data.triggerPrompt || 'scheduled task'}"`, timestamp: Date.now() }]);
-            setIsExpanded(true);
+            setPanelHeight(DEFAULT_H);
             break;
           }
           case 'plan_ready': {
@@ -325,22 +334,70 @@ export const AIActivityPanel = forwardRef<AIActivityPanelHandle, AIActivityPanel
   // Always show panel - compute activity state
   const hasActivity = isRunning || currentOperation || isCommandRunning || scheduledRunning;
 
-  // Toggle handler for chevron
+  // Toggle handler for chevron / header-row click
   const handleToggle = () => {
-    setIsExpanded(prev => !prev);
+    setPanelHeight(h => (h > COLLAPSED_H + 16 ? COLLAPSED_H : DEFAULT_H));
+  };
+
+  // Top-edge drag resize — live height during drag (transition off), snap
+  // bands on release: near-bottom → collapsed, near-default → 288, past
+  // ~70% of full → full height. Double-click the grip jumps full/collapse.
+  const _snapHeight = (h: number) => {
+    const full = _fullHeight();
+    if (h < 72) return COLLAPSED_H;
+    if (h > full * 0.70) return full;
+    if (Math.abs(h - DEFAULT_H) < 40) return DEFAULT_H;
+    return h;
+  };
+  const handleDragStart = (e: ReactMouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    dragRef.current = { startY: e.clientY, startH: panelHeight };
+    setDragging(true);
+    const prevSelect = document.body.style.userSelect;
+    document.body.style.userSelect = 'none';
+    const onMove = (ev: MouseEvent) => {
+      const d = dragRef.current;
+      if (!d) return;
+      const next = Math.min(Math.max(d.startH + (d.startY - ev.clientY), COLLAPSED_H), _fullHeight());
+      setPanelHeight(next);
+    };
+    const onUp = (ev: MouseEvent) => {
+      window.removeEventListener('mousemove', onMove);
+      document.body.style.userSelect = prevSelect;
+      setDragging(false);
+      const d = dragRef.current;
+      dragRef.current = null;
+      if (d) setPanelHeight(_snapHeight(Math.min(Math.max(d.startH + (d.startY - ev.clientY), COLLAPSED_H), _fullHeight())));
+    };
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp, { once: true });
+  };
+  const handleGripDoubleClick = (e: ReactMouseEvent) => {
+    e.stopPropagation();
+    setPanelHeight(h => (h > _fullHeight() * 0.7 ? COLLAPSED_H : _fullHeight()));
   };
 
   // Unified render - always shows, just different heights
   return (
-    <div 
-      className={`border-t bg-[#1e1e1e] transition-all duration-300 ease-in-out flex flex-col ${
-        isExpanded ? 'h-72' : 'h-10'
-      }`}
-      style={{ 
+    <div
+      className={`relative border-t bg-[#1e1e1e] ${dragging ? '' : 'transition-all duration-300 ease-in-out'} flex flex-col`}
+      style={{
         borderColor: 'rgba(255, 255, 255, 0.1)',
-        overflow: 'hidden'
+        overflow: 'hidden',
+        height: panelHeight,
       }}
     >
+      {/* Drag-resize handle — top edge; separate from the row-toggle so a
+          click still expands/collapses while a drag resizes freely. */}
+      <div
+        className="absolute top-0 left-0 right-0 h-2 cursor-ns-resize z-10 group"
+        onMouseDown={handleDragStart}
+        onDoubleClick={handleGripDoubleClick}
+        title="Drag to resize · double-click for full height"
+      >
+        <div className="mx-auto mt-[3px] w-10 h-1 rounded-full bg-white/10 group-hover:bg-white/30 transition-colors" />
+      </div>
       {/* Header - Icon only, minimal like Windsurf. Click anywhere on the
           row to expand/collapse; action buttons stopPropagation below. */}
       <div

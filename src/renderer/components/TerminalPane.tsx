@@ -34,7 +34,7 @@ export function TerminalPane({ visible }: TerminalPaneProps) {
   const [input, setInput] = useState('');
   const [sensitive, setSensitive] = useState(false);
   const [err, setErr] = useState<string | null>(null);
-  const inputRef = useRef<HTMLInputElement>(null);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
 
   const act = useCallback(async (payload: any) => {
@@ -114,7 +114,8 @@ export function TerminalPane({ visible }: TerminalPaneProps) {
 
   const sendLine = async (text: string) => {
     if (!activeId) return;
-    const r = await act({ action: 'send', sessionId: activeId, text: text + '\r', sensitive });
+    // \n → \r so multi-line input executes as typed lines in the PTY.
+    const r = await act({ action: 'send', sessionId: activeId, text: text.replace(/\n/g, '\r') + '\r', sensitive });
     if (!r?.ok) setErr(r?.error || null);
     setTimeout(refreshScreen, 120);
   };
@@ -126,6 +127,12 @@ export function TerminalPane({ visible }: TerminalPaneProps) {
   };
 
   const isPassword = prompt === 'password';
+
+  // Warp-style prompt prefix — show the session's working directory.
+  const activeMeta = sessions.find(s => s.id === activeId)?.meta;
+  const cwdLabel = activeMeta?.cwd
+    ? `${activeMeta.cwd.replace(/^\/Users\/[^/]+/, '~')} %`
+    : '~ %';
 
   return (
     <div className="flex flex-col h-full" style={{ minHeight: 0 }}>
@@ -162,80 +169,99 @@ export function TerminalPane({ visible }: TerminalPaneProps) {
         )}
       </div>
 
-      {/* Screen */}
+      {/* Terminal block — screen + prompt read as one unit (Warp-style) */}
       <div
-        ref={scrollRef}
-        onClick={() => inputRef.current?.focus()}
-        className="flex-1 overflow-auto px-3 py-1 bg-black/40 rounded mx-2 cursor-text"
+        className="flex-1 flex flex-col bg-black/40 rounded mx-2 overflow-hidden"
         style={{ minHeight: 0 }}
+        onClick={() => inputRef.current?.focus()}
       >
-        <pre
-          className="text-gray-200 whitespace-pre-wrap break-all"
-          style={{ fontFamily: 'Menlo, Monaco, "Courier New", monospace', fontSize: 12, lineHeight: '15px', margin: 0 }}
+        {/* Screen */}
+        <div
+          ref={scrollRef}
+          className="flex-1 overflow-auto px-3 py-1 cursor-text"
+          style={{ minHeight: 0 }}
         >
-          {screen || (activeId ? '(waiting for output…)' : 'No session — click "+ New" or start an agent task.')}
-        </pre>
-      </div>
-
-      {/* Prompt banner */}
-      {isPassword && (
-        <div className="mx-2 mt-1 px-2 py-1 rounded bg-amber-500/15 text-amber-300 text-xs">
-          Password prompt detected — type below; transcript capture is paused while "sensitive" is on.
+          <pre
+            className="text-gray-200 whitespace-pre-wrap break-all"
+            style={{ fontFamily: 'Menlo, Monaco, "Courier New", monospace', fontSize: 12, lineHeight: '15px', margin: 0 }}
+          >
+            {screen || (activeId ? '(waiting for output…)' : 'No session — click "+ New" or start an agent task.')}
+          </pre>
         </div>
-      )}
-      {exited !== null && (
-        <div className="mx-2 mt-1 px-2 py-1 rounded bg-white/5 text-gray-400 text-xs">
-          Session exited (code {exited}).
-        </div>
-      )}
-      {err && (
-        <div className="mx-2 mt-1 px-2 py-1 rounded bg-red-500/10 text-red-400 text-xs">{err}</div>
-      )}
 
-      {/* Input row */}
-      <div className="flex items-center gap-1.5 px-2 pt-1.5 pb-1.5">
-        <button
-          onClick={() => sendCtrl('c')}
-          disabled={!activeId || exited !== null}
-          className="p-1.5 rounded bg-white/5 text-gray-400 hover:bg-white/10 hover:text-gray-200 disabled:opacity-40 transition-colors"
-          title="Interrupt — sends Ctrl-C to the terminal"
-        >
-          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
-            <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
-          </svg>
-        </button>
-        <button
-          onClick={() => sendCtrl('esc')}
-          disabled={!activeId || exited !== null}
-          className="px-1.5 py-1 text-[10px] font-mono rounded bg-white/5 text-gray-400 hover:bg-white/10 hover:text-gray-200 disabled:opacity-40 transition-colors"
-          title="Escape — sends Esc (for terminal menus and prompts)"
-        >
-          esc
-        </button>
-        <button
-          onClick={() => setSensitive(s => !s)}
-          className={`p-1.5 rounded transition-colors ${sensitive ? 'bg-amber-500/25 text-amber-300' : 'bg-white/5 text-gray-400 hover:bg-white/10 hover:text-gray-200'}`}
-          title={sensitive ? 'Sensitive input on — transcript capture paused' : 'Sensitive input off — click to hide what you type from logs'}
-        >
-          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <rect x="3" y="11" width="18" height="11" rx="2" />
-            <path d="M7 11V7a5 5 0 0 1 10 0v4" />
-          </svg>
-        </button>
-        <input
-          ref={inputRef}
-          value={input}
-          onChange={e => setInput(e.target.value)}
-          onKeyDown={e => {
-            if (e.key === 'Enter') { sendLine(input); setInput(''); }
-            e.stopPropagation();
-          }}
-          disabled={!activeId || exited !== null}
-          placeholder={activeId ? (isPassword ? 'type password, press Enter' : 'type, Enter to send') : 'select or open a session'}
-          type={sensitive || isPassword ? 'password' : 'text'}
-          className="flex-1 bg-[#2a2a2a] text-gray-200 text-xs rounded px-2 py-1 border border-white/10 outline-none focus:border-blue-500/40 disabled:opacity-40"
-          style={{ fontFamily: 'Menlo, monospace' }}
-        />
+        {/* Prompt banner */}
+        {isPassword && (
+          <div className="px-3 py-1 bg-amber-500/15 text-amber-300 text-xs">
+            Password prompt detected — type below; transcript capture is paused while "sensitive" is on.
+          </div>
+        )}
+        {exited !== null && (
+          <div className="px-3 py-1 bg-white/5 text-gray-400 text-xs">
+            Session exited (code {exited}).
+          </div>
+        )}
+        {err && (
+          <div className="px-3 py-1 bg-red-500/10 text-red-400 text-xs">{err}</div>
+        )}
+
+        {/* Divider */}
+        <div className="border-t border-white/10" />
+
+        {/* Prompt row — cwd prefix + multi-line input + controls */}
+        <div className="flex items-end gap-2 px-3 py-1.5">
+          <span
+            className="text-gray-500 whitespace-nowrap select-none pb-[3px]"
+            style={{ fontFamily: 'Menlo, Monaco, "Courier New", monospace', fontSize: 12 }}
+          >
+            {cwdLabel}
+          </span>
+          <textarea
+            ref={inputRef}
+            value={input}
+            rows={Math.max(1, Math.min(4, input.split('\n').length))}
+            onChange={e => setInput(e.target.value)}
+            onKeyDown={e => {
+              if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendLine(input); setInput(''); }
+              e.stopPropagation();
+            }}
+            disabled={!activeId || exited !== null}
+            placeholder={activeId ? (isPassword ? 'type password, Enter to send' : '') : 'select or open a session'}
+            className="flex-1 bg-transparent text-gray-200 text-xs outline-none resize-none disabled:opacity-40 placeholder:text-gray-600"
+            style={{
+              fontFamily: 'Menlo, Monaco, "Courier New", monospace', fontSize: 12, lineHeight: '18px', maxHeight: 90, overflowY: 'auto',
+              // Textareas can't use type=password — mask via WebkitTextSecurity (Chromium).
+              ...((sensitive || isPassword) ? { WebkitTextSecurity: 'disc' } as any : {}),
+            }}
+          />
+          <button
+            onClick={() => sendCtrl('esc')}
+            disabled={!activeId || exited !== null}
+            className="px-1.5 py-1 text-[10px] font-mono rounded bg-white/5 text-gray-400 hover:bg-white/10 hover:text-gray-200 disabled:opacity-40 transition-colors shrink-0"
+            title="Escape — sends Esc (for terminal menus and prompts)"
+          >
+            esc
+          </button>
+          <button
+            onClick={() => sendCtrl('c')}
+            disabled={!activeId || exited !== null}
+            className="p-1.5 rounded bg-white/5 text-gray-400 hover:bg-white/10 hover:text-gray-200 disabled:opacity-40 transition-colors shrink-0"
+            title="Interrupt — sends Ctrl-C to the terminal"
+          >
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+              <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
+            </svg>
+          </button>
+          <button
+            onClick={() => setSensitive(s => !s)}
+            className={`p-1.5 rounded transition-colors shrink-0 ${sensitive ? 'bg-amber-500/25 text-amber-300' : 'bg-white/5 text-gray-400 hover:bg-white/10 hover:text-gray-200'}`}
+            title={sensitive ? 'Sensitive input on — transcript capture paused' : 'Sensitive input off — click to hide what you type from logs'}
+          >
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <rect x="3" y="11" width="18" height="11" rx="2" />
+              <path d="M7 11V7a5 5 0 0 1 10 0v4" />
+            </svg>
+          </button>
+        </div>
       </div>
     </div>
   );
