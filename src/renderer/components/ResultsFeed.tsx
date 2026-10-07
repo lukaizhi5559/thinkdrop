@@ -45,7 +45,7 @@ export type FeedEntry =
   | { id: string; ts: number; kind: 'proactive'; text: string; thoughtId?: string; pending?: boolean; exchangeId?: string; historic?: boolean }
   | { id: string; ts: number; kind: 'plan-check'; check: import('./PlanCheckCard').PlanCheckPayload; exchangeId?: string }
   | { id: string; ts: number; kind: 'plan-question'; planId: string | null; question: string; options: import('./QuestionCard').QuestionOption[]; answered?: string; exchangeId?: string }
-  | { id: string; ts: number; kind: 'plan-review'; review: { planId: string; taskNum: number; title?: string; prompt?: string; priorResults?: { taskNum: number; result: string }[]; resolved?: boolean; skipped?: boolean }; exchangeId?: string }
+  | { id: string; ts: number; kind: 'plan-review'; review: { planId: string; taskNum: number; title?: string; prompt?: string; gate?: 'commit' | 'step' | 'auto'; priorResults?: { taskNum: number; result: string }[]; resolved?: boolean; skipped?: boolean }; exchangeId?: string }
   | { id: string; ts: number; kind: 'system'; text: string; exchangeId?: string; historic?: boolean };
 
 interface ResultsFeedProps {
@@ -898,6 +898,7 @@ const FeedEntryRow = React.memo(function FeedEntryRow({
       }
       const sendReview = (action: string) =>
         ipcRenderer?.send('plan:task-review', { planId: r.planId, taskNum: r.taskNum, action });
+      const stepGate = r.gate === 'step';
       return (
         <div className="feed-entry" style={{ margin: '4px 0 12px', position: 'relative', paddingBottom: 10 }}>
           <div style={{
@@ -911,13 +912,15 @@ const FeedEntryRow = React.memo(function FeedEntryRow({
                 <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
               </svg>
               <span style={{ color: '#fcd34d', fontSize: '0.72rem', fontWeight: 600 }}>
-                This task makes a real change — review what was gathered, then approve to continue.
+                {stepGate
+                  ? 'Step-through run — review this task, then approve to continue.'
+                  : 'This task makes a real change — review what was gathered, then approve to continue.'}
               </span>
             </div>
             <div className="flex items-center gap-2" style={{ marginBottom: 6 }}>
               <div className="flex-shrink-0 w-3 h-3 rounded-full" style={{ backgroundColor: '#f59e0b' }} />
               <span style={{ color: '#fcd34d', fontSize: '0.76rem', fontWeight: 600 }}>
-                Review — Task {r.taskNum}
+                {stepGate ? `Step-through — Task ${r.taskNum}` : `Review — Task ${r.taskNum}`}
               </span>
             </div>
             <div style={{ color: '#e5e7eb', fontSize: '0.74rem', fontWeight: 600 }}>

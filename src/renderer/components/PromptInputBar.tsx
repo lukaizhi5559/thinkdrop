@@ -42,8 +42,9 @@ interface PromptInputBarProps {
    *  highlightsStore) so it can't leak into submitted prompts. */
   selectionPending?: boolean;
   /** Planning mode — active plan-drafting session pinned above the input.
-   *  planName is the dot-syntax name (or null → "plan-<id>" placeholder). */
-  planning?: { active: boolean; planId?: string | null; planName?: string | null } | null;
+   *  planName is the dot-syntax name (or null → "plan-<id>" placeholder);
+   *  planFile backs the Plan Readiness strip's task snapshot + Open plan. */
+  planning?: { active: boolean; planId?: string | null; planName?: string | null; planFile?: string | null } | null;
   /** Toggle planning mode on/off (paperclip-adjacent button or chip ×). */
   onPlanningToggle?: () => void;
 }
@@ -294,19 +295,36 @@ function PromptInputBarImpl(
         {planning?.active && (
           <div
             className="planning-chip flex items-center gap-1 px-2 py-1 rounded-md text-xs"
-            title={`Planning mode${planning.planName ? `: ${planning.planName}` : ' — drafting a plan'}`}
             style={{
               backgroundColor: 'rgba(34, 211, 238, 0.14)',
               border: '1px solid rgba(34, 211, 238, 0.35)',
               color: '#67e8f9',
             }}
           >
-            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M9 4L3 6v14l6-2 6 2 6-2V4l-6 2-6-2z"/><polyline points="9 4 9 18"/><polyline points="15 6 15 20"/>
-            </svg>
-            <span className="truncate max-w-[180px]">
-              Planning{planning.planName ? `: ${planning.planName}` : ' mode'}
-            </span>
+            {/* Chip body surfaces the Plan Readiness card in the results feed;
+                the × is the only exit-planning affordance. */}
+            <button
+              type="button"
+              className="flex items-center gap-1 hover:opacity-80"
+              title={`Show plan readiness${planning.planName ? ` — ${planning.planName}` : ''}`}
+              style={{ background: 'none', border: 'none', color: 'inherit', padding: 0, cursor: 'pointer' }}
+              onClick={() => {
+                try {
+                  (window as any).electron?.ipcRenderer?.send('plan:check:action', {
+                    planId: planning.planId || null,
+                    planFile: planning.planFile || null,
+                    action: 'show-check',
+                  });
+                } catch (_) {}
+              }}
+            >
+              <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M9 4L3 6v14l6-2 6 2 6-2V4l-6 2-6-2z"/><polyline points="9 4 9 18"/><polyline points="15 6 15 20"/>
+              </svg>
+              <span className="truncate max-w-[180px]">
+                Planning{planning.planName ? `: ${planning.planName}` : ' mode'}
+              </span>
+            </button>
             <button
               onClick={onPlanningToggle}
               className="ml-1 hover:opacity-70"

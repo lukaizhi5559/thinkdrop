@@ -1,7 +1,7 @@
 import 'animate.css';
 import React, { useEffect, useRef, useState } from 'react';
 import type { ScreenOutput, ScreenClearMessage } from './types';
-import { TextScreen } from './TextScreen';
+import { DocScreen } from './DocScreen';
 import { ImageScreen } from './ImageScreen';
 import { CarouselScreen } from './CarouselScreen';
 import { SceneScreen } from './SceneScreen';
@@ -98,6 +98,10 @@ export function ScreenStage({ onOccupancyChange }: { onOccupancyChange?: (occupi
       } else if (dir === 'play') {
         window.dispatchEvent(new CustomEvent('screen:text-play'));
         window.dispatchEvent(new CustomEvent('screen:three-key', { detail: { key: 'play' } }));
+      } else if (dir === 'exit-edit' || dir === 'doc-saved') {
+        // Doc artifact: Esc-in-edit-mode forwards here from _onEscClear; a
+        // successful file save echoes 'doc-saved' for the saved flash.
+        window.dispatchEvent(new CustomEvent('screen:doc-nav', { detail: { dir } }));
       } else {
         // 3D-scene vocabulary: reset / edit / control_mode / preset_*
         window.dispatchEvent(new CustomEvent('screen:three-key', { detail: { key: dir } }));
@@ -333,9 +337,23 @@ function Scrim({ output }: { output: ScreenOutput }) {
 
 // ── Kind dispatch ───────────────────────────────────────────────────────────
 
+/** Plain text that doesn't read as markdown gets fenced so RichContentRenderer
+ *  shows it verbatim (verse/quote passages like "John 3:16" stay unstyled). */
+function textToDoc(output: ScreenOutput): ScreenOutput {
+  const text = output.text || '';
+  const looksMarkdown = /^#{1,6}\s|^\s*[-*]\s|\*\*[^*]+\*\*|\[[^\]]+\]\(|```|^>\s|\|.*\|/m.test(text);
+  const markdown = looksMarkdown ? text : '```\n' + text + '\n```';
+  return {
+    ...output,
+    kind: 'doc',
+    doc: output.doc || { markdown, format: looksMarkdown ? 'MD' : 'TXT', editable: false, sourcePath: null },
+  };
+}
+
 function KindView({ output, animateClass, onDismiss }: { output: ScreenOutput; animateClass: string; onDismiss?: () => void }) {
   switch (output.kind) {
-    case 'text':  return <TextScreen  output={output} animateClass={animateClass} />;
+    case 'text':  return <DocScreen    output={textToDoc(output)} animateClass={animateClass} />;
+    case 'doc':   return <DocScreen    output={output} animateClass={animateClass} />;
     case 'image': return (output.images && output.images.length > 1)
       ? <CarouselScreen output={output} animateClass={animateClass} />
       : <ImageScreen output={output} animateClass={animateClass} />;

@@ -24,6 +24,7 @@
 
 import { useEffect, useState } from 'react';
 import { StepIcon } from './AutomationProgress';
+import { TaskRows, summarizeTasks } from './PlanTaskRows';
 
 const ipcRenderer = (window as any).electron?.ipcRenderer;
 
@@ -69,6 +70,9 @@ export interface PlanCheckItem {
 
 export interface PlanCheckPayload {
   planId: string | null;
+  /** Absolute path of the plan .md — carried so 'open-plan' works even after
+   *  main's pending-check slot has moved on. */
+  planFile?: string;
   items: PlanCheckItem[];
   allClear: boolean;
   authOpened?: string;
@@ -78,7 +82,12 @@ export interface PlanCheckPayload {
 
 interface PlanCheckCardProps {
   check: PlanCheckPayload;
-  /** Run plan — only enabled when allClear. */
+  /** Compact mode (default): one grouped row per task on top; the detailed
+   *  item list below is limited to non-passing rows (issues, pending steps,
+   *  warnings) so action buttons stay reachable. Pass false for the full
+   *  item-by-item audit list. */
+  compact?: boolean;
+  /** Legacy "Run plan" override — unused by the new footer, kept for callers. */
   onRun?: () => void;
 }
 
@@ -106,7 +115,7 @@ function _send(planId: string | null, itemId: string | undefined, action: string
   ipcRenderer?.send('plan:check:action', { planId, itemId, action, ...extra });
 }
 
-export function PlanCheckCard({ check, onRun }: PlanCheckCardProps) {
+export function PlanCheckCard({ check, compact = true }: PlanCheckCardProps) {
   const [confirmBypass, setConfirmBypass] = useState<string | null>(null);
   const [keyInputs, setKeyInputs] = useState<Record<string, string>>({});
   const [submitted, setSubmitted] = useState<Record<string, boolean>>({});
@@ -117,10 +126,10 @@ export function PlanCheckCard({ check, onRun }: PlanCheckCardProps) {
 
   const issues = check.items.filter(i => i.status === 'issue');
   const warns = check.items.filter(i => i.status === 'warn');
-  // Two-stage flow: approval-gated tasks make the primary action "Review plan"
-  // — clicking it starts the run and the approval gate surfaces the actual
-  // "Approve & Run / Skip task" card. Ungated plans go straight to "Run plan".
-  const hasReview = check.items.some(i => i.kind === 'approval-required');
+  // Compact: pass rows are folded into the task summary; issues/warns/pending
+  // still render in detail so their action buttons stay reachable.
+  const detailItems = compact ? check.items.filter(i => i.status !== 'pass') : check.items;
+  const runnable = check.allClear;
 
   const _submitKey = (item: PlanCheckItem, envName: string) => {
     const field = `${item.id}:${envName}`;
@@ -169,8 +178,14 @@ export function PlanCheckCard({ check, onRun }: PlanCheckCardProps) {
         </button>
       </div>
 
+      {compact && (
+        <div style={{ marginBottom: detailItems.length ? 8 : 0 }}>
+          <TaskRows tasks={summarizeTasks(check.items)} compact />
+        </div>
+      )}
+
       <div style={{ display: 'flex', flexDirection: 'column', gap: 7 }}>
-        {check.items.map(item => (
+        {detailItems.map(item => (
           <div key={item.id}>
             <div className="flex items-start gap-2.5">
               <div className="mt-0.5">
@@ -292,35 +307,55 @@ export function PlanCheckCard({ check, onRun }: PlanCheckCardProps) {
         <div style={{ color: COLORS.secondaryText, fontSize: '0.70rem', marginTop: 8 }}>Plan cancelled.</div>
       )}
 
-      {/* Footer — AP "Approve & Run" / "Cancel" pair */}
+      {/* Footer — Cancel / Open plan / Review task / Run all (one line) */}
       {!check.cancelled && (
-        <div className="flex justify-end" style={{ gap: 8, marginTop: 12, borderTop: '1px solid rgba(255,255,255,0.07)', paddingTop: 10 }}>
+        <div className="flex" style={{ gap: 6, marginTop: 12, borderTop: '1px solid rgba(255,255,255,0.07)', paddingTop: 10, flexWrap: 'nowrap' }}>
           <button
             onClick={() => _send(check.planId, undefined, 'cancel')}
             style={{ ..._btnBase, backgroundColor: COLORS.dangerBg, border: COLORS.dangerBorder, color: COLORS.dangerText }}
             onMouseEnter={e => (e.currentTarget.style.backgroundColor = 'rgba(239,68,68,0.18)')}
             onMouseLeave={e => (e.currentTarget.style.backgroundColor = COLORS.dangerBg)}
-          >Cancel plan</button>
+          >Cancel</button>
           <button
-            onClick={onRun}
-            disabled={!check.allClear}
+            onClick={() => _send(check.planId, undefined, 'open-plan', { planFile: check.planFile || '' })}
+            title="Open the full plan in the on-screen document view"
+            style={{ ..._btnBase, backgroundColor: 'transparent', border: COLORS.ghostBorder, color: COLORS.secondaryText }}
+            onMouseEnter={e => (e.currentTarget.style.backgroundColor = 'rgba(255,255,255,0.06)')}
+            onMouseLeave={e => (e.currentTarget.style.backgroundColor = 'transparent')}
+          >Open plan</button>
+          <span style={{ flex: 1 }} />
+          <button
+            onClick={() => _send(check.planId, undefined, 'run-review')}
+            disabled={!runnable}
+            title="Run each task in order, pausing for approval before every task"
+            style={{
+              ..._btnBase, fontWeight: 600,
+              backgroundColor: 'transparent',
+              border: runnable ? '1px solid rgba(96,165,250,0.4)' : '1px solid rgba(255,255,255,0.08)',
+              color: runnable ? '#93c5fd' : COLORS.mutedText,
+              cursor: runnable ? 'pointer' : 'default',
+              opacity: runnable ? 1 : 0.6,
+            }}
+            onMouseEnter={e => { if (runnable) e.currentTarget.style.backgroundColor = 'rgba(59,130,246,0.14)'; }}
+            onMouseLeave={e => (e.currentTarget.style.backgroundColor = 'transparent')}
+          >Review task</button>
+          <button
+            onClick={() => _send(check.planId, undefined, 'run-all')}
+            disabled={!runnable}
+            title="Run all tasks back-to-back — review gates are auto-approved"
             style={{
               ..._btnBase, display: 'flex', alignItems: 'center', gap: 6, fontWeight: 600,
-              backgroundColor: check.allClear ? COLORS.primaryBg : 'transparent',
-              border: check.allClear ? COLORS.primaryBorder : '1px solid rgba(255,255,255,0.08)',
-              color: check.allClear ? COLORS.primaryText : COLORS.mutedText,
-              cursor: check.allClear ? 'pointer' : 'default',
-              opacity: check.allClear ? 1 : 0.6,
+              backgroundColor: runnable ? COLORS.primaryBg : 'transparent',
+              border: runnable ? COLORS.primaryBorder : '1px solid rgba(255,255,255,0.08)',
+              color: runnable ? COLORS.primaryText : COLORS.mutedText,
+              cursor: runnable ? 'pointer' : 'default',
+              opacity: runnable ? 1 : 0.6,
             }}
-            onMouseEnter={e => { if (check.allClear) e.currentTarget.style.backgroundColor = 'rgba(59,130,246,0.30)'; }}
-            onMouseLeave={e => { if (check.allClear) e.currentTarget.style.backgroundColor = COLORS.primaryBg; }}
+            onMouseEnter={e => { if (runnable) e.currentTarget.style.backgroundColor = 'rgba(59,130,246,0.30)'; }}
+            onMouseLeave={e => { if (runnable) e.currentTarget.style.backgroundColor = COLORS.primaryBg; }}
           >
-            {hasReview ? (
-              <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
-            ) : (
-              <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"/></svg>
-            )}
-            {hasReview ? 'Review plan' : 'Run plan'}
+            <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+            Run all
           </button>
         </div>
       )}

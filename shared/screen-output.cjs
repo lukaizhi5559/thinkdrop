@@ -30,7 +30,7 @@
  *   emoji      — accent emoji rendered alongside content (any kind)
  */
 
-const KINDS = ['text', 'image', 'chart', 'effect', 'emoji', 'alert', 'deck', 'scene', 'three'];
+const KINDS = ['text', 'image', 'chart', 'effect', 'emoji', 'alert', 'deck', 'scene', 'three', 'doc'];
 
 const POSITIONS = ['center', 'top', 'bottom', 'banner', 'fullscreen'];
 const SCRIMS = ['none', 'dim', 'blur', 'black', 'white'];
@@ -79,10 +79,14 @@ const KIND_DEFAULTS = {
   deck:   { position: 'fullscreen', scrim: 'blur', durationMs: 0, priority: 40 },
   scene:  { position: 'fullscreen', scrim: 'none', durationMs: 0, priority: 50 },
   three:  { position: 'fullscreen', scrim: 'none', durationMs: 0, priority: 15 },
+  // doc — Claude-style markdown artifact card (preview/source edit, export
+  // menu). Blocking: it carries real chrome (buttons, editable source view).
+  doc:    { position: 'center',     scrim: 'dim',  durationMs: 0, priority: 25 },
 };
 
 /** Max accepted sizes — defensive clamps for a localhost trust boundary. */
 const MAX_TEXT_LEN = 20000;
+const MAX_DOC_LEN = 200000; // doc kind carries full plan/file markdown
 const MAX_TITLE_LEN = 500;
 const MAX_DATAURL_BYTES = 15 * 1024 * 1024; // ~15MB
 const MAX_SLIDES = 40;
@@ -301,6 +305,22 @@ function normalizeScreenOutput(raw) {
     case 'three': {
       out.three = _three(raw.three || {});
       if (!out.three) return { ok: false, error: `three kind requires three.scene: ${THREE_SCENES.join(', ')}` };
+      break;
+    }
+    case 'doc': {
+      // { markdown, format?, editable?, sourcePath? } — sourcePath marks the
+      // display as file-backed: the renderer's Save writes back through
+      // ghostlayer:doc-save. Without it edits stay in-memory.
+      const d = raw.doc && typeof raw.doc === 'object' ? raw.doc : {};
+      const markdown = _str(d.markdown ?? raw.markdown ?? raw.text, MAX_DOC_LEN);
+      if (!markdown) return { ok: false, error: 'doc kind requires doc.markdown' };
+      out.doc = {
+        markdown,
+        format: _str(d.format, 20) || 'MD',
+        editable: d.editable === true,
+        sourcePath: _str(d.sourcePath, 2048),
+      };
+      out.blocking = raw.blocking !== false; // docs default to input capture
       break;
     }
   }

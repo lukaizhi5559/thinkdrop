@@ -2113,10 +2113,19 @@ export function UnifiedOverlay() {
     ipcRenderer.on('unified:clear', handleClear, token);
     ipcRenderer.on('automation:progress', handleAutomationProgress, token);
     // Plan-check card — repeated emits for a planId patch the same feed entry.
-    ipcRenderer.on('plan:check', (data: { planId: string | null; items: any[]; allClear: boolean; authOpened?: string; cancelled?: boolean; error?: string }) => {
+    ipcRenderer.on('plan:check', (data: { planId: string | null; items: any[]; allClear: boolean; authOpened?: string; cancelled?: boolean; error?: string; surface?: boolean }) => {
       const entryId = `plancheck:${data?.planId || 'unknown'}`;
       const existing = feedStore.getState().entries.find(e => e.id === entryId);
-      if (existing) {
+      // `surface` (Planning-mode chip click / "where are we at in the plan") —
+      // drop the old entry so the card re-appends at the feed bottom, and make
+      // sure the results tab is showing.
+      if (data?.surface) {
+        if (existing) feedStore.removeEntry(entryId);
+        setActiveTab('results');
+        setUnreadTabs(prev => { const next = new Set(prev); next.delete('results'); return next; });
+        feedStore.appendEntry({ id: entryId, ts: Date.now(), kind: 'plan-check', check: data } as any);
+        setTimeout(() => scrollToBottom(), 50);
+      } else if (existing) {
         feedStore.patchEntry(entryId, { check: data } as any);
       } else {
         feedStore.appendEntry({ id: entryId, ts: Date.now(), kind: 'plan-check', check: data } as any);
@@ -2834,6 +2843,7 @@ export function UnifiedOverlay() {
         </div>
 
         {/* AI Activity Panel - visible on all tabs */}
+        {/* Commenting out for now until decided on usefulness */} 
         <AIActivityPanel
           ref={aiActivityPanelRef}
           isDebugMode={isDebugMode}

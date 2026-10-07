@@ -250,7 +250,9 @@ async function _schedule(run) {
     // Approval gate — commit-type tasks (book/buy/send/…) hold here until the
     // user reviews what the gather tasks produced and approves via the
     // plan:review card / voice "go ahead". Held tasks are NOT stuck.
-    if (task.approval === 'required' && !run.approved.has(task.num)) {
+    // reviewEach (the card's "Review Task & Run") gates EVERY task — the run
+    // pauses before each dispatch, not just commit tasks.
+    if ((task.approval === 'required' || run.reviewEach) && !run.approved.has(task.num)) {
       if (!run.reviewRequested.has(task.num)) {
         run.reviewRequested.add(task.num);
         const priorResults = _effectiveDeps(run, task)
@@ -262,6 +264,7 @@ async function _schedule(run) {
           title: task.title,
           prompt: task.prompt,
           priorResults,
+          gate: task.approval === 'required' ? 'commit' : 'step',
         };
         _emit('plan:review', payload);
         if (_onReview) { try { _onReview(payload); } catch (_) {} }
@@ -289,7 +292,7 @@ async function _schedule(run) {
     // resulted, dispatched, nor awaiting approval.
     const stuck = run.tasks.filter(t =>
       !run.results.has(t.num)
-      && !(t.approval === 'required' && !run.approved.has(t.num)));
+      && !((t.approval === 'required' || run.reviewEach) && !run.approved.has(t.num)));
     if (stuck.length) {
       for (const t of stuck) {
         _writeTaskStatus(run, t.num, planFormat.TASK_STATUS.FAILED, 'Unsatisfiable dependencies');
@@ -342,6 +345,10 @@ function bindTaskId(planId, taskNum, taskId) {
  * @param {Object} [opts]
  * @param {string[]} [opts.bypassAgents] - agents the user bypassed for auth
  * @param {string} [opts.sessionId]
+ * @param {boolean} [opts.reviewEach] - step-through: every task pauses at the
+ *   review gate before dispatch, not just Approval:required ones
+ * @param {boolean} [opts.autoApprove] - run straight through: pre-approve all
+ *   tasks so no review gate ever holds ("Run All Tasks")
  * @returns {{ok:boolean, planId:string, blockers?:Array, error?:string}}
  */
 async function startPlan(planPath, opts = {}) {
@@ -415,8 +422,14 @@ async function startPlan(planPath, opts = {}) {
     bypassed,
     approved: new Set(),        // task nums the user approved at the review gate
     reviewRequested: new Set(), // dedupe — one plan:review emit per task
+    reviewEach: opts.reviewEach === true,
     cancelled: false,
   };
+  // autoApprove ("Run All Tasks") — every task is pre-approved so no gate
+  // (approval-required or reviewEach) ever holds the run.
+  if (opts.autoApprove === true) {
+    for (const t of run.tasks) run.approved.add(t.num);
+  }
   // Pre-fill results for tasks already done (restart/resume mid-run).
   for (const t of plan.tasks) {
     if (t.status === planFormat.TASK_STATUS.DONE) run.results.set(t.num, { _status: 'done', result: t.result });

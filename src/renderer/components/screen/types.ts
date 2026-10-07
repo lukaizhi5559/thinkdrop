@@ -9,7 +9,7 @@
  * the validator; this file only types what arrives after normalization.
  */
 
-export type ScreenKind = 'text' | 'image' | 'chart' | 'effect' | 'emoji' | 'alert' | 'deck' | 'scene' | 'three';
+export type ScreenKind = 'text' | 'image' | 'chart' | 'effect' | 'emoji' | 'alert' | 'deck' | 'scene' | 'three' | 'doc';
 export type ScreenMood = 'neutral' | 'warm' | 'happy' | 'sad' | 'alert' | 'playful' | 'calm';
 export type ScreenPosition = 'center' | 'top' | 'bottom' | 'banner' | 'fullscreen';
 export type ScreenScrim = 'none' | 'dim' | 'blur' | 'black' | 'white';
@@ -52,6 +52,16 @@ export interface ScreenThree {
   speed: number;   // 0–2 rotation/drift multiplier
   density: number; // 0.1–1 particle/geometry count multiplier
   text?: string;   // optional caption chip
+}
+
+/** kind:'doc' — Claude-style markdown artifact card (preview/source edit,
+ *  export menu). sourcePath marks the display file-backed: Save writes back
+ *  via ghostlayer:doc-save; absent → edits stay in-memory. */
+export interface ScreenDoc {
+  markdown: string;
+  format: string;        // badge label — 'MD', 'TXT', …
+  editable: boolean;
+  sourcePath: string | null;
 }
 
 /** kind:'image' carousel entry — url, local path, or inline data URL. */
@@ -101,6 +111,7 @@ export interface ScreenOutput {
   deck?: ScreenDeck;
   scene?: ScreenScene;
   three?: ScreenThree;
+  doc?: ScreenDoc;
 }
 
 /** IPC payloads */
