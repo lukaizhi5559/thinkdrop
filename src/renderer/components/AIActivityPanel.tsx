@@ -26,7 +26,7 @@ interface LogEntry {
 export const AIActivityPanel = forwardRef<AIActivityPanelHandle, AIActivityPanelProps>(
   ({ isDebugMode, isRunning, currentOperation }, ref) => {
     const [isExpanded, setIsExpanded] = useState(false);
-    const [view, setView] = useState<'activity' | 'terminal'>('activity');
+    const [view, setView] = useState<'activity' | 'terminal'>('terminal');
     const [logs, setLogs] = useState<LogEntry[]>([]);
     const [autoDebug, setAutoDebug] = useState(false);
     const [isCommandRunning, setIsCommandRunning] = useState(false);
@@ -42,6 +42,12 @@ export const AIActivityPanel = forwardRef<AIActivityPanelHandle, AIActivityPanel
         setIsExpanded(true);
       }
     }, [isDebugMode]);
+
+    // Terminal is the default surface; the activity log only takes over while
+    // a scheduled automation is running (its real purpose), then hands back.
+    useEffect(() => {
+      setView(scheduledRunning ? 'activity' : 'terminal');
+    }, [scheduledRunning]);
 
     // Listen for operation status updates
     useEffect(() => {
@@ -328,15 +334,21 @@ export const AIActivityPanel = forwardRef<AIActivityPanelHandle, AIActivityPanel
   return (
     <div 
       className={`border-t bg-[#1e1e1e] transition-all duration-300 ease-in-out flex flex-col ${
-        isExpanded ? 'h-48' : 'h-10'
+        isExpanded ? 'h-72' : 'h-10'
       }`}
       style={{ 
         borderColor: 'rgba(255, 255, 255, 0.1)',
         overflow: 'hidden'
       }}
     >
-      {/* Header - Icon only, minimal like Windsurf */}
-      <div className="flex items-center justify-between px-3 py-2 h-10">
+      {/* Header - Icon only, minimal like Windsurf. Click anywhere on the
+          row to expand/collapse; action buttons stopPropagation below. */}
+      <div
+        className="flex items-center justify-between px-3 py-2 h-10 cursor-pointer select-none"
+        onClick={handleToggle}
+        role="button"
+        aria-expanded={isExpanded}
+      >
         <div className="flex items-center gap-2">
           {/* Activity indicator - pulse when has activity */}
           {hasActivity ? (
@@ -351,30 +363,13 @@ export const AIActivityPanel = forwardRef<AIActivityPanelHandle, AIActivityPanel
             </svg>
           )}
           <span className="text-xs text-gray-400">{scheduledRunning ? 'Running scheduled automation...' : (currentOperation || (hasActivity ? 'Working...' : 'Ready'))}</span>
-
-          {/* Activity / Terminal tab toggle — only when expanded */}
-          {isExpanded && (
-            <div className="flex items-center gap-0.5 ml-2 rounded bg-white/5 p-0.5">
-              {(['activity', 'terminal'] as const).map(v => (
-                <button
-                  key={v}
-                  onClick={() => setView(v)}
-                  className={`px-2 py-0.5 text-[10px] rounded transition-colors ${
-                    view === v ? 'bg-blue-600/30 text-blue-300' : 'text-gray-500 hover:text-gray-300'
-                  }`}
-                >
-                  {v === 'activity' ? 'Activity' : 'Terminal'}
-                </button>
-              ))}
-            </div>
-          )}
         </div>
         
         <div className="flex items-center gap-1">
           {/* Auto-Debug button - only when not running */}
           {isDebugMode && !isCommandRunning && (
             <button
-              onClick={runAutoDebug}
+              onClick={(e) => { e.stopPropagation(); runAutoDebug(); }}
               disabled={autoDebug}
               className="flex items-center gap-1 px-2 py-1 text-xs rounded bg-blue-600/20 text-blue-400 hover:bg-blue-600/30 disabled:opacity-50 transition-colors"
             >
@@ -388,7 +383,8 @@ export const AIActivityPanel = forwardRef<AIActivityPanelHandle, AIActivityPanel
           {/* Stop button - only when command is running */}
           {isCommandRunning && (
             <button
-              onClick={() => {
+              onClick={(e) => {
+                e.stopPropagation();
                 setIsCommandRunning(false);
                 setAutoDebug(false);
                 ipcRenderer.send('operation:cancel');
@@ -405,7 +401,7 @@ export const AIActivityPanel = forwardRef<AIActivityPanelHandle, AIActivityPanel
           {/* Clear button - only show when expanded and has logs */}
           {isExpanded && logs.length > 0 && (
             <button
-              onClick={clearLogs}
+              onClick={(e) => { e.stopPropagation(); clearLogs(); }}
               className="p-1 rounded hover:bg-white/10 text-gray-400 hover:text-gray-200 transition-colors"
               title="Clear terminal"
             >
@@ -417,7 +413,7 @@ export const AIActivityPanel = forwardRef<AIActivityPanelHandle, AIActivityPanel
           )}
           
           <button
-            onClick={handleToggle}
+            onClick={(e) => { e.stopPropagation(); handleToggle(); }}
             className="p-1 rounded hover:bg-white/10 text-gray-400 hover:text-gray-200 transition-colors"
             title={isExpanded ? 'Collapse' : 'Expand'}
           >

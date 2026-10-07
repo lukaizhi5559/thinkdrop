@@ -81,6 +81,21 @@ export function TerminalPane({ visible }: TerminalPaneProps) {
     return () => { clearInterval(t); clearInterval(s); };
   }, [visible, refreshSessions, refreshScreen]);
 
+  // Agent sessions — when an agent opens a PTY (cli.agent pty_exec etc.) jump
+  // straight to it so the pane shows the live work without manual selection.
+  useEffect(() => {
+    const handler = (data: any) => {
+      if (data?.type === 'terminal:session_open' && data.sessionId) {
+        setActiveId(data.sessionId);
+        refreshSessions();
+      }
+    };
+    try {
+      ipcRenderer.on('terminal:session', handler, 'TerminalPane-session');
+      return () => { ipcRenderer.removeListenerByToken('terminal:session', 'TerminalPane-session'); };
+    } catch (_) { return; }
+  }, [refreshSessions]);
+
   useEffect(() => {
     if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
   }, [screen]);
@@ -178,29 +193,34 @@ export function TerminalPane({ visible }: TerminalPaneProps) {
       )}
 
       {/* Input row */}
-      <div className="flex items-center gap-1 px-2 pt-1 pb-1">
+      <div className="flex items-center gap-1.5 px-2 pt-1.5 pb-1.5">
         <button
           onClick={() => sendCtrl('c')}
           disabled={!activeId || exited !== null}
-          className="px-1.5 py-1 text-[10px] rounded bg-white/5 text-gray-400 hover:bg-white/10 disabled:opacity-40"
-          title="Send Ctrl-C"
+          className="p-1.5 rounded bg-white/5 text-gray-400 hover:bg-white/10 hover:text-gray-200 disabled:opacity-40 transition-colors"
+          title="Interrupt — sends Ctrl-C to the terminal"
         >
-          ^C
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+            <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
+          </svg>
         </button>
         <button
           onClick={() => sendCtrl('esc')}
           disabled={!activeId || exited !== null}
-          className="px-1.5 py-1 text-[10px] rounded bg-white/5 text-gray-400 hover:bg-white/10 disabled:opacity-40"
-          title="Send Escape"
+          className="px-1.5 py-1 text-[10px] font-mono rounded bg-white/5 text-gray-400 hover:bg-white/10 hover:text-gray-200 disabled:opacity-40 transition-colors"
+          title="Escape — sends Esc (for terminal menus and prompts)"
         >
           esc
         </button>
         <button
           onClick={() => setSensitive(s => !s)}
-          className={`px-1.5 py-1 text-[10px] rounded transition-colors ${sensitive ? 'bg-amber-500/25 text-amber-300' : 'bg-white/5 text-gray-400 hover:bg-white/10'}`}
-          title="Sensitive input — pauses transcript capture"
+          className={`p-1.5 rounded transition-colors ${sensitive ? 'bg-amber-500/25 text-amber-300' : 'bg-white/5 text-gray-400 hover:bg-white/10 hover:text-gray-200'}`}
+          title={sensitive ? 'Sensitive input on — transcript capture paused' : 'Sensitive input off — click to hide what you type from logs'}
         >
-          🔒
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <rect x="3" y="11" width="18" height="11" rx="2" />
+            <path d="M7 11V7a5 5 0 0 1 10 0v4" />
+          </svg>
         </button>
         <input
           ref={inputRef}

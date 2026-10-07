@@ -137,6 +137,9 @@ contextBridge.exposeInMainWorld('electron', {
         'ghostlayer:hover-interactive',
         'ghostlayer:display-capabilities',
         'ghostlayer:open-scene-prompt',
+        'ghostlayer:edit-focus',
+        'ghostlayer:doc-save',
+        'ghostlayer:doc-export',
         'preflight:open-agents-tab',
         'preflight:recheck',
         'preflight:auth_continue',
@@ -283,6 +286,7 @@ contextBridge.exposeInMainWorld('electron', {
         'plan:check',
         'plan:question',
         'plan:review',
+        'terminal:session',
       ];
       if (validChannels.includes(channel)) {
         const wrapped = (_event, ...args) => func(...args);

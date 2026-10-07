@@ -267,6 +267,15 @@ function _onEscClear() {
     _cancelLockedTask();
     return;
   }
+  // A doc display in source-edit mode gets first dibs — Esc exits the editor,
+  // a second Esc clears the display (the renderer flips `editing` back via
+  // ghostlayer:edit-focus).
+  for (const [id, d] of screenDisplays.entries()) {
+    if (d && d.editing) {
+      try { ghostLayerWindow?.webContents.send('ghostlayer:display-nav', { dir: 'exit-edit', id }); } catch (_) {}
+      return;
+    }
+  }
   if (screenDisplays.size === 0) { _updateEscShortcut(); return; }
   console.log('[Screen] Esc pressed — clearing all displays');
   clearScreenDisplays(null);
@@ -397,10 +406,96 @@ function _updateNavShortcut() {
 }
 
 /**
+ * Normalize + track + show + forward a raw ScreenOutput payload to the ghost
+ * window. Shared by POST /screen/display and internal producers (e.g. the
+ * plan-check card's "Open plan"). Returns { ok:true, id } | { ok:false, error }.
+ */
+async function _displayOnScreen(parsed) {
+  const norm = normalizeScreenOutput(parsed);
+  if (!norm.ok) return { ok: false, error: norm.error };
+  const output = norm.output;
+
+  // Inject real screen dims — producers and the renderer can reason
+  // about fit (font size, scroll distance) against the actual display.
+  try {
+    const d = screen.getPrimaryDisplay();
+    output.screen = { width: d.bounds.width, height: d.bounds.height };
+  } catch (_) {}
+
+  // Local file path → dataUrl (image kind, including carousel
+  // images[] entries). ~15MB cap matches the normalizer's dataUrl clamp.
+  const MIME = { '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.gif': 'image/gif', '.webp': 'image/webp', '.svg': 'image/svg+xml' };
+  const pathToDataUrl = async (item) => {
+    const buf = await fs.promises.readFile(item.path);
+    const mime = MIME[path.extname(item.path).toLowerCase()] || 'application/octet-stream';
+    if (buf.length <= 15 * 1024 * 1024) {
+      item.dataUrl = `data:${mime};base64,${buf.toString('base64')}`;
+    }
+    delete item.path;
+  };
+  if (output.kind === 'image') {
+    try {
+      if (output.path && !output.dataUrl) await pathToDataUrl(output);
+      if (Array.isArray(output.images)) {
+        for (const it of output.images) {
+          if (it.path && !it.dataUrl) await pathToDataUrl(it);
+        }
+      }
+    } catch (e) {
+      return { ok: false, error: `cannot read image path: ${e.message}` };
+    }
+  }
+
+  screenDisplays.set(output.id, {
+    blocking: output.blocking === true,
+    arrowNav: (output.kind === 'deck' && output.deck && output.deck.controls === true)
+      // Multi-image carousels navigate with ←/→ too.
+      || (output.kind === 'image' && Array.isArray(output.images) && output.images.length > 1),
+    // Editable doc displays flip the ghost window focusable so the source
+    // view can take real typing — tracked here so Esc routes exit-edit first.
+    editableDoc: output.kind === 'doc' && output.doc && output.doc.editable === true,
+    editing: false,
+  });
+  showGhostLayer();
+  _applyScreenClickThrough();
+  _updateEscShortcut();
+  _updateNavShortcut();
+  if (ghostLayerWindow && !ghostLayerWindow.isDestroyed()) {
+    ghostLayerWindow.webContents.send('ghostlayer:display', output);
+    // A blocking editable doc is a real editor surface — the ghost window is
+    // focusable:false by design, so typing needs an explicit flip while the
+    // display is live. Restored when the display clears (clearScreenDisplays).
+    if (output.kind === 'doc' && output.doc?.editable && output.blocking) {
+      try {
+        ghostLayerWindow.setFocusable(true);
+        ghostLayerWindow.focus();
+      } catch (_) {}
+    }
+  }
+  console.log(`[Screen] display id=${output.id} kind=${output.kind} mood=${output.mood} blocking=${output.blocking}`);
+  return { ok: true, id: output.id };
+}
+
+/** Release the doc-editor focus flip — window returns to focusable:false. */
+function _releaseDocFocus() {
+  if (!ghostLayerWindow || ghostLayerWindow.isDestroyed()) return;
+  try {
+    ghostLayerWindow.blur();
+    ghostLayerWindow.setFocusable(false);
+  } catch (_) {}
+}
+
+/**
  * Shared clear path for /screen/clear, the Esc shortcut, and future callers.
  * id=null clears all. The renderer confirms vacancy via 'ghostlayer:display-idle'.
  */
 function clearScreenDisplays(id = null) {
+  // Doc focus flip lives per-display — releasing here covers both the
+  // single-clear and clear-all paths.
+  const hadDocFocus = id
+    ? screenDisplays.get(id)?.editableDoc
+    : [...screenDisplays.values()].some(d => d?.editableDoc);
+  if (hadDocFocus) _releaseDocFocus();
   if (id) screenDisplays.delete(id);
   else screenDisplays.clear();
   _applyScreenClickThrough();
@@ -1774,6 +1869,7 @@ function startOverlayControlServer() {
           const _agentEventTypes = [
             'agent:turn_live', 'agent:turn', 'agent:complete', 'agent:thought', 'agent:thinking',
             'needs_login', 'task:auth_required', 'task:auth_resolved', 'agent:tier',
+            'terminal:session_open', 'terminal:prompt_wait',
             'tab_flow:computed', 'tab_flow:step_start', 'tab_flow:step_done', 'tab_flow:step_failed',
             'tab_map:plan', 'tab_map:step_start', 'tab_map:step_done',
             'app_flow:start', 'app_flow:focusing', 'app_flow:computed', 'app_flow:tier_selected',
@@ -1782,6 +1878,11 @@ function startOverlayControlServer() {
           if (!_agentEventTypes.includes(evt.type)) {
             res.writeHead(200).end(JSON.stringify({ ok: true }));
             return;
+          }
+          // Terminal session events — broadcast to all windows so TerminalPane
+          // (and any watcher) sees agent-opened PTY sessions live.
+          if (evt.type === 'terminal:session_open' || evt.type === 'terminal:prompt_wait') {
+            safeSendUnified('terminal:session', evt);
           }
           // OS-level alert when a browser sign-in window needs the user — the
           // in-app cards render silently in the queue; the window itself opens
@@ -2083,60 +2184,12 @@ function startOverlayControlServer() {
       req.on('end', async () => {
         try {
           const parsed = JSON.parse(body || '{}');
-          const norm = normalizeScreenOutput(parsed);
-          if (!norm.ok) {
-            res.writeHead(400).end(JSON.stringify({ ok: false, error: norm.error }));
+          const r = await _displayOnScreen(parsed);
+          if (!r.ok) {
+            res.writeHead(400).end(JSON.stringify({ ok: false, error: r.error }));
             return;
           }
-          const output = norm.output;
-
-          // Inject real screen dims — producers and the renderer can reason
-          // about fit (font size, scroll distance) against the actual display.
-          try {
-            const d = screen.getPrimaryDisplay();
-            output.screen = { width: d.bounds.width, height: d.bounds.height };
-          } catch (_) {}
-
-          // Local file path → dataUrl (image kind, including carousel
-          // images[] entries). ~15MB cap matches the normalizer's dataUrl clamp.
-          const MIME = { '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.gif': 'image/gif', '.webp': 'image/webp', '.svg': 'image/svg+xml' };
-          const pathToDataUrl = async (item) => {
-            const buf = await fs.promises.readFile(item.path);
-            const mime = MIME[path.extname(item.path).toLowerCase()] || 'application/octet-stream';
-            if (buf.length <= 15 * 1024 * 1024) {
-              item.dataUrl = `data:${mime};base64,${buf.toString('base64')}`;
-            }
-            delete item.path;
-          };
-          if (output.kind === 'image') {
-            try {
-              if (output.path && !output.dataUrl) await pathToDataUrl(output);
-              if (Array.isArray(output.images)) {
-                for (const it of output.images) {
-                  if (it.path && !it.dataUrl) await pathToDataUrl(it);
-                }
-              }
-            } catch (e) {
-              res.writeHead(400).end(JSON.stringify({ ok: false, error: `cannot read image path: ${e.message}` }));
-              return;
-            }
-          }
-
-          screenDisplays.set(output.id, {
-            blocking: output.blocking === true,
-            arrowNav: (output.kind === 'deck' && output.deck && output.deck.controls === true)
-              // Multi-image carousels navigate with ←/→ too.
-              || (output.kind === 'image' && Array.isArray(output.images) && output.images.length > 1),
-          });
-          showGhostLayer();
-          _applyScreenClickThrough();
-          _updateEscShortcut();
-          _updateNavShortcut();
-          if (ghostLayerWindow && !ghostLayerWindow.isDestroyed()) {
-            ghostLayerWindow.webContents.send('ghostlayer:display', output);
-          }
-          console.log(`[Screen] display id=${output.id} kind=${output.kind} mood=${output.mood} blocking=${output.blocking}`);
-          res.writeHead(200).end(JSON.stringify({ ok: true, id: output.id }));
+          res.writeHead(200).end(JSON.stringify({ ok: true, id: r.id }));
         } catch (err) {
           res.writeHead(400).end(JSON.stringify({ ok: false, error: err.message }));
         }
@@ -2654,7 +2707,7 @@ function _markPlanAuthLedger(agentId) {
  * With autoStart, an all-clear plan dispatches through planRunner directly.
  * @returns {Promise<boolean>} allClear
  */
-async function _emitPlanCheck(planId, planFile, { autoStart = false, bypassed } = {}) {
+async function _emitPlanCheck(planId, planFile, { autoStart = false, bypassed, surface = false } = {}) {
   try {
     const planFormat = require('../../shared/plan-format.cjs');
     const { computePlanCheck } = require('../../shared/plan-check.cjs');
@@ -2662,8 +2715,12 @@ async function _emitPlanCheck(planId, planFile, { autoStart = false, bypassed } 
     const tasks = planFormat.parseTasks(content);
     const bypass = bypassed || _pendingPlanCheck?.bypassed || new Set();
     const { items, allClear } = await computePlanCheck(tasks, { bypassed: bypass });
-    _pendingPlanCheck = { planId, planFile, items, bypassed: bypass, autoStart };
-    safeSendUnified('plan:check', { planId, items, allClear });
+    // A recheck for the same plan keeps a pending autoStart — the readiness
+    // strip's debounced plan:check invoke must not cancel a conversational
+    // run trigger that's waiting on issue resolution.
+    const keepAuto = autoStart || (_pendingPlanCheck?.planFile === planFile && _pendingPlanCheck?.autoStart === true);
+    _pendingPlanCheck = { planId, planFile, items, bypassed: bypass, autoStart: keepAuto };
+    safeSendUnified('plan:check', { planId, planFile, items, allClear, surface });
     console.log(`[PlanCheck] ${planId || planFile}: ${items.filter(i => i.status === 'issue').length} issue(s), allClear=${allClear}`);
     // Approval-gated plans never auto-start — the readiness card waits for
     // "Review plan", and the approval gate emits the review card mid-run.
@@ -2719,6 +2776,12 @@ function _matchPlanCheckAction(text) {
     }
     return null; // free-form answers ride the normal lane
   }
+  // "Where are we at in the plan" / "show me the plan readiness" during a
+  // planning session → surface the readiness card, never reaches the LLM.
+  if (_planningMode?.active
+    && /where('?re| are) we( at)?|plan (status|readiness|progress)|show (me )?(the )?(plan|readiness|progress)|how('?s| is) (the )?plan/.test(t)) {
+    return { action: 'show-check' };
+  }
   const pc = _pendingPlanCheck;
   if (!pc || !pc.items.some(i => i.status === 'issue' || i.kind === 'missing-steps')) return null;
   const issues = pc.items.filter(i => i.status === 'issue');
@@ -2749,6 +2812,8 @@ function _matchPlanCheckAction(text) {
       || pc.items.find(x => x.kind === 'missing-steps' || x.kind === 'steps-failed');
     if (i) return { action: 'retry-steps', itemId: i.id };
   }
+  if (/^run\s+all\b|^run\s+everything\b/.test(t)) return { action: 'run-all' };
+  if (/step[\s-]?through|review\s+(each|every)\s+task|review\s+task/.test(t)) return { action: 'run-review' };
   if (/^(run|start|go)(\s+(the\s+)?plan)?$/.test(t)) {
     return { action: 'run', itemId: issues[0]?.id };
   }
@@ -2818,8 +2883,45 @@ async function _secretList(prefix) {
 }
 
 /** Resolve a plan:check:action into the card's next state. */
-async function _handlePlanCheckAction({ planId, itemId, action, value, envName } = {}) {
+async function _handlePlanCheckAction({ planId, itemId, action, value, envName, planFile } = {}) {
   const pc = _pendingPlanCheck;
+  // 'open-plan' works even without a pending check — the drafting-phase
+  // readiness strip knows the planFile before the first check emit exists.
+  if (action === 'open-plan') {
+    const file = pc?.planFile || planFile
+      || (planId ? require('path').join(os.homedir(), '.thinkdrop', 'plans', `${planId}.md`) : null);
+    try {
+      if (file && fs.existsSync(file)) {
+        const content = fs.readFileSync(file, 'utf8');
+        const titleM = content.match(/^# Plan:\s*(.+)$/m) || content.match(/^#\s+(.+)$/m);
+        await _displayOnScreen({
+          kind: 'doc',
+          title: (titleM ? titleM[1].trim() : null) || _planningMode.planName || 'Plan',
+          scrim: 'dim',
+          dismiss: 'manual',
+          blocking: true,
+          doc: { markdown: content, format: 'MD', editable: true, sourcePath: file },
+        });
+      }
+    } catch (err) { console.warn('[PlanCheck] open-plan failed:', err.message); }
+    return;
+  }
+  if (action === 'cancel' && !pc) {
+    // Drafting-phase cancel — no checklist emitted yet; just exit planning.
+    if (_planningMode?.active) _setPlanningMode({ active: false });
+    return;
+  }
+  if (action === 'show-check') {
+    // Chip click / "where are we at in the plan" — re-emit the checklist with
+    // `surface` so the renderer bumps the card to the feed bottom + shows the
+    // results tab. Works with or without a pending check.
+    const file = pc?.planFile || planFile || _planningMode?.planFile
+      || (planId ? require('path').join(os.homedir(), '.thinkdrop', 'plans', `${planId}.md`) : null);
+    if (file && fs.existsSync(file)) {
+      _emitPlanCheck(planId || pc?.planId || null, file, { surface: true }).catch(() => {});
+    }
+    return;
+  }
   if (!pc) return;
   const item = pc.items.find(i => i.id === itemId) || pc.items.find(i => i.status === 'issue');
   const recheck = () => _emitPlanCheck(pc.planId, pc.planFile, { autoStart: pc.autoStart });
@@ -2829,7 +2931,7 @@ async function _handlePlanCheckAction({ planId, itemId, action, value, envName }
         // Same emit the gather card uses — opens the headed sign-in browser.
         ipcMain.emit('browser.agent:auth', null, { agentId: item.agentId, taskId: null });
         // Signal the renderer the flow started so the row shows "verify".
-        safeSendUnified('plan:check', { planId: pc.planId, items: pc.items, allClear: false, authOpened: item.agentId });
+        safeSendUnified('plan:check', { planId: pc.planId, planFile: pc.planFile, items: pc.items, allClear: false, authOpened: item.agentId });
       }
       break;
     case 'i-signed-in': {
@@ -2886,7 +2988,7 @@ async function _handlePlanCheckAction({ planId, itemId, action, value, envName }
           await recheck();
         })();
         // Immediate UI feedback — row flips to pending while setup runs
-        safeSendUnified('plan:check', { planId: pc.planId, items: pc.items.map(i => i.id === item.id ? { ...i, label: `${item.agentId} — setting up…`, status: 'pending', kind: 'missing-steps' } : i), allClear: false });
+        safeSendUnified('plan:check', { planId: pc.planId, planFile: pc.planFile, items: pc.items.map(i => i.id === item.id ? { ...i, label: `${item.agentId} — setting up…`, status: 'pending', kind: 'missing-steps' } : i), allClear: false });
       }
       break;
     }
@@ -2954,22 +3056,31 @@ async function _handlePlanCheckAction({ planId, itemId, action, value, envName }
     case 'recheck':
       await recheck();
       break;
-    case 'run': {
-      // Manual "Run plan" — 'warn' is advisory; only issues/pending block.
+    case 'run':
+    case 'run-review':
+    case 'run-all': {
+      // 'run' — approval-gated (voice/back-compat). 'run-review' — step-through:
+      // every task pauses for approval. 'run-all' — straight through, all
+      // gates pre-approved. 'warn' is advisory; only issues/pending block.
       if (pc.items.some(i => i.status === 'issue' || i.status === 'pending')) break;
       const planRunner = require('./planRunner');
-      const r = await planRunner.startPlan(pc.planFile, { sessionId: null, bypassAgents: [...pc.bypassed] });
+      const r = await planRunner.startPlan(pc.planFile, {
+        sessionId: null,
+        bypassAgents: [...pc.bypassed],
+        reviewEach: action === 'run-review',
+        autoApprove: action === 'run-all',
+      });
       if (r?.ok) {
         _pendingPlanCheck = null;
         _setPlanningMode({ active: false });
       } else {
-        safeSendUnified('plan:check', { planId: pc.planId, items: pc.items, allClear: false, error: r?.error || 'run failed' });
+        safeSendUnified('plan:check', { planId: pc.planId, planFile: pc.planFile, items: pc.items, allClear: false, error: r?.error || 'run failed' });
       }
       break;
     }
     case 'cancel':
       _pendingPlanCheck = null;
-      safeSendUnified('plan:check', { planId: pc.planId, items: pc.items, allClear: false, cancelled: true });
+      safeSendUnified('plan:check', { planId: pc.planId, planFile: pc.planFile, items: pc.items, allClear: false, cancelled: true });
       break;
   }
 }
@@ -4615,6 +4726,7 @@ ipcMain.on('ghostlayer:capture-ready', () => {
 // fully exited (after out-animations). We clear our id set, restore
 // click-through, and hide the window — unless a drop session owns the screen.
 ipcMain.on('ghostlayer:display-idle', () => {
+  if ([...screenDisplays.values()].some(d => d?.editableDoc)) _releaseDocFocus();
   screenDisplays.clear();
   _hoverInteractive = false;
   _applyScreenClickThrough();
@@ -4643,6 +4755,93 @@ ipcMain.on('ghostlayer:display-capabilities', (_e, data) => {
   entry.keys = new Set(Array.isArray(data.keys) ? data.keys.map(String) : []);
   screenDisplays.set(id, entry);
   _updateNavShortcut();
+});
+
+// ── kind:'doc' artifact card — save / export / edit-focus ────────────────────
+
+// DocScreen entering/leaving its editable source view. Tracks `editing` on the
+// display so _onEscClear routes the first Esc to exit-edit instead of clearing.
+ipcMain.on('ghostlayer:edit-focus', (_e, data) => {
+  const id = data && typeof data.id === 'string' ? data.id : null;
+  if (!id || !screenDisplays.has(id)) return;
+  const entry = screenDisplays.get(id) || {};
+  entry.editing = !!(data && data.on);
+  screenDisplays.set(id, entry);
+});
+
+// File-backed doc save — writes the edited markdown back to its source path.
+// Plan files get a plan:updated nudge + a checklist recheck when a pending
+// plan:check is watching that file (edits can resolve/create issues).
+ipcMain.on('ghostlayer:doc-save', (_e, data) => {
+  try {
+    const sourcePath = data && typeof data.sourcePath === 'string' ? data.sourcePath : null;
+    const content = data && typeof data.content === 'string' ? data.content : null;
+    if (!sourcePath || content == null) return;
+    fs.writeFileSync(sourcePath, content, 'utf8');
+    console.log(`[Screen] doc-save → ${sourcePath}`);
+    if (/\.md$/i.test(sourcePath)) {
+      try {
+        safeSendUnified('plan:updated', { planId: path.basename(sourcePath, '.md'), planFile: sourcePath });
+      } catch (_) {}
+      if (_pendingPlanCheck?.planFile === sourcePath) {
+        _emitPlanCheck(_pendingPlanCheck.planId, sourcePath, { autoStart: _pendingPlanCheck.autoStart })
+          .catch(() => {});
+      }
+    }
+    if (ghostLayerWindow && !ghostLayerWindow.isDestroyed()) {
+      try { ghostLayerWindow.webContents.send('ghostlayer:display-nav', { dir: 'doc-saved', id: data.id }); } catch (_) {}
+    }
+  } catch (err) {
+    console.warn('[Screen] doc-save failed:', err.message);
+  }
+});
+
+// Doc export — Copy menu actions.
+//   download → save dialog, write the markdown
+//   pdf      → hidden window renders the captured preview HTML → printToPDF
+//   publish  → snapshot copy into ~/.thinkdrop/published + reveal in Finder
+ipcMain.on('ghostlayer:doc-export', (_e, data) => {
+  (async () => {
+    const { dialog, shell, BrowserWindow } = require('electron');
+    const action = data?.action;
+    const title = String(data?.title || 'document').replace(/[\\/:*?"<>|]/g, '-').slice(0, 80) || 'document';
+    const markdown = typeof data?.markdown === 'string' ? data.markdown : '';
+    try {
+      if (action === 'download') {
+        const r = await dialog.showSaveDialog({ defaultPath: `${title}.md`, filters: [{ name: 'Markdown', extensions: ['md'] }] });
+        if (r.canceled || !r.filePath) return;
+        fs.writeFileSync(r.filePath, markdown, 'utf8');
+        shell.showItemInFolder(r.filePath);
+      } else if (action === 'pdf') {
+        const r = await dialog.showSaveDialog({ defaultPath: `${title}.pdf`, filters: [{ name: 'PDF', extensions: ['pdf'] }] });
+        if (r.canceled || !r.filePath) return;
+        const html = typeof data?.html === 'string' && data.html ? data.html
+          : `<pre style="white-space:pre-wrap;font:14px/1.6 -apple-system,sans-serif;color:#111">${markdown.replace(/&/g,'&amp;').replace(/</g,'&lt;')}</pre>`;
+        const win = new BrowserWindow({ show: false, webPreferences: { offscreen: true } });
+        try {
+          await win.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(
+            `<!doctype html><html><head><meta charset="utf-8"><style>
+              body{font:14px/1.65 -apple-system,'Helvetica Neue',sans-serif;color:#111;padding:32px 40px;max-width:760px;margin:0 auto}
+              h1,h2,h3{line-height:1.25} pre,code{font-family:ui-monospace,Menlo,monospace;background:#f4f4f5;border-radius:4px}
+              pre{padding:10px 12px;overflow-x:auto} code{padding:1px 4px} pre code{padding:0;background:none}
+              table{border-collapse:collapse} td,th{border:1px solid #d4d4d8;padding:4px 10px;text-align:left}
+              blockquote{border-left:3px solid #d4d4d8;margin:0;padding-left:12px;color:#52525b}
+            </style></head><body>${html}</body></html>`)}`);
+          const pdf = await win.webContents.printToPDF({ printBackground: true, margins: { marginType: 'none' } });
+          fs.writeFileSync(r.filePath, pdf);
+          shell.showItemInFolder(r.filePath);
+        } finally { try { win.destroy(); } catch (_) {} }
+      } else if (action === 'publish') {
+        const dir = path.join(os.homedir(), '.thinkdrop', 'published');
+        fs.mkdirSync(dir, { recursive: true });
+        const file = path.join(dir, `${title}-${Date.now().toString(36)}.md`);
+        fs.writeFileSync(file, markdown, 'utf8');
+        shell.showItemInFolder(file);
+      }
+    } catch (err) {
+      console.warn(`[Screen] doc-export ${action} failed:`, err.message);
+    }
+  })();
 });
 
 // "AI in Control" X button — cancel the task the lock belongs to.
@@ -5441,7 +5640,7 @@ app.whenReady().then(async () => {
               .approvePlanTask(hit.planId, hit.taskNum, { skip: hit.action === 'skip-task' })
               .catch(err => console.warn('[PlanReview] voice action failed:', err.message));
           } else {
-            _handlePlanCheckAction({ planId: _pendingPlanCheck?.planId, itemId: hit.itemId, action: hit.action })
+            _handlePlanCheckAction({ planId: _pendingPlanCheck?.planId || _planningMode?.planId, planFile: _pendingPlanCheck?.planFile || _planningMode?.planFile, itemId: hit.itemId, action: hit.action })
               .catch(err => console.warn('[PlanCheck] voice action failed:', err.message));
           }
           return true;
