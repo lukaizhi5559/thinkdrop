@@ -88,7 +88,7 @@ export function TerminalPane({ visible }: TerminalPaneProps) {
   useEffect(() => {
     if (!visible) return;
     refreshSessions();
-    const t = setInterval(() => { refreshScreen(); }, 400);
+    const t = setInterval(() => { refreshScreen(); }, 80);
     const s = setInterval(refreshSessions, 5000);
     return () => { clearInterval(t); clearInterval(s); };
   }, [visible, refreshSessions, refreshScreen]);
@@ -237,10 +237,15 @@ export function TerminalPane({ visible }: TerminalPaneProps) {
       <div
         className="flex-1 flex flex-col bg-black/40 rounded mx-2 overflow-hidden"
         style={{ minHeight: 0 }}
-        onClick={() => termRef.current?.focus()}
       >
-        {/* Screen — xterm emulator fed by the session's raw ANSI stream */}
-        <div className="flex-1 px-2 py-1" style={{ minHeight: 0 }}>
+        {/* Screen — xterm emulator fed by the session's raw ANSI stream.
+            Focus is grabbed only on the screen area — clicks on the compose
+            row below must NOT steal focus back to xterm. */}
+        <div
+          className="flex-1 px-2 py-1"
+          style={{ minHeight: 0 }}
+          onClick={() => termRef.current?.focus()}
+        >
           {activeId
             ? <div ref={termHostRef} className="h-full w-full" />
             : <div className="px-1 py-1 text-gray-500 text-xs" style={{ fontFamily: 'Menlo, monospace' }}>No session — click "+ New" or start an agent task.</div>}
@@ -282,7 +287,7 @@ export function TerminalPane({ visible }: TerminalPaneProps) {
               e.stopPropagation();
             }}
             disabled={!activeId || exited !== null}
-            placeholder={activeId ? (isPassword ? 'type password, Enter to send' : '') : 'select or open a session'}
+            placeholder={activeId ? (isPassword ? 'type password, Enter to send' : 'Enter to run · Shift+Enter for newline') : 'select or open a session'}
             className="flex-1 bg-transparent text-gray-200 text-xs outline-none resize-none disabled:opacity-40 placeholder:text-gray-600"
             style={{
               fontFamily: 'Menlo, Monaco, "Courier New", monospace', fontSize: 12, lineHeight: '18px', maxHeight: 90, overflowY: 'auto',
