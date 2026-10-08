@@ -366,7 +366,7 @@ function _makeProgressCallback(taskId, agentId) {
  * @param {string[]|null} [args.preflightAuthBypass] - Agent IDs to treat as authed for this run only
  * @param {Object|null}  [args._resumeState] - Paused finalState to resume from (ask_user answer)
  */
-async function execute({ taskId, prompt, agentId, source, originalPrompt, sessionId, planFile, preflightAuthBypass, userApproved, thoughtContext, guessedIntent, planTask, _resumeState, _deterministicPlan, _deterministicTemplate, _deterministicLowRisk, _deterministicExternal, _deterministicServiceAgent, _resumeMultiIntent, _resumeIntentQueue, _resumeIntentResults, _resumeDataContext }) {
+async function execute({ taskId, prompt, agentId, source, originalPrompt, detectedLanguage, sessionId, planFile, preflightAuthBypass, userApproved, thoughtContext, guessedIntent, planTask, _resumeState, _deterministicPlan, _deterministicTemplate, _deterministicLowRisk, _deterministicExternal, _deterministicServiceAgent, _resumeMultiIntent, _resumeIntentQueue, _resumeIntentResults, _resumeDataContext }) {
   if (!_mcpAdapter || !_llmBackend) {
     console.error('[HandoffRunner] Not initialized — call init() first');
     _notifyComplete(taskId, agentId, 'failed', 'HandoffRunner not initialized', null, sessionId);
@@ -440,6 +440,13 @@ async function execute({ taskId, prompt, agentId, source, originalPrompt, sessio
           message: prompt,
           resolvedMessage: prompt,
           intent: { type: 'command_automate' }, // Handoffs are always command_automate
+          // Original-language prompt + ISO code — webSearch uses the original
+          // (not its English translation) so SERPs return native-language
+          // results (Baidu/Temu-class sources) and localized AI Overviews;
+          // answer.js sets the response language from detectedLanguage.
+          originalPrompt: originalPrompt || null,
+          detectedLanguage: detectedLanguage || null,
+          responseLanguage: detectedLanguage || null,
           sessionId: sessionId || null,
           userId: process.env.MONITOR_USER_ID || 'local_user',
           // context.sessionId pins resolveReferencesV2's history fetch and

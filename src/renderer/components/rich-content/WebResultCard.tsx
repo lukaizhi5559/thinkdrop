@@ -23,6 +23,7 @@ export interface WebResultItem {
   videoUrl?: string;
   embedUrl?: string;
   posterUrl?: string;
+  originalUrl?: string;
   duration?: string;
   channel?: string;
   sourceUrl?: string;
@@ -45,6 +46,16 @@ const openUrl = (url: string) => {
 const WebResultCard: React.FC<WebResultCardProps> = ({ item }) => {
   const [imgFailed, setImgFailed] = useState(false);
   const [imgLoaded, setImgLoaded] = useState(false);
+  // Direct thumbnail/CDN URLs (Brave imgs.search proxy, hotlink-protected
+  // hosts) fail intermittently — walk the fallback chain before giving up.
+  const thumbCandidates = React.useMemo(
+    () => [item.imageUrl, item.posterUrl, item.originalUrl]
+      .filter((u): u is string => typeof u === 'string' && /^https?:|^data:|^thinkdrop-image:/.test(u))
+      .filter((u, i, a) => a.indexOf(u) === i),
+    [item.imageUrl, item.posterUrl, item.originalUrl]
+  );
+  const [srcIdx, setSrcIdx] = useState(0);
+  const thumbUrl = thumbCandidates[srcIdx];
 
   const handleClick = useCallback(() => {
     // For video items, prefer the watch page (url) then the direct video/embed URL.
@@ -52,11 +63,14 @@ const WebResultCard: React.FC<WebResultCardProps> = ({ item }) => {
     openUrl(target);
   }, [item.url, item.videoUrl, item.embedUrl, item.imageUrl]);
 
-  const handleImgError = useCallback(() => setImgFailed(true), []);
+  const handleImgError = useCallback(() => {
+    setImgLoaded(false);
+    if (srcIdx < thumbCandidates.length - 1) setSrcIdx(srcIdx + 1);
+    else setImgFailed(true);
+  }, [srcIdx, thumbCandidates.length]);
   const handleImgLoad = useCallback(() => setImgLoaded(true), []);
 
   const isVideo = item.mediaType === 'video';
-  const thumbUrl = item.imageUrl || item.posterUrl;
 
   const hostname = item.hostname || (() => {
     try { return new URL(item.url || item.imageUrl || '').hostname.replace(/^www\./, ''); } catch (_) { return ''; }

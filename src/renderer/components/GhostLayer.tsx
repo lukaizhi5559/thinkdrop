@@ -108,6 +108,9 @@ function GhostLayer() {
   // Voice session startup — the hidden Chrome launch takes a few seconds;
   // this pill covers that dead air ("Starting voice…").
   const [voiceStarting, setVoiceStarting] = useState(false);
+  // Web-search worker boot — "Web search starting up…" pill while the hidden
+  // Chrome warms (mirrors voiceStarting; driven by 'websearch:state').
+  const [webSearchStarting, setWebSearchStarting] = useState(false);
   // Selection context — pill shown while a text selection is armed for the
   // next prompt (main captures the text at submit time).
   const [selectionCtx, setSelectionCtx] = useState(false);
@@ -328,6 +331,18 @@ function GhostLayer() {
     };
   }, []);
 
+  // Web-search browser state — 'starting' shows a pill until Chrome is ready.
+  useEffect(() => {
+    if (!ipcRenderer) return;
+    const handleWs = (data: { state?: string }) => {
+      setWebSearchStarting(data?.state === 'starting');
+    };
+    ipcRenderer.on('websearch:state', handleWs, GHOST_TOKEN);
+    return () => {
+      ipcRenderer.removeListenerByToken('websearch:state', GHOST_TOKEN);
+    };
+  }, []);
+
   // Clear highlights on Escape key
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -362,7 +377,7 @@ function GhostLayer() {
   // Tell main when the window goes fully idle — highlights gone, not scanning,
   // no drop/boundary, and no screen-output displays. Main then hides the
   // window + clears its display tracking (restores click-through).
-  const ghostOccupied = screenOccupied || isVisible || isScanning || !!drop || !!boundary || !!controlLock || !!fillerProgress || voiceSleeping || voiceStarting || selectionCtx;
+  const ghostOccupied = screenOccupied || isVisible || isScanning || !!drop || !!boundary || !!controlLock || !!fillerProgress || voiceSleeping || voiceStarting || webSearchStarting || selectionCtx;
   const prevOccupied = useRef(ghostOccupied);
   useEffect(() => {
     if (prevOccupied.current && !ghostOccupied) {
@@ -378,6 +393,9 @@ function GhostLayer() {
 
   // Voice-startup pill — covers the seconds while the hidden worker launches.
   const startNode = voiceStarting ? <VoiceStartingPill /> : null;
+
+  // Web-search-startup pill — shown while the hidden Chrome warms at boot.
+  const webSearchNode = webSearchStarting ? <WebSearchStartingPill /> : null;
 
   // Filler warmup pill — renders in every path (independent of highlights).
   const fillerNode = fillerProgress ? <FillerProgressPill progress={fillerProgress} /> : null;
@@ -403,7 +421,7 @@ function GhostLayer() {
 
   // Show scanning overlay with dark background
   if (isScanning) {
-    return <>{stageNode}{fillerNode}{startNode}{sleepNode}{selNode}{lockNode}<ScanningOverlay timer={scanTimer} /></>;
+    return <>{stageNode}{fillerNode}{startNode}{webSearchNode}{sleepNode}{selNode}{lockNode}<ScanningOverlay timer={scanTimer} /></>;
   }
 
   // The progress drop renders independently of bounding-box highlights — it is
@@ -415,12 +433,13 @@ function GhostLayer() {
   const boundaryNode = boundary ? <PersistentBoundary element={boundary} visible={dropVisible} /> : null;
 
   if (!isVisible || highlights.length === 0) {
-    return <>{stageNode}{boundaryNode}{dropNode}{fillerNode}{startNode}{sleepNode}{selNode}{lockNode}</>;
+    return <>{stageNode}{boundaryNode}{dropNode}{fillerNode}{startNode}{webSearchNode}{sleepNode}{selNode}{lockNode}</>;
   }
 
   return (
     <>
     {stageNode}
+    {webSearchNode}
     <div
       style={{
         position: 'fixed',
@@ -926,6 +945,53 @@ function VoiceStartingPill() {
           flexShrink: 0,
           borderRadius: '50%',
           border: '2px solid #fbbf24',
+          borderTopColor: 'transparent',
+          animation: 'td-drop-spin 0.8s linear infinite',
+        }}
+      />
+    </div>
+  );
+}
+
+/**
+ * WebSearchStartingPill — shown while the web-search service's hidden Chrome
+ * warms at startup (mirrors VoiceStartingPill; blue accent to distinguish).
+ */
+function WebSearchStartingPill() {
+  return (
+    <div
+      style={{
+        position: 'fixed',
+        bottom: 28,
+        left: '50%',
+        transform: 'translateX(-50%)',
+        zIndex: 100000,
+        pointerEvents: 'none',
+        display: 'flex',
+        alignItems: 'center',
+        gap: 10,
+        padding: '9px 16px',
+        borderRadius: 9999,
+        background: 'rgba(10,14,22,0.82)',
+        backdropFilter: 'blur(8px)',
+        WebkitBackdropFilter: 'blur(8px)',
+        border: '1px solid rgba(96,165,250,0.35)',
+        boxShadow: '0 6px 24px rgba(0,0,0,0.35), 0 0 16px rgba(96,165,250,0.18)',
+        color: '#e5e7eb',
+        fontFamily: 'system-ui, -apple-system, sans-serif',
+      }}
+    >
+      <span style={{ display: 'flex', animation: 'td-drop-bob 2.4s ease-in-out infinite' }}>
+        <ThinkDropLogo size={18} />
+      </span>
+      <span style={{ fontSize: 13, fontWeight: 600 }}>Web search starting up…</span>
+      <span
+        style={{
+          width: 12,
+          height: 12,
+          flexShrink: 0,
+          borderRadius: '50%',
+          border: '2px solid #60a5fa',
           borderTopColor: 'transparent',
           animation: 'td-drop-spin 0.8s linear infinite',
         }}

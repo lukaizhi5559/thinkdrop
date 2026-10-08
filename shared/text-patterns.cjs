@@ -187,6 +187,25 @@ const DEICTIC_CONTINUATION_RE = new RegExp([
   '\\b(?:tell me(?: more)? about|more about|what about|how about|expand on|elaborate on|go on about)\\s+(?:that|this|it|those|them)\\b',
 ].join('|'), 'i');
 
+/** Third-person / deictic pronouns that carry no referent of their own. */
+const THIRD_PERSON_SUBJECT_RE = /\b(he|she|they|him|her|them|his|their|it|that|this|those|these)\b/i;
+
+/** isContextDependent — the question's subject is a pronoun with no named
+ *  referent in the prompt itself, so the answer lives in conversation
+ *  history ("how long has he been in office"). A standalone-answer tier
+ *  (keyword fallback, SERP-first quick path) must never take these — the
+ *  referent resolves upstream in resolveReferences. Named-referent
+ *  heuristic: a capitalized word (≥2 chars, not "I") after the first word
+ *  means the prompt carries its own subject ("how long has Trump been…").
+ *  Impersonal "it" ("what time is it") over-routes to handoff — slower,
+ *  never wrong. */
+function isContextDependent(text) {
+  const t = String(text || '');
+  if (!THIRD_PERSON_SUBJECT_RE.test(t)) return false;
+  const words = t.trim().split(/\s+/).slice(1);
+  return !words.some(w => /^[A-Z][a-zA-Z]{1,}/.test(w) && w !== 'I');
+}
+
 /** Screen-observation questions — "what's on my screen", "describe what I'm
  *  looking at", "read the text visible on screen". These need a live capture,
  *  so both comms (handoff guard) and the stategraph (screen_intelligence) key
@@ -454,6 +473,8 @@ module.exports = {
   ALL_TIME_QUERY_PATTERN,
   SCREEN_OBSERVATION_RE,
   DEICTIC_CONTINUATION_RE,
+  THIRD_PERSON_SUBJECT_RE,
+  isContextDependent,
   AMBIENT_ARTIFACT_RE,
   SCREEN_OUTPUT_RE,
   LOOKUP_THEN_DISPLAY_RE,

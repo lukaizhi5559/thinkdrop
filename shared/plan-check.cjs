@@ -62,7 +62,7 @@ async function computePlanCheck(tasks, opts = {}) {
       taskNum: n,
       label: stepsState === 'failed'
         ? `Task ${n} — step generation failed (will replan at run)`
-        : `Task ${n} — steps ready`,
+        : (stepsState === 'pass' ? `Task ${n} — steps ready` : `Task ${n} — generating steps…`),
       detail: title,
       status: stepsState === 'pass' ? 'pass' : (stepsState === 'failed' ? 'warn' : 'pending'),
       kind: stepsState === 'pass' ? undefined : (stepsState === 'failed' ? 'steps-failed' : 'missing-steps'),

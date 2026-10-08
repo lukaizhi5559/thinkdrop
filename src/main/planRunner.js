@@ -46,8 +46,26 @@ function _isGenericAgent(agentId) {
 // cached flow). Flagged plans dispatch deterministicPlan:null so planSkillsV2
 // live-plans instead — slower, never wrong.
 const _INTERACTIVE_STEP_SKILLS = new Set(['url.first.agent', 'dom.act', 'tab.map.agent', 'turn.loop.agent']);
+// Browser-family steps bound to a non-browser agent can't execute — observed:
+// nylas.agent (type:'cli') handed url.first.agent + dom.act steps. Replan live
+// with the right skill family instead of dispatching a guaranteed-fail plan.
+function _agentFamilyMismatch(steps) {
+  let describe = null;
+  try { describe = require('../../shared/service-map.cjs').describeAgent; } catch (_) { return null; }
+  for (const s of steps) {
+    const agentId = s && s.args && s.args.agentId;
+    if (!agentId || !_INTERACTIVE_STEP_SKILLS.has(s.skill)) continue;
+    const desc = describe(agentId) || describe(String(agentId).replace(/\.agent$/, ''));
+    if (desc && desc.type && desc.type !== 'browser') {
+      return `${s.skill} step bound to ${desc.type} agent ${agentId}`;
+    }
+  }
+  return null;
+}
 function _stepsLookDegenerate(task, steps) {
   if (String(task.stepsStatus || '').toLowerCase() === 'failed') return 'steps-status-failed';
+  const mismatch = _agentFamilyMismatch(steps);
+  if (mismatch) return mismatch;
   if (!steps.some(s => s && _INTERACTIVE_STEP_SKILLS.has(s.skill))) return null;
   const domActs = steps.filter(s => s && s.skill === 'dom.act').length;
   const hasVerify = steps.some(s => s && s.skill === 'turn.loop.agent'
@@ -497,4 +515,4 @@ function listRuns() {
   }));
 }
 
-module.exports = { init, startPlan, cancelPlan, getRun, listRuns, onTaskComplete, bindTaskId, approvePlanTask };
+module.exports = { init, startPlan, cancelPlan, getRun, listRuns, onTaskComplete, bindTaskId, approvePlanTask, _stepsLookDegenerate };

@@ -841,6 +841,37 @@ async function _cmdGet(urlPath) {
 // ---------------------------------------------------------------------------
 const OVERLAY_CONTROL_PORT = parseInt(process.env.OVERLAY_CONTROL_PORT || '3010', 10);
 
+// The web-search service pushes browser state to /websearch/state, but if it
+// booted before this server was listening the 'starting' push is dropped and
+// GhostLayer's pill never shows. Poll /service.health once on listen (with a
+// couple of retries to catch a mid-launch 'starting' state) and emit whatever
+// the service reports.
+function _syncWebSearchState(attempt = 1) {
+  const WS_PORT = parseInt(process.env.MCP_WEB_SEARCH_PORT || '3002', 10);
+  const req = http.get({ hostname: '127.0.0.1', port: WS_PORT, path: '/service.health', timeout: 2000 }, (res) => {
+    let data = '';
+    res.on('data', (c) => { data += c; });
+    res.on('end', () => {
+      try {
+        const state = JSON.parse(data)?.providers?.['search-browser'];
+        if (state) {
+          console.log(`[Overlay Control] web-search browser state on listen: ${state}`);
+          safeSendUnified('websearch:state', { state });
+          _sendGhostChannel('websearch:state', { state });
+          // Still warming — poll once more shortly so the 'ready' transition
+          // (whose push may also predate the renderer mount) isn't lost.
+          if (state === 'starting' && attempt < 4) {
+            setTimeout(() => _syncWebSearchState(attempt + 1), 3000);
+          }
+        }
+      } catch (_) {}
+    });
+  });
+  req.on('timeout', () => req.destroy());
+  req.on('error', () => {}); // web-search not up — pill simply never shows
+  req.end();
+}
+
 // Active progressCallback for the currently running stategraph execution.
 // Set whenever an execution starts, cleared when it ends. Used by the overlay
 // server /agent-turn endpoint to forward real-time agent turn events from the
@@ -1027,6 +1058,28 @@ function startOverlayControlServer() {
 
     if (req.method !== 'POST') {
       res.writeHead(405).end(JSON.stringify({ error: 'Method Not Allowed' }));
+      return;
+    }
+
+    // ── POST /websearch/state — web-search service reports its hidden Chrome
+    // worker lifecycle so GhostLayer can show a "starting" pill (same pattern
+    // as voice:state). Body: { state: 'starting'|'ready'|'degraded'|'closed' }
+    // If the service booted BEFORE this server was listening, its 'starting'
+    // push is dropped silently — _syncWebSearchState() below covers that.
+    if (req.url === '/websearch/state') {
+      let body = '';
+      req.on('data', chunk => { body += chunk; });
+      req.on('end', () => {
+        let state = null;
+        try { state = JSON.parse(body || '{}').state; } catch (_) {}
+        if (!state) {
+          res.writeHead(400).end(JSON.stringify({ ok: false, error: 'state required' }));
+          return;
+        }
+        safeSendUnified('websearch:state', { state });
+        _sendGhostChannel('websearch:state', { state });
+        res.writeHead(200).end(JSON.stringify({ ok: true }));
+      });
       return;
     }
 
@@ -1443,7 +1496,7 @@ function startOverlayControlServer() {
       req.on('data', chunk => { body += chunk; });
       req.on('end', () => {
         try {
-          const { taskId, prompt, agentId, source, originalPrompt, guessedIntent, sessionId: handoffSessionId, userApproved, thoughtContext, planId, planTaskNum, planTask, preflightAuthBypass, deterministicPlan } = JSON.parse(body || '{}');
+          const { taskId, prompt, agentId, source, originalPrompt, detectedLanguage, guessedIntent, sessionId: handoffSessionId, userApproved, thoughtContext, planId, planTaskNum, planTask, preflightAuthBypass, deterministicPlan } = JSON.parse(body || '{}');
           console.log(`[CommsGraph] Handoff received — task=${taskId} agent=${agentId || 'auto'} source=${source} guessedIntent=${guessedIntent || 'null'} session=${handoffSessionId || 'none'}${thoughtContext?.id ? ` thought=${thoughtContext.id}` : ''}`);
 
           // Emit task:created BEFORE starting the stategraph run so the queue card
@@ -1470,6 +1523,7 @@ function startOverlayControlServer() {
             agentId: agentId || null,
             source: source || 'text',
             originalPrompt: originalPrompt || null,
+            detectedLanguage: detectedLanguage || null,
             sessionId: handoffSessionId || currentSessionId,
             userApproved: userApproved === true,
             thoughtContext: thoughtContext || null,
@@ -1502,6 +1556,14 @@ function startOverlayControlServer() {
         try {
           const evt = JSON.parse(body || '{}');
           safeSendUnified('plan:updated', { planId: evt.planId || null });
+          // If a plan-check card is waiting on background step generation,
+          // re-run the checklist now that the file changed — otherwise the
+          // card sits pending forever and the run never kicks off.
+          const pc = _pendingPlanCheck;
+          if (pc && evt.planId && (pc.planId === evt.planId
+              || path.basename(pc.planFile || '', '.md') === evt.planId)) {
+            _emitPlanCheck(pc.planId, pc.planFile, { autoStart: pc.autoStart }).catch(() => {});
+          }
           res.writeHead(200).end(JSON.stringify({ ok: true }));
         } catch (err) {
           res.writeHead(500).end(JSON.stringify({ error: err.message }));
@@ -2368,6 +2430,7 @@ function startOverlayControlServer() {
 
   server.listen(OVERLAY_CONTROL_PORT, '127.0.0.1', () => {
     console.log(`[Overlay Control] HTTP server listening on http://127.0.0.1:${OVERLAY_CONTROL_PORT}`);
+    _syncWebSearchState();
   });
 
   server.on('error', (err) => {

@@ -2135,11 +2135,14 @@ export function UnifiedOverlay() {
       // issue count so rechecks don't spam.
       if (data && data.allClear === false && !data.cancelled) {
         const issues = (data.items || []).filter((i: any) => i.status === 'issue');
-        const sysId = `plancheck-blocked:${data.planId || 'unknown'}:${issues.length}`;
+        const pending = (data.items || []).filter((i: any) => i.status === 'pending');
+        const sysId = `plancheck-blocked:${data.planId || 'unknown'}:${issues.length}:${pending.length}`;
         if (!feedStore.getState().entries.some(e => e.id === sysId)) {
           feedStore.appendEntry({
             id: sysId, ts: Date.now(), kind: 'system',
-            text: `Plan can't start yet — ${issues.length} issue${issues.length === 1 ? '' : 's'} need attention (see the checklist card below).`,
+            text: issues.length
+              ? `Plan can't start yet — ${issues.length} issue${issues.length === 1 ? '' : 's'} need attention (see the checklist card below).`
+              : 'Plan is almost ready — waiting for step generation to finish…',
           } as any);
         }
       }

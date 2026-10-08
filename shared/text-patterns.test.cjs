@@ -150,6 +150,29 @@ it('alltime+: "first memory ever"', () => assert(hits(P.ALL_TIME_QUERY_PATTERN, 
 it('convrecall+: "did I send messages about X"', () => assert(hits(P.CONV_RECALL_QUERY_RE, 'did I send messages about the trip')));
 it('legacy+: "conversation about X"', () => assert(hits(P.LEGACY_RECALL_RE, 'the conversation about budget')));
 
+// ── isContextDependent (pronoun-subject follow-ups) ──────────────────────────
+section('isContextDependent');
+
+const CTXDEP_POS = [
+  'how long has he been in office',          // the observed Biden bug
+  'when did she say that',
+  'tell me more about them',
+  'what did they announce',
+  'how old is he',
+  'where was it filmed',
+  'what time is it',                          // impersonal — over-routes, safe
+];
+const CTXDEP_NEG = [
+  'how long is the movie',                    // no pronoun
+  'how long has Trump been in office',        // named referent
+  'when was the last eclipse',
+  'who is the president',
+  'what is quantum computing',
+  'how long has NASA been around',
+];
+for (const s of CTXDEP_POS) it(`ctxdep+: "${s}"`, () => assert(P.isContextDependent(s), 'expected context-dependent'));
+for (const s of CTXDEP_NEG) it(`ctxdep-: "${s}"`, () => assert(!P.isContextDependent(s), 'false positive'));
+
 // ── hasRelativeTimePhrase (parseDateRange) ───────────────────────────────────
 section('hasRelativeTimePhrase (parseDateRange)');
 
