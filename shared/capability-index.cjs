@@ -74,42 +74,48 @@ const PLATFORM_AFFORDANCES = {
   darwin: [
     {
       id: 'messages.app.agent', label: 'Messages (iMessage/SMS via this Mac)',
-      kind: 'local', tool: 'osascript', platforms: ['darwin'],
+      kind: 'local', tool: 'osascript', service: 'messages', platforms: ['darwin'],
+      capabilities: ['send_text', 'send_imessage', 'send_sms', 'message_contact'],
       keywords: ['sms', 'text', 'text message', 'imessage', 'message my', 'send a text', 'send text'],
       authType: 'none', friction: 0,
       detail: 'osascript drives Messages.app — works if the Mac is signed into iMessage.',
     },
     {
       id: 'reminders.app.agent', label: 'Apple Reminders',
-      kind: 'local', tool: 'osascript', platforms: ['darwin'],
+      kind: 'local', tool: 'osascript', service: 'reminders', platforms: ['darwin'],
+      capabilities: ['create_reminder', 'list_reminders', 'complete_reminder'],
       keywords: ['reminder', 'remind me', 'todo', 'to-do', 'take out the trash'],
       authType: 'none', friction: 0,
       detail: 'osascript creates native Reminders entries — no account needed.',
     },
     {
       id: 'notify.app.agent', label: 'macOS Notification',
-      kind: 'local', tool: 'osascript', platforms: ['darwin'],
+      kind: 'local', tool: 'osascript', service: 'notify', platforms: ['darwin'],
+      capabilities: ['send_notification', 'alert_user'],
       keywords: ['notification', 'notify me', 'alert me', 'ding'],
       authType: 'none', friction: 0,
       detail: 'osascript display notification — instant, no setup.',
     },
     {
       id: 'cron.agent', label: 'Scheduled job (crontab)',
-      kind: 'local', tool: 'crontab', platforms: ['darwin', 'linux'],
+      kind: 'local', tool: 'crontab', service: 'cron', platforms: ['darwin', 'linux'],
+      capabilities: ['schedule_job', 'schedule_cron', 'recurring_task'],
       keywords: ['every week', 'every day', 'weekly', 'daily', 'recurring', 'schedule', 'cron'],
       authType: 'none', friction: 0,
       detail: 'crontab entry — runs on a schedule with zero accounts.',
     },
     {
       id: 'say.agent', label: 'Text-to-speech (say)',
-      kind: 'local', tool: 'say', platforms: ['darwin'],
+      kind: 'local', tool: 'say', service: 'say', platforms: ['darwin'],
+      capabilities: ['text_to_speech', 'speak_text', 'synthesize_audio'],
       keywords: ['generate a sound', 'text to speech', 'speak', 'say it', 'voice note', 'audio file'],
       authType: 'none', friction: 0,
       detail: 'say -o file.aiff — synthesized audio, no setup.',
     },
     {
       id: 'afplay.agent', label: 'Audio playback (afplay)',
-      kind: 'local', tool: 'afplay', platforms: ['darwin'],
+      kind: 'local', tool: 'afplay', service: 'afplay', platforms: ['darwin'],
+      capabilities: ['play_audio', 'play_sound'],
       keywords: ['play a sound', 'play audio', 'play music file', 'chime'],
       authType: 'none', friction: 0,
       detail: 'afplay plays audio files locally.',
@@ -119,7 +125,8 @@ const PLATFORM_AFFORDANCES = {
   linux: [
     {
       id: 'notify-send.agent', label: 'Desktop notification (notify-send)',
-      kind: 'local', tool: 'notify-send', platforms: ['linux'],
+      kind: 'local', tool: 'notify-send', service: 'notify-send', platforms: ['linux'],
+      capabilities: ['send_notification', 'alert_user'],
       keywords: ['notification', 'notify me', 'alert me'],
       authType: 'none', friction: 0,
       detail: 'notify-send posts a desktop notification.',
@@ -176,7 +183,7 @@ async function _scanRegisteredAgents() {
         service: a.service,
         keywords: [a.service, a.agentId],
         authType: 'browser-session',
-        installed: true,
+        installed: true, registered: true,
         friction: auth === 'authed' ? 1 : (auth === 'needs sign-in' ? 5 : 4),
         setupSummary: auth === 'authed' ? _summary(1) : `browser sign-in ${auth === 'needs sign-in' ? 'needed' : 'may be needed'}`,
         detail: `Registered browser agent (${auth}).`,
@@ -202,7 +209,7 @@ async function _scanRegisteredAgents() {
       verified: a.verified === true,
       keywords: [a.service, a.agentId, a.cliTool, ...(a.capabilities || []), ...(a.keywords || [])].filter(Boolean),
       authType: hasSecrets ? 'env' : 'none',
-      installed, missingSecrets,
+      installed, missingSecrets, registered: true,
       friction,
       detail: installed ? 'Registered agent, CLI present.' : 'Registered agent — needs install/setup.',
     }));
@@ -325,6 +332,7 @@ async function searchCapabilities(query, opts = {}) {
   ];
   const seen = new Set();
   const scored = [];
+  const unmatchedRegistered = [];
   for (const c of pools) {
     if (!c.platforms.includes(platform)) continue;
     if (seen.has(c.id)) continue;
@@ -332,11 +340,29 @@ async function searchCapabilities(query, opts = {}) {
     const m = c.id.match(/^mcp\.([^.]+)\.agent$/);
     if (m && seedKw.has(m[1])) c.keywords = [...new Set([...(c.keywords || []), ...seedKw.get(m[1])])];
     const match = _matchScore(c, tokens);
-    if (match <= 0) continue;
+    if (match <= 0) {
+      // Registered agents are the user's own capability set — the selector's
+      // job is semantic pick over facts, and it can't pick what retrieval
+      // dropped. Keep them available as pool context (never standalone
+      // evidence — callers still require a scored hit to invoke selection).
+      if (opts.includeUnmatchedRegistered && c.registered) {
+        unmatchedRegistered.push({ ...c, matchScore: 0 });
+      }
+      continue;
+    }
     scored.push({ ...c, matchScore: match });
   }
   scored.sort((a, b) => (a.friction - b.friction) || (b.matchScore - a.matchScore));
-  return scored.slice(0, opts.limit || 8);
+  const out = scored.slice(0, opts.limit || 8);
+  if (opts.includeUnmatchedRegistered && out.length) {
+    // Append unmatched registered agents only when a scored hit exists —
+    // otherwise the pool is just "everything the user owns", which is not
+    // evidence the prompt is a capability task at all.
+    out.push(...unmatchedRegistered
+      .sort((a, b) => a.friction - b.friction)
+      .slice(0, opts.maxRegistered ?? 15));
+  }
+  return out;
 }
 
 // ── capability.probe — read-only verb-gated inspection ─────────────────────
@@ -469,26 +495,35 @@ async function selectCapability(name, opts = {}) {
   ];
   const cand = candidates.find(c =>
     c.id.toLowerCase() === target ||
+    c.id.toLowerCase() === `${target}.agent` ||
     String(c.service || '').toLowerCase() === target ||
     String(c.tool || '').toLowerCase() === target ||
     c.id.toLowerCase() === `mcp.${target}.agent` ||
     c.id.toLowerCase().endsWith(`.${target}`));
 
   const isMcp = cand?.kind === 'mcp';
-  const tool = cand?.tool || (isMcp ? null : target);
+  const isApi = cand?.kind === 'api';
+  const tool = cand?.tool || (isMcp || isApi ? null : target);
   const service = cand?.service || target;
   const secrets = cand?.authEnv || (cand?.authType === 'env' ? [] : []);
-  const agentId = `${service.replace(/[^a-z0-9]/g, '_')}.agent`;
+  // Prefer the candidate's own id when it's already agent-shaped — an
+  // affordance like 'messages.app.agent' must keep its id, not be
+  // re-derived into 'messages_app.agent'.
+  const agentId = (cand?.id || '').endsWith('.agent')
+    ? cand.id
+    : `${service.replace(/[^a-z0-9]/g, '_')}.agent`;
 
   const fm = [
     '---',
     `id: ${agentId}`,
     `service: ${service}`,
-    `type: ${isMcp ? 'mcp' : 'cli'}`,
+    `type: ${isMcp ? 'mcp' : isApi ? 'api' : 'cli'}`,
     tool ? `cli_tool: ${tool}` : null,
     isMcp ? `mcp_server: ${service}` : null,
+    cand?.setupUrl ? `setupUrl: ${cand.setupUrl}` : null,
     'status: draft',
     cand?.installCmd ? `install_cmd: ${cand.installCmd}` : null,
+    (cand?.capabilities || []).length ? `capabilities: [${cand.capabilities.join(', ')}]` : null,
     (cand?.keywords || []).length ? `keywords: [${[...new Set([service, ...(cand.keywords || [])])].join(', ')}]` : null,
     secrets.length ? 'secrets:' : null,
     ...secrets.map(s => `  - ${s}`),
@@ -527,10 +562,13 @@ const INFER_MAX_CANDIDATES = 6;
 const INFER_VERIFY_TIMEOUT_MS = 8000;
 
 const INFER_PROMPT = `You name real, existing tools that could accomplish a user's goal. Respond with ONLY a JSON array of up to 6 objects:
-[{"name":"binary-or-server-name","kind":"cli|npm|mcp|api","package":"npm-or-brew-package-if-different","why":"one short phrase"}]
+[{"name":"binary-or-server-name","kind":"cli|npm|mcp|api","package":"npm-or-brew-package-if-different","why":"one short phrase","authEnv":["ENV_VAR_NAMES"],"setupUrl":"https://docs-or-console-url"}]
+
+"authEnv" and "setupUrl" are OPTIONAL — include them only when you are confident (e.g. TWILIO_ACCOUNT_SID, OPENAI_API_KEY). Never invent plausible-looking names.
 
 Rules:
 - Only name tools you are confident actually exist (real binaries, npm packages, brew formulae, or MCP servers).
+- Prefer in this order: zero-install/local affordances (osascript, curl, platform tools) → already-installed CLIs → installable CLIs → API-keyed services.
 - Prefer the simplest/least-setup option first.
 - If a service name was given (e.g. "slack", "twilio"), include its official CLI/SDK package if one exists.
 - If nothing plausible exists, return [].
@@ -587,6 +625,18 @@ function _installCmdFor(cand, verification) {
   return null;
 }
 
+// LLM-proposed auth metadata — sanitized, never trusted. Env names must be
+// UPPER_SNAKE; setupUrl must be https. Presence/absence of the vars adjusts
+// friction mechanically (stored key = 1, missing key = 3+).
+function _inferAuthFields(p, baseFriction) {
+  const authEnv = (Array.isArray(p?.authEnv) ? p.authEnv : [])
+    .map(k => String(k || '').trim()).filter(k => /^[A-Z][A-Z0-9_]{2,}$/.test(k));
+  const setupUrl = /^https:\/\/\S+$/.test(String(p?.setupUrl || '')) ? String(p.setupUrl).slice(0, 300) : null;
+  if (!authEnv.length) return { authEnv: [], setupUrl, friction: baseFriction };
+  const missing = authEnv.filter(k => !process.env[k]);
+  return { authEnv, setupUrl, friction: missing.length ? Math.max(baseFriction, 3) : Math.min(baseFriction, 1) };
+}
+
 /**
  * Semantic fallback for searchCapabilities. On a keyword miss, the LLM
  * proposes candidate tools; every proposal is mechanically verified before
@@ -617,14 +667,16 @@ async function inferCapabilities(goal, opts = {}) {
     const v = _verifyCandidate(p);
     if (!v.verified) { rejected.push({ name, why: v.evidence }); continue; }
 
+    const _auth = _inferAuthFields(p, v.installed ? 0 : (v.seed ? (v.seed.authType === 'env' ? 3 : 2) : 2));
     if (v.installed) {
       // Smoke check: binary answers --version (probe is verb-gated, read-only).
       const pv = await capabilityProbe(v.bin, ['--version']);
       candidates.push(_candidate({
-        id: `${name}.agent`, label: `${name} (installed)`, kind: p.kind === 'mcp' ? 'mcp' : 'cli',
+        id: `${name}.agent`, label: `${name} (installed)`, kind: p.kind === 'mcp' ? 'mcp' : (p.kind === 'api' ? 'api' : 'cli'),
         service: name, tool: v.bin, keywords: [name],
-        authType: 'none', installed: true, verified: Boolean(pv.ok),
-        friction: 0, detail: `Inferred for "${goal}" — ${p.why || 'verified installed'}.`,
+        authType: _auth.authEnv.length ? 'env' : 'none', installed: true, verified: Boolean(pv.ok),
+        authEnv: _auth.authEnv, setupUrl: _auth.setupUrl,
+        friction: _auth.friction, detail: `Inferred for "${goal}" — ${p.why || 'verified installed'}.`,
         evidence: v.evidence,
       }));
     } else if (v.seed) {
@@ -637,10 +689,11 @@ async function inferCapabilities(goal, opts = {}) {
       }));
     } else {
       candidates.push(_candidate({
-        id: `${name}.agent`, label: `${name} (${v.evidence} package)`, kind: 'cli',
+        id: `${name}.agent`, label: `${name} (${v.evidence} package)`, kind: p.kind === 'api' ? 'api' : 'cli',
         service: name, tool: name, keywords: [name],
-        authType: 'none', installed: false,
-        installCmd: _installCmdFor(p, v), friction: 2,
+        authType: _auth.authEnv.length ? 'env' : 'none', installed: false,
+        authEnv: _auth.authEnv, setupUrl: _auth.setupUrl,
+        installCmd: _installCmdFor(p, v), friction: _auth.friction,
         detail: `Inferred for "${goal}" — ${p.why || 'verified package'}.`,
         evidence: v.evidence,
       }));
@@ -678,11 +731,22 @@ const GENERIC_VERB_TOKENS = new Set([
  * @returns {'pin'|'clarify'} pin = action verb maps to a capability; clarify =
  *   prompt only names the target (connector verbs / unknown intent).
  */
+// Plural↔singular tolerance: capability slugs are usually plural (list_emails)
+// while users say "the email". Strip a trailing 's' only when the stem stays
+// >2 chars and the word doesn't end in ss/us/is — so 'status', 'address',
+// 'analysis' never collapse. Scoped to verbFit; _tokens/_matchScore untouched.
+function _sing(t) {
+  return t.length > 3 && /[^s]s$/.test(t) && !/(ss|us|is)$/.test(t)
+    ? t.slice(0, -1)
+    : t;
+}
+
 function verbFit(prompt, candidate) {
   const capTokens = new Set();
   for (const cap of candidate.capabilities || []) {
     for (const t of _tokens(cap)) capTokens.add(t);
   }
+  const capStems = new Set([...capTokens].map(_sing));
   // Identity tokens (service/tool/agent id) name the TARGET, not the action —
   // exclude them so "connect to chromecast" can't pin on 'chromecast' alone.
   // Keywords stay IN scope: a keyword can be the action verb itself ("cast").
@@ -692,7 +756,112 @@ function verbFit(prompt, candidate) {
   // No declared capabilities — fit can't be confirmed, so clarify rather
   // than pin a tool we can't prove does the asked thing.
   if (!capTokens.size) return 'clarify';
-  return leftovers.some(t => capTokens.has(t) && !GENERIC_VERB_TOKENS.has(t)) ? 'pin' : 'clarify';
+  return leftovers.some(t => capStems.has(_sing(t)) && !GENERIC_VERB_TOKENS.has(t)) ? 'pin' : 'clarify';
+}
+
+// ── capability.select-best — semantic selection over retrieved candidates ──
+// Three-layer routing:
+//   1. searchCapabilities — mechanical retrieval (generous recall; its job is
+//      "don't miss candidates", never the decision itself).
+//   2. selectBestCapability — ONE bounded temp-0 LLM call picks the best
+//      surface from the verified fact table, or "none". Replaces token-fit
+//      decisions (verbFit) for routing — a substring match can no longer
+//      become a pin.
+//   3. decideGate — pure function; verified facts alone decide what the
+//      pick means (pin / needs_setup / clarify / none). The LLM can't fake
+//      facts — an uninstalled tool can never become "ready".
+//
+// llmCaller is injected (command-service wraps skill-llm askWithMessages).
+// Without it the function returns ok:false — callers must degrade to
+// ASKING (clarify/needs_setup), never to a lexical pin.
+
+const SELECT_MAX_CANDIDATES = 20; // 8 scored hits + unmatched registered agents
+
+const SELECT_PROMPT = `You pick the single best execution surface for a user goal from verified candidates, or none.
+
+Rules:
+- Prefer deterministic surfaces — local affordances, CLI/API/MCP agents — over browser agents ALWAYS, even when a browser agent is signed in. A named service (gmail, jira, n8n, slack) identifies the data, not the surface.
+- fit "exact" only when the candidate can clearly perform the asked action (check kind + capabilities). If the goal's real target is an entity the candidate doesn't own — e.g. events on a public website, a file on disk — answer "none", not the nearest lookalike service.
+- fit "none" when the goal is a public-page read/scrape/summary, a local file or screen question, a device/OS action, or ordinary conversation — those use generic tools, not these candidates.
+- fit "partial" when a candidate probably applies but intent is ambiguous (connector verbs: "connect X", "use X", "set up X").
+- Browser agents are the last resort: pick only when no deterministic surface can do the task.
+- Respond ONLY JSON: {"pick":"<candidate id or null>","fit":"exact|partial|none","reason":"<short>","alternatives":["<id>",...]}
+
+Goal: `;
+
+function _candidateFacts(c) {
+  return `${c.id} | kind:${c.kind} | service:${c.service || '?'} | caps:[${(c.capabilities || []).join(',')}]`
+    + ` | ${c.installed ? 'installed' : 'NOT installed'} | friction:${c.friction} (${c.setupSummary || 'setup unknown'})`
+    + ` | ${c.detail || ''}`;
+}
+
+/**
+ * Semantic pick over retrieved candidates.
+ * @param {string} query
+ * @param {object} [opts] { llmCaller, candidates, limit }
+ * @returns {Promise<{ok:boolean, pick:?object, fit:'exact'|'partial'|'none', reason:string, alternatives:Array, candidates:Array, error?:string}>}
+ */
+async function selectBestCapability(query, opts = {}) {
+  // Caller-supplied candidates are already the vetted pool — no matchScore
+  // filter. When WE retrieve, the pool is scored hits + unmatched registered.
+  const callerSupplied = Array.isArray(opts.candidates) && opts.candidates.length;
+  const candidates = callerSupplied ? opts.candidates : await searchCapabilities(query, {
+    limit: opts.limit || 8,
+    includeUnmatchedRegistered: true,
+    maxRegistered: opts.maxRegistered,
+  });
+  if (!candidates.length) {
+    return { ok: true, pick: null, fit: 'none', reason: 'no candidates', alternatives: [], candidates };
+  }
+  // Fact table: scored hits first (most likely relevant), then unmatched
+  // registered agents (the user's own capability set — reachable even when
+  // vocabulary doesn't overlap, e.g. "gmail" → nylas email CLI).
+  const pool = candidates.slice(0, SELECT_MAX_CANDIDATES);
+  const llmCaller = opts.llmCaller;
+  if (typeof llmCaller !== 'function') return { ok: false, error: 'no-llm-caller', candidates };
+
+  const table = pool.map((c, i) => `${i + 1}. ${_candidateFacts(c)}`).join('\n');
+  let verdict = null;
+  try {
+    const raw = await llmCaller(`${SELECT_PROMPT}${JSON.stringify(String(query || '').slice(0, 400))}\n\nCANDIDATES:\n${table}`);
+    const m = String(raw || '').match(/\{[\s\S]*\}/);
+    verdict = m ? JSON.parse(m[0]) : null;
+  } catch (e) {
+    return { ok: false, error: `llm:${e.message}`, candidates };
+  }
+  if (!verdict || typeof verdict !== 'object') return { ok: false, error: 'bad-verdict', candidates };
+
+  const byId = new Map(pool.map(c => [String(c.id).toLowerCase(), c]));
+  const pick = verdict.pick ? (byId.get(String(verdict.pick).toLowerCase()) || null) : null;
+  // A pick naming an unknown id is a malformed verdict — treat as none,
+  // never honor an id outside the retrieved pool.
+  if (verdict.pick && !pick) return { ok: true, pick: null, fit: 'none', reason: 'invalid-pick', alternatives: [], candidates };
+  let fit = ['exact', 'partial', 'none'].includes(verdict.fit) ? verdict.fit : 'none';
+  if (!pick) fit = 'none';
+  const alternatives = (Array.isArray(verdict.alternatives) ? verdict.alternatives : [])
+    .map(a => byId.get(String(a).toLowerCase()))
+    .filter(c => c && c !== pick);
+  return { ok: true, pick, fit, reason: String(verdict.reason || '').slice(0, 240), alternatives, candidates };
+}
+
+/**
+ * Pure decision mapping — what a semantic pick MEANS, from verified facts only.
+ * @returns {'pin'|'needs_setup'|'clarify'|'none'|'fallback'}
+ *   'fallback' = selector failed — caller degrades to asking, never pinning.
+ */
+function decideGate(selection) {
+  if (!selection || selection.ok !== true) return 'fallback';
+  const { pick, fit } = selection;
+  if (fit === 'none' || !pick) return 'none';
+  if (fit === 'partial') return 'clarify';
+  // fit === 'exact'
+  if (pick.kind === 'browser') {
+    // Sole deterministic route absent — browser IS the route; the preflight
+    // sign-in wall handles auth downstream, so a planning detour for an
+    // unambiguous named-service action is pure friction.
+    return (pick.installed && pick.friction <= 5) ? 'pin' : 'needs_setup';
+  }
+  return (pick.installed && pick.friction <= 1) ? 'pin' : 'needs_setup';
 }
 
 // ── stampDescriptor — write verified/status fields into agent frontmatter ──
@@ -717,4 +886,4 @@ function stampDescriptor(agentId, patch = {}) {
   return { ok: true, file };
 }
 
-module.exports = { searchCapabilities, capabilityProbe, selectCapability, inferCapabilities, verbFit, stampDescriptor, whichCli, SETUP_SUMMARIES, SETUP_ETA, PLATFORM_AFFORDANCES };
+module.exports = { searchCapabilities, capabilityProbe, selectCapability, inferCapabilities, selectBestCapability, decideGate, verbFit, stampDescriptor, whichCli, SETUP_SUMMARIES, SETUP_ETA, PLATFORM_AFFORDANCES };

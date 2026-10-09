@@ -58,8 +58,9 @@ function _recordStepArtifact(taskId, event) {
   const output = String(event.error || event.stdout || '').trim();
   a.steps.set(idx, {
     title: event.description || event.title || prev.title || event.skill || 'Step',
-    status: event.type === 'step_failed' || /step_failed$/.test(event.type) ? 'failed'
-      : (event.skipped === true || prev.status === 'skipped') ? 'skipped'
+    status: event.type === 'ask_user' || /ask_user$/.test(event.type) ? 'needs_input'
+      : event.type === 'step_failed' || /step_failed$/.test(event.type) ? 'failed'
+      : event.skipped === true ? 'skipped'
       : 'done',
     skill: event.skill || prev.skill || undefined,
     output: output ? output.slice(0, _ARTIFACT_MAX_OUTPUT) : prev.output || undefined,
@@ -108,9 +109,16 @@ function _recordAllDoneArtifacts(taskId, event) {
       : (typeof r.step === 'number' ? r.step - 1 : null);
     if (idx === null) continue;
     const prev = a.steps.get(idx) || {};
-    const status = prev.status === 'failed' ? 'failed'
-      : r.skipped ? 'skipped'
+    // A clear ok:true wins over a pinned failure — recovery attempts append a
+    // SECOND skillResult at the same step index (fs.read fail → cli.agent
+    // success), so the last result is authoritative. An explicit skipped flag
+    // still wins (skip is intent, not ambiguity), and ambiguous entries
+    // (ok undefined) respect the pin rather than flipping a real failure.
+    const status = r.skipped ? 'skipped'
+      : r.askUser === true ? 'needs_input'
+      : r.ok === true ? 'done'
       : r.ok === false ? 'failed'
+      : prev.status === 'failed' ? 'failed'
       : 'done';
     const output = String(r.error || r.stdout || '').trim();
     a.steps.set(idx, {
@@ -122,6 +130,9 @@ function _recordAllDoneArtifacts(taskId, event) {
       draftPath: r.draftPath || prev.draftPath || undefined,
       openIn: Array.isArray(r.openIn) ? r.openIn : prev.openIn || undefined,
       diff: r.diff || prev.diff || undefined,
+      recoveredFrom: (prev.status === 'failed' && r.ok === true)
+        ? (prev.skill || 'unknown')
+        : prev.recoveredFrom || undefined,
     });
   }
   while (a.steps.size > _ARTIFACT_MAX_STEPS) {
@@ -366,7 +377,7 @@ function _makeProgressCallback(taskId, agentId) {
  * @param {string[]|null} [args.preflightAuthBypass] - Agent IDs to treat as authed for this run only
  * @param {Object|null}  [args._resumeState] - Paused finalState to resume from (ask_user answer)
  */
-async function execute({ taskId, prompt, agentId, source, originalPrompt, detectedLanguage, sessionId, planFile, preflightAuthBypass, userApproved, thoughtContext, guessedIntent, planTask, _resumeState, _deterministicPlan, _deterministicTemplate, _deterministicLowRisk, _deterministicExternal, _deterministicServiceAgent, _resumeMultiIntent, _resumeIntentQueue, _resumeIntentResults, _resumeDataContext }) {
+async function execute({ taskId, prompt, agentId, capabilityReason, source, originalPrompt, detectedLanguage, sessionId, planFile, preflightAuthBypass, userApproved, thoughtContext, guessedIntent, planTask, _resumeState, _deterministicPlan, _deterministicTemplate, _deterministicLowRisk, _deterministicExternal, _deterministicServiceAgent, _resumeMultiIntent, _resumeIntentQueue, _resumeIntentResults, _resumeDataContext }) {
   if (!_mcpAdapter || !_llmBackend) {
     console.error('[HandoffRunner] Not initialized — call init() first');
     _notifyComplete(taskId, agentId, 'failed', 'HandoffRunner not initialized', null, sessionId);
@@ -503,6 +514,9 @@ async function execute({ taskId, prompt, agentId, source, originalPrompt, detect
           // registered agent (or a detectAgent regex). resolveAgent honors it
           // before the local_system skip, verified against the registry.
           ...(agentId ? { _pinnedAgentId: agentId } : {}),
+          // Capability-selector provenance — why this lane was pinned
+          // (semantic pick reason, for journal/audit).
+          ...(capabilityReason ? { _capabilityReason: capabilityReason } : {}),
           // Same cross-prompt session continuity as the serial path — without
           // this the promotion matrix in resolveReferencesV2 never sees the
           // prior browser session and plan-level close-all runs unprotected.
@@ -778,6 +792,30 @@ async function execute({ taskId, prompt, agentId, source, originalPrompt, detect
       }
       return { ok: true, status: 'waiting-for-input' };
 
+    } else if (abortController.signal.aborted) {
+      // Aborted mid-run: the graph short-circuited (no pendingQuestion, no
+      // error), so execute() resolved into the normal-completion shape with a
+      // PARTIAL answer. Reporting 'done' here wrote ✅ done to plan files for
+      // a cancelled run — emit 'cancelled' truthfully instead.
+      console.log(`[HandoffRunner] Task ${taskId} aborted mid-run — reporting cancelled`);
+      progressCallback({ type: 'pipeline:done', contract: finalState._contract });
+      _notifyComplete(taskId, agentId, 'cancelled', 'Cancelled by user', null, sessionId, null, null, _artifactSnapshot(taskId));
+      if (_ipcBroadcast) {
+        _ipcBroadcast('task:complete', {
+          taskId,
+          prompt: originalPrompt || prompt,
+          answer: '',
+          sources,
+          items,
+          status: 'cancelled',
+          agentId,
+          source,
+          sessionId: finalState.resolvedSessionId || sessionId || null,
+          artifacts: _artifactSnapshot(taskId),
+        });
+      }
+      return { ok: true, status: 'cancelled' };
+
     } else {
       // Normal completion
       const thinking = finalState.thinking || null;
@@ -900,6 +938,24 @@ function getPendingPlanApprovals() {
 /** @param {string} taskId */
 function hasPendingQuestion(taskId) {
   return _pendingQuestions.has(taskId);
+}
+
+/**
+ * Find a task parked on ask_user for a given agent — used by the terminal
+ * setup lane's post-auth resume when a credential-shaped ask_user was
+ * intercepted mid-run.
+ * @param {string} agentId - canonical agent id (e.g. 'nylas.agent')
+ * @returns {string|null} taskId
+ */
+function findPendingQuestionForAgent(agentId) {
+  const target = String(agentId || '').toLowerCase();
+  if (!target) return null;
+  for (const [tid, ctx] of _pendingQuestions) {
+    const pqAgent = ctx?.finalState?.pendingQuestion?.agentId;
+    const cands = [pqAgent, ctx?.agentId].filter(Boolean).map(v => String(v).toLowerCase());
+    if (cands.includes(target) || cands.includes(`${target}.agent`)) return tid;
+  }
+  return null;
 }
 
 /**
@@ -1253,4 +1309,4 @@ function getLiveRun(taskId) {
   return _activeRuns.get(taskId) || null;
 }
 
-module.exports = { init, execute, resume, answerQuestion, hasPendingQuestion, getPendingPlanApprovals, cancel, getActiveCount, getActiveTaskIds, getProgressCallback, getLiveRun, setGatherAnswerCallback, setOnTaskComplete };
+module.exports = { init, execute, resume, answerQuestion, hasPendingQuestion, findPendingQuestionForAgent, getPendingPlanApprovals, cancel, getActiveCount, getActiveTaskIds, getProgressCallback, getLiveRun, setGatherAnswerCallback, setOnTaskComplete, _recordStepArtifact, _recordAllDoneArtifacts, _artifactSnapshot, _runArtifacts };

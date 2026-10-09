@@ -1058,6 +1058,10 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
   // Preflight state
   const [preflightAgents, setPreflightAgents] = useState<PreflightAgent[]>([]);
   const [preflightAuthRequired, setPreflightAuthRequired] = useState<PreflightAuthRequired | null>(null);
+  // Terminal-setup lane — 'opening' → setup PTY is being spawned, 'open' →
+  // prompts are live in the terminal drawer, 'unavailable' → no wizard exists,
+  // fall back to the Agents tab.
+  const [agentSetupStatus, setAgentSetupStatus] = useState<Record<string, 'opening' | 'open' | 'unavailable'>>({});
   const preflightAuthRequiredRef = useRef<PreflightAuthRequired | null>(null);
   useEffect(() => { preflightAuthRequiredRef.current = preflightAuthRequired; }, [preflightAuthRequired]);
   const [preflightAuthBrowserOpened, setPreflightAuthBrowserOpened] = useState(false);
@@ -1531,7 +1535,21 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
           setPreflightAuthBrowserOpened(false);
           setPreflightAuthBackgroundFailed(false);
           setPreflightAuthVerifying(false);
+          // CLI/MCP/API setup is terminal-driven — mark the lane "opening" so
+          // the card renders a terminal status line instead of an Agents-tab
+          // dead end. Browser auth stays card-based (a real browser is needed).
+          if (data.authType !== 'browser_oauth' && data.authType !== 'browser_reauth') {
+            setAgentSetupStatus(prev => ({ ...prev, [data.agentId]: 'opening' }));
+          }
           onAuthPending?.(true);
+          break;
+
+        case 'agent:setup_opened':
+          setAgentSetupStatus(prev => ({ ...prev, [data.agentId]: 'open' }));
+          break;
+
+        case 'agent:setup_unavailable':
+          setAgentSetupStatus(prev => ({ ...prev, [data.agentId]: 'unavailable' }));
           break;
 
         case 'preflight:agent_ready':
@@ -1540,6 +1558,7 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
               ? { ...a, ready: true, authed: true, message: data.message || `${data.agentId} ready` }
               : a
           ));
+          setAgentSetupStatus(prev => { const n = { ...prev }; delete n[data.agentId]; return n; });
           setPreflightAuthRequired(prev => (prev?.agentId === data.agentId ? null : prev));
           if (preflightAuthRequiredRef.current?.agentId === data.agentId) {
             onAuthPending?.(false);
@@ -1553,6 +1572,7 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
               ? { ...a, ready: false, authed: false, message: data.message || `${data.agentId} auth failed` }
               : a
           ));
+          setAgentSetupStatus(prev => { const n = { ...prev }; delete n[data.agentId]; return n; });
           setPreflightAuthRequired(prev => (prev?.agentId === data.agentId ? null : prev));
           if (preflightAuthRequiredRef.current?.agentId === data.agentId) {
             onAuthPending?.(false);
@@ -2135,6 +2155,9 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
         }
 
         case 'task:auth_required': {
+          // cli-family auth walls are narrated in the terminal pane — the
+          // browser-style overlay card would race the setup lane.
+          if (data.serviceType === 'cli') break;
           // Login wall detected during task execution — show prominent auth overlay card
           const stepIdx = steps.findIndex(s => s.status === 'running');
           const displayIdx = stepIdx >= 0 ? stepIdx : (data.stepIndex ?? 0) + stepOffsetRef.current;
@@ -2674,6 +2697,7 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
           setPreflightAuthVerifying(false);
           setPreflightAuthBackgroundFailed(false);
           setPreflightAuthRequired(null);
+          if (data.agentId) setAgentSetupStatus(prev => { const n = { ...prev }; delete n[data.agentId]; return n; });
           onAuthPending?.(false);
           break;
 
@@ -2682,6 +2706,7 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
           setPreflightAuthVerifying(false);
           setPreflightAuthBackgroundFailed(false);
           setPreflightAuthRequired(null);
+          if (data.agentId) setAgentSetupStatus(prev => { const n = { ...prev }; delete n[data.agentId]; return n; });
           onAuthPending?.(false);
           break;
 
@@ -5744,7 +5769,6 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
       {preflightAuthRequired && (
         (() => {
           const isBrowserAuth = preflightAuthRequired.authType === 'browser_oauth' || preflightAuthRequired.authType === 'browser_reauth';
-          const isCliSetup = preflightAuthRequired.authType === 'cli_setup';
           const _rawName = (preflightAuthRequired.serviceName || preflightAuthRequired.agentId.replace('.agent', '') || 'this service');
           const displayName = _rawName.charAt(0).toUpperCase() + _rawName.slice(1);
           return (
@@ -5774,19 +5798,17 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
               {preflightAuthRequired.message}
             </div> */}
             <div className="text-xs" style={{ color: '#f59e0b' }}>
-              {isCliSetup
-                ? 'CLI agent needs configuration — open the Agents tab to complete setup.'
-                : isBrowserAuth
+              {isBrowserAuth
                 ? preflightAuthBackgroundFailed
                   ? 'Sign-in could not be verified — try again, confirm below, or proceed without.'
                   : 'Browser login required — sign in, confirm below, or proceed without.'
-                : preflightAuthRequired.authType === 'cli_install'
-                ? 'CLI install required — open the Agents tab to install.'
-                : preflightAuthRequired.authType === 'cli_update_needed'
-                ? 'CLI version drift detected — update recommended. Open the Agents tab to update.'
-                : preflightAuthRequired.authType === 'api_key'
-                ? 'API key required — open the Agents tab to add credentials.'
-                : 'Authentication required — open the Agents tab to add credentials.'
+                : agentSetupStatus[preflightAuthRequired.agentId] === 'unavailable'
+                ? (preflightAuthBackgroundFailed
+                  ? 'Setup ran but sign-in could not be verified — retry below or open the Agents tab.'
+                  : 'Automatic setup is not available for this agent — open the Agents tab.')
+                : agentSetupStatus[preflightAuthRequired.agentId] === 'open'
+                ? `Setting up ${displayName} in the terminal — follow the prompts below.`
+                : `Opening terminal setup for ${displayName}…`
               }
             </div>
           </div>
@@ -5867,28 +5889,78 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
                 </button>
               </div>
             ) : (
-              <button
-                onClick={() => {
-                  ipcRenderer?.send('preflight:open-agents-tab', {
-                    agentId: preflightAuthRequired.agentId,
-                    serviceName: preflightAuthRequired.serviceName,
-                    authType: preflightAuthRequired.authType,
-                    message: preflightAuthRequired.message,
-                    reason: preflightAuthRequired.reason || null,
-                    setupInfo: preflightAuthRequired.setupInfo || null,
-                  });
-                }}
-                className="text-xs font-medium rounded-md transition-colors"
-                style={{
-                  padding: '6px 12px',
-                  backgroundColor: 'rgba(245,158,11,0.15)',
-                  border: '1px solid rgba(245,158,11,0.4)',
-                  color: '#f59e0b',
-                  cursor: 'pointer',
-                }}
-              >
-                {isCliSetup ? 'Configure in Agents Tab →' : 'Open Agents Tab →'}
-              </button>
+              <div style={{ display: 'flex', flexDirection: 'column', width: '100%', gap: 6 }}>
+                {/* ── Terminal-setup status line ─────────────────────────────── */}
+                {agentSetupStatus[preflightAuthRequired.agentId] !== 'unavailable' && (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 2 }}>
+                    <span className="text-xs" style={{ color: '#3b82f6', display: 'flex', alignItems: 'center', gap: 6 }}>
+                      <span className="animate-spin" style={{ display: 'inline-block', width: 12, height: 12, border: '2px solid #3b82f6', borderTopColor: 'transparent', borderRadius: '50%' }} />
+                      {agentSetupStatus[preflightAuthRequired.agentId] === 'open'
+                        ? `Setup running in the terminal — answer ${displayName}'s prompts there`
+                        : `Opening a setup terminal for ${displayName}…`}
+                    </span>
+                  </div>
+                )}
+                {/* Clickable dashboard/console link — the terminal setup lane
+                    auto-opens it too, but keep it clickable for re-entry. */}
+                {(() => {
+                  const _su = preflightAuthRequired.setupInfo?.setupUrl;
+                  const url = Array.isArray(_su) ? _su[0] : _su;
+                  if (!url || typeof url !== 'string' || !/^https?:\/\//i.test(url)) return null;
+                  return (
+                    <a
+                      href={url}
+                      onClick={e => { e.preventDefault(); ipcRenderer?.send('shell:open-url', url); }}
+                      className="text-xs"
+                      style={{ color: '#60a5fa', textDecoration: 'underline', cursor: 'pointer', alignSelf: 'flex-start' }}
+                    >
+                      Open {displayName} dashboard ↗
+                    </a>
+                  );
+                })()}
+                <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+                  {agentSetupStatus[preflightAuthRequired.agentId] === 'unavailable' && (
+                    <button
+                      onClick={() => {
+                        ipcRenderer?.send('preflight:open-agents-tab', {
+                          agentId: preflightAuthRequired.agentId,
+                          serviceName: preflightAuthRequired.serviceName,
+                          authType: preflightAuthRequired.authType,
+                          message: preflightAuthRequired.message,
+                          reason: preflightAuthRequired.reason || null,
+                          setupInfo: preflightAuthRequired.setupInfo || null,
+                        });
+                      }}
+                      className="text-xs font-medium rounded-md transition-colors"
+                      style={{
+                        padding: '6px 12px',
+                        backgroundColor: 'rgba(245,158,11,0.15)',
+                        border: '1px solid rgba(245,158,11,0.4)',
+                        color: '#f59e0b',
+                        cursor: 'pointer',
+                      }}
+                    >
+                      Open Agents Tab →
+                    </button>
+                  )}
+                  <button
+                    onClick={() => {
+                      ipcRenderer?.send('preflight:auth_bypass', { agentId: preflightAuthRequired.agentId, taskId });
+                    }}
+                    className="text-xs font-medium rounded-md transition-colors"
+                    style={{
+                      padding: '6px 14px',
+                      backgroundColor: 'transparent',
+                      border: '1px solid rgba(107,114,128,0.3)',
+                      color: '#9ca3af',
+                      cursor: 'pointer',
+                      alignSelf: 'flex-start',
+                    }}
+                  >
+                    Proceed without
+                  </button>
+                </div>
+              </div>
             )}
           </div>
         </div>

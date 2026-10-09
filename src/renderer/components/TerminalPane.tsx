@@ -141,11 +141,18 @@ export function TerminalPane({ visible }: TerminalPaneProps) {
 
   // Agent sessions — when an agent opens a PTY (cli.agent pty_exec etc.) jump
   // straight to it so the pane shows the live work without manual selection.
+  // prompt_wait does the same jump AND focuses xterm so arrows/Enter/type all
+  // reach the PTY immediately — the run is blocked on this answer.
   useEffect(() => {
     const handler = (data: any) => {
       if (data?.type === 'terminal:session_open' && data.sessionId) {
         setActiveId(data.sessionId);
         refreshSessions();
+      } else if (data?.type === 'terminal:prompt_wait' && data.sessionId) {
+        setActiveId(data.sessionId);
+        setPrompt(data.prompt || 'input');
+        refreshSessions();
+        setTimeout(() => { try { termRef.current?.focus(); } catch (_) {} }, 60);
       }
     };
     try {
@@ -195,6 +202,7 @@ export function TerminalPane({ visible }: TerminalPaneProps) {
   };
 
   const isPassword = prompt === 'password';
+  const isInput = prompt === 'input';
 
   // Warp-style prompt prefix — show the session's working directory.
   const activeMeta = sessions.find(s => s.id === activeId)?.meta;
@@ -273,7 +281,7 @@ export function TerminalPane({ visible }: TerminalPaneProps) {
                           </div>
                         ))}
                         {exited !== null && (
-                          <div className="text-xs text-gray-500 mt-1">session ended (exit {exited})</div>
+                          <div className="text-xs text-gray-500 mt-1">{exited < 0 ? 'session closed' : `session ended (exit ${exited})`}</div>
                         )}
                       </div>
                     )}
@@ -289,9 +297,14 @@ export function TerminalPane({ visible }: TerminalPaneProps) {
             Password prompt detected — type below; transcript capture is paused while "sensitive" is on.
           </div>
         )}
+        {isInput && exited === null && (
+          <div className="px-3 py-1 bg-blue-500/15 text-blue-300 text-xs">
+            Waiting for input — type below and press Enter (arrow keys work too — click the screen first for menus).
+          </div>
+        )}
         {exited !== null && (
           <div className="px-3 py-1 bg-white/5 text-gray-400 text-xs">
-            Session exited (code {exited}).
+            {exited < 0 ? 'Session closed — open a new one or select another above.' : `Session exited (code ${exited}).`}
           </div>
         )}
         {err && (
@@ -319,7 +332,7 @@ export function TerminalPane({ visible }: TerminalPaneProps) {
               e.stopPropagation();
             }}
             disabled={!activeId || exited !== null}
-            placeholder={activeId ? (isPassword ? 'type password, Enter to send' : 'Enter to run · Shift+Enter for newline') : 'select or open a session'}
+            placeholder={activeId ? (isPassword ? 'type password, Enter to send' : isInput ? 'type your answer, Enter to send' : 'Enter to run · Shift+Enter for newline') : 'select or open a session'}
             className="flex-1 bg-transparent text-gray-200 text-xs outline-none resize-none disabled:opacity-40 placeholder:text-gray-600"
             style={{
               fontFamily: 'Menlo, Monaco, "Courier New", monospace', fontSize: 12, lineHeight: '18px', maxHeight: 90, overflowY: 'auto',

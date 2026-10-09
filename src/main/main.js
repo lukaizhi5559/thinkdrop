@@ -1438,17 +1438,19 @@ function startOverlayControlServer() {
       req.on('end', async () => {
         try {
           const { name, args } = JSON.parse(body || '{}');
-          if (name === 'cancel_current_task') {
+          if (name === 'cancel_current_task'
+              || (name === 'thinkdrop_control' && args?.command === 'cancel_task')) {
             // Model-driven cancel — same target as spoken pipeline cancels.
-            if (_lastVoiceTaskId) {
-              const tid = _lastVoiceTaskId;
-              try { require('./handoffRunner').cancel(tid); } catch (_) {}
-              _commsHttp('/comms.cancel', { taskId: tid }).catch(() => {});
-              safeSendUnified('task:complete', { taskId: tid, status: 'cancelled', error: 'cancelled by voice' });
-              res.writeHead(200).end(JSON.stringify({ ok: true, output: 'Cancelled the task.' }));
-            } else {
-              res.writeHead(200).end(JSON.stringify({ ok: true, output: 'Nothing is running right now.' }));
-            }
+            res.writeHead(200).end(JSON.stringify({ ok: true, output: _cancelCurrentVoiceTask() }));
+            return;
+          }
+          if (name === 'thinkdrop_control') {
+            // Lane/card state changes — the model picked the command
+            // semantically; the enum maps straight to real dispatch.
+            console.log(`🗣️ [VoiceTool] thinkdrop_control: ${args?.command}`);
+            _dispatchVoiceControl(args?.command, args)
+              .then(output => res.writeHead(200).end(JSON.stringify({ ok: true, output })))
+              .catch(err => res.writeHead(200).end(JSON.stringify({ ok: true, output: `That didn't work: ${err.message}` })));
             return;
           }
           if (name !== 'run_thinkdrop_task') {
@@ -1457,6 +1459,15 @@ function startOverlayControlServer() {
           }
           let instruction = (args?.instruction || '').trim();
           console.log(`🗣️ [VoiceTool] run_thinkdrop_task: "${instruction.substring(0, 80)}"`);
+          // Backstop dedupe — the transcript intercept may have already
+          // dispatched this same phrase; replay its result instead of
+          // double-firing the action.
+          const _normInstr = instruction.toLowerCase();
+          if (_lastVoiceControlHit && _lastVoiceControlHit.norm === _normInstr
+              && Date.now() - _lastVoiceControlHit.at < 4000) {
+            res.writeHead(200).end(JSON.stringify({ ok: true, output: _lastVoiceControlHit.output }));
+            return;
+          }
           // Selection context — capture the armed highlight alongside the tool call.
           let toolSelectedText = '';
           if (_selectionArmed || _capturedSelectionText) {
@@ -1464,26 +1475,58 @@ function startOverlayControlServer() {
             instruction = consumed.prompt;
             toolSelectedText = consumed.selectedText;
           }
-          const commsPort = parseInt(process.env.COMMS_GRAPH_PORT || '3015', 10);
-          let output = 'Working on it — I\'ll let you know when it\'s done.';
+          // Pending-card intercept — same deterministic actions typed prompts
+          // and voice finals get via routeThroughCommsGraph ("stop planning",
+          // "cancel", "option 2"). Without it a spoken "stop planning" reached
+          // the pinned planner, which narrated an exit that never happened.
           try {
-            const r = await _postJson(
-              new URL('/comms.process', `http://127.0.0.1:${commsPort}`),
-              { text: instruction, source: 'voice', sessionId: currentSessionId, selectedText: toolSelectedText || undefined, planning: _planningMode && _planningMode.active ? _planningMode : undefined },
-              15000
-            );
-            if (r?.ok && r?.data?.text) output = r.data.text;
-            else promptQueue.enqueue(instruction, { selectedText: toolSelectedText, sessionId: currentSessionId });
-            // <plan_run/> confirmed via voice — dispatch the draft plan.
-            if (r?.data?.metadata?.runPlan && r.data.metadata.planFile) {
-              _triggerPlanRun(r.data.metadata);
+            const hit = _matchPlanCheckAction(instruction);
+            if (hit) {
+              if (hit.prompt) {
+                instruction = hit.prompt;
+              } else {
+                const output = await _dispatchPlanCheckHit(hit);
+                res.writeHead(200).end(JSON.stringify({ ok: true, output }));
+                return;
+              }
             }
-          } catch (_) {
-            promptQueue.enqueue(instruction, { selectedText: toolSelectedText, sessionId: currentSessionId });
-          }
+          } catch (_) {}
+          const { output } = await _voiceDispatchInstruction(instruction, toolSelectedText);
           res.writeHead(200).end(JSON.stringify({ ok: true, output }));
         } catch (err) {
           res.writeHead(500).end(JSON.stringify({ error: err.message }));
+        }
+      });
+      return;
+    }
+
+    // ── POST /voice.control-check — Talk Mode transcript backstop ────────────
+    // gpt-realtime hears user audio directly; when it answers a control phrase
+    // conversationally instead of calling thinkdrop_control, voice-service
+    // forwards the user transcript here. Same _matchPlanCheckAction gate as
+    // every other surface — unhandled text passes through ({handled:false}).
+    if (req.url === '/voice.control-check') {
+      let body = '';
+      req.on('data', chunk => { body += chunk; });
+      req.on('end', async () => {
+        try {
+          const { text } = JSON.parse(body || '{}');
+          const hit = _matchPlanCheckAction(text);
+          if (!hit) {
+            res.writeHead(200).end(JSON.stringify({ ok: true, handled: false }));
+            return;
+          }
+          console.log(`🗣️ [VoiceControl] transcript intercept: "${String(text).substring(0, 80)}" → ${hit.action || 'prompt'}`);
+          let output;
+          if (hit.prompt) {
+            output = (await _voiceDispatchInstruction(hit.prompt, '')).output;
+          } else {
+            output = await _dispatchPlanCheckHit(hit);
+          }
+          _lastVoiceControlHit = { norm: String(text || '').trim().toLowerCase(), output, at: Date.now() };
+          res.writeHead(200).end(JSON.stringify({ ok: true, handled: true, output }));
+        } catch (err) {
+          res.writeHead(200).end(JSON.stringify({ ok: true, handled: false, error: err.message }));
         }
       });
       return;
@@ -1496,7 +1539,7 @@ function startOverlayControlServer() {
       req.on('data', chunk => { body += chunk; });
       req.on('end', () => {
         try {
-          const { taskId, prompt, agentId, source, originalPrompt, detectedLanguage, guessedIntent, sessionId: handoffSessionId, userApproved, thoughtContext, planId, planTaskNum, planTask, preflightAuthBypass, deterministicPlan } = JSON.parse(body || '{}');
+          const { taskId, prompt, agentId, source, originalPrompt, detectedLanguage, guessedIntent, sessionId: handoffSessionId, userApproved, thoughtContext, planId, planTaskNum, planTask, preflightAuthBypass, deterministicPlan, capabilityReason } = JSON.parse(body || '{}');
           console.log(`[CommsGraph] Handoff received — task=${taskId} agent=${agentId || 'auto'} source=${source} guessedIntent=${guessedIntent || 'null'} session=${handoffSessionId || 'none'}${thoughtContext?.id ? ` thought=${thoughtContext.id}` : ''}`);
 
           // Emit task:created BEFORE starting the stategraph run so the queue card
@@ -1521,6 +1564,7 @@ function startOverlayControlServer() {
             taskId,
             prompt,
             agentId: agentId || null,
+            capabilityReason: capabilityReason || null,
             source: source || 'text',
             originalPrompt: originalPrompt || null,
             detectedLanguage: detectedLanguage || null,
@@ -1534,6 +1578,16 @@ function startOverlayControlServer() {
             // the LLM planning pass (planning.cjs generated them at draft time).
             _deterministicPlan: Array.isArray(deterministicPlan) && deterministicPlan.length ? deterministicPlan : null,
             _deterministicTemplate: Array.isArray(deterministicPlan) && deterministicPlan.length ? 'plan_task' : null,
+            // Plan tasks pinned to a service agent must keep preflight — the
+            // _deterministicExternal flag is the designed mechanism: resolveAgent
+            // registry-verifies + pins the agent, preflightAgents skips the early
+            // return and runs cli/api/auth checks → preflight:auth_required →
+            // _openSetupSession terminal lane. Without it, cli agents reach
+            // executeCommand unauthenticated and dead-end on ask_user cards.
+            ...(planTask === true && Array.isArray(deterministicPlan) && deterministicPlan.length
+                && agentId && String(agentId).endsWith('.agent')
+              ? { _deterministicExternal: true, _deterministicServiceAgent: String(agentId) }
+              : {}),
           }).catch(err => {
             console.error(`[CommsGraph] Handoff ${taskId} error:`, err.message);
           });
@@ -1567,6 +1621,197 @@ function startOverlayControlServer() {
           res.writeHead(200).end(JSON.stringify({ ok: true }));
         } catch (err) {
           res.writeHead(500).end(JSON.stringify({ error: err.message }));
+        }
+      });
+      return;
+    }
+
+    // ── POST /plan.status — planning lane's plan.status tool. Live run state
+    // the planner cannot see otherwise (runs, held review gates, pending
+    // check) plus task statuses persisted in the plan file.
+    if (req.url === '/plan.status') {
+      let body = '';
+      req.on('data', chunk => { body += chunk; });
+      req.on('end', () => {
+        try {
+          const { planId } = JSON.parse(body || '{}');
+          const planRunner = require('./planRunner');
+          const planFormat = require('../../shared/plan-format.cjs');
+          const handoffRunner = require('./handoffRunner');
+          const run = planId ? planRunner.getRun(planId) : null;
+          const file = planId
+            ? require('path').join(os.homedir(), '.thinkdrop', 'plans', `${planId}.md`) : null;
+          let fileTasks = [];
+          let planStatus = null;
+          let fileContent = null;
+          try {
+            if (file && fs.existsSync(file)) {
+              fileContent = fs.readFileSync(file, 'utf8');
+              planStatus = (planFormat.parseFrontmatter(fileContent) || {}).status || null;
+              fileTasks = planFormat.parseTasks(fileContent)
+                .map(t => ({ num: t.num, title: t.title, status: t.status || null }));
+            }
+          } catch (_) {}
+          // Stale-marker reconciliation — a task persisted 🔄 running only
+          // proves dispatch, not progress. When no live run exists the marker
+          // is definitionally orphaned (same invariant startPlan uses); heal
+          // the file and report `interrupted` so the planner can't narrate
+          // "in progress". When a run IS live, a task parked on ask_user is
+          // surfaced as waiting-for-input, not running.
+          if (!run && fileContent) {
+            try {
+              let content = fileContent;
+              let dirty = false;
+              for (const t of fileTasks) {
+                if (t.status !== planFormat.TASK_STATUS.RUNNING) continue;
+                content = planFormat.updateTaskStatus(content, t.num, planFormat.TASK_STATUS.PENDING, 'Interrupted — no live run');
+                t.status = 'interrupted';
+                dirty = true;
+              }
+              // Frontmatter heal — same invariant plan:list enforces: a
+              // 'running' status with no live run is a dead marker. Without
+              // this the tool output led with "plan file status: running" and
+              // the model anchored on that word over the qualifiers.
+              if (planStatus === 'running') {
+                content = planFormat.updateFrontmatterStatus(content, 'ready');
+                planStatus = 'ready';
+                dirty = true;
+              }
+              if (dirty) fs.writeFileSync(file, content, 'utf8');
+            } catch (_) {}
+          }
+          const tasks = run
+            ? run.tasks.map(t => {
+                const tid = run.dispatched?.get?.(t.num);
+                const waiting = !!(tid && handoffRunner.hasPendingQuestion?.(tid));
+                return { num: t.num, title: t.title, status: waiting ? 'waiting-for-input' : (t.status || null) };
+              })
+            : fileTasks;
+          const waitingNums = tasks.filter(t => t.status === 'waiting-for-input').map(t => t.num);
+          res.writeHead(200).end(JSON.stringify({
+            ok: true,
+            planId: planId || null,
+            live: !!run,
+            // Single-word verdict for the planner — the tool renderer leads
+            // with this so "running" can never headline a dead run's report.
+            liveState: run ? (waitingNums.length ? 'waiting-for-input' : (run.status || 'running')) : 'not-running',
+            runStatus: run?.status || null,
+            planStatus,
+            tasks,
+            waitingTasks: waitingNums,
+            interruptedTasks: tasks.filter(t => t.status === 'interrupted').map(t => t.num),
+            heldAtReview: [..._pendingPlanReviews.values()]
+              .filter(r => !planId || r.planId === planId)
+              .map(r => r.taskNum),
+            pendingCheck: !!_pendingPlanCheck && (!_pendingPlanCheck.planId || _pendingPlanCheck.planId === planId),
+            runs: planRunner.listRuns(),
+          }));
+        } catch (err) {
+          res.writeHead(500).end(JSON.stringify({ error: err.message }));
+        }
+      });
+      return;
+    }
+
+    // ── POST /plan.cancel — planning lane's plan.cancel tool. Cancels the run
+    // AND the conversational artifacts (held review cards, pending check) so a
+    // tool claim of cancellation is always backed by a real effect.
+    if (req.url === '/plan.cancel') {
+      let body = '';
+      req.on('data', chunk => { body += chunk; });
+      req.on('end', () => {
+        try {
+          const { planId } = JSON.parse(body || '{}');
+          const planRunner = require('./planRunner');
+          const pid = planId
+            || (planRunner.listRuns().find(r => r.status === 'running') || {}).planId
+            || _pendingPlanCheck?.planId || null;
+          const cancelled = pid ? planRunner.cancelPlan(pid) : false;
+          for (const [key, review] of _pendingPlanReviews) {
+            if (!pid || review.planId === pid) {
+              _pendingPlanReviews.delete(key);
+              safeSendUnified('plan:review', { planId: review.planId, taskNum: review.taskNum, resolved: true, skipped: true });
+            }
+          }
+          if (_pendingPlanCheck && (!pid || _pendingPlanCheck.planId === pid)) {
+            const pcx = _pendingPlanCheck;
+            _pendingPlanCheck = null;
+            safeSendUnified('plan:check', { planId: pcx.planId, planFile: pcx.planFile, items: pcx.items, allClear: false, cancelled: true });
+          }
+          // Cancel = "get me out" — leave the lane when it cancelled the
+          // pinned plan (or planning was active with nothing to resolve).
+          // The reply's metadata.exitPlanning keeps main from re-pinning.
+          const exitedPlanning = !!(_planningMode?.active && (!pid || _planningMode.planId === pid));
+          if (exitedPlanning) _exitPlanningLane();
+          console.log(`[PlanRunner] /plan.cancel — ${pid || 'none'} cancelled=${cancelled}`);
+          res.writeHead(200).end(JSON.stringify({ ok: true, planId: pid, cancelled, exitedPlanning }));
+        } catch (err) {
+          res.writeHead(500).end(JSON.stringify({ error: err.message }));
+        }
+      });
+      return;
+    }
+
+    // ── POST /url.open — planning lane's url.open tool. Signup/login/verify
+    // destinations get a real browser window, not a pasted link the user has
+    // to copy. http/https only.
+    if (req.url === '/url.open') {
+      let body = '';
+      req.on('data', chunk => { body += chunk; });
+      req.on('end', async () => {
+        try {
+          const { url } = JSON.parse(body || '{}');
+          if (typeof url !== 'string' || !/^https?:\/\//i.test(url)) {
+            res.writeHead(400).end(JSON.stringify({ ok: false, error: 'http(s) url required' }));
+            return;
+          }
+          await require('electron').shell.openExternal(url);
+          console.log(`[UrlOpen] ${url}`);
+          res.writeHead(200).end(JSON.stringify({ ok: true, url }));
+        } catch (err) {
+          res.writeHead(500).end(JSON.stringify({ ok: false, error: err.message }));
+        }
+      });
+      return;
+    }
+
+    // ── POST /setup.start — planning lane's setup.start tool. ThinkDrop owns
+    // service setup: preflight_check discovers the runnable init/auth/install
+    // command (descriptor setupInfo + --help), then _openSetupSession drives
+    // it in a labeled setup:<svc> PTY, re-probes, and _resumeAfterAuth
+    // continues the parked task / pending plan check. The planner must never
+    // tell the user to run setup commands by hand while this lane exists.
+    if (req.url === '/setup.start') {
+      let body = '';
+      req.on('data', chunk => { body += chunk; });
+      req.on('end', async () => {
+        try {
+          const { service, agentId } = JSON.parse(body || '{}');
+          const svc = String(service || agentId || '').replace(/\.agent$/, '').toLowerCase().trim();
+          if (!svc) {
+            res.writeHead(400).end(JSON.stringify({ ok: false, error: 'service required' }));
+            return;
+          }
+          const normalizedAgentId = `${svc}.agent`;
+          if (_openSetupSessions.has(svc)) {
+            res.writeHead(200).end(JSON.stringify({ ok: true, service: svc, already: true }));
+            return;
+          }
+          const evt = await _setupEventBase(svc);
+          res.writeHead(200).end(JSON.stringify({
+            ok: true, service: svc, started: true,
+            setupUrl: evt.setupInfo.setupUrl || null,
+          }));
+          // Heavier discovery async — preflight_check merges descriptor
+          // setupInfo with --help discovery for the runnable command, then
+          // _openSetupSession owns the terminal lane + verify + resume.
+          (async () => {
+            await _enrichSetupEvent(evt, svc);
+            try { await _openSetupSession(evt, null); }
+            catch (err) { console.warn('[SetupStart] _openSetupSession failed:', err.message); }
+          })();
+        } catch (err) {
+          res.writeHead(500).end(JSON.stringify({ ok: false, error: err.message }));
         }
       });
       return;
@@ -1966,6 +2211,9 @@ function startOverlayControlServer() {
           // (and any watcher) sees agent-opened PTY sessions live.
           if (evt.type === 'terminal:session_open' || evt.type === 'terminal:prompt_wait') {
             safeSendUnified('terminal:session', evt);
+            // Input needed — the pane raises in-app, but the overlay itself
+            // may be hidden/behind an OAuth window. Surface it OS-level too.
+            if (evt.type === 'terminal:prompt_wait') alertTerminalInput(evt);
           }
           // Ticker lines (step boundaries, diagnosis notes) — broadcast to the
           // collapsed drawer header. Not routed to handoff callbacks; the
@@ -1978,7 +2226,11 @@ function startOverlayControlServer() {
           // OS-level alert when a browser sign-in window needs the user — the
           // in-app cards render silently in the queue; the window itself opens
           // outside the overlay, so pull attention with a Notification.
-          if (evt.type === 'needs_login' || evt.type === 'task:auth_required') {
+          // cli-family auth_required is narrated in the terminal pane instead —
+          // prompt_wait already alerts for real input prompts.
+          if (evt.type === 'task:auth_required' && evt.serviceType === 'cli') {
+            safeSendUnified('terminal:activity', { type: 'terminal:activity', line: `🔐 ${evt.serviceDisplay || evt.agentId || 'cli'} needs sign-in — follow the terminal prompts`, ts: Date.now() });
+          } else if (evt.type === 'needs_login' || evt.type === 'task:auth_required') {
             alertSignInNeeded(evt.serviceDisplay || evt.agentId || '', evt.loginUrl || '', evt.sessionId || evt.agentId || evt.type);
           }
           // Handoff tasks (comms-graph queue cards) carry ?taskId= — route the
@@ -2533,6 +2785,406 @@ function closeActiveBrowserSessions(reason = 'cancel') {
 let _pendingPreflightPromptsByTask = new Map(); // Per-task pending preflight prompts for handoff tasks: taskId → { prompt, agentId, source, originalPrompt, sessionId }
 let _pendingNewlyBuiltAgents = new Set(); // Tracks newly built agents pending auth — retained on cancel for retry
 
+// ── Terminal setup lane ────────────────────────────────────────────────────
+// preflight:auth_required for cli/mcp/api agents routes here — the labeled
+// `setup:<service>` PTY runs the agent's own init/auth/install command in the
+// visible terminal (prompt_wait raises the drawer for user input), then a real
+// re-probe decides success and the parked task auto-resumes. browser_oauth
+// events narrate the same session while the headed sign-in window opens.
+const _openSetupSessions = new Set(); // service keys with a live setup PTY
+const _CLI_FAMILY_AUTHTYPES = new Set(['cli_setup', 'cli_install', 'cli_update_needed', 'api_key', 'bearer', 'basic']);
+const _BROWSER_AUTHTYPES = new Set(['browser_oauth', 'browser_reauth']);
+
+function _setupNote(label, text) {
+  safeSendUnified('terminal:activity', { type: 'terminal:activity', line: text.replace(/^#\s*/, ''), ts: Date.now() });
+  return _cmdHttp('/terminal.note', { label, text }).catch(() => null);
+}
+
+/** Re-probe a cli agent's auth via cli.agent's canonical preflight_check. */
+async function _probeCliAuth(agentId, service, cliTool, setupInfo) {
+  const res = await _cmdHttp('/command.automate', {
+    skill: 'cli.agent',
+    args: { action: 'preflight_check', task: '', agents: [{ id: agentId, service, cliTool, setupInfo }] },
+  }, { timeoutMs: 15000 }).catch(() => null);
+  const pf = res?.data || res || {};
+  const c = (pf.detectedClis || []).find(d => String(d.service || '').toLowerCase() === service);
+  return !!(c && (c.authUser || c.authStatus === 'authenticated' || c.authStatus === 'configured'));
+}
+
+/** Re-probe a credential agent — did the secret land in the profile store?
+ *  store_secret rows live under `<key>_ref`, plain rows under `<key>` — probe
+ *  both via command-service's debug proxy (which carries the memory API key). */
+async function _probeCredAuth(agentId, envName) {
+  const base = `credential:${agentId}:${envName}`;
+  for (const key of [base, `${base}_ref`]) {
+    const res = await _setupGetJson(`http://127.0.0.1:3007/debug/profile?key=${encodeURIComponent(key)}`).catch(() => null);
+    const d = res?.data || res || {};
+    if (d && (d.value || d.valueRef || d.keyRef || d.stored)) return true;
+  }
+  return false;
+}
+
+function _setupGetJson(url) {
+  return new Promise((resolve) => {
+    const req = http.get(url, (res) => {
+      let d = ''; res.on('data', c => { d += c; });
+      res.on('end', () => { try { resolve(JSON.parse(d)); } catch (_) { resolve(null); } });
+    });
+    req.on('error', () => resolve(null));
+    req.setTimeout(5000, () => { req.destroy(); resolve(null); });
+  });
+}
+
+// ── Resumable setup state ──────────────────────────────────────────────────
+// ~/.thinkdrop/setup/<svc>.json — { verifiedAt, attempts, lastCmd, lastError,
+// lastPrompt, updatedAt }. A fresh verified marker lets a re-entered setup
+// lane skip straight to the probe→resume path; failure state carries where
+// it stopped so retries resume instead of replaying blindly.
+const _SETUP_STATE_DIR = path.join(os.homedir(), '.thinkdrop', 'setup');
+const _SETUP_STATE_VERIFIED_TTL_MS = 24 * 60 * 60 * 1000;
+function _setupStateRead(svc) {
+  try { return JSON.parse(fs.readFileSync(path.join(_SETUP_STATE_DIR, `${svc}.json`), 'utf8')); }
+  catch (_) { return null; }
+}
+function _setupStateWrite(svc, patch) {
+  try {
+    fs.mkdirSync(_SETUP_STATE_DIR, { recursive: true });
+    const cur = _setupStateRead(svc) || {};
+    fs.writeFileSync(path.join(_SETUP_STATE_DIR, `${svc}.json`),
+      JSON.stringify({ ...cur, ...patch, updatedAt: Date.now() }));
+  } catch (_) {}
+}
+
+// ── setup-event builders — shared by /setup.start and the runtime
+// credential-ask intercept so both produce the same _openSetupSession evt.
+// _setupEventBase: fast descriptor read (agent.query → setupUrl, cliTool,
+// authType). _enrichSetupEvent: heavier cli.agent preflight_check merge
+// (initCmd/authCmd/installCmd/credentials) for the runnable command.
+async function _setupEventBase(svc) {
+  const evt = { agentId: `${svc}.agent`, serviceName: svc, authType: 'cli_setup', cliTool: null, setupInfo: {} };
+  try {
+    const q = await _cmdHttp('/agent.query', { id: evt.agentId });
+    if (q?.found || q?.data?.found) {
+      const rec = q.data || q;
+      evt.cliTool = rec.cliTool || null;
+      const desc = String(rec.descriptor || '');
+      const fm = (desc.match(/^---\s*\n([\s\S]*?)\n---/) || [])[1] || desc.slice(0, 4000);
+      const urlM = fm.match(/setupUrl["']?\s*[:=]\s*["']?(https?:\/\/[^\s"',}\]]+)/i);
+      if (urlM) evt.setupInfo.setupUrl = urlM[1];
+      const typeM = desc.match(/^type:\s*(\S+)/m);
+      const dtype = typeM ? typeM[1].toLowerCase() : '';
+      if (['api_key', 'bearer', 'basic'].includes(dtype)) evt.authType = dtype;
+      else if (dtype.startsWith('browser')) evt.authType = 'browser_oauth';
+    }
+  } catch (_) {}
+  return evt;
+}
+
+async function _enrichSetupEvent(evt, svc) {
+  try {
+    const pfRes = await mcpAdapter.callService('command', 'command.automate', {
+      skill: 'cli.agent',
+      args: { action: 'preflight_check', task: `set up and authenticate ${svc}` },
+    }, { timeoutMs: 30000 }).catch(() => null);
+    const pf = pfRes?.data || pfRes;
+    const match = Array.isArray(pf?.detectedClis)
+      ? pf.detectedClis.find(c => [c.service, c.cli, (c.agentId || '').replace(/\.agent$/, '')]
+          .filter(Boolean).some(v => String(v).toLowerCase() === svc))
+      : null;
+    if (match) {
+      if (match.cli) evt.cliTool = match.cli;
+      evt.setupInfo = { ...(match.setupInfo || {}), ...evt.setupInfo };
+      if (!evt.setupInfo.installCmd && match.cli) {
+        evt.setupInfo.installCmd = match.installMethod === 'npm'
+          ? `npm install -g ${match.installPkg || match.cli}`
+          : `brew install ${match.installPkg || match.cli}`;
+      }
+      evt.authType = match.isApiKey ? 'api_key'
+        : match.installed === false ? 'cli_install'
+        : (['api_key', 'bearer', 'basic', 'browser_oauth'].includes(evt.authType) ? evt.authType : 'cli_setup');
+    }
+  } catch (err) { console.warn('[SetupStart] preflight_check failed:', err.message); }
+  return evt;
+}
+
+// Credential-shaped ask_user detection — questions a cli/api agent asks when it
+// hits an auth wall mid-run. Account/sign-in phrasing alone is NOT enough
+// (file pickers and clarifications also start with "Do you have"); require a
+// credential noun or an explicit auth verb + service context.
+const _CRED_ASK_RE = /(api[- ]?key|apikey|access[- ]?token|auth[- ]?token|bearer|client[-_ ]?(id|secret)|secret|password|credentials?|personal access token|grant[- ]?id|sign[- ]?in|log ?in|authenticat|authoriz|oauth)/i;
+
+function _looksLikeCredentialAsk(question) {
+  const q = String(question || '');
+  if (!q) return false;
+  if (_CRED_ASK_RE.test(q)) return true;
+  // "Do you have a Nylas account/API key?" style account probes from cli.agent
+  return /\bdo you have\b/i.test(q) && /\b(account|profile|console|dashboard|developer)\b/i.test(q);
+}
+
+/**
+ * Runtime net for ask_user credential walls. Resolves the asking agent via
+ * agent.query; cli-family agents get the terminal setup lane (suppress card,
+ * flip the auth ledger honest, emit preflight:auth_required so the renderer
+ * shows the terminal status line, build evt, open setup:<svc> PTY). Anything
+ * else re-broadcasts the original card so nothing is swallowed.
+ */
+async function _interceptCredentialAsk(data) {
+  const agentId = String(data.agentId || '');
+  const svc = agentId.replace(/\.agent$/, '').toLowerCase();
+  const forwardCard = () => {
+    if (resultsWindow && !resultsWindow.isDestroyed()) safeSend(resultsWindow, 'automation:progress', data);
+    if (unifiedWindow && !unifiedWindow.isDestroyed()) safeSend(unifiedWindow, 'automation:progress', data);
+  };
+  if (!svc) { forwardCard(); return; }
+
+  const evt = await _setupEventBase(svc);
+  // Only cli-family auth types take the terminal lane — browser agents keep
+  // their card/overlay flow.
+  if (!_CLI_FAMILY_AUTHTYPES.has(evt.authType)) { forwardCard(); return; }
+
+  // Ledger honesty — a live credential prompt proves the cached authed:true
+  // is stale; flip it so plan-check/status stop reporting "authed".
+  try {
+    const { markAgentAuthFailed } = require('../../stategraph-module/src/nodes/preflightAgents');
+    markAgentAuthFailed(evt.agentId, 'runtime credential prompt');
+  } catch (_) {}
+
+  // Surface the setup status line (renderer already handles this event type
+  // for cli-family: "Opening terminal setup for X…" instead of a card).
+  const authEvt = { ...evt, type: 'preflight:auth_required', taskId: data.taskId || null };
+  if (resultsWindow && !resultsWindow.isDestroyed()) safeSend(resultsWindow, 'automation:progress', authEvt);
+  if (unifiedWindow && !unifiedWindow.isDestroyed()) safeSend(unifiedWindow, 'automation:progress', authEvt);
+
+  // URL the agent embedded in its question (e.g. the dashboard link) — prefer
+  // it over the descriptor's setupUrl when present.
+  const urlM = String(data.question || '').match(/https?:\/\/[^\s"',)}\]]+/i);
+  if (urlM && !evt.setupInfo.setupUrl) evt.setupInfo.setupUrl = urlM[0];
+
+  await _enrichSetupEvent(evt, svc);
+  try { await _openSetupSession(evt, data.taskId || null); }
+  catch (err) {
+    console.warn('[CredentialAsk] setup lane failed, forwarding card:', err.message);
+    forwardCard();
+  }
+}
+
+/**
+ * Open the terminal setup lane for an agent that failed preflight auth.
+ * cmd-bearing types run the agent's own initCmd/authCmd/installCmd verbatim in
+ * a labeled PTY; credential types run a `read -s` + profile.store_secret
+ * script; browser types narrate while the headed sign-in flow runs in parallel.
+ * Then a real probe verifies and _resumeAfterAuth continues the parked task.
+ */
+async function _openSetupSession(evt, taskId) {
+  const rawAgentId = evt.agentId || '';
+  if (!rawAgentId) return;
+  const normalizedAgentId = rawAgentId.endsWith('.agent') ? rawAgentId : `${rawAgentId}.agent`;
+  const service = String(evt.serviceName || rawAgentId.replace(/\.agent$/, '') || 'agent').toLowerCase();
+  const authType = evt.authType || 'cli_setup';
+  const si = evt.setupInfo || {};
+  const label = `setup:${service}`;
+
+  if (_openSetupSessions.has(service)) return; // already running
+  _openSetupSessions.add(service);
+  const cleanup = () => _openSetupSessions.delete(service);
+  const fail = (msg) => {
+    cleanup();
+    _setupStateWrite(service, { lastError: msg });
+    safeSendUnified('automation:progress', { type: 'agent:setup_unavailable', agentId: normalizedAgentId, serviceName: service, taskId: taskId || undefined });
+    safeSendUnified('automation:progress', { type: 'preflight:auth_background_failed', agentId: normalizedAgentId, taskId: taskId || undefined, message: msg });
+  };
+
+  safeSendUnified('automation:progress', { type: 'agent:setup_opened', agentId: normalizedAgentId, serviceName: service, authType, taskId: taskId || undefined });
+
+  // Dashboard/console URL — open it once in the user's browser so the key or
+  // OAuth consent is one click away, and narrate it in the terminal for the
+  // transcript. Deduped per service so a re-entry doesn't spam windows.
+  if (si.setupUrl && /^https?:\/\//i.test(si.setupUrl)) {
+    const _urlKey = `url:${service}`;
+    if (!_openSetupSessions.has(_urlKey)) {
+      _openSetupSessions.add(_urlKey);
+      require('electron').shell.openExternal(si.setupUrl)
+        .then(() => _setupNote(label, `# Dashboard opened in your browser: ${si.setupUrl}`))
+        .catch(() => {});
+    }
+  }
+
+  // ── Browser OAuth: terminal narrates, headed window does the sign-in ──────
+  if (_BROWSER_AUTHTYPES.has(authType)) {
+    _setupNote(label, `# Opening ${service} sign-in in your browser — the terminal will show progress…`);
+    ipcMain.emit('browser.agent:auth', null, { agentId: normalizedAgentId, taskId });
+    return; // resolution arrives via the browser.auth callback → _resumeAfterAuth
+  }
+  if (!_CLI_FAMILY_AUTHTYPES.has(authType)) {
+    safeSendUnified('automation:progress', { type: 'agent:setup_unavailable', agentId: normalizedAgentId, serviceName: service, taskId: taskId || undefined });
+    cleanup();
+    return;
+  }
+
+  // ── Build the setup command ────────────────────────────────────────────────
+  const isCred = ['api_key', 'bearer', 'basic'].includes(authType);
+  const envName = (Array.isArray(si.credentials) && si.credentials[0]) || `${service.toUpperCase().replace(/[^A-Z0-9]/g, '_')}_API_KEY`;
+  const cliTool = evt.cliTool || si.cliTool || null;
+  // cli_install/cli_update need an explicit installCmd — the tool isn't there
+  // to probe, so a `cli --help` fallback would just exit 127.
+  const isInstallType = authType === 'cli_install' || authType === 'cli_update_needed';
+  const cmd = si.initCmd || si.authCmd || si.installCmd || (isCred
+    ? `printf '%s\\n' "# ${service} needs ${envName} — paste it below (input hidden)."; read -s -p "${envName}: " K && echo && curl -s -X POST http://127.0.0.1:3007/credential.store -H 'Content-Type: application/json' -d "{\\"keytarKey\\":\\"credential:${normalizedAgentId}:${envName}\\",\\"value\\":\\"$K\\",\\"service\\":\\"${service}\\"}" -o /dev/null -w 'stored (HTTP %{http_code})\\n'`
+    : (!isInstallType && cliTool) ? `${cliTool} auth --help 2>/dev/null || ${cliTool} --help` : null);
+
+  if (!cmd) {
+    // Nothing runnable — let the fallback Agents-tab card handle it.
+    safeSendUnified('automation:progress', { type: 'agent:setup_unavailable', agentId: normalizedAgentId, serviceName: service, taskId: taskId || undefined });
+    cleanup();
+    return;
+  }
+
+  // ── Resumable: a fresh verified marker skips the lane — probe only ────────
+  const priorState = _setupStateRead(service);
+  if (priorState?.verifiedAt && Date.now() - priorState.verifiedAt < _SETUP_STATE_VERIFIED_TTL_MS) {
+    const stillAuthed = isCred
+      ? await _probeCredAuth(normalizedAgentId, envName)
+      : await _probeCliAuth(normalizedAgentId, service, cliTool, si);
+    if (stillAuthed) {
+      _setupNote(label, `# ${service} already verified — resuming your task.`);
+      const resumed = await _resumeAfterAuth(normalizedAgentId, taskId);
+      cleanup();
+      if (!resumed) safeSendUnified('automation:progress', { type: 'preflight:auth_succeeded', agentId: normalizedAgentId, message: 'Signed in.' });
+      return;
+    }
+    // Verified marker was stale (creds revoked/expired) — clear + full lane.
+    _setupStateWrite(service, { verifiedAt: null });
+  }
+  _setupStateWrite(service, { attempts: (priorState?.attempts || 0) + 1, lastCmd: cmd, lastError: null });
+  _setupNote(label, `# Setting up ${service}${priorState?.attempts ? ` — resuming (attempt ${(priorState.attempts || 0) + 1})` : ''} — follow the prompts below.`);
+  // The user chose this setup — answer its SAFE prompts for them (generic
+  // [Y/n] confirms → y, arrow-key menus → accept the default). The never-list
+  // still guards secrets/2FA/destructive/consent prompts for the user.
+  const _autoAnswer = { enable: true, confirm: 'y', select: 'default' };
+  const exec = await _cmdHttp('/terminal.exec', { label, cmd, timeoutMs: 240000, autoAnswer: _autoAnswer }).catch(() => null);
+  if (Array.isArray(exec?.autoAnswers) && exec.autoAnswers.length) {
+    for (const aa of exec.autoAnswers) {
+      _setupNote(label, aa.answered
+        ? `# auto-answered: ${aa.line} → ${aa.answer}`
+        : `# needs you: ${aa.line}`);
+      if (!aa.answered) _setupStateWrite(service, { lastPrompt: aa.line });
+    }
+  }
+  _setupNote(label, `# setup command finished (exit ${exec?.exitCode ?? '?'}) — verifying…`);
+
+  // ── Re-probe → resume ──────────────────────────────────────────────────────
+  const authed = isCred
+    ? await _probeCredAuth(normalizedAgentId, envName)
+    : await _probeCliAuth(normalizedAgentId, service, cliTool, si);
+  if (authed) {
+    _setupStateWrite(service, { verifiedAt: Date.now(), lastError: null });
+    _setupNote(label, `# ${service} verified — resuming your task.`);
+    const resumed = await _resumeAfterAuth(normalizedAgentId, taskId);
+    if (!resumed) fail('Setup verified but no pending task to resume — re-run your request.');
+    cleanup();
+    return;
+  }
+  // authCmd differs from what ran (init configured creds, auth does the login) — chain once.
+  if (si.authCmd && si.authCmd !== cmd) {
+    _setupNote(label, `# Configuration saved — running '${si.authCmd}' for sign-in…`);
+    await _cmdHttp('/terminal.exec', { label, cmd: si.authCmd, timeoutMs: 240000, autoAnswer: _autoAnswer }).catch(() => null);
+    const authed2 = isCred
+      ? await _probeCredAuth(normalizedAgentId, envName)
+      : await _probeCliAuth(normalizedAgentId, service, evt.cliTool || null, si);
+    if (authed2) {
+      _setupStateWrite(service, { verifiedAt: Date.now(), lastError: null });
+      _setupNote(label, `# ${service} verified — resuming your task.`);
+      const resumed2 = await _resumeAfterAuth(normalizedAgentId, taskId);
+      if (!resumed2) fail('Setup verified but no pending task to resume — re-run your request.');
+      cleanup();
+      return;
+    }
+  }
+  fail(`Setup for ${service} didn't verify — check the terminal output, or open the Agents tab.`);
+}
+
+/**
+ * Shared post-auth resume — used by the browser sign-in callback and the
+ * terminal setup lane. Marks the ledger authed, emits auth_succeeded, and
+ * resumes whichever surface is parked: per-task handoff, pending prompt, or
+ * the pending plan check. Returns true when something was resumed.
+ */
+async function _resumeAfterAuth(normalizedAgentId, taskIdHint) {
+  const _findPendingTask = () => {
+    if (taskIdHint && _pendingPreflightPromptsByTask.has(taskIdHint)) {
+      return { taskId: taskIdHint, entry: _pendingPreflightPromptsByTask.get(taskIdHint) };
+    }
+    let onlyEntry = null, count = 0;
+    for (const [tid, entry] of _pendingPreflightPromptsByTask) {
+      count++;
+      onlyEntry = { taskId: tid, entry };
+      if (entry.agentId === normalizedAgentId) return { taskId: tid, entry };
+    }
+    return count === 1 ? onlyEntry : null;
+  };
+  const _pendingTask = _findPendingTask();
+  const _now = new Date().toISOString();
+  const _expires = new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString();
+  try {
+    await _cmdHttp('/agent.update', { id: normalizedAgentId, authed_at: _now, auth_expires_at: _expires });
+  } catch (err) {
+    console.warn(`[TerminalSetup] authed_at update failed for ${normalizedAgentId}:`, err.message);
+  }
+
+  let resumed = false;
+  if (_pendingTask) {
+    _pendingPreflightPromptsByTask.delete(_pendingTask.taskId);
+    _pendingNewlyBuiltAgents.delete(normalizedAgentId);
+    const tp = _pendingTask.entry;
+    console.log(`[TerminalSetup] Auth succeeded — resuming handoff task ${_pendingTask.taskId}: "${(tp.prompt || '').slice(0, 60)}"`);
+    safeSendUnified('automation:progress', { type: 'preflight:auth_succeeded', agentId: normalizedAgentId, taskId: _pendingTask.taskId, message: 'Sign-in verified — resuming task...' });
+    safeSendUnified('task:complete', { taskId: _pendingTask.taskId, prompt: tp.originalPrompt || tp.prompt, answer: '', status: 'running', agentId: tp.agentId, source: tp.source, sessionId: tp.sessionId });
+    const handoffRunner = require('./handoffRunner');
+    handoffRunner.execute({ taskId: _pendingTask.taskId, prompt: tp.prompt, agentId: tp.agentId, source: tp.source, originalPrompt: tp.originalPrompt, sessionId: tp.sessionId })
+      .catch(err => console.error(`[TerminalSetup] Handoff resume ${_pendingTask.taskId} failed:`, err.message));
+    resumed = true;
+  } else if (_pendingPreflightPrompt) {
+    const pp = _pendingPreflightPrompt;
+    _pendingPreflightPrompt = null;
+    _pendingNewlyBuiltAgents.delete(normalizedAgentId);
+    console.log(`[TerminalSetup] Auth succeeded — re-enqueuing prompt: "${pp.prompt.slice(0, 60)}"`);
+    safeSendUnified('automation:progress', { type: 'preflight:auth_succeeded', agentId: normalizedAgentId, message: 'Sign-in verified — resuming task...' });
+    promptQueue.enqueue(pp.prompt, { selectedText: pp.selectedText, responseLanguage: pp.responseLanguage, sessionId: pp.sessionId });
+    resumed = true;
+  }
+  // Credential-ask intercept path — a task parked on ask_user (intercepted
+  // credential question) resumes via answerQuestion with a synthetic "done"
+  // answer so the agent retries the original call with fresh creds. The park
+  // lands a beat after the ask_user broadcast, so poll briefly.
+  if (!resumed) {
+    const handoffRunner = require('./handoffRunner');
+    for (let i = 0; i < 6 && !resumed; i++) {
+      const qTid = (taskIdHint && handoffRunner.hasPendingQuestion(taskIdHint) && taskIdHint)
+        || handoffRunner.findPendingQuestionForAgent(normalizedAgentId);
+      if (!qTid) { if (i < 5) await new Promise(r => setTimeout(r, 400)); continue; }
+      console.log(`[TerminalSetup] Auth succeeded — resuming ask_user-parked task ${qTid}`);
+      safeSendUnified('automation:progress', { type: 'preflight:auth_succeeded', agentId: normalizedAgentId, taskId: qTid, message: 'Credentials verified — resuming task...' });
+      handoffRunner.answerQuestion(qTid,
+        `${normalizedAgentId.replace(/\.agent$/, '')} credentials were configured in the terminal and verified — continue the original task now.`)
+        .catch(err => console.error(`[TerminalSetup] ask_user resume ${qTid} failed:`, err.message));
+      resumed = true;
+    }
+  }
+  // Plan-check is independent — a parked task and a pending plan check can
+  // coexist; both must resume.
+  if (_pendingPlanCheck) {
+    _markPlanAuthLedger(normalizedAgentId);
+    safeSendUnified('automation:progress', { type: 'preflight:auth_succeeded', agentId: normalizedAgentId, message: 'Sign-in verified — rechecking plan...' });
+    const pc = _pendingPlanCheck;
+    await _emitPlanCheck(pc.planId, pc.planFile, { autoStart: pc.autoStart })
+      .catch(err => console.warn('[TerminalSetup] post-auth plan recheck failed:', err.message));
+    resumed = true;
+  }
+  // Auth verified with nothing parked — still surface success so cards clear.
+  if (!resumed) safeSendUnified('automation:progress', { type: 'preflight:auth_succeeded', agentId: normalizedAgentId, message: 'Signed in.' });
+  return resumed;
+}
+
 // ── Sign-in alert ─────────────────────────────────────────────────────────
 // A headed browser sign-in window opening is easy to miss when the user isn't
 // watching the overlay — fire a macOS Notification + dock bounce so the alert
@@ -2557,6 +3209,47 @@ function alertSignInNeeded(serviceDisplay, loginUrl, key) {
     console.log(`[SignInAlert] Notification fired for ${svc}`);
   } catch (_e) {
     console.warn('[SignInAlert] Notification failed:', _e?.message || _e);
+  }
+}
+
+// ── Terminal-input alert ──────────────────────────────────────────────────
+// A PTY prompt (password, API key, client ID, yes/no, menu) means the run is
+// blocked on the user — but the overlay may be hidden or behind an OAuth
+// window that just grabbed focus. Bring it forward non-activating and fire a
+// Notification whose click gives it real focus. Deduped per prompt (30s).
+const _promptAlertedAt = new Map(); // `${sessionId}:${prompt}` → timestamp
+function alertTerminalInput(evt) {
+  try {
+    const _k = `${evt.sessionId || 'unknown'}:${evt.prompt || 'input'}:${evt.line || ''}`;
+    const _last = _promptAlertedAt.get(_k) || 0;
+    if (Date.now() - _last < 30000) return;
+    _promptAlertedAt.set(_k, Date.now());
+    if (unifiedWindow && !unifiedWindow.isDestroyed() && !unifiedWindow.isVisible()) {
+      try { unifiedWindow.showInactive(); unifiedWindow.moveTop(); } catch (_) {}
+    }
+    const { Notification, app } = require('electron');
+    if (Notification.isSupported()) {
+      const n = new Notification({
+        title: 'ThinkDrop — Terminal needs input',
+        body: evt.line
+          ? `“${String(evt.line).slice(0, 80)}” — click to answer`
+          : 'A setup prompt is waiting in the terminal — click to answer.',
+        silent: false,
+      });
+      n.on('click', () => {
+        try {
+          if (unifiedWindow && !unifiedWindow.isDestroyed()) {
+            unifiedWindow.show();
+            unifiedWindow.focus();
+          }
+        } catch (_) {}
+      });
+      n.show();
+    }
+    app.dock?.bounce?.('informational');
+    console.log(`[TermAlert] Input prompt surfaced — session ${evt.sessionId}, prompt ${evt.prompt}`);
+  } catch (_e) {
+    console.warn('[TermAlert] Notification failed:', _e?.message || _e);
   }
 }
 let _takeOverContext = null; // Phase 10: { agentId, task, pageType, service } — set when user takes over, used for distillHumanCorrection
@@ -2678,6 +3371,20 @@ const APPROVAL_CONFIRM_RE = /^(?:yes|yeah|yep|yup|sure|ok(?:ay)?|approve[ds]?|co
 const APPROVAL_VETO_RE = /\b(but|however|instead|actually|wait|change|edit|fix|don'?t|do\s+not|not\s+yet|hold|stop|cancel|different|before\s+you)\b/i;
 const APPROVAL_DENY_RE = /^(?:no|nope|nah|cancel(?:led| it| that)?|stop|don'?t(?:\s+send|\s+do)?|do\s+not|reject|decline|never\s*mind|forget\s+it|hold\s+off|wait)[\s.!,'"]*/i;
 
+// Pre-run card commands — FULLY anchored on punctuation-normalized text so a
+// real instruction can never hijack ("send it to bob@gmail.com" / "sure, also
+// cc X" carry a tail and fall through to the planning lane). Voice transcripts
+// are the same strings after [.,!] stripping; '?' still vetoes.
+// Unanchored — "cancel" comes in many shapes ("lets cancel this then",
+// "actually nevermind abort it"). Checked BEFORE the confirm family in both
+// the review gate and the run gate so an explicit cancel always wins.
+const PLAN_CANCEL_RE = /\bcancel\b|\bnever ?mind\b|\bforget (?:it|that|this)\b|\babort\b|\bstop (?:it|this|that|everything|the plan)\b/i;
+// Lane exit + run-confirm phrases — shared module (testable — this file can't
+// load outside Electron); see plan-check-phrases.cjs for the anchored vs
+// inline contract and the negation-binding rules. planning.cjs uses the same
+// PLAN_CONFIRM_RE/PLAN_RUN_RE for its deterministic in-lane run confirm.
+const { PLANNING_EXIT_RE, PLANNING_EXIT_INLINE_RE, PLANNING_EXIT_NEG_RE, PLAN_CONFIRM_RE, PLAN_RUN_RE } = require('../../shared/plan-check-phrases.cjs');
+
 /**
  * If exactly one task is awaiting plan approval and `text` is a short
  * confirm/deny, resolve it (resume or cancel). Returns true when handled.
@@ -2757,6 +3464,29 @@ function _setPlanningMode(mode) {
   safeSendUnified('planning:state', _planningMode);
 }
 
+/**
+ * Leave the planning lane — the ONLY way text/LLM paths close it (the chip ×
+ * goes through `planning:set`). Clears the conversational planning artifacts
+ * (choices card, pending readiness check) and unbinds the comms-graph session
+ * so the next prompt classifies normally. The plan FILE is untouched — the
+ * draft stays on disk and remains resumable from the Plans tab / "continue
+ * the plan".
+ * @returns {boolean} whether planning mode was actually active.
+ */
+function _exitPlanningLane() {
+  const wasActive = !!_planningMode?.active;
+  _pendingChoices = null;
+  if (_pendingPlanCheck) {
+    const pc = _pendingPlanCheck;
+    _pendingPlanCheck = null;
+    safeSendUnified('plan:check', { planId: pc.planId, planFile: pc.planFile, items: pc.items, allClear: false, cancelled: true });
+  }
+  _setPlanningMode({ active: false });
+  _commsHttp('/plan.exit', { sessionId: currentSessionId }).catch(() => {});
+  console.log(`[Planning] Lane exited (wasActive=${wasActive})`);
+  return wasActive;
+}
+
 // User confirmed execution inside the planning lane (<plan_run/> →
 // metadata.runPlan). The plan-check card gates the run: when every checklist
 // item passes it starts immediately; unresolved issues render inline actions
@@ -2764,7 +3494,7 @@ function _setPlanningMode(mode) {
 function _triggerPlanRun(metadata) {
   const planFile = metadata.planFile;
   console.log(`[PlanRunner] Conversational run trigger — ${planFile} (via plan check)`);
-  _emitPlanCheck(metadata.planId || null, planFile, { autoStart: true })
+  _emitPlanCheck(metadata.planId || null, planFile, { autoStart: true, surface: true })
     .catch(err => console.warn('[PlanRunner] run trigger failed:', err.message));
 }
 
@@ -2814,14 +3544,18 @@ async function _emitPlanCheck(planId, planFile, { autoStart = false, bypassed, s
     _pendingPlanCheck = { planId, planFile, items, bypassed: bypass, autoStart: keepAuto };
     safeSendUnified('plan:check', { planId, planFile, items, allClear, surface });
     console.log(`[PlanCheck] ${planId || planFile}: ${items.filter(i => i.status === 'issue').length} issue(s), allClear=${allClear}`);
-    // Approval-gated plans never auto-start — the readiness card waits for
-    // "Review plan", and the approval gate emits the review card mid-run.
-    // Auto-start is only the fast path for plans with nothing to approve.
-    const needsReview = items.some(i => i.kind === 'approval-required');
-    if (allClear && autoStart && !needsReview) {
+    // Approval-gated tasks carry status 'pass' — they don't block the start;
+    // they pause mid-run at their own review gates. An explicit run request
+    // (autoStart from <plan_run/> or a confirm intercept) means GO — the
+    // readiness card is not a second gate on top of the per-task ones.
+    if (allClear && autoStart) {
       const planRunner = require('./planRunner');
       const r = await planRunner.startPlan(planFile, { sessionId: null, bypassAgents: [...bypass] });
       if (r?.ok) {
+        // Patch the card into a read-only "running" state before clearing —
+        // otherwise the feed keeps the last live-looking payload with enabled
+        // buttons while the run is actually underway.
+        safeSendUnified('plan:check', { planId, planFile, items, allClear: true, started: true });
         _pendingPlanCheck = null;
         _setPlanningMode({ active: false });
       } else {
@@ -2835,6 +3569,106 @@ async function _emitPlanCheck(planId, planFile, { autoStart = false, bypassed, s
   }
 }
 
+// ── Voice control plumbing ──────────────────────────────────────────────────
+// Shared by /voice.tool (model function calls) and /voice.control-check (the
+// transcript backstop for when gpt-realtime answers a control phrase without
+// calling a tool). _matchPlanCheckAction below stays the single authority on
+// what text counts as a control phrase — both paths funnel through it.
+
+let _lastVoiceControlHit = null; // { norm, output, at } — dedupe model+backstop double-fire
+
+function _cancelCurrentVoiceTask() {
+  if (_lastVoiceTaskId) {
+    const tid = _lastVoiceTaskId;
+    try { require('./handoffRunner').cancel(tid); } catch (_) {}
+    _commsHttp('/comms.cancel', { taskId: tid }).catch(() => {});
+    safeSendUnified('task:complete', { taskId: tid, status: 'cancelled', error: 'cancelled by voice' });
+    return 'Cancelled the task.';
+  }
+  return 'Nothing is running right now.';
+}
+
+/** Dispatch a _matchPlanCheckAction hit (non-prompt kind) → spoken line. */
+async function _dispatchPlanCheckHit(hit) {
+  if (hit.action === 'approve-task' || hit.action === 'skip-task') {
+    await require('./planRunner')
+      .approvePlanTask(hit.planId, hit.taskNum, { skip: hit.action === 'skip-task' });
+    return hit.action === 'skip-task' ? 'Skipped it.' : 'Approved — resuming.';
+  }
+  await _handlePlanCheckAction({
+    planId: hit.planId || _pendingPlanCheck?.planId || _planningMode?.planId,
+    planFile: hit.planFile || _pendingPlanCheck?.planFile || _planningMode?.planFile,
+    itemId: hit.itemId, action: hit.action,
+  });
+  return hit.action === 'exit-planning' ? 'Planning mode is off — the draft stays saved.' : 'Done.';
+}
+
+/**
+ * Route a voice instruction through comms-graph like a voice prompt; returns
+ * the reply text plus planning metadata. [app-state:…] prefixes mark real
+ * state so the realtime model can't upgrade draft prose into "sent/done".
+ */
+async function _voiceDispatchInstruction(instruction, selectedText) {
+  const commsPort = parseInt(process.env.COMMS_GRAPH_PORT || '3015', 10);
+  let output = 'Working on it — I\'ll let you know when it\'s done.';
+  let metadata = null;
+  try {
+    const r = await _postJson(
+      new URL('/comms.process', `http://127.0.0.1:${commsPort}`),
+      { text: instruction, source: 'voice', sessionId: currentSessionId, selectedText: selectedText || undefined, planning: _planningMode && _planningMode.active ? _planningMode : undefined },
+      15000
+    );
+    if (r?.ok && r?.data?.text) { output = r.data.text; metadata = r.data.metadata || null; }
+    else promptQueue.enqueue(instruction, { selectedText, sessionId: currentSessionId });
+    // <plan_run/> confirmed via voice — dispatch the draft plan.
+    if (metadata?.runPlan && metadata.planFile) _triggerPlanRun(metadata);
+    // <plan_exit/> / plan.cancel via voice — flip the real flag.
+    if (metadata?.exitPlanning) _exitPlanningLane();
+  } catch (_) {
+    promptQueue.enqueue(instruction, { selectedText, sessionId: currentSessionId });
+  }
+  if (metadata?.exitPlanning) output = `[app-state: planning mode is now off] ${output}`;
+  else if (metadata?.runPlan) output = `[app-state: plan run dispatched — the plan card shows progress] ${output}`;
+  else if (metadata?.source === 'planning') output = `[app-state: planning mode — the plan is a draft; nothing has executed] ${output}`;
+  return { output, metadata };
+}
+
+/**
+ * thinkdrop_control enum → real dispatch. The model picks the intent
+ * semantically (no text parsing here); approve/skip/pick funnel through
+ * _matchPlanCheckAction on a canonical phrase so the same state gates apply.
+ */
+async function _dispatchVoiceControl(command, args = {}) {
+  switch (command) {
+    case 'exit_planning':
+      return _dispatchPlanCheckHit({ action: 'exit-planning' });
+    case 'cancel_plan':
+      return _dispatchPlanCheckHit({ action: 'cancel-plan', planId: _pendingPlanCheck?.planId || _planningMode?.planId, planFile: _pendingPlanCheck?.planFile || _planningMode?.planFile });
+    case 'cancel_task':
+      return _cancelCurrentVoiceTask();
+    case 'approve': case 'skip': case 'run_plan': case 'pick_option': {
+      const phrase = command === 'approve' ? 'yes'
+        : command === 'skip' ? 'skip it'
+        : command === 'pick_option' ? `option ${args.argument || ''}`
+        : 'run the plan';
+      const hit = _matchPlanCheckAction(phrase);
+      if (!hit) {
+        // Nothing gated it — let the planning lane decide (it can still emit
+        // <plan_run/> which the dispatch path honors).
+        const out = await _voiceDispatchInstruction(phrase, '');
+        return out.output;
+      }
+      if (hit.prompt) {
+        const out = await _voiceDispatchInstruction(hit.prompt, '');
+        return out.output;
+      }
+      return _dispatchPlanCheckHit(hit);
+    }
+    default:
+      return `Unknown control command: ${command}`;
+  }
+}
+
 /**
  * Map spoken/typed text to a pending card action. Returns the dispatched
  * action descriptor when consumed, null when the text should pass through
@@ -2843,14 +3677,36 @@ async function _emitPlanCheck(planId, planFile, { autoStart = false, bypassed, s
 function _matchPlanCheckAction(text) {
   const t = String(text || '').trim().toLowerCase();
   if (!t) return null;
+  // "don't cancel it yet" contains "cancel" but means the opposite.
+  const cancelIntent = PLAN_CANCEL_RE.test(t) && !/(don'?t|do not)\s+(?:cancel|abort|stop)/.test(t);
+  // Lane exit — "stop planning" / "exit plan mode". This must be a real state
+  // flip, not LLM prose: previously the phrase fell through to the pinned
+  // planner which fabricated "planning mode is off" while nothing changed.
+  // Runs before the review/choices blocks — the exit phrasing is unambiguous
+  // lane language; a held commit gate stays held (the run keeps waiting).
+  if (PLANNING_EXIT_RE.test(t) && !PLANNING_EXIT_NEG_RE.test(t)) {
+    return { action: 'exit-planning' };
+  }
+  // Mid-sentence exit ("why don't you get out of plan mode") — noun-locked to
+  // "plan/planning mode" so it can't fire on task content. Same negation
+  // guard; the thinkdrop_control tool path covers whatever phrasing this misses.
+  if (PLANNING_EXIT_INLINE_RE.test(t) && !PLANNING_EXIT_NEG_RE.test(t)) {
+    return { action: 'exit-planning' };
+  }
   // Mid-run review gate — a held commit task waiting for approval wins over
   // everything else while it's pending (voice "go ahead" / "skip it").
   if (_pendingPlanReviews.size) {
     const [key, review] = _pendingPlanReviews.entries().next().value;
+    // Cancel wins over confirm — "yes but cancel it" must not approve.
+    // (Previously there was no deny path at all, so "lets cancel this then"
+    // fell through to the planning LLM which fabricated a cancellation.)
+    if (cancelIntent) {
+      return { action: 'cancel-plan', planId: review.planId };
+    }
     if (APPROVAL_CONFIRM_RE.test(t)) {
       return { action: 'approve-task', planId: review.planId, taskNum: review.taskNum };
     }
-    if (/^skip\b/.test(t)) {
+    if (/^skip\b/.test(t) || APPROVAL_DENY_RE.test(t)) {
       return { action: 'skip-task', planId: review.planId, taskNum: review.taskNum };
     }
   }
@@ -2866,7 +3722,8 @@ function _matchPlanCheckAction(text) {
         return { prompt: label }; // pass through as the planning answer
       }
     }
-    return null; // free-form answers ride the normal lane
+    // Non-numeric text isn't a pick — fall THROUGH to the card matchers below
+    // (a lingering choices card must not suppress run/cancel interception).
   }
   // "Where are we at in the plan" / "show me the plan readiness" during a
   // planning session → surface the readiness card, never reaches the LLM.
@@ -2874,14 +3731,73 @@ function _matchPlanCheckAction(text) {
     && /where('?re| are) we( at)?|plan (status|readiness|progress)|show (me )?(the )?(plan|readiness|progress)|how('?s| is) (the )?plan/.test(t)) {
     return { action: 'show-check' };
   }
-  const pc = _pendingPlanCheck;
-  if (!pc || !pc.items.some(i => i.status === 'issue' || i.kind === 'missing-steps')) return null;
+  let pc = _pendingPlanCheck;
+  // Stale card — a pending check for a plan other than the active planning
+  // session's must not own run/cancel commands. "ok let's do that" while the
+  // planner just reopened a different plan would otherwise fire the wrong
+  // card. The feed entry stays as history; commands now pass through to the
+  // planner, which emits <plan_run/> for the correct plan.
+  if (pc && _planningMode?.active && _planningMode.planId && pc.planId
+      && pc.planId !== _planningMode.planId) {
+    console.log(`[PlanCheck] Ignoring stale card ${pc.planId} — active plan is ${_planningMode.planId}`);
+    // Dim the stale feed card — its buttons would be dead without this.
+    safeSendUnified('plan:check', { planId: pc.planId, planFile: pc.planFile, items: pc.items, allClear: false, superseded: true });
+    _pendingPlanCheck = null;
+    pc = null;
+  }
+  if (!pc) {
+    // No card yet but the session's plan is READY — "yes" answering
+    // "execute it now?" must not round-trip the LLM. Run the readiness check
+    // on the session plan with autoStart armed; issues/pending still render
+    // as a card. The 'ready' file gate keeps clarifying-question "yes"
+    // answers on the planning lane.
+    const rnorm = t.replace(/[.,!]/g, ' ').replace(/\s+/g, ' ').trim();
+    if (_planningMode?.active && _planningMode.planFile
+        && ((rnorm.length <= 45 && PLAN_RUN_RE.test(rnorm)) || (rnorm.length <= 30 && PLAN_CONFIRM_RE.test(rnorm)))
+        && !rnorm.includes('?') && !APPROVAL_VETO_RE.test(rnorm)) {
+      let st = null;
+      try {
+        const pf = require('../../shared/plan-format.cjs');
+        st = (pf.parseFrontmatter(fs.readFileSync(_planningMode.planFile, 'utf8')) || {}).status || null;
+      } catch (_) {}
+      if (st === 'ready') {
+        return { action: 'run-ready', planId: _planningMode.planId, planFile: _planningMode.planFile };
+      }
+    }
+    // No card pending — but a live run can still be cancelled by text/voice.
+    // Otherwise "stop the plan" mid-run becomes planning dialogue.
+    if (cancelIntent) {
+      const pr = require('./planRunner');
+      const live = pr.listRuns().find(r => r.status === 'running') || pr.listRuns()[0];
+      if (live) return { action: 'cancel-plan', planId: live.planId };
+    }
+    return null;
+  }
   const issues = pc.items.filter(i => i.status === 'issue');
+  // Universal commands — cancel/open work in every card state, not just when
+  // issues exist. (Previously gated behind an issue check, so "cancel plan" on
+  // a healthy card fell through to the planning LLM.)
+  if (cancelIntent) return { action: 'cancel' };
+  if (/^(open|show|view)\s+(the\s+|my\s+)?plan\b/.test(t)) return { action: 'open-plan' };
+  // Run family — only when nothing blocks (no issues, no pending rows). Fully
+  // anchored on normalized text: "send it to bob" / "sure, also cc X" carry a
+  // tail, fail the anchor, and ride the normal planning lane instead.
+  const runnable = !pc.items.some(i => i.status === 'issue' || i.status === 'pending');
+  if (runnable) {
+    const norm = t.replace(/[.,!]/g, ' ').replace(/\s+/g, ' ').trim();
+    if (/^run\s+all$|^run\s+everything$/.test(norm)) return { action: 'run-all' };
+    if (/^step\s+through$|^review\s+(each\s+task|every\s+task|task|the\s+plan|plan)$/.test(norm)) return { action: 'run-review' };
+    if (((norm.length <= 45 && PLAN_RUN_RE.test(norm)) || (norm.length <= 30 && PLAN_CONFIRM_RE.test(norm)))
+        && !norm.includes('?') && !APPROVAL_VETO_RE.test(norm)) {
+      return { action: 'run' };
+    }
+  }
+  // Issue-scoped commands — still gated on a real issue/missing-steps row.
+  if (!pc.items.some(i => i.status === 'issue' || i.kind === 'missing-steps')) return null;
   const forAgent = (re) => {
     const m = t.match(re);
     return issues.find(i => i.agentId && (t.includes(i.agentId.replace('.agent', '').toLowerCase()) || (m && i.agentId.toLowerCase().includes(m[0]))));
   };
-  if (/^cancel(\s+(the\s+)?plan)?$/.test(t) || /^cancel plan/.test(t)) return { action: 'cancel' };
   if (/^sign[\s-]?in|^log[\s-]?in|^authenticate/.test(t)) {
     const i = forAgent() || issues.find(x => x.kind === 'signin') || issues[0];
     return { action: 'signin', itemId: i.id };
@@ -2998,9 +3914,46 @@ async function _handlePlanCheckAction({ planId, itemId, action, value, envName, 
     } catch (err) { console.warn('[PlanCheck] open-plan failed:', err.message); }
     return;
   }
-  if (action === 'cancel' && !pc) {
-    // Drafting-phase cancel — no checklist emitted yet; just exit planning.
-    if (_planningMode?.active) _setPlanningMode({ active: false });
+  // Lane exit — "stop planning" / "exit plan mode" / LLM <plan_exit/>. Flips
+  // the real mode flag + unbinds the session; the plan draft stays on disk.
+  if (action === 'exit-planning') {
+    const wasActive = _exitPlanningLane();
+    safeSendUnified('ws-bridge:message', {
+      type: 'chunk',
+      text: wasActive
+        ? 'Planning mode off — the draft stays saved under Plans.'
+        : 'Planning mode isn\'t on right now.',
+    });
+    safeSendUnified('ws-bridge:message', { type: 'done' });
+    return;
+  }
+  // Cancel — 'cancel' (pending check card) and 'cancel-plan' (mid-run review
+  // gate / live run, no card) share one path: kill any live run, resolve held
+  // review cards, dismiss the checklist, exit planning mode.
+  if (action === 'cancel' || action === 'cancel-plan') {
+    const planRunner = require('./planRunner');
+    const pid = (action === 'cancel-plan' ? planId : null) || pc?.planId || planId
+      || (() => { const live = planRunner.listRuns().find(r => r.status === 'running'); return live?.planId || null; })();
+    const run = pid ? planRunner.getRun(pid) : null;
+    if (run) {
+      planRunner.cancelPlan(pid);
+      // Resolve held review cards for this plan so the gate UI dismisses.
+      for (const [key, review] of _pendingPlanReviews) {
+        if (review.planId === pid) {
+          _pendingPlanReviews.delete(key);
+          safeSendUnified('plan:review', { planId: pid, taskNum: review.taskNum, resolved: true, skipped: true });
+        }
+      }
+      console.log(`[PlanCheck] Run cancelled by user — plan ${pid}`);
+    }
+    if (pc) {
+      _pendingPlanCheck = null;
+      safeSendUnified('plan:check', { planId: pc.planId, planFile: pc.planFile, items: pc.items, allClear: false, cancelled: true });
+    }
+    // Cancel reads as "get me out" — leave the lane whenever it was open, not
+    // just when no card/run existed. The plan file keeps its status and stays
+    // resumable; only the conversational lane closes.
+    if (_planningMode?.active) _exitPlanningLane();
     return;
   }
   if (action === 'show-check') {
@@ -3011,6 +3964,16 @@ async function _handlePlanCheckAction({ planId, itemId, action, value, envName, 
       || (planId ? require('path').join(os.homedir(), '.thinkdrop', 'plans', `${planId}.md`) : null);
     if (file && fs.existsSync(file)) {
       _emitPlanCheck(planId || pc?.planId || null, file, { surface: true }).catch(() => {});
+    }
+    return;
+  }
+  if (action === 'run-ready') {
+    // Confirm intercept with no pending card — fire the check on the session
+    // plan; autoStart starts it when nothing blocks, and `surface` bumps the
+    // card to the feed bottom so the user sees the gate either way.
+    const file = planFile || _planningMode?.planFile;
+    if (file) {
+      _emitPlanCheck(planId || _planningMode?.planId || null, file, { autoStart: true, surface: true }).catch(() => {});
     }
     return;
   }
@@ -3056,9 +4019,18 @@ async function _handlePlanCheckAction({ planId, itemId, action, value, envName, 
       break;
     }
     case 'cli-login': {
+      // Terminal setup lane — the labeled setup:<svc> PTY runs the CLI's own
+      // login/init command visibly, re-probes on exit, and _resumeAfterAuth
+      // rechecks the pending plan check. Replaces the old blind /agent.run.
       if (item?.agentId) {
-        const tool = item.agentId.replace('.agent', '');
-        _cmdHttp('/agent.run', { agentId: item.agentId, task: `authenticate ${tool} — run the login command` }).catch(() => {});
+        const service = item.agentId.replace(/\.agent$/, '');
+        (async () => {
+          const evt = await _setupEventBase(service);
+          await _enrichSetupEvent(evt, service);
+          try { await _openSetupSession(evt, null); }
+          catch (err) { console.warn('[PlanCheck] cli-login setup failed:', err.message); }
+        })();
+        safeSendUnified('plan:check', { planId: pc.planId, planFile: pc.planFile, items: pc.items.map(i => i.id === item.id ? { ...i, label: `${item.agentId} — sign-in running in terminal…`, status: 'pending', kind: 'missing-steps' } : i), allClear: false });
       }
       break;
     }
@@ -3163,6 +4135,7 @@ async function _handlePlanCheckAction({ planId, itemId, action, value, envName, 
         autoApprove: action === 'run-all',
       });
       if (r?.ok) {
+        safeSendUnified('plan:check', { planId: pc.planId, planFile: pc.planFile, items: pc.items, allClear: true, started: true });
         _pendingPlanCheck = null;
         _setPlanningMode({ active: false });
       } else {
@@ -3170,10 +4143,6 @@ async function _handlePlanCheckAction({ planId, itemId, action, value, envName, 
       }
       break;
     }
-    case 'cancel':
-      _pendingPlanCheck = null;
-      safeSendUnified('plan:check', { planId: pc.planId, planFile: pc.planFile, items: pc.items, allClear: false, cancelled: true });
-      break;
   }
 }
 
@@ -3369,17 +4338,34 @@ function initStateGraph() {
         mcpAdapter,
         llmBackend,
         ipcBroadcast: (channel, data) => {
-          if (resultsWindow && !resultsWindow.isDestroyed()) {
-            safeSend(resultsWindow, channel, data);
-          }
-          if (unifiedWindow && !unifiedWindow.isDestroyed()) {
-            safeSend(unifiedWindow, channel, data);
+          // Credential-shaped ask_user from a cli-family agent → intercept into
+          // the terminal setup lane instead of dead-ending on a chat card.
+          // Suppress the broadcast now; _interceptCredentialAsk re-forwards the
+          // card when the agent isn't cli-family or nothing is runnable.
+          const _credAsk = channel === 'automation:progress' && data
+            && data.type === 'ask_user' && data.agentId
+            && _looksLikeCredentialAsk(String(data.question || data.text || ''));
+          if (!_credAsk) {
+            if (resultsWindow && !resultsWindow.isDestroyed()) {
+              safeSend(resultsWindow, channel, data);
+            }
+            if (unifiedWindow && !unifiedWindow.isDestroyed()) {
+              safeSend(unifiedWindow, channel, data);
+            }
           }
           // Handoff tasks take this broadcast path, not safeSendUnified — so
           // the GhostLayer drop/control-lock driver must be invoked here too,
           // or app.agent steps via comms-graph never show "AI in Control".
           if (channel === 'automation:progress') {
             try { driveProgressDrop(data).catch(() => {}); } catch (_) {}
+            // Terminal setup lane — a preflight auth_required opens the
+            // labeled setup:<service> PTY instead of dead-ending on a card.
+            // Fires while planning continues, so setup is often underway
+            // before the task even parks on auth-required.
+            if (data && data.type === 'preflight:auth_required') {
+              try { _openSetupSession(data, data.taskId || null).catch(() => {}); } catch (_) {}
+            }
+            if (_credAsk) _interceptCredentialAsk(data).catch(() => {});
           }
           // Voice TTS fan-out — a handoff task submitted by voice speaks its
           // final answer when it completes (the ack was already spoken).
@@ -5752,7 +6738,7 @@ app.whenReady().then(async () => {
               .approvePlanTask(hit.planId, hit.taskNum, { skip: hit.action === 'skip-task' })
               .catch(err => console.warn('[PlanReview] voice action failed:', err.message));
           } else {
-            _handlePlanCheckAction({ planId: _pendingPlanCheck?.planId || _planningMode?.planId, planFile: _pendingPlanCheck?.planFile || _planningMode?.planFile, itemId: hit.itemId, action: hit.action })
+            _handlePlanCheckAction({ planId: hit.planId || _pendingPlanCheck?.planId || _planningMode?.planId, planFile: hit.planFile || _pendingPlanCheck?.planFile || _planningMode?.planFile, itemId: hit.itemId, action: hit.action })
               .catch(err => console.warn('[PlanCheck] voice action failed:', err.message));
           }
           return true;
@@ -5852,7 +6838,9 @@ app.whenReady().then(async () => {
             // Planning lane — comms-graph created/updated a plan draft. Pin
             // planning mode so follow-ups stay in the lane, and tell the
             // renderer so the cyan chip + Plans tab refresh immediately.
-            if ((intent === 6 || metadata?.planId) && metadata?.planId) {
+            // Skipped on exit turns (<plan_exit/> / plan.cancel): the reply
+            // still carries planId, and pinning here would undo the exit.
+            if (!metadata?.exitPlanning && (intent === 6 || metadata?.planId) && metadata?.planId) {
               _setPlanningMode({
                 active: true,
                 planId: metadata.planId,
@@ -5880,6 +6868,13 @@ app.whenReady().then(async () => {
                 _emitPlanCheck(metadata.planId, metadata.planFile, { autoStart: false })
                   .catch(err => console.warn('[PlanCheck] proactive emit failed:', err.message));
               }
+            }
+
+            // <plan_exit/> or plan.cancel this turn — actually close the lane.
+            // The planner can't say "planning mode is off" without the marker;
+            // when it does emit one, this is the real state flip behind it.
+            if (metadata?.exitPlanning) {
+              _exitPlanningLane();
             }
 
             // <choices> — capability-gap options from the planner →
@@ -6630,9 +7625,11 @@ app.whenReady().then(async () => {
 
   // plan:run — dispatch a task-plan through planRunner
   ipcMain.handle('plan:run', async (_e, { planFile, bypassAgents = [], sessionId = null } = {}) => {
+    console.log(`[PlanRunner] plan:run invoked — ${planFile}`);
     try {
       const planRunner = require('./planRunner');
       const r = await planRunner.startPlan(planFile, { bypassAgents, sessionId });
+      console.log(`[PlanRunner] plan:run result — ${JSON.stringify(r)}`);
       if (r.ok) _setPlanningMode({ active: false });
       return r;
     } catch (err) { return { ok: false, error: err.message }; }
@@ -11056,7 +12053,40 @@ app.whenReady().then(async () => {
         responseLanguage: pp.responseLanguage,
         sessionId: pp.sessionId,
       });
-    } else if (pausedAutomationState) {
+      return;
+    }
+    // Parked handoff tasks live in the per-task map — a "Re-check" click must
+    // reach them too or the sign-in card is a dead end (previously only the
+    // prompt-level park was checked → "no pending prompt"). Re-dispatch the
+    // task: the rerun's own preflight re-verifies auth honestly — success
+    // runs, still-blocked re-parks on the same card.
+    {
+      const _normId = agentId ? (String(agentId).endsWith('.agent') ? String(agentId) : `${agentId}.agent`) : null;
+      let taskHit = null;
+      if (_normId) {
+        for (const [tid, entry] of _pendingPreflightPromptsByTask) {
+          const eid = entry?.agentId ? (String(entry.agentId).endsWith('.agent') ? entry.agentId : `${entry.agentId}.agent`) : null;
+          if (eid === _normId) { taskHit = { taskId: tid, entry }; break; }
+        }
+      }
+      if (!taskHit && _pendingPreflightPromptsByTask.size === 1) {
+        const [tid, entry] = [..._pendingPreflightPromptsByTask.entries()][0];
+        taskHit = { taskId: tid, entry };
+      }
+      if (taskHit) {
+        const tp = taskHit.entry;
+        console.log(`[StateGraph] preflight:recheck — re-dispatching parked task ${taskHit.taskId}: "${(tp.prompt || '').slice(0, 60)}"`);
+        _pendingPreflightPromptsByTask.delete(taskHit.taskId);
+        safeSendUnified('preflight:recheck', { agentId });
+        safeSendUnified('task:complete', { taskId: taskHit.taskId, prompt: tp.originalPrompt || tp.prompt, answer: '', status: 'running', agentId: tp.agentId, source: tp.source, sessionId: tp.sessionId });
+        require('./handoffRunner').execute({
+          taskId: taskHit.taskId, prompt: tp.prompt, agentId: tp.agentId, source: tp.source,
+          originalPrompt: tp.originalPrompt, sessionId: tp.sessionId,
+        }).catch(err => console.error(`[StateGraph] recheck re-dispatch ${taskHit.taskId} failed:`, err.message));
+        return;
+      }
+    }
+    if (pausedAutomationState) {
       // Fallback: if we have a paused automation state, clear it and let user re-submit
       console.log(`[StateGraph] preflight:recheck — clearing paused automation state (no pending preflight prompt)`);
       pausedAutomationState = null;
@@ -11150,109 +12180,24 @@ app.whenReady().then(async () => {
             console.log(`[GatherAuth] browser.agent background run done for ${normalizedAgentId}: ok=${result?.data?.ok} authVerified=${result?.data?.authVerified}`);
             // Re-resolve — the pending entry may have been deleted (task:cancel) or
             // re-registered while the background auth was running.
-            const _pendingTask = _findPendingTask();
-            if (result?.data?.ok && result?.data?.authVerified === true && _pendingTask) {
-              // ── Per-task handoff path: auth verified — resume the queue task ──
-              _pendingPreflightPromptsByTask.delete(_pendingTask.taskId);
-              _pendingNewlyBuiltAgents.delete(normalizedAgentId);
-              const _now = new Date().toISOString();
-              const _expires = new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString();
-              try {
-                await _cmdHttp('/agent.update', { id: normalizedAgentId, authed_at: _now, auth_expires_at: _expires });
-                console.log(`[PreflightAuth] Updated ${normalizedAgentId} authed_at=${_now}`);
-              } catch (err) {
-                console.warn(`[PreflightAuth] Could not update authed_at for ${normalizedAgentId}:`, err.message);
-              }
-              const tp = _pendingTask.entry;
-              console.log(`[GatherAuth] Auth succeeded — resuming handoff task ${_pendingTask.taskId}: "${(tp.prompt || '').slice(0, 60)}"`);
-              safeSendUnified('automation:progress', {
-                type: 'preflight:auth_succeeded',
-                agentId: normalizedAgentId,
-                taskId: _pendingTask.taskId,
-                message: 'Sign-in verified — resuming task...',
-              });
-              safeSendUnified('task:complete', {
-                taskId: _pendingTask.taskId,
-                prompt: tp.originalPrompt || tp.prompt,
-                answer: '',
-                status: 'running',
-                agentId: tp.agentId,
-                source: tp.source,
-              });
-              const handoffRunner = require('./handoffRunner');
-              handoffRunner.execute({
-                taskId: _pendingTask.taskId,
-                prompt: tp.prompt,
-                agentId: tp.agentId,
-                source: tp.source,
-                originalPrompt: tp.originalPrompt,
-                sessionId: tp.sessionId,
-              }).catch(err => {
-                console.error(`[GatherAuth] Handoff resume ${_pendingTask.taskId} failed:`, err.message);
-              });
-            } else if (result?.data?.ok && result?.data?.authVerified === true && _pendingPreflightPrompt) {
-              // Auth verified by browser.agent — update authed_at and re-enqueue.
-              // This is the single source of truth for auth success.
-              const pp = _pendingPreflightPrompt;
-              _pendingPreflightPrompt = null;
-              _pendingNewlyBuiltAgents.delete(normalizedAgentId);
-              const _now = new Date().toISOString();
-              const _expires = new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString();
-              try {
-                await _cmdHttp('/agent.update', { id: normalizedAgentId, authed_at: _now, auth_expires_at: _expires });
-                console.log(`[PreflightAuth] Updated ${normalizedAgentId} authed_at=${_now}`);
-              } catch (err) {
-                console.warn(`[PreflightAuth] Could not update authed_at for ${normalizedAgentId}:`, err.message);
-              }
-              console.log(`[GatherAuth] Auth succeeded — re-enqueuing prompt: "${pp.prompt.slice(0, 60)}"`);
-              safeSendUnified('automation:progress', {
-                type: 'preflight:auth_succeeded',
-                agentId: normalizedAgentId,
-                message: 'Sign-in verified — resuming task...',
-              });
-              promptQueue.enqueue(pp.prompt, {
-                selectedText: pp.selectedText,
-                responseLanguage: pp.responseLanguage,
-                sessionId: pp.sessionId,
-              });
-            } else if (_pendingTask || _pendingPreflightPrompt) {
+            const verified = !!(result?.data?.ok && result?.data?.authVerified === true);
+            const _setupLabel = `setup:${normalizedAgentId.replace(/\.agent$/, '')}`;
+            if (verified) {
+              _setupNote(_setupLabel, '# sign-in verified — resuming your task').catch(() => {});
+              await _resumeAfterAuth(normalizedAgentId, _pendingTaskId);
+            } else if (_findPendingTask() || _pendingPreflightPrompt) {
               // Background auth probe failed or returned inconclusive — tell the UI
               // so the card can show retry/continue options instead of hanging.
               // Do NOT clear pending entries — the Retry button needs them to
               // re-enqueue after a successful retry. Only clear on success or cancel.
               console.log(`[GatherAuth] Background auth did not verify — notifying UI for ${normalizedAgentId} (preserving pending prompt for retry)`);
+              _setupNote(_setupLabel, '# sign-in not verified — retry, or proceed without it').catch(() => {});
               safeSendUnified('automation:progress', {
                 type: 'preflight:auth_background_failed',
                 agentId: normalizedAgentId,
                 taskId: _pendingTaskId || undefined,
                 message: result?.data?.error || 'Background auth check did not confirm login.',
               });
-            }
-            // ── Plan-check path — a card-initiated sign-in has no pending    ──
-            // task/prompt. On verify: mark the preflight ledger (the gate's
-            // own source of truth — AgentsTab sign-ins previously missed it),
-            // update authed_at, and re-run the checklist; autoStart resumes.
-            if (result?.data?.ok && result?.data?.authVerified === true && _pendingPlanCheck) {
-              _markPlanAuthLedger(normalizedAgentId);
-              try {
-                await _cmdHttp('/agent.update', {
-                  id: normalizedAgentId,
-                  authed_at: new Date().toISOString(),
-                  auth_expires_at: new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString(),
-                });
-              } catch (err) {
-                console.warn(`[PlanCheck] authed_at update failed for ${normalizedAgentId}:`, err.message);
-              }
-              safeSendUnified('automation:progress', {
-                type: 'preflight:auth_succeeded',
-                agentId: normalizedAgentId,
-                message: 'Sign-in verified — rechecking plan...',
-              });
-              const pc = _pendingPlanCheck;
-              if (pc) {
-                await _emitPlanCheck(pc.planId, pc.planFile, { autoStart: pc.autoStart })
-                  .catch(err => console.warn('[PlanCheck] post-auth recheck failed:', err.message));
-              }
             }
           } catch (_) {}
         });

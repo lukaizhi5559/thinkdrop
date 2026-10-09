@@ -79,4 +79,22 @@ function _applyNormalization(task, resFor) {
   return { steps, agents, services: [...services] };
 }
 
-module.exports = { normalizeTaskSteps, normalizeTaskStepsAsync };
+// Browser-family steps bound to a non-browser agent can't execute — observed:
+// nylas.agent (type:'cli') handed url.first.agent + dom.act steps. Shared by
+// planRunner (stored steps → drop to live planning) and planSkillsV2 (live
+// plan → deterministic repair). Returns a reason string or null.
+const AGENT_FAMILY_MISMATCH_SKILLS = new Set(['url.first.agent', 'dom.act', 'tab.map.agent', 'turn.loop.agent', 'browser.agent']);
+function agentFamilyMismatch(steps) {
+  for (const s of steps || []) {
+    const agentId = s && s.args && s.args.agentId;
+    if (!agentId || !AGENT_FAMILY_MISMATCH_SKILLS.has(s.skill)) continue;
+    const desc = serviceMap.describeAgent(agentId)
+      || serviceMap.describeAgent(String(agentId).replace(/\.agent$/, ''));
+    if (desc && desc.type && desc.type !== 'browser') {
+      return `${s.skill} step bound to ${desc.type} agent ${agentId}`;
+    }
+  }
+  return null;
+}
+
+module.exports = { normalizeTaskSteps, normalizeTaskStepsAsync, agentFamilyMismatch, AGENT_FAMILY_MISMATCH_SKILLS };

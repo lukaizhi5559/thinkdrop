@@ -283,7 +283,25 @@ const SCREEN_THREE_RE   = /\b(?:3\s?-?d|three\.?js|webgl|starfield|particle\s+(?
  *  the movie"); it stays in the verb list ("plot a bar chart"). */
 const SCREEN_VISUAL_KIND_RE = new RegExp([
   '\\b(?:show|display|plot|draw|present|put\\s+up|make|create|generate|render|give\\s+me|pull\\s+up|bring\\s+up|visuali[sz]e)\\b[^.]{0,50}\\b(?:pie|donut|bar|line|area|scatter)?\\s*(?:chart|graph)\\b',
-  '\\b(?:show|display|plot|draw|present|put\\s+up|make|create|generate|render|give\\s+me|pull\\s+up|bring\\s+up)\\b[^.]{0,50}\\b(?:slide\\s?deck|deck|slides?|slideshow|presentation)\\b',
+  '\\b(?:show|display|plot|draw|present|put\\s+up|make|create|generate|render|give\\s+me|pull\\s+up|bring\\s+up|put\\s+together|assemble)\\b[^.]{0,50}\\b(?:slide\\s?deck|deck|slides?|slideshow|presentation)\\b',
+].join('|'), 'i');
+
+/** Prose-artifact nouns — "an essay", "a write-up", "a blog post". The doc
+ *  kind renders them as an editable markdown card on the GhostLayer. */
+const SCREEN_DOC_RE = /\b(?:essay|write[\s-]?up|short\s+story|article|blog[\s-]?post)\b/i;
+
+/** Custom-visual nouns the deterministic kinds can't express — animations,
+ *  infographics, diagrams. Route to the 'scene' generative escape hatch. */
+const SCREEN_SCENE_RE = /\b(?:animation|infographic|diagram)\b/i;
+
+/** Build-verb + non-chart/deck deliverable artifact — "write an essay",
+ *  "put together a write-up", "make an animation", "build a 3d model".
+ *  Companion to SCREEN_VISUAL_KIND_RE (which covers chart/deck); same guards
+ *  apply: artifact-into-app and file-output phrasing win over the screen. */
+const SCREEN_DELIVERABLE_RE = new RegExp([
+  '\\b(?:write|draft|compose|put\\s+together|make|create|generate|produce)\\b[^.]{0,50}\\b(?:essay|write[\\s-]?up|short\\s+story|article|blog[\\s-]?post)\\b',
+  '\\b(?:show|display|animate|make|create|generate|render|build|design)\\b[^.]{0,50}\\b(?:animation|infographic|diagram)\\b',
+  '\\b(?:make|create|generate|build|draw|render|design|model|animate)\\b[^.]{0,50}\\b3\\s?-?d\\s+(?:model|scene|render|animation|graphic)\\b',
 ].join('|'), 'i');
 
 /** Artifact-into-app phrasing — "chart in Excel", "slides on PowerPoint",
@@ -376,6 +394,49 @@ const DEVICE_STATE_RE = /\b(?:battery|disk\s+(?:space|usage)|storage|free\s+spac
  *  (like FILE_PATH_RE) and as a deterministic guard. */
 const LOCAL_FS_PROBE_RE = /\bhow\s+many\s+(?:files?|folders?|items|things|directories)\b|\b(?:count|list|show|display|tell\s+me|check|look\s+at|find)\b[^.?]{0,40}\b(?:files?|folders?|directories|items)\b[^.?]{0,40}\b(?:on|in|inside|within)\s+(?:(?:my|the|this|your|the\s+user'?s|user'?s)\s+)?(?:desktop|downloads|documents|home|folder|directory|drive|disk)\b|\bwhat(?:'s|\s+is|\s+are)?\s+(?:in|inside|on)\s+(?:my|the|this|your|the\s+user'?s|user'?s)\s+(?:desktop|downloads|documents|folder|directory|drive|clipboard)\b|\bgit\s+(?:status|diff|log|commit|push|pull|branch|stash|add|checkout|merge|rebase|init|clone)\b|\b(?:commit|push|pull|stash|rebase|merge|checkout|diff)\s+(?:my|the|this|all\s+(?:my|the|of)?)?\s*(?:work|changes|code|repo(?:sitory)?|branch|files?)\b|\bwhat(?:'s|\s+is)\s+on\s+(?:my|the)\s+clipboard\b|\blistening\s+on\s+port\b|\bport\s+\d{2,5}\b/i;
 
+// ── Overlay attachment tags ──────────────────────────────────────────────────
+// Prompt chips ride into comms-graph/stategraph as bracket tags: [File: p],
+// [Folder: p] are path POINTERS (content lives on disk, needs tools);
+// [Context:], [Thought:], [Highlighted:] carry inline text bodies.
+/** A line that is ONLY a file/folder ref tag — not content-bearing context. */
+const FILE_REF_TAG_LINE_RE = /^\s*\[(?:File|Folder):\s*[^\]]*\]\s*$/i;
+/** Any attachment/context tag wrapper, for stripping them out of classify text. */
+const ATTACHMENT_TAG_RE = /\[(?:File|Folder|Context|Thought|Highlighted):\s*[^\]]*\]/gi;
+
+// ── Routing-promise detection ────────────────────────────────────────────────
+// The persona teaches routing phrases ("Routing that to ThinkDrop", "Let me
+// check on that") and "never say I can't — say what you're doing". A tool-less
+// quick lane emitting those is promising a dispatch that never happens
+// (observed: "[File: x.rtf] add placeholders…" → "Understood — I'll add … Let
+// me route that to ThinkDrop now." → nothing dispatched). Patterns are
+// anchored on first-person deferral verbs + pronominal objects so real answers
+// ("the route to the airport", "check that box under settings" advice) stay
+// out. Sentence-level: refusal.cjs's stripRoutingPromises removes the matches.
+const ROUTING_PROMISE_RE = new RegExp([
+  // "route/routing that|it|this to…" — deferral verb + object + direction
+  '\\b(?:route|routed|routing|routes)\\s+(?:that|this|it|those|them|things?|your\\s+\\w+)\\s+(?:to|along|over|off|up|on)\\b',
+  // deferral target is the system itself: "…to ThinkDrop", "…over to ThinkDrop"
+  '\\b(?:to|over\\s+to|along\\s+to|off\\s+to|up\\s+to|on\\s+to)\\s+thinkdrop\\b',
+  // internal machinery jargon leaking into user-facing prose
+  '\\bstate\\s*-?\\s*graph\\b|\\b(?:deeper|main|primary|backend|background|bigger|downstream)\\s+(?:system|pipeline|agent|engine|runner|task\\s*runner|task\\s*queue|team|graph|module)\\b',
+  // first-person deferral verb + object: "let me route that", "I'll pass it
+  // along", "I'm going to hand this off", "let me send this over"
+  '\\b(?:let\\s+me|i\'ll|i\\s+will|i\'m\\s+(?:going\\s+to|gonna)|gonna|i\\s+need\\s+to|i\\s+should)\\s+(?:route|pass|forward|hand|delegate|refer|escalate|send|shoot|push|kick|punt|flick|toss)\\s+(?:that|this|it|those|them|your\\s+\\w+|this\\s+over|that\\s+over)\\b',
+  // first-person fetch/lookup deferral: "let me pull that up", "let me look
+  // that up", "I'll track that down", "let me check that out", "while I dig
+  // that up"
+  '\\b(?:let\\s+me|i\'ll|i\\s+will|i\'m\\s+(?:going\\s+to|gonna)|while\\s+i|i\\s+need\\s+to)\\s+(?:pull|look|check|track|hunt|grab|dig|fetch|find|retrieve|load|see)\\s+(?:that|this|it|those|them)\\s+(?:up|out|down)\\b',
+  // "let me check on/into that", "let me look into this" — preposition forms
+  '\\b(?:let\\s+me|i\'ll|i\\s+will|while\\s+i|i\\s+need\\s+to)\\s+(?:check|look)\\s+(?:on|into)\\s+(?:that|this|it)\\b',
+  // "let me get that for you / going / done / handled / set up / taken care of"
+  '\\b(?:let\\s+me|i\'ll|i\\s+will|i\'m\\s+(?:going\\s+to|gonna))\\s+get\\s+(?:that|this|it)\\s+(?:for\\s+you|going|started|done|sorted|handled|set\\s+up|scheduled|taken\\s+care\\s+of)\\b',
+  // "let me find out", "let me see what I can do/find", "let me figure that out"
+  '\\b(?:let\\s+me|i\'ll|i\\s+will|i\\s+need\\s+to)\\s+(?:find\\s+out|figure\\s+(?:that|this|it)\\s+out|see\\s+what\\s+i\\s+can)\\b',
+  // present-participle deferral without the "let me" lead: "passing that
+  // along", "handing it over", "forwarding this to…", "routing that to…"
+  '\\b(?:passing|handing|forwarding|routing|kicking|punting|sending)\\s+(?:that|this|it|those|them|your\\s+\\w+)\\s+(?:along|over|off|to|up|on)\\b',
+].join('|'), 'i');
+
 function inferScreenOutput(message) {
   const msg = String(message || '');
   const out = { kind: null, content: null };
@@ -403,6 +464,8 @@ function inferScreenOutput(message) {
   else if (SCREEN_DECK_RE.test(msg)) out.kind = 'deck';
   else if (SCREEN_CHART_RE.test(msg)) out.kind = 'chart';
   else if (SCREEN_THREE_RE.test(msg)) out.kind = 'three';
+  else if (SCREEN_DOC_RE.test(msg)) out.kind = 'doc';
+  else if (SCREEN_SCENE_RE.test(msg)) out.kind = 'scene';
   // No kind noun at all — "show a person running on the my screen" names a
   // concrete thing you look at. Default to an image fetch; abstract/data
   // nouns (summary, verse, list…) are carved out of the pattern and stay on
@@ -479,8 +542,13 @@ module.exports = {
   SCREEN_OUTPUT_RE,
   LOOKUP_THEN_DISPLAY_RE,
   SCREEN_VISUAL_KIND_RE,
+  SCREEN_DELIVERABLE_RE,
   VISUAL_INTO_APP_RE,
   SCREEN_THREE_RE,
+  SCREEN_CHART_RE,
+  SCREEN_DECK_RE,
+  SCREEN_DOC_RE,
+  SCREEN_SCENE_RE,
   SCREEN_IMG_URL_RE,
   SCREEN_IMG_PATH_RE,
   LOCAL_DATA_SUBJECT_RE,
@@ -491,4 +559,7 @@ module.exports = {
   SCRIPTURE_REF_RE,
   SCREEN_CONCRETE_SUBJECT_RE,
   inferScreenOutput,
+  FILE_REF_TAG_LINE_RE,
+  ATTACHMENT_TAG_RE,
+  ROUTING_PROMISE_RE,
 };

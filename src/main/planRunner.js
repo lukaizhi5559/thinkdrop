@@ -50,17 +50,9 @@ const _INTERACTIVE_STEP_SKILLS = new Set(['url.first.agent', 'dom.act', 'tab.map
 // nylas.agent (type:'cli') handed url.first.agent + dom.act steps. Replan live
 // with the right skill family instead of dispatching a guaranteed-fail plan.
 function _agentFamilyMismatch(steps) {
-  let describe = null;
-  try { describe = require('../../shared/service-map.cjs').describeAgent; } catch (_) { return null; }
-  for (const s of steps) {
-    const agentId = s && s.args && s.args.agentId;
-    if (!agentId || !_INTERACTIVE_STEP_SKILLS.has(s.skill)) continue;
-    const desc = describe(agentId) || describe(String(agentId).replace(/\.agent$/, ''));
-    if (desc && desc.type && desc.type !== 'browser') {
-      return `${s.skill} step bound to ${desc.type} agent ${agentId}`;
-    }
-  }
-  return null;
+  try {
+    return require('../../shared/plan-steps.cjs').agentFamilyMismatch(steps);
+  } catch (_) { return null; }
 }
 function _stepsLookDegenerate(task, steps) {
   if (String(task.stepsStatus || '').toLowerCase() === 'failed') return 'steps-status-failed';
@@ -379,9 +371,11 @@ async function startPlan(planPath, opts = {}) {
 
   let plan;
   try { plan = _loadPlan(planPath); } catch (err) {
+    console.warn(`[PlanRunner] startPlan ${planId} — load failed: ${err.message}`);
     return { ok: false, planId, error: `Cannot read plan: ${err.message}` };
   }
   if (!planFormat.isTaskPlan(plan.content) || !plan.tasks.length) {
+    console.warn(`[PlanRunner] startPlan ${planId} — not a task plan or zero tasks`);
     return { ok: false, planId, error: 'Plan has no ## Task sections — use planExecutor for legacy plans' };
   }
 
@@ -393,6 +387,7 @@ async function startPlan(planPath, opts = {}) {
     const { assessRunGate } = require('../../comms-graph/src/planPreflight.cjs');
     const gate = assessRunGate(plan.tasks, bypassed);
     if (!gate.ok) {
+      console.warn(`[PlanRunner] startPlan ${planId} — run gate blocked: ${(gate.blockers || []).map(b => b.agentId).join(', ') || 'unknown'}`);
       _onAuthRequired && _onAuthRequired(planId, gate.blockers, planPath);
       _emit('plan:auth_required', { planId, blockers: gate.blockers });
       return { ok: false, planId, blockers: gate.blockers };

@@ -173,6 +173,67 @@ const CTXDEP_NEG = [
 for (const s of CTXDEP_POS) it(`ctxdep+: "${s}"`, () => assert(P.isContextDependent(s), 'expected context-dependent'));
 for (const s of CTXDEP_NEG) it(`ctxdep-: "${s}"`, () => assert(!P.isContextDependent(s), 'false positive'));
 
+// ── Attachment-tag patterns ──────────────────────────────────────────────────
+section('FILE_REF_TAG_LINE_RE / ATTACHMENT_TAG_RE');
+
+const FILELINE_POS = [
+  '[File: /Users/x/Desktop/kids-appts.rtf]',
+  '[Folder: /Users/x/Desktop/screens]',
+  '[File: ~/docs/note.txt]   ',
+  '  [FILE: /tmp/a.png]',
+];
+const FILELINE_NEG = [
+  '[File: /tmp/a.txt] what is this',        // tag + instruction — content line
+  '[Highlighted: some selected text]',
+  '[Context: a pinned body]',
+  '[Thought: proactive card text]',
+  'just a plain sentence',
+];
+for (const s of FILELINE_POS) it(`filetag+: "${s}"`, () => assert(hits(P.FILE_REF_TAG_LINE_RE, s), 'no match'));
+for (const s of FILELINE_NEG) it(`filetag-: "${s}"`, () => assert(!hits(P.FILE_REF_TAG_LINE_RE, s), 'false positive'));
+
+it('ATTACHMENT_TAG_RE strips every tag wrapper', () => {
+  const stripped = '[File: /a/b.txt]\n[Highlighted: code]\n[Context: body]\n[Thought: card]\n\ndo the thing'
+    .replace(P.ATTACHMENT_TAG_RE, ' ').replace(/\s{2,}/g, ' ').trim();
+  assert(stripped === 'do the thing', `leftover: "${stripped}"`);
+});
+
+// ── ROUTING_PROMISE_RE — deferral prose a quick lane can't perform ────────────
+section('ROUTING_PROMISE_RE');
+
+const ROUTE_POS = [
+  // observed failures
+  "Understood — I'll add placeholders for appointment times and dates for each Saturday in November to that file. Let me route that to ThinkDrop now.",
+  'Let me pull that up and give you the summary. Routing that to ThinkDrop now.',
+  // persona-taught phrasings
+  'Routing that to ThinkDrop now.',
+  'Let me check on that.',
+  'Passing that along.',
+  'Let me look that up for you.',
+  'Let me pull that up.',
+  "I'll get that for you.",
+  "I'll hand it off to the main system.",
+  'Give me a second while I pull that up.',
+  "One moment while I track that down.",
+  'Let me look into that for you.',
+  "I'm going to forward it to the task queue.",
+  'Handing this over to the deeper system.',
+  'Let me send that to ThinkDrop.',
+];
+const ROUTE_NEG = [
+  'The capital of France is Paris.',
+  'There are 21 files on the desktop.',
+  'The route to the airport is via I-280.',
+  'Here is your file.',
+  'I deleted 12 items.',
+  "It looks like a doctor's appointment summary with dates listed.",
+  "Sure — the appointment is on Saturday at 10am.",
+  "You can route the call to support from settings.",
+  'Let me know if you want more detail.',
+];
+for (const s of ROUTE_POS) it(`route+: "${s.substring(0, 60)}…"`, () => assert(hits(P.ROUTING_PROMISE_RE, s), 'no match'));
+for (const s of ROUTE_NEG) it(`route-: "${s.substring(0, 60)}…"`, () => assert(!hits(P.ROUTING_PROMISE_RE, s), 'false positive'));
+
 // ── hasRelativeTimePhrase (parseDateRange) ───────────────────────────────────
 section('hasRelativeTimePhrase (parseDateRange)');
 

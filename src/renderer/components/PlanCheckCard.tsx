@@ -78,6 +78,10 @@ export interface PlanCheckPayload {
   authOpened?: string;
   cancelled?: boolean;
   error?: string;
+  /** Run actually started — card flips to a dimmed, read-only state. */
+  started?: boolean;
+  /** A different plan took over the active session — card is inert. */
+  superseded?: boolean;
 }
 
 interface PlanCheckCardProps {
@@ -145,19 +149,21 @@ export function PlanCheckCard({ check, compact = true }: PlanCheckCardProps) {
       padding: '10px 12px',
       backgroundColor: COLORS.cardBg,
       border: COLORS.cardBorder,
+      opacity: check.started || check.superseded ? 0.55 : 1,
+      transition: 'opacity 0.25s ease',
     }}>
       {/* Header — AP blue-dot + title pattern */}
       <div className="flex items-center justify-between" style={{ marginBottom: 8 }}>
         <div className="flex items-center gap-2">
           <div className="flex-shrink-0 w-3 h-3 rounded-full" style={{ backgroundColor: '#3b82f6' }} />
           <span style={{ color: COLORS.headerText, fontSize: '0.78rem', fontWeight: 600 }}>
-            Plan readiness
+            {check.started ? 'Plan readiness — running' : 'Plan readiness'}
           </span>
         </div>
         <button
           type="button"
           title="Re-run readiness checks"
-          disabled={checking}
+          disabled={checking || !!check.started}
           onClick={() => { setChecking(true); _send(check.planId, undefined, 'recheck'); }}
           onMouseEnter={e => { e.currentTarget.style.backgroundColor = 'rgba(255,255,255,0.07)'; }}
           onMouseLeave={e => { e.currentTarget.style.backgroundColor = 'transparent'; }}
@@ -168,11 +174,11 @@ export function PlanCheckCard({ check, compact = true }: PlanCheckCardProps) {
             padding: '1px 6px',
             color: COLORS.mutedText,
             fontSize: '0.69rem',
-            cursor: checking ? 'default' : 'pointer',
-            opacity: checking ? 0.6 : 1,
+            cursor: checking || check.started ? 'default' : 'pointer',
+            opacity: checking || check.started ? 0.6 : 1,
           }}
         >
-          {checking ? 'checking…' : check.allClear
+          {check.started ? 'run started' : checking ? 'checking…' : check.allClear
             ? (warns.length ? `${warns.length} warning${warns.length === 1 ? '' : 's'}` : 'all clear')
             : `${issues.length} issue${issues.length === 1 ? '' : 's'}`}
         </button>
@@ -306,9 +312,32 @@ export function PlanCheckCard({ check, compact = true }: PlanCheckCardProps) {
       {check.cancelled && (
         <div style={{ color: COLORS.secondaryText, fontSize: '0.70rem', marginTop: 8 }}>Plan cancelled.</div>
       )}
+      {check.superseded && (
+        <div style={{ color: COLORS.secondaryText, fontSize: '0.70rem', marginTop: 8 }}>
+          Superseded — a different plan is active now. Open this plan to make it current again.
+        </div>
+      )}
+
+      {/* Started — run is underway; the card is read-only history now. */}
+      {check.started && (
+        <div style={{
+          marginTop: 12, borderTop: '1px solid rgba(255,255,255,0.07)', paddingTop: 10,
+          color: COLORS.secondaryText, fontSize: '0.72rem',
+        }}>
+          Run started — watch the run card above for progress.
+        </div>
+      )}
+
+      {/* All-clear nudge — the gate is open but nothing has started yet; make
+          the required action explicit so nobody waits on a silent card. */}
+      {!check.started && !check.cancelled && check.allClear && (
+        <div style={{ marginTop: 8, color: COLORS.secondaryText, fontSize: '0.68rem' }}>
+          Ready — say "run it" or press Run all to start{check.items.some(i => i.kind === 'approval-required') ? ' · Review task steps through each approval' : ''}.
+        </div>
+      )}
 
       {/* Footer — Cancel / Open plan / Review task / Run all (one line) */}
-      {!check.cancelled && (
+      {!check.cancelled && !check.started && !check.superseded && (
         <div className="flex" style={{ gap: 6, marginTop: 12, borderTop: '1px solid rgba(255,255,255,0.07)', paddingTop: 10, flexWrap: 'nowrap' }}>
           <button
             onClick={() => _send(check.planId, undefined, 'cancel')}
