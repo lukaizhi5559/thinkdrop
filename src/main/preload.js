@@ -136,6 +136,7 @@ contextBridge.exposeInMainWorld('electron', {
         'ghostlayer:display-clear-request',
         'ghostlayer:hover-interactive',
         'ghostlayer:display-capabilities',
+        'ghostlayer:scene-error',
         'ghostlayer:open-scene-prompt',
         'ghostlayer:edit-focus',
         'ghostlayer:doc-save',

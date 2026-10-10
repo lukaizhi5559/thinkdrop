@@ -467,6 +467,23 @@ async function _displayOnScreen(parsed) {
     }
   }
 
+  // Generated scene source is a deliverable — persist every displayed scene's
+  // js to ~/.thinkdrop/scene-exports so the code can be exported/reused no
+  // matter which producer pushed it (stategraph node, plan skill, preview).
+  // Content-hash filename keeps the two export paths from duplicating files.
+  if (output.kind === 'scene' && output.scene && typeof output.scene.js === 'string') {
+    try {
+      const dir = path.join(os.homedir(), '.thinkdrop', 'scene-exports');
+      fs.mkdirSync(dir, { recursive: true });
+      const hash = require('crypto').createHash('sha1').update(output.scene.js).digest('hex').slice(0, 10);
+      const file = path.join(dir, `scene-${hash}.js`);
+      if (!fs.existsSync(file)) fs.writeFileSync(file, output.scene.js, 'utf8');
+      output.scene.exportPath = file;
+    } catch (e) {
+      console.warn('[Screen] scene export failed:', e.message);
+    }
+  }
+
   screenDisplays.set(output.id, {
     blocking: output.blocking === true,
     arrowNav: (output.kind === 'deck' && output.deck && output.deck.controls === true)
@@ -1009,12 +1026,20 @@ function startOverlayControlServer() {
         'three.module.js': ['three', 'three.module.js'],
         'three.core.js':   ['three', 'three.core.js'],
       };
+      // OrbitControls is an examples addon — lives outside build/, and its
+      // bare `from 'three'` import can't resolve inside the sandboxed iframe
+      // (opaque origin, no import maps). Rewrite it to the absolute vendor URL.
+      const ORBIT_SRC = () => {
+        const pkgDir = path.dirname(require.resolve('three'));
+        let code = fs.readFileSync(path.join(pkgDir, '..', 'examples', 'jsm', 'controls', 'OrbitControls.js'), 'utf8');
+        return code.replace(/from\s+['"]three['"]/g, "from '/screen/vendor/three.module.js'");
+      };
       const spec = VENDOR_LIBS[lib];
-      if (spec) {
+      if (spec || lib === 'OrbitControls.js') {
         try {
-          const pkgDir = path.dirname(require.resolve(spec[0]));
-          const filePath = path.join(pkgDir, '..', 'build', spec[1]);
-          const code = fs.readFileSync(filePath, 'utf8');
+          const code = spec
+            ? fs.readFileSync(path.join(path.dirname(require.resolve(spec[0])), '..', 'build', spec[1]), 'utf8')
+            : ORBIT_SRC();
           res.setHeader('Content-Type', 'text/javascript; charset=utf-8');
           res.writeHead(200).end(code);
           return;
@@ -5940,6 +5965,15 @@ ipcMain.on('ghostlayer:display-clear-request', (_e, data) => {
 // The submitted prompt flows through the normal pipeline; screenOutput
 // re-POSTs the regenerated scene under the stable 'scene:active' id so the
 // display remounts in place (the prompt→scene loop).
+// Scene build errors surface from the sandboxed iframe — the parent reports
+// them here so blank-canvas failures show up in logs instead of silently
+// displaying controls chrome over nothing.
+ipcMain.on('ghostlayer:scene-error', (_e, data) => {
+  try {
+    console.warn(`[GhostLayer] scene build failed — id=${data?.id || '?'} title="${String(data?.title || '').slice(0, 80)}"${data?.error ? ` error=${String(data.error).slice(0, 200)}` : ''}`);
+  } catch (_) {}
+});
+
 ipcMain.on('ghostlayer:open-scene-prompt', (_e, data) => {
   if (!unifiedWindow || unifiedWindow.isDestroyed()) return;
   try {

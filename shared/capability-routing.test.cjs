@@ -14,7 +14,7 @@
 process.env.THINKDROP_AGENTS_DIR = '/tmp/td-routing-test-agents';
 const fs = require('fs');
 const path = require('path');
-const { searchCapabilities, selectBestCapability, decideGate, selectCapability } = require('./capability-index.cjs');
+const { searchCapabilities, selectBestCapability, decideGate, selectCapability, mergeRouteOptions } = require('./capability-index.cjs');
 const { detectScreenOutput } = require('../stategraph-module/src/utils/classifyTask.js');
 const { classifyPromptLine, answerFor } = require('../mcp-services/command-service/src/terminal/auto-answer.cjs');
 
@@ -146,6 +146,37 @@ section('materialization — selectCapability writes a draft descriptor');
   check('draft file written', fs.existsSync(f));
   const src = fs.existsSync(f) ? fs.readFileSync(f, 'utf8') : '';
   check('descriptor carries capabilities', /capabilities/i.test(src) || /send_text/i.test(src));
+}
+
+section('route options — merged ready + needs-setup list');
+
+// Selector pick leads the ready group; external verified options follow.
+{
+  const merged = mergeRouteOptions(
+    [CLI, UNREADY, BR],
+    [{ id: 'textbee.agent', service: 'textbee', installed: false, friction: 3, installCmd: 'npx -y @textbee/mcp' }],
+    CLI,
+  );
+  check('pick first', merged[0].id === 'nylas.agent');
+  check('pick marked ready', merged[0].ready === true && merged[0].needsSetup === false);
+  check('unready registered stays but flagged', merged.some(o => o.id === 'twilio.agent' && o.needsSetup === true));
+  check('external option appended', merged.some(o => o.id === 'textbee.agent' && o.needsSetup === true));
+}
+
+// Dedupe — an infer candidate that slugs to a retrieved service merges away.
+{
+  const merged = mergeRouteOptions(
+    [CLI],
+    [{ id: 'nylas.agent', service: 'nylas', installed: false, friction: 3 }],
+    null,
+  );
+  check('dedupes by service slug', merged.filter(o => /nylas/.test(o.id)).length === 1);
+}
+
+// Cap — never more than 8 options on the card.
+{
+  const many = Array.from({ length: 12 }, (_, i) => ({ id: `svc${i}.agent`, service: `svc${i}`, installed: true, friction: 0 }));
+  check('capped at 8', mergeRouteOptions(many, [], null).length === 8);
 }
 
 console.log(`\n${passed} passed, ${failed} failed`);

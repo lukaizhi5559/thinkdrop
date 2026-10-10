@@ -27,6 +27,7 @@ import { MOOD_ACCENT } from './types';
 const VENDOR_BASE = 'http://127.0.0.1:3010/screen/vendor';
 const LIB_MODULES: Record<string, string> = {
   three: `${VENDOR_BASE}/three.module.js`,
+  OrbitControls: `${VENDOR_BASE}/OrbitControls.js`,
 };
 
 const THREE_HARNESS = `
@@ -39,6 +40,12 @@ scene.add(new THREE.AmbientLight(0xffffff, 0.7));
 const key = new THREE.DirectionalLight(0xffffff, 1.4);
 key.position.set(3, 4, 6);
 scene.add(key);
+// OrbitControls ships with three's examples — injected as a build() param so
+// generated code can new OrbitControls(camera, renderer.domElement) for
+// drag-orbit/wheel-zoom instead of hand-rolling spherical math.
+const controls = new OrbitControls(camera, canvas);
+controls.enableDamping = true;
+controls.dampingFactor = 0.08;
 function fit(){ renderer.setSize(innerWidth, innerHeight); renderer.setPixelRatio(Math.min(devicePixelRatio, 2)); camera.aspect = innerWidth/innerHeight; camera.updateProjectionMatrix(); }
 fit(); addEventListener('resize', fit);
 // Key forwarding — the parent posts { tdKey } for capability-registered
@@ -51,17 +58,18 @@ addEventListener('message', (e) => {
 });
 let api = {};
 try {
-  const build = new Function('THREE', 'ctx', __GENERATED__);
-  api = build(THREE, { scene, camera, renderer, canvas, width: innerWidth, height: innerHeight, onKey: (fn) => keyHandlers.push(fn) }) || {};
+  const build = new Function('THREE', 'OrbitControls', 'scene', 'camera', 'renderer', 'controls', 'canvas', 'ctx', __GENERATED__);
+  api = build(THREE, OrbitControls, scene, camera, renderer, controls, canvas, { scene, camera, renderer, controls, canvas, width: innerWidth, height: innerHeight, onKey: (fn) => keyHandlers.push(fn) }) || {};
 } catch (e) {
   console.error('[scene] build failed:', e);
   document.title = 'scene-error';
-  try { parent.postMessage('td-scene-error', '*'); } catch (_) {}
+  try { parent.postMessage({ type: 'td-scene-error', error: String(e && (e.message || e)).slice(0, 300) }, '*'); } catch (_) {}
 }
 const t0 = performance.now();
 let frames = 0;
 (function loop(){
   try { api.tick && api.tick((performance.now() - t0) / 1000); } catch (e) {}
+  try { controls.update(); } catch (e) {}
   renderer.render(scene, camera);
   // Heartbeat after real frames — the opaque sandbox hides the canvas from
   // parent DOM probes, so rendering is confirmed over postMessage instead.
@@ -81,7 +89,7 @@ function buildSrcDoc(output: ScreenOutput): string {
   // Non-three scenes run as a module body directly; both paths heartbeat
   // 'td-scene-rendered' so tests can confirm the frame actually painted.
   const moduleBody = libs.includes('three')
-    ? imports + '\n' + THREE_HARNESS.replace('__GENERATED__', JSON.stringify(userCode))
+    ? imports + `\nimport { OrbitControls } from '${LIB_MODULES.OrbitControls}';` + '\n' + THREE_HARNESS.replace('__GENERATED__', JSON.stringify(userCode))
     : imports + '\ntry {\n' + userCode +
       "\ntry { parent.postMessage('td-scene-rendered', '*'); } catch (_) {}\n" +
       "} catch (e) { try { parent.postMessage('td-scene-error', '*'); } catch (_) {} }";
@@ -104,6 +112,7 @@ export function SceneScreen({ output }: { output: ScreenOutput }) {
   const srcDoc = useMemo(() => buildSrcDoc(output), [output]);
   const frameRef = useRef<HTMLIFrameElement>(null);
   const [status, setStatus] = useState<'loading' | 'rendered' | 'error'>('loading');
+  const [errorDetail, setErrorDetail] = useState<string | null>(null);
   const [ctrlMode, setCtrlMode] = useState(false);
   const interactive = output.blocking === true;
 
@@ -143,8 +152,17 @@ export function SceneScreen({ output }: { output: ScreenOutput }) {
   useEffect(() => {
     const onMsg = (e: MessageEvent) => {
       if (e.source !== frameRef.current?.contentWindow) return;
-      if (e.data === 'td-scene-rendered') setStatus('rendered');
-      else if (e.data === 'td-scene-error') setStatus('error');
+      const d = e.data;
+      if (d === 'td-scene-rendered') setStatus('rendered');
+      else if (d === 'td-scene-error' || (d && d.type === 'td-scene-error')) {
+        setStatus('error');
+        const detail = d && typeof d === 'object' ? d.error : null;
+        setErrorDetail(detail || null);
+        // Surface in main.log — a blank canvas otherwise fails silently.
+        try {
+          ipcRenderer?.send('ghostlayer:scene-error', { id: output.id, title: output.title, error: detail });
+        } catch (_) {}
+      }
     };
     window.addEventListener('message', onMsg);
     return () => window.removeEventListener('message', onMsg);
@@ -175,6 +193,17 @@ export function SceneScreen({ output }: { output: ScreenOutput }) {
           fontFamily: 'system-ui, -apple-system, sans-serif', pointerEvents: 'none',
         }}>
           {output.title}
+        </div>
+      )}
+      {status === 'error' && (
+        <div style={{
+          position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%, -50%)',
+          padding: '14px 22px', borderRadius: 12, maxWidth: 420, textAlign: 'center',
+          background: 'rgba(10,14,22,0.85)', border: '1px solid rgba(248,113,113,0.5)',
+          color: '#fca5a5', fontSize: 14, fontWeight: 500,
+          fontFamily: 'system-ui, -apple-system, sans-serif', pointerEvents: 'none',
+        }}>
+          Scene failed to build{errorDetail ? ` — ${errorDetail}` : ''}. Press E to edit and retry.
         </div>
       )}
       {/* Controls hint — advertises the scene loop + control mode. */}

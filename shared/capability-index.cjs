@@ -832,10 +832,36 @@ async function selectBestCapability(query, opts = {}) {
   if (!verdict || typeof verdict !== 'object') return { ok: false, error: 'bad-verdict', candidates };
 
   const byId = new Map(pool.map(c => [String(c.id).toLowerCase(), c]));
-  const pick = verdict.pick ? (byId.get(String(verdict.pick).toLowerCase()) || null) : null;
+  // LLMs paraphrase ids ("messages", "Messages.app", "imessage") — resolve
+  // the pick against the pool through a bounded set of normalizations. This
+  // is id normalization, not intent guessing: the pick must still land on a
+  // retrieved candidate.
+  function _resolvePick(raw) {
+    if (raw == null || raw === '') return null;
+    // Numeric answer — the model echoed the table's row number ("4").
+    if (/^\d+$/.test(String(raw).trim())) {
+      const i = parseInt(String(raw).trim(), 10) - 1;
+      return pool[i] || null;
+    }
+    const p = String(raw).toLowerCase().replace(/[^a-z0-9._-]+/g, '');
+    if (!p) return null;
+    if (byId.has(p)) return byId.get(p);
+    for (const v of [`${p}.agent`, `${p}.app.agent`]) if (byId.has(v)) return byId.get(v);
+    for (const c of pool) {
+      if (String(c.service || '').toLowerCase() === p) return c;
+      if (String(c.label || '').toLowerCase() === String(raw).toLowerCase()) return c;
+    }
+    // Prefix/contains match — 'messages.app' → 'messages.app.agent'.
+    const contains = pool.filter(c => String(c.id).toLowerCase().startsWith(p) || String(c.id).toLowerCase().includes(`.${p}.`));
+    return contains.length === 1 ? contains[0] : null;
+  }
+  const pick = _resolvePick(verdict.pick);
   // A pick naming an unknown id is a malformed verdict — treat as none,
   // never honor an id outside the retrieved pool.
-  if (verdict.pick && !pick) return { ok: true, pick: null, fit: 'none', reason: 'invalid-pick', alternatives: [], candidates };
+  if (verdict.pick && !pick) {
+    console.warn(`[capability-index] invalid pick "${verdict.pick}" — not in candidate pool`);
+    return { ok: true, pick: null, fit: 'none', reason: `invalid-pick:${String(verdict.pick).slice(0, 60)}`, alternatives: [], candidates };
+  }
   let fit = ['exact', 'partial', 'none'].includes(verdict.fit) ? verdict.fit : 'none';
   if (!pick) fit = 'none';
   const alternatives = (Array.isArray(verdict.alternatives) ? verdict.alternatives : [])
@@ -886,4 +912,33 @@ function stampDescriptor(agentId, patch = {}) {
   return { ok: true, file };
 }
 
-module.exports = { searchCapabilities, capabilityProbe, selectCapability, inferCapabilities, selectBestCapability, decideGate, verbFit, stampDescriptor, whichCli, SETUP_SUMMARIES, SETUP_ETA, PLATFORM_AFFORDANCES };
+// ── Route options merge ──────────────────────────────────────────────────
+// Merge retrieved candidates (ready/registered) with inferred external
+// options (verified CLI/API/MCP packages) into one ordered options list —
+// the "which route should I use" card in planning. Ready routes first
+// (selector's pick leads = recommended), then needs-setup, friction-sorted.
+function mergeRouteOptions(results, inferred, pick) {
+  const out = [];
+  const seen = new Set();
+  const seenTools = new Set();
+  const slug = (o) => String(o?.service || o?.tool || o?.id || o?.label || '').toLowerCase().replace(/[^a-z0-9]+/g, '');
+  const push = (o, ready) => {
+    const s = slug(o);
+    if (!s || seen.has(s) || (o?.tool && seenTools.has(slug({ tool: o.tool })))) return;
+    seen.add(s);
+    if (o?.tool) seenTools.add(slug({ tool: o.tool }));
+    out.push({ ...o, ready, needsSetup: !ready });
+  };
+  const pickId = pick?.id ? String(pick.id) : null;
+  const ready = (results || []).filter(r => r && r.installed !== false && (r.friction ?? 9) <= 2);
+  const pickFirst = ready.slice().sort((a, b) =>
+    (b.id === pickId) - (a.id === pickId) || (a.friction ?? 9) - (b.friction ?? 9));
+  for (const r of pickFirst) push(r, true);
+  // Registered-but-unready candidates still belong on the list (needs auth).
+  for (const r of (results || [])) if (r && !seen.has(slug(r))) push(r, false);
+  // External verified options.
+  for (const c of (inferred || [])) push(c, !!c.installed && (c.friction ?? 9) <= 1);
+  return out.slice(0, 8);
+}
+
+module.exports = { searchCapabilities, capabilityProbe, selectCapability, inferCapabilities, selectBestCapability, decideGate, verbFit, stampDescriptor, whichCli, SETUP_SUMMARIES, SETUP_ETA, PLATFORM_AFFORDANCES, mergeRouteOptions };

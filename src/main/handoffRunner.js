@@ -210,9 +210,19 @@ function setGatherAnswerCallback(cb) {
 // Legacy string-mode questions pass through untouched.
 function _taskGatherCallback(taskId) {
   if (typeof _gatherAnswerCallback !== 'function') return null;
-  return (q) => _gatherAnswerCallback(
-    q && typeof q === 'object' && q.batch ? { ...q, taskId } : q
-  );
+  return async (q) => {
+    // Waiting on a user answer is not a stall — suspend the watchdog for the
+    // duration of the ask, then re-arm it so the run can't hang forever after.
+    const run = _activeRuns.get(taskId);
+    if (run) clearTimeout(run.stallTimer);
+    try {
+      return await _gatherAnswerCallback(
+        q && typeof q === 'object' && q.batch ? { ...q, taskId } : q
+      );
+    } finally {
+      run?.armStall?.();
+    }
+  };
 }
 
 // ── HTTP helpers (notify comms-graph) ──────────────────────────────────────────
@@ -387,6 +397,10 @@ async function execute({ taskId, prompt, agentId, capabilityReason, source, orig
   const abortController = new AbortController();
   const progressCallback = _makeProgressCallback(taskId, agentId);
   let stateGraph = null;
+  // Hoisted: the catch block reads this for trace capture — a `const` inside
+  // try is block-scoped and the catch can't see it (observed: a stalled task
+  // crashed reporting itself, `_runEntry is not defined`).
+  let _runEntry = null;
 
   try {
     stateGraph = _createStateGraph();
@@ -535,7 +549,7 @@ async function execute({ taskId, prompt, agentId, capabilityReason, source, orig
 
     // Expose the live state on the run entry so main.js auth handlers can
     // push mid-run decisions into it.
-    const _runEntry = _activeRuns.get(taskId);
+    _runEntry = _activeRuns.get(taskId);
     if (_runEntry) _runEntry.state = initialState;
 
     // Execute the stategraph
