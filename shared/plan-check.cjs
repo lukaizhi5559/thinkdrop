@@ -146,7 +146,11 @@ async function computePlanCheck(tasks, opts = {}) {
             bypassed: authState === 'bypassed',
           });
         } else {
-          const needs = authState === 'needs sign-in';
+          // Credential-typed agents (api_key/bearer/basic) at 'unknown' have
+          // no stored-secret evidence — flag them so the card agrees with the
+          // run gate instead of reporting "ready" while the gate blocks.
+          const needs = authState === 'needs sign-in'
+            || (authState === 'unknown' && ['api_key', 'bearer', 'basic'].includes(desc.type));
           items.push({
             id: `t${n}-${desc.agentId}`,
             taskNum: n, agentId: desc.agentId,

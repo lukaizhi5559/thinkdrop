@@ -484,6 +484,11 @@ function humanizeError(error: string): string {
   if (msg.includes('ECONNREFUSED') || msg.includes('connection refused')) {
     return 'Could not reach the service — is it running?';
   }
+  // macOS Local Network denial — the OS refused LAN access for this app
+  // (Chromecast discovery, LAN devices). Not a service/auth problem.
+  if (msg.includes('EHOSTUNREACH') || msg.includes('No route to host') || msg.includes('local-network-blocked')) {
+    return 'Blocked from local network — enable this app in System Settings → Privacy & Security → Local Network';
+  }
   if (msg.includes('permission denied') || msg.includes('EACCES')) {
     return 'Permission denied';
   }

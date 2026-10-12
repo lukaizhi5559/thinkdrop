@@ -4033,6 +4033,9 @@ async function _handlePlanCheckAction({ planId, itemId, action, value, envName, 
         const { storeAgentSecret } = require('../../shared/secret-resolve.cjs');
         const ok = await storeAgentSecret(item.agentId, envName, value);
         console.log(`[PlanCheck] submit-key ${item.agentId} ${envName}: ${ok ? 'stored' : 'FAILED'}`);
+        // A successfully stored credential IS the auth evidence for
+        // secrets-type agents — stamp the ledger so the run gate agrees.
+        if (ok) _markPlanAuthLedger(item.agentId);
         // Mirror under the legacy <agent>_<key> shape so AgentsTab's
         // get-stored-secrets (profile.list prefix scan) sees it too.
         try {
@@ -4209,26 +4212,25 @@ let _userResizeSendTimer = null;
 // user drags (would flip _userHasMovedPanel and change the anchor behavior).
 let _lastProgrammaticMoveAt = 0;
 
-// Snap the panel back into the primary display's work area (animated).
-// Used on drag end ('moved' event) — we deliberately do not clamp during a
-// drag because that fights the cursor.
-function clampUnifiedWindowToWorkArea() {
+// Minimal drag-end clamp — keeps a ~40px sliver of the panel on the nearest
+// display so the user can always grab it back. We deliberately do not clamp
+// during a drag because that fights the cursor, and we do NOT pull the panel
+// fully inside the work area — off-screen positioning is allowed.
+//   x: may hang off either side, leaving an S-px sliver.
+//   y: the top edge can't leave the display top (the drag handle is the
+//      header — a bottom-sliver-only window would be ungrabbable); it may
+//      hang off the bottom, keeping the header's top S px visible.
+function keepUnifiedWindowGrabbable() {
   if (!unifiedWindow || unifiedWindow.isDestroyed()) return;
-  const primaryDisplay = screen.getPrimaryDisplay();
-  const { width: screenWidth, height: screenHeight } = primaryDisplay.workAreaSize;
-  const margin = UNIFIED_MARGIN;
-  const topMargin = UNIFIED_TOP_MARGIN;
-  const usableMaxH = Math.max(UNIFIED_COLLAPSED_HEIGHT, screenHeight - topMargin - margin);
-  const maxH = Math.min(UNIFIED_ABSOLUTE_MAX_HEIGHT, usableMaxH);
+  const S = 40;
   const b = unifiedWindow.getBounds();
-  const clampedW = b.width;
-  const clampedH = Math.min(Math.max(b.height, UNIFIED_COLLAPSED_HEIGHT), maxH);
-  const clampedX = Math.max(margin, Math.min(b.x, screenWidth - clampedW - margin));
-  const clampedY = Math.max(topMargin, Math.min(b.y, screenHeight - clampedH - margin));
-  if (clampedX !== b.x || clampedY !== b.y || clampedH !== b.height) {
+  const wa = screen.getDisplayMatching(b).workArea;
+  const x = Math.max(wa.x - b.width + S, Math.min(b.x, wa.x + wa.width - S));
+  const y = Math.max(wa.y, Math.min(b.y, wa.y + wa.height - S));
+  if (x !== b.x || y !== b.y) {
     _lastProgrammaticMoveAt = Date.now();
     unifiedWindow.setBounds(
-      { x: Math.round(clampedX), y: Math.round(clampedY), width: Math.round(clampedW), height: Math.round(clampedH) },
+      { x: Math.round(x), y: Math.round(y), width: b.width, height: b.height },
       true
     );
   }
@@ -4241,16 +4243,17 @@ function clampUnifiedWindowToWorkArea() {
 //   saveBounds:    if true, stash current bounds into _preExpandBounds before resizing
 //                  (used by the expand toggle so collapse can restore them).
 //   restoreBounds: if true, ignore contentHeight/width and restore _preExpandBounds
-//                  (clamped into the work area). Clears the stash.
+//                  (position restored verbatim — wherever the user had it).
+//                  Clears the stash.
 //
 // Anchoring rule:
 //   - DEFAULT (user has NOT dragged the panel): always anchor bottom-right —
 //     x = screenWidth - w - margin, y = screenHeight - h - margin. Growth goes
 //     upward; collapse always returns to the bottom-right corner.
-//   - AFTER USER DRAG (_userHasMovedPanel): quadrant-aware — if the panel's
-//     vertical CENTER is in the TOP half of the work area, anchor the TOP edge
-//     (grow downward, clamped on-screen); otherwise anchor the BOTTOM edge
-//     (grow upward). X is preserved and clamped on-screen.
+//   - AFTER USER DRAG (_userHasMovedPanel): the panel's own edges anchor —
+//     if its vertical CENTER is in the top half of its display, the TOP edge
+//     stays put (grow downward); otherwise the BOTTOM edge stays put (grow
+//     upward). X/Y are preserved exactly — no on-screen clamping.
 function applyUnifiedBounds({ contentHeight, width, animate = true, saveBounds = false, restoreBounds = false } = {}) {
   if (!unifiedWindow || unifiedWindow.isDestroyed()) return null;
   const primaryDisplay = screen.getPrimaryDisplay();
@@ -4268,14 +4271,15 @@ function applyUnifiedBounds({ contentHeight, width, animate = true, saveBounds =
     _preExpandBounds = { x: bounds.x, y: bounds.y, width: bounds.width, height: bounds.height };
   }
 
-  // Collapse toggle: restore stashed bounds (clamped into the work area).
+  // Collapse toggle: restore stashed bounds verbatim — position unclamped,
+  // the stash is wherever the user had the panel (possibly off-screen).
   if (restoreBounds && _preExpandBounds) {
     const restored = _preExpandBounds;
     _preExpandBounds = null;
     const rW = Math.min(Math.max(restored.width, UNIFIED_MIN_WIDTH), UNIFIED_MAX_WIDTH);
     const rH = Math.min(Math.max(restored.height, minH), maxH);
-    const rX = Math.max(margin, Math.min(restored.x, screenWidth - rW - margin));
-    const rY = Math.max(topMargin, Math.min(restored.y, screenHeight - rH - margin));
+    const rX = restored.x;
+    const rY = restored.y;
     _lastProgrammaticMoveAt = Date.now();
     unifiedWindow.setBounds(
       { x: Math.round(rX), y: Math.round(rY), width: Math.round(rW), height: Math.round(rH) },
@@ -4297,15 +4301,16 @@ function applyUnifiedBounds({ contentHeight, width, animate = true, saveBounds =
     newX = screenWidth - clampedW - margin;
     newY = screenHeight - clampedH - margin;
   } else {
-    // User-dragged: quadrant-aware — top-half anchors top (grow down), bottom-half
-    // anchors bottom (grow up); X preserved and clamped on-screen.
+    // User-dragged: own-edge anchoring, no on-screen clamping — the panel
+    // stays where the user put it (possibly off-screen). Top half of its
+    // display → top edge pinned (grow down); bottom half → bottom edge
+    // pinned (grow up). X preserved exactly.
+    const wa = screen.getDisplayMatching(bounds).workArea;
     const centerY = bounds.y + bounds.height / 2;
-    if (centerY < screenHeight / 2) {
-      newY = Math.max(topMargin, Math.min(bounds.y, screenHeight - clampedH - margin));
-    } else {
-      newY = screenHeight - clampedH - margin;
-    }
-    newX = Math.max(margin, Math.min(bounds.x, screenWidth - clampedW - margin));
+    newY = centerY < wa.y + wa.height / 2
+      ? bounds.y
+      : bounds.y + bounds.height - clampedH;
+    newX = bounds.x;
   }
 
   _lastProgrammaticMoveAt = Date.now();
@@ -4431,7 +4436,17 @@ function initStateGraph() {
           ipcBroadcast: (channel, data) => safeSendUnified(channel, data),
           onAuthRequired: (planId, blockers) => {
             console.log(`[PlanRunner] Plan ${planId} blocked on auth:`, blockers.map(b => b.agentId).join(', '));
-            safeSendUnified('preflight:open-agents-tab', { planId, blockers });
+            // Top-level agentId/reason so the renderer can highlight the
+            // specific agent — previously only nested in `blockers`, which
+            // left the Agents tab open on a dead generic view.
+            const first = blockers[0] || {};
+            safeSendUnified('preflight:open-agents-tab', {
+              planId,
+              blockers,
+              agentId: first.agentId || null,
+              reason: first.reason || null,
+              authType: first.authType || null,
+            });
           },
           onReview: (payload) => {
             const key = `${payload.planId}:${payload.taskNum}`;
@@ -5535,9 +5550,10 @@ function createUnifiedWindow() {
   });
 
   // Native (-webkit-app-region: drag) window moves. will-move marks the panel
-  // as user-positioned (quadrant anchoring from then on) and tells the
+  // as user-positioned (own-edge anchoring from then on) and tells the
   // renderer to suppress content-driven resizes while dragging; 'moved' fires
-  // on drag end → clear the flag + snap back inside the work area.
+  // on drag end → clear the flag + keep a ~40px sliver on-screen. The panel
+  // is otherwise free to sit off-screen — no snap back into the work area.
   // will-move can also fire for our own setBounds/setPosition — ignore those
   // via the _lastProgrammaticMoveAt timestamp so programmatic moves don't
   // silently flip the panel to user-dragged anchoring.
@@ -5549,11 +5565,11 @@ function createUnifiedWindow() {
 
   unifiedWindow.on('moved', () => {
     // Always clear the renderer's drag flag — a missed drag-end would leave
-    // resize suppression stuck on forever. Only skip the snap-back clamp when
+    // resize suppression stuck on forever. Only skip the sliver clamp when
     // this 'moved' was actually our own programmatic setBounds finishing.
     safeSendUnified('unified:drag-end');
     if (Date.now() - _lastProgrammaticMoveAt < 400) return;
-    clampUnifiedWindowToWorkArea();
+    keepUnifiedWindowGrabbable();
   });
 
   const isDev = process.env.NODE_ENV === 'development';
@@ -11564,11 +11580,12 @@ app.whenReady().then(async () => {
     }
   });
 
-  // Drag end: clamp the panel back into the work area with animation.
+  // Drag end: keep a ~40px sliver on-screen so the panel stays grabbable.
   // We deliberately do NOT clamp during `window:move` (mousemove) because that
-  // would fight the cursor; instead we snap back once the user releases.
+  // would fight the cursor; the sliver clamp runs once on release. The panel
+  // is otherwise allowed to sit off-screen — no snap back into the work area.
   ipcMain.on('window:move-done', () => {
-    clampUnifiedWindowToWorkArea();
+    keepUnifiedWindowGrabbable();
   });
 
   ipcMain.on('results-window:close', () => {

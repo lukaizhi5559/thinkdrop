@@ -384,8 +384,8 @@ async function startPlan(planPath, opts = {}) {
 
   // Run gate — unresolved auth blocks start unless bypassed.
   try {
-    const { assessRunGate } = require('../../comms-graph/src/planPreflight.cjs');
-    const gate = assessRunGate(plan.tasks, bypassed);
+    const { assessRunGateAsync } = require('../../comms-graph/src/planPreflight.cjs');
+    const gate = await assessRunGateAsync(plan.tasks, bypassed);
     if (!gate.ok) {
       console.warn(`[PlanRunner] startPlan ${planId} — run gate blocked: ${(gate.blockers || []).map(b => b.agentId).join(', ') || 'unknown'}`);
       _onAuthRequired && _onAuthRequired(planId, gate.blockers, planPath);
