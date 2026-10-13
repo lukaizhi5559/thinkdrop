@@ -240,7 +240,23 @@ const SCREEN_OBSERVATION_RE = new RegExp([
   // screen", "whats all this on my screen", "what's it doing on my screen".
   // Anchored on the on-screen tail so off-screen phrasing can't match.
   '\\bwhat\'?s?\\s+(?:is\\s+|are\\s+)?(?:this|that|it|everything|all\\s+this)\\b[^.]{0,15}\\bon\\s+(?:my\\s+|the\\s+)?screen\\b',
+  // explicit inspect-verb + live surface — "scan the screen", "scan the page",
+  // "read this tab", "check the page", "analyze the site". The verb list
+  // excludes display verbs (show/put/display → screen_output) and page-action
+  // verbs (scroll/click/type → dom.act lane); the determiner group is REQUIRED
+  // so bare nouns can't drift in ("scan the images" is image analysis, "read
+  // page 42" is a book/file read — neither is a live-surface observation).
+  '\\b(?:scan|read|inspect|examine|analy[sz]e|review|check|look\\s+(?:at|over|through)|go\\s+(?:over|through))\\s+(?:(?:the|my|this|that|current|open|whole|entire|full|loaded|visible)\\s+)+(?:screen|page|tab|site|website|window)\\b',
 ].join('|'), 'i');
+
+/** Deictic live-page referent — "this page", "the tab", "on this site". The
+ *  referent is the page visibly open in the user's real browser; a stale
+ *  context URL is not it. Consumers: comms server.cjs's live-page handoff
+ *  guard, resolveReferencesV2's deixis→'url' fallbacks, and page_scan's
+ *  deictic→scan_page choice. 'screen' is intentionally absent — a screen
+ *  referent routes to screen_intelligence (OCR/read_screen), not the 'url'
+ *  doc pipeline these callers feed. */
+const LIVE_PAGE_REF_RE = /\b(?:this|the|current|open)\s+(?:page|tab|site|website|article|listing)\b|\bon\s+this\s+(?:page|site|website|tab)\b/i;
 
 /** Artifact nouns that can name a live ambient referent — an open file, the
  *  focused window, the active app, a visible tab. resolveReferencesV2 gates
@@ -535,6 +551,7 @@ module.exports = {
   PROFILE_QUERY_PATTERN,
   ALL_TIME_QUERY_PATTERN,
   SCREEN_OBSERVATION_RE,
+  LIVE_PAGE_REF_RE,
   DEICTIC_CONTINUATION_RE,
   THIRD_PERSON_SUBJECT_RE,
   isContextDependent,
