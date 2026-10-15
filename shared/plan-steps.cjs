@@ -23,6 +23,29 @@ const { canonicalAgent } = require('./agent-canonical.cjs');
 const skillIndex = require('./skill-index.cjs');
 const serviceMap = require('./service-map.cjs');
 
+// ── Doc-extract rewrite ─────────────────────────────────────────────────────
+// Plans that route document text extraction through generic CLIs (pandoc —
+// which cannot read PDFs — pdftotext, textutil, soffice, …) get rewritten to
+// doc.read, the maintained skill backed by pdf_extract.py / docx_ops.py /
+// xlsx_ops.py / pptx_extract.py with dep-check + pdftotext/textutil fallback.
+// Running at normalize time heals both fresh plans (planning.cjs write-back)
+// and saved plans (planRunner dispatch-time re-normalization).
+const _DOC_EXTRACT_TOOL_RE = /\b(pandoc|pdftotext|pdf2txt|mutool|textutil|soffice|libreoffice|antiword|docx2txt|unoconv|in2csv)\b/i;
+const _DOC_PATH_RE = /[^\s"',;&|`$()]+\.(pdf|docx?|xlsx?|pptx?|odt|ods|odp|rtf|epub)(?![\w.])/i;
+const _CLI_SKILLS = new Set(['shell.run', 'cli.agent']);
+
+function _docExtractPath(step) {
+  const vals = [];
+  for (const v of Object.values(step.args || {})) {
+    if (typeof v === 'string') vals.push(v);
+    else if (Array.isArray(v)) vals.push(...v.filter(x => typeof x === 'string'));
+  }
+  const blob = vals.join(' ');
+  if (!_DOC_EXTRACT_TOOL_RE.test(blob)) return null;
+  const m = blob.match(_DOC_PATH_RE);
+  return m ? m[0] : null;
+}
+
 async function normalizeTaskStepsAsync(task) {
   // Resolve every step URL (with live discovery) up-front, then apply the same
   // pass-1/pass-2 logic as the sync version.
@@ -59,7 +82,20 @@ function _applyNormalization(task, resFor) {
   // Pass 2 — assign agentIds.
   const steps = raw.map((s, i) => {
     if (!s || typeof s !== 'object') return s;
-    const out = { ...s, args: { ...(s.args || {}) } };
+    let out = { ...s, args: { ...(s.args || {}) } };
+    // Doc-extract rewrite — CLI conversion steps on document paths become
+    // doc.read { path } (pandoc cannot read PDFs; the skill owns the chain).
+    if (_CLI_SKILLS.has(out.skill)) {
+      const docPath = _docExtractPath(out);
+      if (docPath) {
+        out = {
+          ...out,
+          skill: 'doc.read',
+          args: { path: docPath },
+          description: out.description || `Extract text from ${docPath.split('/').pop()}`,
+        };
+      }
+    }
     const svc = resFor(i);
     if (svc && typeof out.args.url === 'string') {
       out.args.agentId = svc.canonicalAgent;

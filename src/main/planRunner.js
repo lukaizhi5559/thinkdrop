@@ -184,13 +184,20 @@ function _depsFailed(run, task) {
 async function _dispatchTask(run, task) {
   let prompt = task.prompt || task.title;
   // Inject upstream results so "the doc I just made" resolves in the child run.
-  const depBits = _effectiveDeps(run, task)
-    .map(dep => run.results.get(dep))
-    .filter(r => r && r._status === 'done' && r.result)
-    .map((r, i) => `Result of earlier step ${i + 1}: ${String(r.result).slice(0, 300)}`);
+  const _depEntries = _effectiveDeps(run, task)
+    .map(dep => ({ taskNum: dep, r: run.results.get(dep) }))
+    .filter(e => e.r && e.r._status === 'done' && e.r.result);
+  const depBits = _depEntries
+    .map((e, i) => `Result of earlier step ${i + 1}: ${String(e.r.result).slice(0, 2000)}`);
   if (depBits.length) {
     prompt = `[Prior step results — context only]\n${depBits.join('\n')}\n\n[Your task]\n${prompt}`;
   }
+  // Structured prior-results channel — the prompt slice above is context for
+  // the planner/dispatcher; this carries the real (capped) payloads through
+  // comms → handoff → state so {{synthesisAnswer}}-style references in this
+  // task's steps resolve to actual upstream output instead of dead tokens.
+  const priorResults = _depEntries
+    .map(e => ({ taskNum: e.taskNum, result: String(e.r.result).slice(0, 8000) }));
 
   // Re-normalize steps at dispatch — heals plans generated before the
   // service-resolution fix (stale web.agent docs.new steps → google.agent),
@@ -232,6 +239,7 @@ async function _dispatchTask(run, task) {
     // Steps pre-generated during planning → stategraph adopts them as
     // _deterministicPlan and skips the LLM planning pass entirely.
     deterministicPlan: steps,
+    priorResults: priorResults.length ? priorResults : null,
     source: 'plan',
   });
   if (!resp || !resp.taskId) {
