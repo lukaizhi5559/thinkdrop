@@ -1564,7 +1564,7 @@ function startOverlayControlServer() {
       req.on('data', chunk => { body += chunk; });
       req.on('end', () => {
         try {
-          const { taskId, prompt, agentId, source, originalPrompt, detectedLanguage, guessedIntent, sessionId: handoffSessionId, userApproved, thoughtContext, planId, planTaskNum, planTask, preflightAuthBypass, deterministicPlan, priorResults, capabilityReason } = JSON.parse(body || '{}');
+          const { taskId, prompt, agentId, source, originalPrompt, detectedLanguage, guessedIntent, sessionId: handoffSessionId, userApproved, thoughtContext, planId, planTaskNum, planTask, preflightAuthBypass, deterministicPlan, priorResults, capabilityReason, routeDecision } = JSON.parse(body || '{}');
           console.log(`[CommsGraph] Handoff received — task=${taskId} agent=${agentId || 'auto'} source=${source} guessedIntent=${guessedIntent || 'null'} session=${handoffSessionId || 'none'}${thoughtContext?.id ? ` thought=${thoughtContext.id}` : ''}`);
 
           // Emit task:created BEFORE starting the stategraph run so the queue card
@@ -1606,6 +1606,10 @@ function startOverlayControlServer() {
             // Upstream plan-task results — seeded into the child run so
             // cross-task {{synthesisAnswer}}/prior-output refs resolve to data.
             _priorResults: Array.isArray(priorResults) && priorResults.length ? priorResults : null,
+            // RouteDecision envelope — comms-graph's single upstream
+            // classification; resolveReferencesV2 consumes it in place of
+            // running classifyTask again.
+            routeDecision: routeDecision || null,
             // Plan tasks pinned to a service agent must keep preflight — the
             // _deterministicExternal flag is the designed mechanism: resolveAgent
             // registry-verifies + pins the agent, preflightAgents skips the early

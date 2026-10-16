@@ -387,7 +387,7 @@ function _makeProgressCallback(taskId, agentId) {
  * @param {string[]|null} [args.preflightAuthBypass] - Agent IDs to treat as authed for this run only
  * @param {Object|null}  [args._resumeState] - Paused finalState to resume from (ask_user answer)
  */
-async function execute({ taskId, prompt, agentId, capabilityReason, source, originalPrompt, detectedLanguage, sessionId, planFile, preflightAuthBypass, userApproved, thoughtContext, guessedIntent, planTask, _resumeState, _deterministicPlan, _deterministicTemplate, _deterministicLowRisk, _deterministicExternal, _deterministicServiceAgent, _priorResults, _resumeMultiIntent, _resumeIntentQueue, _resumeIntentResults, _resumeDataContext }) {
+async function execute({ taskId, prompt, agentId, capabilityReason, source, originalPrompt, detectedLanguage, sessionId, planFile, preflightAuthBypass, userApproved, thoughtContext, guessedIntent, planTask, _resumeState, _deterministicPlan, _deterministicTemplate, _deterministicLowRisk, _deterministicExternal, _deterministicServiceAgent, _priorResults, _resumeMultiIntent, _resumeIntentQueue, _resumeIntentResults, _resumeDataContext, routeDecision }) {
   if (!_mcpAdapter || !_llmBackend) {
     console.error('[HandoffRunner] Not initialized — call init() first');
     _notifyComplete(taskId, agentId, 'failed', 'HandoffRunner not initialized', null, sessionId);
@@ -492,6 +492,10 @@ async function execute({ taskId, prompt, agentId, capabilityReason, source, orig
           // emit gather:question_batch cards and await answers, same as the
           // serial path in main.js.
           gatherAnswerCallback: _taskGatherCallback(taskId),
+          // RouteDecision envelope — comms-graph ran the canonical task
+          // classification at ingress; resolveReferencesV2 consumes this
+          // instead of paying for a second classifyTask.
+          ...(routeDecision && routeDecision.taskType ? { _routeDecision: routeDecision } : {}),
           // If resuming with an approved plan, set _planFile so planExecutor runs it
           ...(planFile ? { _planFile: planFile } : {}),
           // Deterministic fast-path metadata survives the approval round-trip —

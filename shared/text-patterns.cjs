@@ -114,6 +114,39 @@ function isFileWriteGoal(goal) {
   return FILE_WRITE_VERB_RE.test(g) && FILE_NOUN_RE.test(g);
 }
 
+// ── Local file-content edits ─────────────────────────────────────────────────
+// "add X to this file", "append to notes.rtf", "[File: x] update it" — editing
+// a file's contents is a local fs job, not a service-capability pick. Target
+// nouns are kept conservative: 'list'/'spreadsheet'/'google doc' stay out
+// because they can name real services (Reminders, Sheets, Docs).
+
+/** Verbs that operate on file CONTENTS (not file management like move/copy).
+ *  Read-verbs included — "read/open/print/summarize this file" is the same
+ *  class of local job. 'show'/'check' deliberately absent (ambiguous with
+ *  screen output and QA probing). */
+const FILE_EDIT_VERB_RE = /\b(?:add|append|write|put|insert|save|log|jot|note|record|type|enter|update|edit|store|stick|throw|dump|paste|drop|read|open|view|print|summari[sz]e|translate)\b/i;
+
+const _FILE_EDIT_VERB_ALT = 'add|append|write|put|insert|save|log|jot|note|record|type|enter|update|edit|store|stick|throw|dump|paste|drop|read|open|view|print|summari[sz]e|translate';
+const _FILE_EDIT_EXT_ALT = 'rtf|txt|md|markdown|csv|tsv|json|jsonl|log|odt|pages|html?|xml|ya?ml';
+
+/** "add X to this file" / "append to notes.rtf" — verb + explicit file target. */
+const LOCAL_FILE_EDIT_RE = new RegExp(
+  `\\b(?:${_FILE_EDIT_VERB_ALT})\\b[^.\\n]{0,60}\\b(?:to|into|in|on)\\s+(?:this|that|the|my)\\s+(?:file|note|notes|doc|document|log|journal)\\b`
+  + `|\\b(?:${_FILE_EDIT_VERB_ALT})\\b[^.\\n]{0,60}\\b[\\w-]+\\.(?:${_FILE_EDIT_EXT_ALT})\\b`,
+  'i');
+
+/**
+ * isLocalFileEdit(text, opts) — a file-CONTENT edit (append/write to a named
+ * file or a [File:]-chipped target). opts.hasFileRef lets the caller signal a
+ * stripped attachment chip — "update it" + chip still counts.
+ */
+function isLocalFileEdit(text, opts = {}) {
+  const t = String(text || '');
+  if (!t) return false;
+  if (LOCAL_FILE_EDIT_RE.test(t)) return true;
+  return !!(opts.hasFileRef && FILE_EDIT_VERB_RE.test(t));
+}
+
 // ── Time phrasing / episodic ─────────────────────────────────────────────────
 
 /**
@@ -541,6 +574,9 @@ module.exports = {
   FILE_NOUN_RE,
   EXPLICIT_FILE_PATH_RE,
   isFileWriteGoal,
+  FILE_EDIT_VERB_RE,
+  LOCAL_FILE_EDIT_RE,
+  isLocalFileEdit,
   EPISODIC_RE,
   IMAGE_REQUEST_RES,
   REFERENTIAL_RE,

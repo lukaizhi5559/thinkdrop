@@ -296,6 +296,29 @@ function _tokens(query) {
     .replace(/[^a-z0-9\s]/g, ' ').split(/\s+/).filter(w => w.length > 2);
 }
 
+// Query tokens that carry no service evidence — function words, filler, and
+// generic nouns/verbs. A bare "file" matches 'audio file'/'play music file'
+// keywords and pulls say/afplay into unrelated prompts; "add"/"the"/"you"
+// substring-hit 'address'/'their'/'youtube' the same way (observed: a file-
+// append prompt retrieving say, afplay, catt, nylas, youtube — every hit on
+// a stop-word). Service-discriminative verbs (send/text/call/email/play/
+// search/download/open/schedule/remind) are deliberately NOT here — they are
+// the signal retrieval exists to find.
+const GENERIC_QUERY_TOKENS = new Set([
+  'the', 'this', 'that', 'these', 'those', 'you', 'your', 'yours',
+  'and', 'for', 'with', 'from', 'into', 'onto', 'upon', 'about', 'over', 'per', 'via',
+  'please', 'thanks', 'thank', 'okay', 'yeah', 'yes', 'hey',
+  'need', 'needs', 'want', 'wants', 'have', 'has', 'had',
+  'can', 'could', 'would', 'should', 'shall', 'will', 'may', 'might', 'must',
+  'does', 'did', 'done', 'make', 'made', 'get', 'got', 'put', 'let', 'lets',
+  'add', 'adds', 'save', 'write', 'edit', 'update', 'remove', 'create', 'new',
+  'following', 'below', 'above', 'thing', 'things', 'something', 'anything', 'everything', 'stuff',
+  'just', 'also', 'then', 'now', 'here', 'there', 'when', 'what', 'which', 'who', 'how', 'why', 'where',
+  'some', 'more', 'most', 'all', 'any', 'each', 'every', 'much', 'many', 'few',
+  'today', 'tonight', 'tomorrow', 'yesterday',
+  'file', 'files',
+]);
+
 function _matchScore(candidate, tokens) {
   const hay = [candidate.id, candidate.label, candidate.service, candidate.tool, candidate.capability,
     ...(candidate.keywords || [])].filter(Boolean).join(' ').toLowerCase();
@@ -322,7 +345,10 @@ function _seedKeywordMap() {
 
 async function searchCapabilities(query, opts = {}) {
   const platform = process.platform;
-  const tokens = _tokens(query);
+  // Generic-token filter: only tokens that could name a service or action
+  // count as retrieval evidence. Zero remaining tokens → zero hits → the
+  // caller falls through to infer/handoff instead of gating on noise.
+  const tokens = _tokens(query).filter(t => !GENERIC_QUERY_TOKENS.has(t));
   const seedKw = _seedKeywordMap();
   const pools = [
     ...(await _scanRegisteredAgents()),

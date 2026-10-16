@@ -179,6 +179,34 @@ section('route options — merged ready + needs-setup list');
   check('capped at 8', mergeRouteOptions(many, [], null).length === 8);
 }
 
+section('retrieval — generic query tokens are not service evidence');
+
+// Regression (2026-10-16): "add X to this file" retrieved say/afplay/catt/
+// nylas/youtube — every hit on a stop-word ('file'→'audio file', 'the'→
+// 'their', 'you'→'youtube', 'add'→'address'). Generic tokens now filter out.
+{
+  const hits = await searchCapabilities('I need you to add the following to this file. Wife appt nov. 11th at 8:45am. Ok?');
+  check('file-append prompt → zero capability hits', hits.length === 0, JSON.stringify(hits.map(h => h.id)));
+}
+{
+  const hits = await searchCapabilities('text my wife the appointment time');
+  check('text wife → messages affordance still retrieved', hits.some(h => h.id === 'messages.app.agent'), JSON.stringify(hits.map(h => h.id)));
+}
+{
+  const hits = await searchCapabilities('search my gmail for the invoice');
+  check('named service still retrieves', hits.length > 0, JSON.stringify(hits.map(h => h.id)));
+}
+
+section('local file-edit detection — gate bypass');
+
+const { isLocalFileEdit } = require('./text-patterns.cjs');
+check('"add to this file" → local edit', isLocalFileEdit('I need you to add the following to this file. Wife appt nov. 11th at 8:45am. Ok?'));
+check('"append to notes.rtf" → local edit', isLocalFileEdit('append meeting notes to weekly-notes.rtf'));
+check('file chip + bare verb → local edit', isLocalFileEdit('update it with this', { hasFileRef: true }));
+check('"add to my calendar" → NOT local edit (service)', !isLocalFileEdit('add these dates to my calendar'));
+check('"add to shopping list" → NOT local edit (Reminders)', !isLocalFileEdit('add milk to my shopping list'));
+check('"text my wife" → NOT local edit (messaging)', !isLocalFileEdit('text my wife the appt time'));
+
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);
 })().catch(e => { console.error('FATAL', e); process.exit(1); });
