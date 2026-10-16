@@ -4599,21 +4599,30 @@ let clipboardCheckInterval = null;
 let sentHighlights = new Set();
 let recentlySubmittedPrompts = new Set(); // Track prompts sent via stategraph:process to avoid clipboard re-capture
 
-// ── Selection context: highlight → armed state → lazy capture ─────────────
+// ── Selection context: gesture → validated arm → chip ─────────────────────
 // uiohook detects selection gestures (drag >5px, double-click word-select,
-// Cmd+A) OUTSIDE ThinkDrop windows and "arms" a pending selection — the
-// overlay shows an orange ring and the GhostLayer shows a context pill.
-// The clipboard is NEVER touched at selection time. (The old flow copied at
-// mouseup and restored 300ms later — a Cmd+V inside that window pasted the
-// synthetic copy, which is why paste sometimes needed a second Cmd+V.)
-// The text is captured lazily instead:
-//   - on overlay click/focus while armed (chip shows the text before typing)
-//   - at prompt submit / voice-final while still armed (fallback)
+// Cmd+A) OUTSIDE ThinkDrop windows. Mouse gestures are only CANDIDATES — a
+// >5px drag is also a file move, a title-bar move, a resize, a marquee select.
+// So mouse gestures validate at mouseup (AX read → menu Copy → Cmd+C, with the
+// user's own Cmd+C adopted mid-flight) and only arm when real text lands; the
+// validated text becomes the input chip directly. Keyboard intents (Cmd+A,
+// Shift+nav) arm immediately — those don't misfire.
+// The clipboard is never touched mid-gesture — a synthetic ⌘ inside a live
+// drag can mutate it (copy↔move badge in Finder), and the old copy-at-mouseup
+// flow raced real Cmd+V presses. Validation waits for keyboard quiet, and a
+// user Cmd+C during validation vetoes our restore.
+//   - verified drags arm + chip the text immediately
+//   - Paste context / ⌘; re-capture (or grab un-armed) via the same ladder
 //   - Shift+Cmd+C forces an immediate capture → .md + [File:] chip
 let _uIOhookInstance = null;
 let _mouseDownPos = null;            // { x, y, t } from last outside mousedown (drag tracking)
 let _lastOutsideClick = null;        // { x, y, t } — double-click detection
-let _dragArmTriggered = false;       // once per drag — avoids repeated mousemove checks
+let _dragGestureSeen = false;        // once per drag — a >5px drag candidate; validated at mouseup
+let _validationInFlight = false;     // gesture validation running (AX/probe ladder)
+let _validationQueued = false;       // a second drag fired mid-validation — re-run once current ends
+let _userCopiedDuringProbe = false;  // real Cmd+C landed during validation — adopt it, veto restore
+let _probeBaselineText = null;       // pre-sentinel clipboard text — adopt rejects restoring it as a "user copy"
+let _capturedArmGen = -1;            // _selectionArmGen that produced _capturedSelectionText (cache scope)
 let _selectionArmed = false;         // a selection gesture was detected, context is pending
 let _selectionArmTimer = null;       // 90s auto-expire
 let _selectionApp = null;            // frontmost app at arm time (pill label / logging)
@@ -4713,6 +4722,17 @@ function _broadcastSelectionState() {
   }
 }
 
+// Pull a delivered chip + drop the cached capture — supersede/drop shared logic.
+function _dropDeliveredChip() {
+  if (_selectionSentToChip && _capturedSelectionText) {
+    const stale = _capturedSelectionText;
+    safeSend(unifiedWindow, 'selection:chip-remove', { text: stale });
+    safeSend(promptCaptureWindow, 'selection:chip-remove', { text: stale });
+  }
+  _capturedSelectionText = '';
+  _selectionSentToChip = false;
+}
+
 function _armSelection(sourceApp) {
   const wasArmed = _selectionArmed;
   _selectionArmGen++;
@@ -4721,13 +4741,7 @@ function _armSelection(sourceApp) {
   _userCopiedAfterArm = false;
   // A new selection gesture supersedes the previous capture — pull the stale
   // auto-chip from the input bar so the old text doesn't ride along.
-  if (_selectionSentToChip && _capturedSelectionText) {
-    const stale = _capturedSelectionText;
-    safeSend(unifiedWindow, 'selection:chip-remove', { text: stale });
-    safeSend(promptCaptureWindow, 'selection:chip-remove', { text: stale });
-  }
-  _capturedSelectionText = '';
-  _selectionSentToChip = false;
+  _dropDeliveredChip();
   clearTimeout(_selectionArmTimer);
   _selectionArmTimer = setTimeout(() => _disarmSelection('expired'), SELECTION_ARM_TTL_MS);
   if (!wasArmed) _selLog(`Armed — selection detected in "${_selectionApp || 'unknown'}"`);
@@ -4760,6 +4774,15 @@ function _looksLikeFilePath(text) {
     withNarrowSpace.normalize('NFD'),
   ];
   return candidates.some(c => { try { return fs.existsSync(c); } catch (_) { return false; } });
+}
+
+// Clipboard flavors that mean "files/links were dragged or copied", not a text
+// selection — a Finder file copy also lands its bare filename as plain text,
+// which _looksLikeFilePath can't catch (it's not a path).
+function _clipboardHasFileTypes() {
+  let formats = [];
+  try { formats = clipboard.availableFormats(); } catch (_) { return false; }
+  return formats.some(f => /file-url|nsfilenames|promised-file|url-multiple|text\/uri-list/i.test(f));
 }
 
 // Full clipboard snapshot/restore — readText/writeText alone destroys
@@ -4798,6 +4821,7 @@ async function _probeOnce() {
   const nut = require('@nut-tree-fork/nut-js');
   const { Key } = nut;
   const snap = _clipboardSnapshot();
+  _probeBaselineText = snap.text;
   // Sentinel write: a copy that lands — even with text identical to the
   // pre-existing clipboard — overwrites the sentinel, so detection can't be
   // blinded by same-content deltas. Sentinel surviving = the copy truly
@@ -4817,16 +4841,22 @@ async function _probeOnce() {
     const current = clipboard.readText();
     if (current !== sentinel) { text = current; break; }
   }
+  // File/link flavors mean a drag-copy, not a text selection — read before
+  // restore overwrites them.
+  const fileTypes = _clipboardHasFileTypes();
   if (_lastExternalKeyDownAt >= copyStart) {
     _selLog('User keydown landed mid-capture — paste may have read transient text.');
   }
   // Restore the prior clipboard — capture-time is a moment the user is
-  // interacting with ThinkDrop, not pasting into the source app. Restores
-  // whenever our sentinel/copy is still what's on the clipboard.
+  // interacting with ThinkDrop, not pasting into the source app. Always wipe
+  // our own sentinel; a real user Cmd+C mid-probe vetoes restoring over
+  // content that could be theirs (never clobber a user's fresh copy).
   const now = clipboard.readText();
-  if (now === sentinel || (text && now === text)) _clipboardRestore(snap);
+  if (now === sentinel || (!_userCopiedDuringProbe && text && now === text)) {
+    _clipboardRestore(snap);
+  }
   if (!text) _selLog('Copy did not land (sentinel intact — no selection or wrong target).');
-  return text;
+  return { text, fileTypes };
 }
 
 // Quote a process name for embedding in an AppleScript string literal.
@@ -4881,6 +4911,7 @@ async function _menuCopyOnce() {
   click menu item "Copy" of menu 1 of menu bar item "Edit" of menu bar 1 of p
 end tell`;
   const snap = _clipboardSnapshot();
+  _probeBaselineText = snap.text;
   const sentinel = `__tdsel_${Date.now()}_${Math.random().toString(36).slice(2)}__`;
   try { clipboard.writeText(sentinel); } catch (_) {}
   try {
@@ -4896,11 +4927,117 @@ end tell`;
     const current = clipboard.readText();
     if (current !== sentinel) { text = current; break; }
   }
+  const fileTypes = _clipboardHasFileTypes();
   const now = clipboard.readText();
-  if (now === sentinel || (text && now === text)) _clipboardRestore(snap);
+  // Always wipe our own sentinel; a real user Cmd+C mid-probe vetoes
+  // restoring over content that could be theirs.
+  if (now === sentinel || (!_userCopiedDuringProbe && text && now === text)) {
+    _clipboardRestore(snap);
+  }
   if (text) _selLog(`Menu-copy captured ${text.length} chars.`);
   else _selLog('Menu-copy produced nothing — falling back to keystroke.');
-  return text;
+  return { text, fileTypes };
+}
+
+/**
+ * Tier 0 — the user's own Cmd+C landed during validation. Their copy IS the
+ * selection and IS the proof: poll briefly for it to publish, then adopt it.
+ * The clipboard is theirs — nothing is restored or rewritten.
+ */
+async function _adoptUserCopy() {
+  const deadline = Date.now() + 400;
+  while (Date.now() < deadline) {
+    const t = clipboard.readText();
+    // Reject our sentinel AND the pre-probe baseline: a user Cmd+C that
+    // produced nothing leaves the restore-written baseline behind, and
+    // adopting it would chip stale clipboard text.
+    if (t && t.trim() && !t.startsWith('__tdsel_') && t !== _probeBaselineText) {
+      return { text: t, fileTypes: _clipboardHasFileTypes() };
+    }
+    await new Promise(r => setTimeout(r, 30));
+  }
+  return { text: '', fileTypes: false };
+}
+
+/**
+ * Validate that a completed mouse gesture actually produced a text selection
+ * before arming — mousedown+drag>5px and double-click fire for file drags,
+ * title-bar moves, resizes, and marquee selects too, and none of those should
+ * raise the context pill.
+ *
+ * Runs at mouseup (post-gesture — a mid-drag synthetic ⌘ can mutate the drag
+ * itself: copy↔move badge in Finder) and never touches the clipboard while
+ * the user's own input might interleave:
+ *   tier 0  adopt a real user Cmd+C observed mid-validation
+ *   tier 1  AXSelectedText read — zero clipboard writes
+ *   quiet   wait ~200ms of external-key silence before clipboard tiers
+ *   tier 2  AX Edit→Copy dispatch   tier 3  synthetic Cmd+C
+ * Any tier's result carrying file/link clipboard flavors is rejected.
+ */
+async function _validateGestureSelection() {
+  if (_validationInFlight) { _validationQueued = true; return; }
+  _validationInFlight = true;
+  try {
+    do {
+      _validationQueued = false;
+      _userCopiedDuringProbe = false;
+      // Automation-driven drags (app.agent input steps) must not trigger
+      // clipboard probes — they would race the agent's own clipboard work.
+      if (_taskInFlight) { _selLog('Task in flight — skipping gesture validation.'); continue; }
+      const app = _getFrontmostAppName();
+      _selectionApp = app; // lets _axAppName target the source process pre-arm
+      _selLog(`Validating gesture in "${app || 'unknown'}"…`);
+
+      let text = '';
+      let fileTypes = false;
+
+      text = await _readSelectionViaAX();
+
+      if (!text) {
+        // Quiet gate — give the user's own keystrokes (esp. an immediate
+        // Cmd+C) right-of-way before we write a sentinel / inject ⌘C.
+        const quietStart = Date.now();
+        while (Date.now() - _lastExternalKeyDownAt < 200 && Date.now() - quietStart < 600) {
+          if (_userCopiedDuringProbe) break;
+          await new Promise(r => setTimeout(r, 25));
+        }
+      }
+
+      if (!text && !_userCopiedDuringProbe) {
+        const r = await _menuCopyOnce();
+        text = r.text; fileTypes = r.fileTypes;
+      }
+      if (!text && !_userCopiedDuringProbe && !_overlayHasFocus()) {
+        // Keystroke tier skipped while our overlay holds key — a synthetic
+        // Cmd+C there would copy our own input's selection.
+        const r = await _probeOnce();
+        text = r.text; fileTypes = r.fileTypes;
+      }
+      if (!text && _userCopiedDuringProbe) {
+        _selLog('User Cmd+C observed mid-validation — adopting their copy.');
+        const r = await _adoptUserCopy();
+        text = r.text; fileTypes = r.fileTypes;
+      }
+
+      if (!text || !text.trim() || fileTypes || _looksLikeFilePath(text)) {
+        _selLog(`Validation failed (${!text || !text.trim() ? 'no text' : fileTypes ? 'file flavors' : 'file path'}) — not a text selection.`);
+        // Supersedes a prior arm: a new gesture that isn't text drops it.
+        if (_selectionArmed) { _dropDeliveredChip(); _disarmSelection('validation-failed'); }
+        _selectionApp = null;
+        continue;
+      }
+
+      _armSelection(app);
+      _capturedSelectionText = text;
+      _capturedArmGen = _selectionArmGen;
+      _deliverSelectionChip(text);
+      _pushSelectionToVoice({ captured: true, excerpt: text.slice(0, 120) });
+      _selLog(`Validated ${text.length} chars → armed + chipped.`);
+    } while (_validationQueued);
+  } finally {
+    _validationInFlight = false;
+    _userCopiedDuringProbe = false;
+  }
 }
 
 // Captured-text → input chip delivery. `highlights:update` is the only
@@ -4936,12 +5073,21 @@ async function _captureArmedSelection({ refocusWindow = null } = {}) {
       }
     }
 
+    // Gesture validation already captured text for THIS arm — serve it instead
+    // of probing the clipboard a second time. Requires still-armed: a disarmed
+    // arm's cached text must not leak into an un-armed ⌘; grab.
+    if (_capturedSelectionText && _capturedArmGen === _selectionArmGen && _selectionArmed) {
+      _selLog(`Serving gesture-validated capture (${_capturedSelectionText.length} chars) — no re-probe.`);
+      return _capturedSelectionText;
+    }
+
     // Focus-free ladder — tiers 1–2 read/command the armed app by process
     // name and don't care which window holds key. Tier 3 (synthetic Cmd+C)
     // is the only path that needs the blur dance, so keep it last.
     let text = await _readSelectionViaAX();
+    let fileTypes = false;
 
-    if (!text) text = await _menuCopyOnce();
+    if (!text) ({ text, fileTypes } = await _menuCopyOnce());
 
     if (!text) {
       let nut;
@@ -4957,7 +5103,7 @@ async function _captureArmedSelection({ refocusWindow = null } = {}) {
           await _releaseOverlayKeyFocus();
           await new Promise(r => setTimeout(r, 80));
         }
-        text = await _probeOnce();
+        ({ text, fileTypes } = await _probeOnce());
         if (!text) _selLog(`Attempt ${attempt + 1} missed (${wasFocused ? 'blurred-overlay' : 'source-app-key'} path).`);
       }
     }
@@ -4968,6 +5114,13 @@ async function _captureArmedSelection({ refocusWindow = null } = {}) {
 
     if (!text || !text.trim()) {
       _selLog('Capture produced no new text (selection gone or copy missed).');
+      return null;
+    }
+
+    // File/link clipboard flavors (Finder file drag, link drag) — the bare
+    // filename lands as plain text, so check flavors before the path regex.
+    if (fileTypes) {
+      _selLog('File/link clipboard flavors — not text context.');
       return null;
     }
 
@@ -5014,6 +5167,7 @@ async function _captureArmedToChip(refocusWindow) {
     return;
   }
   _capturedSelectionText = text;
+  _capturedArmGen = gen;
   _deliverSelectionChip(text);
   if (_selectionArmed) {
     _disarmSelection('captured-to-chip');
@@ -5127,6 +5281,9 @@ function startMouseSelectionMonitor() {
         // without synthesizing anything.
         if (!e.shiftKey && e.keycode === UiohookKey.C) {
           _userCopiedAfterArm = true;
+          // A real copy landing mid-validation is the selection proof —
+          // adopt it and veto our clipboard restore (never clobber theirs).
+          if (_validationInFlight) _userCopiedDuringProbe = true;
           // Their own copy IS the selection — diff the clipboard once the copy
           // lands and chip it directly; zero synthetic input. Polls briefly
           // since some apps take a beat to publish the new clipboard.
@@ -5141,6 +5298,7 @@ function startMouseSelectionMonitor() {
                 const t = clipboard.readText();
                 if (t && t !== before && t.trim() && !_looksLikeFilePath(t)) {
                   _capturedSelectionText = t;
+                  _capturedArmGen = gen;
                   _deliverSelectionChip(t);
                   _disarmSelection('user-copy');
                   _pushSelectionToVoice({ captured: true, excerpt: t.slice(0, 120) });
@@ -5215,7 +5373,9 @@ function startMouseSelectionMonitor() {
         && Math.abs(e.y - _lastOutsideClick.y) <= 8;
       _lastOutsideClick = { x: e.x, y: e.y, t: now };
       if (isDoubleClick) {
-        _armSelection(_getFrontmostAppName());
+        // Word-select candidate — validate before arming (double-clicking a
+        // title bar zooms a window; empty space in Finder fires here too).
+        void _validateGestureSelection();
         _mouseDownPos = null;
         return;
       }
@@ -5223,19 +5383,20 @@ function startMouseSelectionMonitor() {
       // Plain outside click dismisses any armed selection.
       _disarmSelection('click-away');
       _mouseDownPos = { x: e.x, y: e.y, t: now };
-      _dragArmTriggered = false;
+      _dragGestureSeen = false;
     });
 
-    // Optimistic arm during the drag — instant visual feedback, once per drag.
+    // Drag candidate at >5px — no arm yet. Pill/chip only appear once mouseup
+    // validation proves the gesture produced real text (file drags, window
+    // moves, and resizes must never raise the context UI).
     uIOhook.on('mousemove', (e) => {
-      if (!_mouseDownPos || _dragArmTriggered) return;
+      if (!_mouseDownPos || _dragGestureSeen) return;
       const dx = e.x - _mouseDownPos.x;
       const dy = e.y - _mouseDownPos.y;
       if (dx * dx + dy * dy < 25) return; // <5px (squared to avoid sqrt)
       if (_isInsideThinkDropWindow(e.x, e.y)) return;
 
-      _dragArmTriggered = true;
-      _armSelection(_getFrontmostAppName());
+      _dragGestureSeen = true;
     });
 
     uIOhook.on('mouseup', (e) => {
@@ -5243,13 +5404,11 @@ function startMouseSelectionMonitor() {
       _mouseDownPos = null;
       const endedInside = _isInsideThinkDropWindow(e.x, e.y);
       // A drag that ENDS inside a ThinkDrop window is a drag-onto-the-input,
-      // not a selection in another app — retract the optimistic arm and drop
-      // whatever the probe picked up.
-      if (endedInside) _capturedSelectionText = '';
-      if (_dragArmTriggered && endedInside) {
-        _disarmSelection('drag-ended-inside');
+      // not a selection in another app — skip validation entirely.
+      if (_dragGestureSeen && !endedInside) {
+        void _validateGestureSelection();
       }
-      _dragArmTriggered = false;
+      _dragGestureSeen = false;
     });
 
     uIOhook.start();
@@ -6885,6 +7044,16 @@ app.whenReady().then(async () => {
               safeSendUnified('ws-bridge:message', { type: 'done', taskId });
             } else {
               safeSendUnified('unified:set-prompt', prompt);
+              // Search-result cards ride the same sentinel channel the
+              // stategraph uses — feedIpc parses \x00SOURCES\x00/\x00ITEMS\x00
+              // chunks into searchSources/resultItems on the committed entry.
+              const _srcs = metadata?.sources, _its = metadata?.items;
+              if (Array.isArray(_srcs) && _srcs.length) {
+                safeSendUnified('ws-bridge:message', { type: 'chunk', text: '\x00SOURCES\x00' + JSON.stringify(_srcs), taskId });
+              }
+              if (Array.isArray(_its) && _its.length) {
+                safeSendUnified('ws-bridge:message', { type: 'chunk', text: '\x00ITEMS\x00' + JSON.stringify(_its), taskId });
+              }
               safeSendUnified('ws-bridge:message', { type: 'chunk', text: responseText, taskId, isPlaceholder });
               safeSendUnified('ws-bridge:message', { type: 'done', taskId });
             }

@@ -31,7 +31,7 @@ export interface CommsTask {
   };
   result: string | null;
   thinking?: string | null;
-  sources?: { url: string; title: string; hostname: string }[] | null;
+  sources?: { url: string; title: string; hostname: string; snippet?: string }[] | null;
   items?: WebResultItem[] | null;
   intent: string;
   source: string;
@@ -1208,7 +1208,7 @@ export const BrainIcon = ({ size = 14, color = '#818cf8' }: { size?: number; col
 );
 
 // ── SourcePill — Perplexity-style favicon stack + dropdown (extracted from ResultsWindow) ──
-const SourcePill = ({ sources }: { sources: { url: string; title: string; hostname: string }[] }) => {
+const SourcePill = ({ sources }: { sources: { url: string; title: string; hostname: string; snippet?: string }[] }) => {
   const [showPanel, setShowPanel] = React.useState(false);
   if (!sources || sources.length === 0) return null;
   const visible = sources.slice(0, 4);
@@ -1265,6 +1265,11 @@ const SourcePill = ({ sources }: { sources: { url: string; title: string; hostna
                 <div style={{ fontSize: '0.62rem', color: '#abafb8', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                   {src.hostname}
                 </div>
+                {src.snippet && (
+                  <div style={{ fontSize: '0.6rem', color: '#8b8f98', marginTop: 1, overflow: 'hidden', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical' }}>
+                    {src.snippet}
+                  </div>
+                )}
               </div>
               <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="#4b5563" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
                 <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>

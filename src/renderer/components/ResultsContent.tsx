@@ -30,6 +30,7 @@ export interface SearchSource {
   url: string;
   hostname: string;
   title?: string;
+  snippet?: string;
 }
 
 export interface ActionChip {
@@ -277,6 +278,11 @@ function ResultsContentImpl({
                   <div style={{ fontSize: '0.65rem', color: '#abafb8', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                     {src.hostname}
                   </div>
+                  {src.snippet && (
+                    <div style={{ fontSize: '0.62rem', color: '#8b8f98', marginTop: 1, overflow: 'hidden', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical' }}>
+                      {src.snippet}
+                    </div>
+                  )}
                 </div>
               </div>
             ))}

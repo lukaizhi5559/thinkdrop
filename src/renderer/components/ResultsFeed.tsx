@@ -622,7 +622,7 @@ const FeedEntryRow = React.memo(function FeedEntryRow({
                       style={{ padding: '2px 8px', borderRadius: 10, backgroundColor: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.09)', cursor: 'pointer' }}
                     >
                       <Favicon domain={s.hostname} size={11} alt="" />
-                      <span style={{ color: '#9ca3af', fontSize: '0.65rem' }}>{s.hostname}</span>
+                      <span style={{ color: '#9ca3af', fontSize: '0.65rem' }} title={s.title || s.hostname}>{s.hostname}</span>
                     </button>
                   ))}
                 </div>

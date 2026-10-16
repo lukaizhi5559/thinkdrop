@@ -10,6 +10,8 @@
  */
 
 import React, { useState, useCallback } from 'react';
+import StarRating from './StarRating';
+import { parseRichSnippet } from './parseRichSnippet';
 
 export interface WebResultItem {
   title?: string;
@@ -18,6 +20,12 @@ export interface WebResultItem {
   price?: string;
   snippet?: string;
   hostname?: string;
+  // Structured SERP rich-snippet fields (google-serp); when absent the card
+  // parses item.snippet for the same patterns (Bing/DDG + cached results).
+  rating?: number;
+  ratingMax?: number;
+  reviewCount?: number;
+  priceRange?: string;
   // Media fields (videos / rich cards)
   mediaType?: 'video' | 'product' | 'article' | 'card';
   videoUrl?: string;
@@ -75,6 +83,14 @@ const WebResultCard: React.FC<WebResultCardProps> = ({ item }) => {
   const hostname = item.hostname || (() => {
     try { return new URL(item.url || item.imageUrl || '').hostname.replace(/^www\./, ''); } catch (_) { return ''; }
   })();
+
+  // Rich-snippet mapping: structured fields win; snippet text is the fallback
+  // source and also yields the deduped display text.
+  const parsed = React.useMemo(() => parseRichSnippet(item.snippet), [item.snippet]);
+  const rating = item.rating ?? parsed.rating;
+  const ratingMax = item.ratingMax ?? parsed.ratingMax ?? 5;
+  const reviewCount = item.reviewCount ?? parsed.reviewCount;
+  const priceChip = item.price || item.priceRange || parsed.priceRange;
 
   return (
     <div
@@ -176,22 +192,25 @@ const WebResultCard: React.FC<WebResultCardProps> = ({ item }) => {
             {item.title}
           </div>
         )}
-        {item.price && (
+        {priceChip && (
           <span style={{
             display: 'inline-block', alignSelf: 'flex-start',
             fontSize: 12, fontWeight: 600, color: '#4ade80',
             background: 'rgba(74,222,128,0.1)', padding: '1px 6px', borderRadius: 4,
           }}>
-            {item.price}
+            {priceChip}
           </span>
         )}
-        {item.snippet && (
+        {rating !== undefined && (
+          <StarRating value={rating} max={ratingMax} count={reviewCount} size={11} />
+        )}
+        {parsed.text && (
           <div style={{
             fontSize: 11, lineHeight: 1.35, color: 'rgba(255,255,255,0.5)',
             display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical',
             overflow: 'hidden',
           }}>
-            {item.snippet}
+            {parsed.text}
           </div>
         )}
         {hostname && (

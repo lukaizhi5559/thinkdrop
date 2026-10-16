@@ -40,7 +40,7 @@ export default function ResultsWindow() {
   const [isSynthesisCollapsed, setIsSynthesisCollapsed] = useState(true);
 
   // Web search sources — populated via \x00SOURCES\x00 sentinel from answer.js
-  const [searchSources, setSearchSources] = useState<{ url: string; title: string; hostname: string }[]>([]);
+  const [searchSources, setSearchSources] = useState<{ url: string; title: string; hostname: string; snippet?: string }[]>([]);
   const [showSourcesPanel, setShowSourcesPanel] = useState(false);
 
   // ── Tab state ────────────────────────────────────────────────────────────────
@@ -917,6 +917,14 @@ export default function ResultsWindow() {
                     }}>
                       {src.hostname}
                     </div>
+                    {src.snippet && (
+                      <div style={{
+                        fontSize: '0.6rem', color: '#8b8f98', marginTop: 1, overflow: 'hidden',
+                        display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical',
+                      }}>
+                        {src.snippet}
+                      </div>
+                    )}
                   </div>
                   {/* External link icon */}
                   <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="#4b5563" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
