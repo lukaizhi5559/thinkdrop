@@ -184,7 +184,15 @@ const NAMED_APP_RE = /\b(chatgpt|chat\s*gpt|openai|claude|anthropic|perplexity|g
 /** User-action verbs paired with a named app → command_automate. Lookup verbs
  *  intentionally excluded ("search X on YouTube" is web_search). NOTE: do not
  *  confuse with browser.agent's _DOM_ACTION_VERB_RE (instruction verbs). */
-const ACTION_VERB_RE = /\b(open|close|send|post|share|create|make|new|delete|remove|cancel|navigate|go\s+to|launch|start|stop|schedule|remind|update|edit|modify|change|rename|fill|submit|download|upload|copy|paste|click|type|press|install|uninstall|sign\s+in|log\s+in|log\s+out|play|pause|watch|listen|order|book|buy|shop|browse|scroll|refresh|reload|turn|toggle|enable|disable|connect|disconnect|pair|mute|unmute|record|print|quit|restart|shut\s*down|lock|unlock|sleep|wake|minimize|maximize|screenshot|snap|capture|adjust|set)\b/i;
+const ACTION_VERB_RE = /\b(open|close|send|post|share|create|make|new|delete|remove|cancel|navigate|go\s+to|goto|launch|start|stop|schedule|remind|update|edit|modify|change|rename|fill|submit|download|upload|copy|paste|click|type|press|install|uninstall|sign\s+in|log\s+in|log\s+out|play|pause|watch|listen|order|book|buy|shop|browse|scroll|refresh|reload|turn|toggle|enable|disable|connect|disconnect|pair|mute|unmute|record|print|quit|restart|shut\s*down|lock|unlock|sleep|wake|minimize|maximize|screenshot|snap|capture|adjust|set)\b/i;
+
+/** Nav-verb LEADING the prompt — "goto biblegateway", "open trello", "pull
+ *  up gmail". Anchored at the start: a command-shaped prompt is a browser/
+ *  app navigation request regardless of whether the destination is a listed
+ *  app or a TLD'd domain (NAMED_APP_RE and domain rules can't enumerate
+ *  every site). Used as a fail-closed veto in webSearchExpress and a
+ *  command_automate hint in the intent guesser. */
+const NAV_VERB_START_RE = /^\s*(?:goto|go\s+to|open|visit|navigate(?:\s+to)?|browse|launch|pull\s+up|bring\s+up|fire\s+up|log\s*(?:in|into)|sign\s*(?:in|into))\b/i;
 
 // ── Plan-template tokens ─────────────────────────────────────────────────────
 
@@ -289,7 +297,17 @@ const SCREEN_OBSERVATION_RE = new RegExp([
  *  deictic→scan_page choice. 'screen' is intentionally absent — a screen
  *  referent routes to screen_intelligence (OCR/read_screen), not the 'url'
  *  doc pipeline these callers feed. */
-const LIVE_PAGE_REF_RE = /\b(?:this|the|current|open)\s+(?:page|tab|site|website|article|listing)\b|\bon\s+this\s+(?:page|site|website|tab)\b/i;
+const LIVE_PAGE_REF_RE = /\b(?:this|the|current|open)\s+(?:page|tab|site|website|article|listing)\b|\bon\s+this\s+(?:page|site|website|tab)\b|\b(?:my|the|this|that)\s+\w+\s+tab\b|\bmy\s+open\s+tab\b/i;
+
+/** Ordinal/deictic item referent — "the first three items", "the second
+ *  listing", "click on it" won't match this (no ordinal) but FOLLOWUP_SHAPE
+ *  already handles bare deictics. The referent is an element of the page
+ *  currently open in the user's browser; there is no public-web meaning, so
+ *  express search must fail closed and the task pipeline resolves it against
+ *  the bound session (resolveReferencesV2's live-page channel). Consumers:
+ *  webSearchExpress.isEligible, intentGuesser (command_automate hint),
+ *  resolveReferencesV2's _livePageRef. */
+const PAGE_ITEM_REF_RE = /\b(?:the\s+)?(?:first|second|third|fourth|fifth|sixth|seventh|eighth|ninth|tenth|last|next|previous|top|bottom|\d+(?:st|nd|rd|th))(?:\s+(?:one|two|three|four|five|six|seven|eight|nine|ten|\d+))?\s+(?:item|result|listing|product|email|e-mail|message|option|link|entry|post|article|row|card|deal)s?\b|\b(?:these|those|the)\s+items?\s+on\s+(?:the|this)\s+(?:page|list|screen)\b|\bthe\s+(?:first|second|third|fourth|fifth|last)\s+one\b|\b(?:this|that|the)\s+(?:item|product|listing|result|option|post|article|row|card|deal|entry)s?\b/i;
 
 /** Artifact nouns that can name a live ambient referent — an open file, the
  *  focused window, the active app, a visible tab. resolveReferencesV2 gates
@@ -583,11 +601,13 @@ module.exports = {
   FILE_REF_RE,
   NAMED_APP_RE,
   ACTION_VERB_RE,
+  NAV_VERB_START_RE,
   stripUnresolvedTokens,
   PROFILE_QUERY_PATTERN,
   ALL_TIME_QUERY_PATTERN,
   SCREEN_OBSERVATION_RE,
   LIVE_PAGE_REF_RE,
+  PAGE_ITEM_REF_RE,
   DEICTIC_CONTINUATION_RE,
   THIRD_PERSON_SUBJECT_RE,
   isContextDependent,

@@ -1425,7 +1425,7 @@ function startOverlayControlServer() {
                 let routedText = text;
                 let voiceSelectedText = '';
                 if (_selectionArmed || _capturedSelectionText) {
-                  const consumed = await _consumeSelectionForPrompt(text, '');
+                  const consumed = await _consumeSelectionForPrompt(text, '', { lane: 'voice' });
                   routedText = consumed.prompt;
                   voiceSelectedText = consumed.selectedText;
                 }
@@ -1496,7 +1496,7 @@ function startOverlayControlServer() {
           // Selection context — capture the armed highlight alongside the tool call.
           let toolSelectedText = '';
           if (_selectionArmed || _capturedSelectionText) {
-            const consumed = await _consumeSelectionForPrompt(instruction, '');
+            const consumed = await _consumeSelectionForPrompt(instruction, '', { lane: 'voice' });
             instruction = consumed.prompt;
             toolSelectedText = consumed.selectedText;
           }
@@ -4628,6 +4628,7 @@ let _selectionArmTimer = null;       // 90s auto-expire
 let _selectionApp = null;            // frontmost app at arm time (pill label / logging)
 let _capturedSelectionText = '';     // text captured early (overlay click) — consumed at submit
 let _selectionSentToChip = false;    // captured text was already delivered as an input chip
+let _chipAutoDelivered = false;      // chip was auto-delivered (voice lane) vs user-confirmed (⌘;)
 let _captureInProgress = false;      // guard against overlapping captures
 let _cmdHeld = false;                // Cmd/Ctrl currently held (uIOhook keydown/keyup)
 let _shiftHeld = false;              // Shift currently held
@@ -4723,14 +4724,17 @@ function _broadcastSelectionState() {
 }
 
 // Pull a delivered chip + drop the cached capture — supersede/drop shared logic.
+// Only AUTO-delivered chips (voice lane) get pulled — a chip the user confirmed
+// via ⌘; is an explicit add and survives new selections (multi-chip stacking).
 function _dropDeliveredChip() {
-  if (_selectionSentToChip && _capturedSelectionText) {
+  if (_selectionSentToChip && _chipAutoDelivered && _capturedSelectionText) {
     const stale = _capturedSelectionText;
     safeSend(unifiedWindow, 'selection:chip-remove', { text: stale });
     safeSend(promptCaptureWindow, 'selection:chip-remove', { text: stale });
   }
   _capturedSelectionText = '';
   _selectionSentToChip = false;
+  _chipAutoDelivered = false;
 }
 
 function _armSelection(sourceApp) {
@@ -5030,9 +5034,11 @@ async function _validateGestureSelection() {
       _armSelection(app);
       _capturedSelectionText = text;
       _capturedArmGen = _selectionArmGen;
-      _deliverSelectionChip(text);
+      // Typed lane: arm only — "Paste context ⌘;" confirms into a chip. Voice
+      // lane (session live) auto-delivers — no hands free for ⌘;.
+      if (_voiceSessionActive) _deliverSelectionChip(text, { auto: true });
       _pushSelectionToVoice({ captured: true, excerpt: text.slice(0, 120) });
-      _selLog(`Validated ${text.length} chars → armed + chipped.`);
+      _selLog(`Validated ${text.length} chars → armed${_voiceSessionActive ? ' + auto-chipped (voice)' : ' — awaiting ⌘;'}.`);
     } while (_validationQueued);
   } finally {
     _validationInFlight = false;
@@ -5043,8 +5049,9 @@ async function _validateGestureSelection() {
 // Captured-text → input chip delivery. `highlights:update` is the only
 // channel UnifiedOverlay handles (its renderer listens for that, not
 // prompt-capture:add-highlight — the legacy standalone window's channel).
-function _deliverSelectionChip(text) {
+function _deliverSelectionChip(text, { auto = false } = {}) {
   _selectionSentToChip = true;
+  _chipAutoDelivered = auto;
   safeSend(unifiedWindow, 'highlights:update', [text]);
   safeSend(promptCaptureWindow, 'prompt-capture:add-highlight', text);
 }
@@ -5158,7 +5165,7 @@ async function _captureArmedSelection({ refocusWindow = null } = {}) {
  * an input chip before the user types. Failure leaves the state armed; the
  * submit-time path is the fallback.
  */
-async function _captureArmedToChip(refocusWindow) {
+async function _captureArmedToChip(refocusWindow, { auto = false } = {}) {
   const gen = _selectionArmGen;
   const text = await _captureArmedSelection({ refocusWindow });
   if (!text) return; // Arm stays armed for a later intent retry.
@@ -5168,11 +5175,25 @@ async function _captureArmedToChip(refocusWindow) {
   }
   _capturedSelectionText = text;
   _capturedArmGen = gen;
-  _deliverSelectionChip(text);
+  _deliverSelectionChip(text, { auto });
   if (_selectionArmed) {
     _disarmSelection('captured-to-chip');
     // Sent after the disarm broadcast so the final voice state is captured+excerpt.
     _pushSelectionToVoice({ captured: true, excerpt: text.slice(0, 120) });
+  }
+  // User-confirmed add (⌘; / Paste-context click) — surface the overlay and
+  // put the caret in the textarea so typing continues immediately. Voice
+  // deliveries never steal focus. The cached fast-path skips the in-capture
+  // refocus, so this runs for every explicit confirm.
+  if (!auto) {
+    const win = refocusWindow && !refocusWindow.isDestroyed() ? refocusWindow : unifiedWindow;
+    if (win && !win.isDestroyed()) {
+      try {
+        if (!win.isVisible()) win.show();
+        if (!_taskInFlight) win.focus();
+      } catch (_) {}
+      safeSend(win, 'selection:focus-input');
+    }
   }
 }
 
@@ -5181,7 +5202,9 @@ async function _captureArmedToChip(refocusWindow) {
  * (`selection:capture-request` IPC). Explicit user action — capture directly.
  */
 function _maybeCaptureOnOverlayFocus(win) {
-  if (_capturedSelectionText || _captureInProgress) return;
+  // Only the in-flight guard stays — a stale _capturedSelectionText must not
+  // block a new explicit capture (⌘; / button is always a fresh user ask).
+  if (_captureInProgress) return;
   void _captureArmedToChip(win);
 }
 
@@ -5191,7 +5214,7 @@ function _maybeCaptureOnOverlayFocus(win) {
  * tag (deduped when the chip already embedded it), and returns the enriched
  * prompt + selectedText. Never blocks routing on capture failure.
  */
-async function _consumeSelectionForPrompt(prompt, selectedText) {
+async function _consumeSelectionForPrompt(prompt, selectedText, { lane = 'typed' } = {}) {
   // A focus/voice-triggered capture may be in flight — give it a beat to land
   // rather than racing a second capture or submitting without the context.
   const waitStart = Date.now();
@@ -5209,12 +5232,27 @@ async function _consumeSelectionForPrompt(prompt, selectedText) {
   _disarmSelection('consumed');
   _capturedSelectionText = '';
   _selectionSentToChip = false;
+  _chipAutoDelivered = false;
   if (!captured || !captured.trim()) return { prompt, selectedText };
 
   const trimmed = captured.trim();
   const embedded = prompt.includes(trimmed) || (selectedText || '').includes(trimmed);
   // The chip was delivered but is absent from the prompt — user removed it.
-  if (!embedded && sentToChip) return { prompt, selectedText };
+  // Typed lane only: voice chips are our own auto-delivered artifact — the
+  // utterance never contains the chip text, so this check would silently drop
+  // the selection it just confirmed.
+  if (!embedded && sentToChip && lane !== 'voice') return { prompt, selectedText };
+
+  if (lane === 'voice') {
+    // Flash the consumed text as a chip so the user sees what context rode the
+    // utterance, then pull it — voice submits bypass the input's clear, and a
+    // lingering chip would re-send on the next typed Enter.
+    _deliverSelectionChip(trimmed, { auto: true });
+    setTimeout(() => {
+      safeSend(unifiedWindow, 'selection:chip-remove', { text: trimmed });
+      safeSend(promptCaptureWindow, 'selection:chip-remove', { text: trimmed });
+    }, 1200);
+  }
   if (embedded) return { prompt, selectedText };
   return {
     prompt: `[Highlighted: ${trimmed}]\n\n${prompt}`,
@@ -5299,10 +5337,14 @@ function startMouseSelectionMonitor() {
                 if (t && t !== before && t.trim() && !_looksLikeFilePath(t)) {
                   _capturedSelectionText = t;
                   _capturedArmGen = gen;
-                  _deliverSelectionChip(t);
-                  _disarmSelection('user-copy');
+                  // Typed lane: cache only — the arm stays so ⌘; confirms into a
+                  // chip. Voice lane: auto-deliver — no hands free for ⌘;.
+                  if (_voiceSessionActive) {
+                    _deliverSelectionChip(t, { auto: true });
+                    _disarmSelection('user-copy');
+                  }
                   _pushSelectionToVoice({ captured: true, excerpt: t.slice(0, 120) });
-                  _selLog(`User Cmd+C captured ${t.length} chars → chip (no synthetic copy)`);
+                  _selLog(`User Cmd+C captured ${t.length} chars → ${_voiceSessionActive ? 'auto-chip (voice)' : 'cached for ⌘;'} (no synthetic copy)`);
                 } else {
                   readBack();
                 }
@@ -5318,12 +5360,13 @@ function startMouseSelectionMonitor() {
           // The pasted-over selection's context is dead — drop captured text
           // and pull any chip already delivered.
           if (_capturedSelectionText) {
-            if (_selectionSentToChip) {
+            if (_selectionSentToChip && _chipAutoDelivered) {
               safeSend(unifiedWindow, 'selection:chip-remove', { text: _capturedSelectionText });
               safeSend(promptCaptureWindow, 'selection:chip-remove', { text: _capturedSelectionText });
             }
             _capturedSelectionText = '';
             _selectionSentToChip = false;
+            _chipAutoDelivered = false;
           }
         }
       }
@@ -7249,13 +7292,10 @@ app.whenReady().then(async () => {
       return;
     }
 
-    // ── Selection context — armed highlight rides along as [Highlighted:] ──
-    // Captured here (never at selection time) so normal Cmd+C/Cmd+V is untouched.
-    if (_selectionArmed || _capturedSelectionText) {
-      const consumed = await _consumeSelectionForPrompt(trimmedPrompt, selectedText);
-      trimmedPrompt = consumed.prompt;
-      selectedText = consumed.selectedText;
-    }
+    // ── Selection context — typed lane is explicit: only ⌘;-confirmed chips
+    // (already wrapped as [Highlighted:] by the renderer) ride the prompt. An
+    // armed-but-unchipped selection is NOT embedded — it stays armed for a
+    // later ⌘; until its TTL expires.
 
     // ── comms-graph routing (feature-flagged) ──────────────────────────────
     // When COMMS_GRAPH_ENABLED=true, route through comms-graph for fast
@@ -8192,7 +8232,7 @@ app.whenReady().then(async () => {
     console.log(`🎙️ [Voice] Session start → voice-bridge (mode=${opts?.mode || 'auto'})`);
     // Voice activation is an intent moment — capture the armed selection so its
     // text is ready before the user's first utterance resolves.
-    if (_selectionArmed && !_capturedSelectionText) void _captureArmedToChip(null);
+    if (_selectionArmed && !_capturedSelectionText) void _captureArmedToChip(null, { auto: true });
     try {
       const url = new URL('/voice.session.start', VOICE_SERVICE_URL);
       await _postJson(url, { mode: opts?.mode || 'auto' });
@@ -8210,7 +8250,7 @@ app.whenReady().then(async () => {
   // voice:session-wake — manual wake while the session is asleep.
   ipcMain.on('voice:session-wake', async () => {
     console.log('🎙️ [Voice] Wake → voice-bridge');
-    if (_selectionArmed && !_capturedSelectionText) void _captureArmedToChip(null);
+    if (_selectionArmed && !_capturedSelectionText) void _captureArmedToChip(null, { auto: true });
     try {
       await _postJson(new URL('/voice.wake', VOICE_SERVICE_URL), {});
       safeSendUnified('voice:state', { state: 'listening' });
@@ -8249,7 +8289,7 @@ app.whenReady().then(async () => {
     console.log('🎙️ [Voice] Push-to-talk: start');
     voiceJournal.setVoiceStatus('listening');
     // Voice-activation is an intent moment — capture the armed selection now.
-    if (_selectionArmed && !_capturedSelectionText) void _captureArmedToChip(null);
+    if (_selectionArmed && !_capturedSelectionText) void _captureArmedToChip(null, { auto: true });
     const wins = [promptCaptureWindow, resultsWindow];
     for (const win of wins) {
       safeSend(win, 'voice:listening', { active: true });
@@ -8570,12 +8610,8 @@ app.whenReady().then(async () => {
   ipcMain.on('stategraph:process', async (_event, { prompt, selectedText = '', sessionId = null, responseLanguage = null } = {}) => {
     if (!prompt?.trim()) return;
 
-    // ── Selection context — armed highlight rides along as [Highlighted:] ──
-    if (_selectionArmed || _capturedSelectionText) {
-      const consumed = await _consumeSelectionForPrompt(prompt.trim(), selectedText);
-      prompt = consumed.prompt;
-      selectedText = consumed.selectedText;
-    }
+    // ── Selection context — typed lane is explicit: only ⌘;-confirmed chips
+    // (already wrapped as [Highlighted:] by the renderer) ride the prompt.
 
     // ── comms-graph routing (feature-flagged) ──────────────────────────────
     // When COMMS_GRAPH_ENABLED=true, text prompts route through comms-graph
@@ -10749,6 +10785,7 @@ app.whenReady().then(async () => {
       _disarmSelection('shortcut');
       _capturedSelectionText = '';
       _selectionSentToChip = false;
+      _chipAutoDelivered = false;
       _createCopyFile(text);
     })();
   });
@@ -10768,6 +10805,7 @@ app.whenReady().then(async () => {
     _disarmSelection('cleared');
     _capturedSelectionText = '';
     _selectionSentToChip = false;
+    _chipAutoDelivered = false;
   });
 
   // Selection context capture — the overlay's "Paste context" button. Routes

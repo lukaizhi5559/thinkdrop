@@ -608,7 +608,7 @@ export function UnifiedOverlay() {
     // Selection/highlight context is a stronger referent than the tail card —
     // "what is this about" + a highlight asks about the highlight, not the
     // card, and thoughtContext would force a handoff in comms-graph.
-    const hasHighlightCtx = selectionArmed || finalHighlights.some(h => !h.startsWith('[Thought:'));
+    const hasHighlightCtx = finalHighlights.some(h => !h.startsWith('[Thought:'));
     const tailThought = thoughtsEnabledRef.current
       && !hasIsolatedContext && !hasHighlightCtx && tailEntry && tailEntry.kind === 'proactive' && !(tailEntry as any).pending && (tailEntry as any).text
       && isThoughtReply(finalPromptText, (tailEntry as any).text)
@@ -653,11 +653,8 @@ export function UnifiedOverlay() {
       return { kind: 'highlight' as const, label: h.replace(/\s+/g, ' ').trim().slice(0, 120) };
     });
 
-    // Armed-but-uncaptured selection — main captures the text at submit time;
-    // show the context riding along on the user bubble.
-    if (selectionArmed && !_attachments.some(a => a.kind === 'highlight')) {
-      _attachments.push({ kind: 'highlight', label: 'Highlighted text' });
-    }
+    // Armed-but-unchipped selections no longer ride typed prompts — chips are
+    // the only vehicle (⌘;-confirmed). No ghost "Highlighted text" attachment.
 
     if (allHighlights.length > 0) {
       finalPrompt += allHighlights.map(h =>
@@ -2263,6 +2260,8 @@ export function UnifiedOverlay() {
     ipcRenderer.on('highlights:confirmed', handleHighlightsConfirmed, token);
     ipcRenderer.on('selection:armed', handleSelectionArmed, token);
     ipcRenderer.on('selection:chip-remove', handleChipRemove, token);
+    // ⌘;/Paste-context confirm landed a chip — put the caret in the input.
+    ipcRenderer.on('selection:focus-input', () => promptInputBarRef.current?.focus(), token);
     ipcRenderer.on('voice:inject-prompt', handleVoiceInject, token);
     ipcRenderer.on('voice:response', handleVoiceResponse, token);
     ipcRenderer.on('voice:recording-started', handleVoiceRecordingStarted, token);
@@ -2363,6 +2362,7 @@ export function UnifiedOverlay() {
       ipcRenderer.removeListenerByToken('highlights:confirmed', token);
       ipcRenderer.removeListenerByToken('selection:armed', token);
       ipcRenderer.removeListenerByToken('selection:chip-remove', token);
+      ipcRenderer.removeListenerByToken('selection:focus-input', token);
       ipcRenderer.removeListenerByToken('voice:inject-prompt', token);
       ipcRenderer.removeListenerByToken('voice:response', token);
       ipcRenderer.removeListenerByToken('voice:recording-started', token);

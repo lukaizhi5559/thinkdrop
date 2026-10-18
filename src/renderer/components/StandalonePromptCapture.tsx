@@ -150,6 +150,8 @@ export default function StandalonePromptCapture() {
     ipcRenderer.on('gather:pending', handleGatherPending, SPC_TOKEN);
     ipcRenderer.on('selection:armed', handleSelectionArmed, SPC_TOKEN);
     ipcRenderer.on('selection:chip-remove', handleChipRemove, SPC_TOKEN);
+    // ⌘;/Paste-context confirm landed a chip — put the caret in the input.
+    ipcRenderer.on('selection:focus-input', () => textareaRef.current?.focus(), SPC_TOKEN);
 
     return () => {
       if (ipcRenderer.removeListenerByToken) {
@@ -166,6 +168,7 @@ export default function StandalonePromptCapture() {
         ipcRenderer.removeListenerByToken('gather:pending', SPC_TOKEN);
         ipcRenderer.removeListenerByToken('selection:armed', SPC_TOKEN);
         ipcRenderer.removeListenerByToken('selection:chip-remove', SPC_TOKEN);
+        ipcRenderer.removeListenerByToken('selection:focus-input', SPC_TOKEN);
       }
     };
   }, []);

@@ -803,17 +803,37 @@ function verbFit(prompt, candidate) {
 
 const SELECT_MAX_CANDIDATES = 20; // 8 scored hits + unmatched registered agents
 
-const SELECT_PROMPT = `You pick the single best execution surface for a user goal from verified candidates, or none.
+const _SELECT_RULES = `- fit "exact" only when the candidate can clearly perform the asked action (check kind + capabilities). If the goal's real target is an entity the candidate doesn't own — e.g. events on a public website, a file on disk — answer "none", not the nearest lookalike service.
+- fit "none" when the goal is a public-page read/scrape/summary, a local file or screen question, a device/OS action, or ordinary conversation — those use generic tools, not these candidates.
+- fit "partial" when a candidate probably applies but intent is ambiguous (connector verbs: "connect X", "use X", "set up X").`;
+
+// Routing rule for browser agents when the ThinkDrop Chrome extension is
+// NOT driving — a browser agent then means a Playwright profile that may
+// need sign-in, so deterministic surfaces win.
+const _SELECT_RULES_BROWSER_LAST = `- Prefer deterministic surfaces — local affordances, CLI/API/MCP agents — over browser agents ALWAYS, even when a browser agent is signed in. A named service (gmail, jira, n8n, slack) identifies the data, not the surface.
+- Browser agents are the last resort: pick only when no deterministic surface can do the task.`;
+
+// ...and when the extension IS connected: browser agents marked
+// "chrome-extension" act inside the user's REAL already-signed-in Chrome —
+// zero setup, already authenticated — so they win reads/lookups/navigation/
+// UI actions on a named web service. Configured CLI/API/MCP still wins
+// structured writes (send, create, delete, post, book).
+const _SELECT_RULES_EXT_CONNECTED = `- The ThinkDrop Chrome extension is CONNECTED: candidates marked "chrome-extension" drive the user's REAL already-signed-in Chrome — zero setup, already authenticated. For reads, lookups, navigation, and UI actions on a named web service, prefer the matching browser agent over CLI/API alternatives.
+- Configured CLI/API/MCP surfaces still win structured writes (send, create, delete, post, book, schedule) when installed and ready.
+- A named service (gmail, jira, n8n, slack) identifies the data; the extension-backed browser agent and a CLI/API agent are both valid surfaces — pick per the rules above.`;
+
+function _selectPrompt(extConnected) {
+  return `You pick the single best execution surface for a user goal from verified candidates, or none.
 
 Rules:
-- Prefer deterministic surfaces — local affordances, CLI/API/MCP agents — over browser agents ALWAYS, even when a browser agent is signed in. A named service (gmail, jira, n8n, slack) identifies the data, not the surface.
-- fit "exact" only when the candidate can clearly perform the asked action (check kind + capabilities). If the goal's real target is an entity the candidate doesn't own — e.g. events on a public website, a file on disk — answer "none", not the nearest lookalike service.
-- fit "none" when the goal is a public-page read/scrape/summary, a local file or screen question, a device/OS action, or ordinary conversation — those use generic tools, not these candidates.
-- fit "partial" when a candidate probably applies but intent is ambiguous (connector verbs: "connect X", "use X", "set up X").
-- Browser agents are the last resort: pick only when no deterministic surface can do the task.
+${extConnected ? _SELECT_RULES_EXT_CONNECTED : _SELECT_RULES_BROWSER_LAST}
+${_SELECT_RULES}
 - Respond ONLY JSON: {"pick":"<candidate id or null>","fit":"exact|partial|none","reason":"<short>","alternatives":["<id>",...]}
 
 Goal: `;
+}
+
+const SELECT_PROMPT = _selectPrompt(false);
 
 function _candidateFacts(c) {
   return `${c.id} | kind:${c.kind} | service:${c.service || '?'} | caps:[${(c.capabilities || []).join(',')}]`
@@ -849,7 +869,7 @@ async function selectBestCapability(query, opts = {}) {
   const table = pool.map((c, i) => `${i + 1}. ${_candidateFacts(c)}`).join('\n');
   let verdict = null;
   try {
-    const raw = await llmCaller(`${SELECT_PROMPT}${JSON.stringify(String(query || '').slice(0, 400))}\n\nCANDIDATES:\n${table}`);
+    const raw = await llmCaller(`${_selectPrompt(!!opts.extConnected)}${JSON.stringify(String(query || '').slice(0, 400))}\n\nCANDIDATES:\n${table}`);
     const m = String(raw || '').match(/\{[\s\S]*\}/);
     verdict = m ? JSON.parse(m[0]) : null;
   } catch (e) {

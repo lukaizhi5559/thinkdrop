@@ -1,0 +1,47 @@
+{
+  "manifest_version": 3,
+  "name": "ThinkDrop",
+  "version": "0.1.0",
+  "description": "Connects your real Chrome browser to ThinkDrop — click the icon to let ThinkDrop automate this browser.",
+  "permissions": [
+    "debugger",
+    "tabs",
+    "activeTab",
+    "scripting",
+    "cookies",
+    "alarms",
+    "webNavigation",
+    "storage"
+  ],
+  "host_permissions": [
+    "<all_urls>",
+    "ws://127.0.0.1/*",
+    "ws://localhost/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["keepalive.js"],
+      "run_at": "document_idle",
+      "all_frames": false
+    }
+  ],
+  "action": {
+    "default_title": "ThinkDrop — click to connect/disconnect",
+    "default_icon": {
+      "16": "icon16.png",
+      "32": "icon32.png",
+      "48": "icon48.png",
+      "128": "icon128.png"
+    }
+  },
+  "icons": {
+    "16": "icon16.png",
+    "32": "icon32.png",
+    "48": "icon48.png",
+    "128": "icon128.png"
+  }
+}
