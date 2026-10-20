@@ -31,6 +31,20 @@ const _STDOUT_EXTRACTORS = {
   'screen.capture':    r => r.text || '',
   'system.introspect': r => r.text || (r.data ? JSON.stringify(r.data) : ''),
   'web.crawl':         r => r.content || r.text || '',
+  // user.agent's data product is the `resolved` map — serialize it so
+  // stdout-based consumers see the values, while structured consumers
+  // ({{user.agent.resolved.*}}) read the preserved `resolved` field.
+  'user.agent':        r => (r.resolved && Object.keys(r.resolved).length) ? JSON.stringify(r.resolved) : (r.summary || ''),
+  // form.fill.agent's data product is the fill report — status, per-field
+  // filled/skipped/missing lists and the form's own validation messages, so
+  // synthesize reports real field state instead of narrating from memory.
+  'form.fill.agent':   r => JSON.stringify({
+    status: r.status || (r.ok ? 'filled' : 'failed'),
+    filled: (r.filledFields || []).map((f) => ({ field: f.label || f.key, value: f.value })),
+    validationIssues: (r.validationIssues || []).map((v) => ({ field: v.label || v.key, message: (v.messages || [])[0], current: v.current })),
+    missing: (r.missingFields || []).map((m) => ({ field: m.label || m.key, required: m.required !== false })),
+    leftoversHandled: r.leftoversHandled || [],
+  }),
 };
 
 function _firstString(...vals) {
@@ -63,4 +77,31 @@ function canonicalizeSkillResult(skill, raw) {
   return { ...raw, ok, stdout, summary };
 }
 
-module.exports = { canonicalizeSkillResult };
+/**
+ * Extract user.agent's structured product from a raw skill result, whatever
+ * shape it arrived in: direct call, wrapped envelope ({data:{result}}), or a
+ * JSON-string stdout. Returns {resolved, missingFields, sources, summary} —
+ * the fields downstream `{{user.agent.resolved.*}}` templating needs.
+ */
+function extractUserAgentResult(raw) {
+  if (!raw || typeof raw !== 'object') return { resolved: {}, missingFields: [], sources: [], summary: '' };
+  // Unwrap common envelopes until a user.agent-shaped object surfaces.
+  let r = raw;
+  for (let i = 0; i < 3; i++) {
+    if (r.resolved || r.missingFields || typeof r.summary === 'string') break;
+    const next = r.data?.result || r.data || r.result || r.stdout;
+    if (next && typeof next === 'object') { r = next; continue; }
+    if (typeof next === 'string') {
+      try { const p = JSON.parse(next); if (p && typeof p === 'object') { r = p; continue; } } catch (_) {}
+    }
+    break;
+  }
+  return {
+    resolved:      (r.resolved && typeof r.resolved === 'object') ? r.resolved : {},
+    missingFields: Array.isArray(r.missingFields) ? r.missingFields : [],
+    sources:       Array.isArray(r.sources) ? r.sources : [],
+    summary:       typeof r.summary === 'string' ? r.summary : '',
+  };
+}
+
+module.exports = { canonicalizeSkillResult, extractUserAgentResult };

@@ -34,16 +34,17 @@ const attachedTabs = new Set(); // tabIds with chrome.debugger attached
 const pendingNavs = new Map();  // tabId → {resolve, timer}
 
 // ---------------------------------------------------------------------------
-// Registry persistence — chrome.storage.session survives service-worker restarts
-// for the life of the browser session (unlike storage.local: cleared on update).
-// Without this, an SW restart loses bindings and resolveTab re-creates tabs for
-// already-bound sessions → duplicate about:blank tabs that fail page probes.
+// Registry persistence — chrome.storage.local survives BOTH service-worker
+// restarts AND extension reloads (storage.session is wiped on reload —
+// observed: user reloads extension → all bindings lost → 'click the first
+// item' minted a blank tab instead of adopting the live eBay tab). Dead
+// tabIds are pruned on hydrate.
 // ---------------------------------------------------------------------------
 let _hydratedResolve;
 const registryHydrated = new Promise(r => { _hydratedResolve = r; });
 (async () => {
   try {
-    const r = await chrome.storage.session.get(['tdSessionTabs']);
+    const r = await chrome.storage.local.get(['tdSessionTabs']);
     const obj = r.tdSessionTabs || {};
     for (const [k, tid] of Object.entries(obj)) {
       if (await getTab(tid)) sessionTabs.set(k, tid); // prune dead tabIds
@@ -60,7 +61,7 @@ const registryHydrated = new Promise(r => { _hydratedResolve = r; });
 })();
 
 function persistRegistry() {
-  try { return chrome.storage.session.set({ tdSessionTabs: Object.fromEntries(sessionTabs) }); }
+  try { return chrome.storage.local.set({ tdSessionTabs: Object.fromEntries(sessionTabs) }); }
   catch (_) { return Promise.resolve(); }
 }
 // Awaited before resolveTab returns — the binding must be durable before the
@@ -217,6 +218,25 @@ function sendEvent(event, extra = {}) {
 // ---------------------------------------------------------------------------
 chrome.tabs.onActivated.addListener(reconnectIfNeeded);
 
+// MRU of real-page tabs — ext:default ("this page") must resolve to the last
+// web tab the user looked at, not a chrome:// settings/devtools page that
+// happens to be focused when the command arrives.
+const _recentRealTabs = [];
+function _noteActiveTab(tabId) {
+  chrome.tabs.get(tabId).then((t) => {
+    if (!t || !/^https?:/i.test(t.url || '')) return;
+    const i = _recentRealTabs.indexOf(tabId);
+    if (i !== -1) _recentRealTabs.splice(i, 1);
+    _recentRealTabs.unshift(tabId);
+    if (_recentRealTabs.length > 20) _recentRealTabs.length = 20;
+  }).catch(() => {});
+}
+chrome.tabs.onActivated.addListener((a) => _noteActiveTab(a.tabId));
+chrome.tabs.onRemoved.addListener((tabId) => {
+  const i = _recentRealTabs.indexOf(tabId);
+  if (i !== -1) _recentRealTabs.splice(i, 1);
+});
+
 chrome.tabs.onRemoved.addListener((tabId) => {
   for (const [sid, tid] of sessionTabs) {
     if (tid === tabId) { unbindSession(sid); sendEvent('tabClosed', { sessionId: sid, tabId }); }
@@ -319,26 +339,37 @@ function tabMatches(tab, hints, strict = false) {
     host = u.hostname.replace(/^www\./, '');
     path = u.pathname || '';
   } catch (_) { return false; }
-  for (const hint of hints.hosts) {
+  // Strict (navigate) mode: only the URL's own host may match — session-name
+  // aliases must not widen adoption (the 'google' alias matching mail.google.com
+  // stole the gmail tab for a calendar.google.com nav, observed 2026-10-19).
+  // hostHintsFor always puts the url host at index 0 when url is given.
+  const _hosts = strict ? hints.hosts.slice(0, 1) : hints.hosts;
+  for (const hint of _hosts) {
     if (!hint) continue;
     if (hint.includes('/')) {
       if ((host + path).includes(hint)) return true;
       continue;
     }
     if (strict) {
-      // Navigate mode: the url's host is authoritative — adopt only tabs on
-      // that exact host or a subdomain of it. Loose name/domain matching here
-      // stole mail.google.com for a calendar.google.com task (observed:
-      // ext:google_agent hijacked the user's gmail tab).
       if (host === hint || host.endsWith('.' + hint)) return true;
       continue;
     }
-    if (host === hint || host.endsWith('.' + hint) || hint.endsWith('.' + host) || host.includes(hint)) return true;
+    // Loose mode: tab must be AT or BELOW the hint host — never a parent
+    // domain (observed: a google.com tab adopted for mail.google.com reads
+    // because 'mail.google.com'.endsWith('.google.com')). Parent-domain
+    // matching stole the google_agent tab for gmail work.
+    if (host === hint || host.endsWith('.' + hint) || host.includes(hint)) return true;
   }
   if (strict) return false;
   const n = (hints.name || '').replace(/\s+/g, '');
   if (n.length >= 4) {
-    if (host.includes(n)) return true;
+    // Name match must hit the bare domain or the FIRST host label —
+    // 'google' matching mail.google.com stole the gmail tab for a
+    // calendar task (observed: ext:google_agent adopted the gmail tab
+    // and its navigation evicted ext:gmail_agent's binding).
+    const firstLabel = host.split('.')[0];
+    const bare = host.split('.').length <= 2;
+    if (firstLabel === n || (bare && host.includes(n))) return true;
     if ((tab.title || '').toLowerCase().includes(hints.name)) return true;
   }
   return false;
@@ -368,27 +399,50 @@ async function resolveTab(sessionId, url, opts = {}) {
 
   if (sessionId === 'ext:default') {
     const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true, windowType: 'normal' });
+    if (tab && /^https?:/i.test(tab.url || '')) return tab.id;
+    // Active tab is chrome://, about:, devtools, etc. — adopt the most recently
+    // active real web page instead of failing on an undriveable URL.
+    for (const id of _recentRealTabs) {
+      const t = await getTab(id).catch(() => null);
+      if (t && /^https?:/i.test(t.url || '')) return t.id;
+    }
+    try {
+      const cands = await chrome.tabs.query({ windowType: 'normal' });
+      const hit = cands.find((c) => /^https?:/i.test(c.url || ''));
+      if (hit) return hit.id;
+    } catch (_) {}
     if (!tab) throw new Error('no active tab in a normal window');
-    return tab.id;
+    throw new Error(`no real web page tab available (active: ${String(tab.url || '').slice(0, 60)})`);
   }
 
   const { kind, key } = parseSession(sessionId);
   const policy = opts.tabPolicy || kind; // explicit arg overrides the prefix
-
-  // Bound registry entry that is still alive → reuse (session continuity)
-  const bound = sessionTabs.get(key);
-  if (bound != null) {
-    const t = await getTab(bound);
-    if (t) return t.id;
-    await unbindSession(key);
-  }
-
   const hints = hostHintsFor(url, key);
   // Strict when navigating: an explicit url makes its host authoritative —
   // loose name/domain fuzzy-matching must not adopt a sibling-service tab
   // (mail.google.com is not a valid adopt target for a calendar.google.com nav).
   const strict = !!url;
 
+  // Bound registry entry that is still alive → reuse (session continuity)
+  const bound = sessionTabs.get(key);
+  if (bound != null) {
+    const t = await getTab(bound);
+    if (t && !/^about:|chrome:|chrome-extension:|edge:/i.test(t.url || '')) return t.id;
+    if (!t) { await unbindSession(key); }
+    // Bound tab is dead or sitting on about:blank (e.g. a prior step minted a
+    // fresh tab and stole the binding) — try to re-adopt an open tab matching
+    // the session's host hints before falling back to the blank tab.
+    try {
+      const _cands = await chrome.tabs.query({});
+      const _hit = _cands.find(c => c.id !== bound && tabMatches(c, hints, strict));
+      if (_hit) {
+        await bindSession(key, _hit.id);
+        sendEvent('tabAdopted', { sessionId, tabId: _hit.id, url: _hit.url, title: _hit.title, via: 'rebind', policy });
+        return _hit.id;
+      }
+    } catch (_) {}
+    if (t) return t.id;
+  }
   // Last-resort: a live tab already bound to another ext session. Worker
   // death/suspension can drop this session's own binding — a follow-up probe
   // must land on the task's real working tab, not a minted about:blank.
@@ -397,12 +451,20 @@ async function resolveTab(sessionId, url, opts = {}) {
   // commandeered (observed: google_agent navigating the user's gmail tab).
   async function fallbackBoundTab() {
     const boundIds = [...sessionTabs.values()];
-    const live = (await Promise.all(boundIds.map(id => getTab(id)))).filter(Boolean);
+    const live = (await Promise.all(boundIds.map(id => getTab(id)))).filter(Boolean)
+      // Never commandeer a blank/internal tab — the 'only bound tab' rescue
+      // path stole another session's about:blank tab twice in a row (observed:
+      // amazon→blank, then gmail→same blank), evicting that session too. A
+      // fresh tab on the right site beats inheriting someone's dead tab.
+      .filter(t => t.url && !/^(about:|chrome:|edge:|brave:)/.test(t.url));
     if (!live.length) return null;
     const hinted = live.filter(t => tabMatches(t, hints, strict));
     if (hinted.length === 1) return hinted[0];
-    if (strict) return hinted.sort((a, b) => (b.lastAccessed || 0) - (a.lastAccessed || 0))[0] || null;
-    if (live.length === 1) return live[0]; // only one working tab exists
+    // A bound tab that doesn't match this session's hints is not this session's
+    // tab — the 'only one working tab' shortcut stole the youtube results tab
+    // for a calendar task (observed: google_calendar_agent adopted youtube's
+    // bound tab because it was the sole live binding). Minting a fresh tab on
+    // the right site always beats borrowing another session's page.
     return hinted.sort((a, b) => (b.lastAccessed || 0) - (a.lastAccessed || 0))[0] || null;
   }
 
@@ -457,6 +519,18 @@ async function sendDebugger(tabId, method, params = {}) {
   await ensureDebugger(tabId);
   return chrome.debugger.sendCommand({ tabId }, method, params);
 }
+
+// Native JS dialogs (beforeunload 'Leave site?', alert/confirm) freeze every
+// CDP op queued behind them — observed: a dirty calendar form's Leave-site
+// dialog stalled the fill task 3+ minutes. Accept only when the navigation
+// is ours (flag set around tabs.update); otherwise DISMISS — staying on the
+// page keeps the typed data instead of silently discarding it.
+const navInProgress = new Set();
+chrome.debugger.onEvent.addListener((source, method, params) => {
+  if (method !== 'Page.javascriptDialogOpening' || !source.tabId) return;
+  const accept = navInProgress.has(source.tabId);
+  chrome.debugger.sendCommand(source, 'Page.handleJavaScriptDialog', { accept }).catch(() => {});
+});
 
 async function detachAllDebuggers() {
   for (const tabId of [...attachedTabs]) {
@@ -613,12 +687,34 @@ async function getElementRect(tabId, selector) {
   const code = `(() => {
     const sel = ${JSON.stringify(selector)};
     let el = null;
-    if (/^(td|e)\\d+$/i.test(sel)) el = document.querySelector('[data-td-ref="' + sel + '"]');
-    if (!el) el = document.querySelector(sel);
+    if (/^(td|e|ff)\\d+$/i.test(sel)) el = document.querySelector('[data-td-ref="' + sel + '"]');
+    if (!el) { try { el = document.querySelector(sel); } catch (_) {} }
+    if (!el) {
+      // a[href='absolute-url'] often fails: the scanner emits el.href (property,
+      // percent-normalized) while querySelector matches the raw attribute.
+      // Fall back to matching anchors by their resolved href property.
+      const m = /^\\s*a\\[href\\s*=\\s*['"](.+)['"]\\s*\\]\\s*$/i.exec(sel);
+      if (m) {
+        const want = m[1];
+        for (const a of document.querySelectorAll('a[href]')) {
+          if (a.href === want) { el = a; break; }
+        }
+        if (!el) {
+          // Loose match: same origin+pathname (query params may re-encode)
+          try {
+            const w = new URL(want, location.href);
+            for (const a of document.querySelectorAll('a[href]')) {
+              const u = new URL(a.href, location.href);
+              if (u.origin === w.origin && u.pathname === w.pathname) { el = a; break; }
+            }
+          } catch (_) {}
+        }
+      }
+    }
     if (!el) return null;
     el.scrollIntoView({ block: 'center', inline: 'center' });
     const r = el.getBoundingClientRect();
-    return { x: r.x + r.width / 2, y: r.y + r.height / 2, width: r.width, height: r.height, tag: el.tagName, ref: el.getAttribute('data-td-ref') };
+    return { x: r.x + r.width / 2, y: r.y + r.height / 2, width: r.width, height: r.height, tag: el.tagName, ref: el.getAttribute('data-td-ref'), href: el.href || null };
   })()`;
   return evaluate(tabId, code);
 }
@@ -662,8 +758,9 @@ async function dispatch(sessionId, action, args, timeoutMs) {
       const tab = await getTab(tabId);
       if (tab && tab.url === args.url) return { ok: true, tabId, url: tab.url, reused: true };
       const done = waitForTabComplete(tabId, timeoutMs || 30000);
+      navInProgress.add(tabId);
       await chrome.tabs.update(tabId, { url: args.url });
-      await done;
+      try { await done; } finally { navInProgress.delete(tabId); }
       const t = await getTab(tabId);
       return { ok: true, tabId, url: t?.url || args.url };
     }
@@ -682,6 +779,17 @@ async function dispatch(sessionId, action, args, timeoutMs) {
 
     case 'snapshot': {
       const tabId = await resolveTab(sessionId, args.url, args);
+      // Wait for the tab to finish loading — snapshots fired mid-navigation
+      // scan an empty document and every turn reports "no elements"
+      // (observed: go-back task → fresh tab → 8 failed snapshot turns).
+      try {
+        const _t0 = Date.now();
+        while (Date.now() - _t0 < 4000) {
+          const rs = await evaluate(tabId, 'document.readyState').catch(() => null);
+          if (rs === 'interactive' || rs === 'complete') break;
+          await new Promise(r => setTimeout(r, 200));
+        }
+      } catch (_) {}
       const raw = await evaluate(tabId, args.scannerScript || args.text || 'null');
       const parsed = typeof raw === 'string' ? JSON.parse(raw) : raw;
       return { ok: true, tabId, result: parsed };
@@ -724,7 +832,7 @@ async function dispatch(sessionId, action, args, timeoutMs) {
       const focusCode = `(() => {
         const sel = ${JSON.stringify(args.selector || args.ref || '')};
         let el = null;
-        if (/^(td|e)\\d+$/i.test(sel)) el = document.querySelector('[data-td-ref="' + sel + '"]');
+        if (/^(td|e|ff)\\d+$/i.test(sel)) el = document.querySelector('[data-td-ref="' + sel + '"]');
         if (!el) el = document.querySelector(sel);
         if (!el) return null;
         el.scrollIntoView({ block: 'center', inline: 'center' });
@@ -747,8 +855,22 @@ async function dispatch(sessionId, action, args, timeoutMs) {
     case 'click':
     case 'clickSelector': {
       const tabId = await resolveTab(sessionId, args.url, args);
-      const rect = await getElementRect(tabId, args.selector || args.ref || '');
-      if (!rect) return { ok: false, tabId, error: `element not found: ${args.selector || args.ref}` };
+      // Anchors: prefer a DOM click — coordinate mouse clicks get intercepted
+      // by page overlays (observed: a promo panel occluding ebay result links).
+      const sel = args.selector || args.ref || '';
+      const rect = await getElementRect(tabId, sel);
+      if (!rect) return { ok: false, tabId, error: `element not found: ${sel}` };
+      if (rect.tag === 'A' && rect.href) {
+        const domClicked = await evaluate(tabId, `(() => {
+          const want = ${JSON.stringify(rect.href)};
+          for (const a of document.querySelectorAll('a[href]')) {
+            if (a.href === want) { a.click(); return true; }
+          }
+          return false;
+        })()`).catch(() => null);
+        if (domClicked) return { ok: true, tabId, clicked: rect, via: 'dom' };
+        // fall through to the coordinate click
+      }
       await mouseClick(tabId, rect.x, rect.y);
       return { ok: true, tabId, clicked: rect };
     }
@@ -894,7 +1016,34 @@ async function dispatch(sessionId, action, args, timeoutMs) {
       return { ok: true, tabId: tab.id };
     }
     case 'tab-close': { try { await chrome.tabs.remove(args.tabId); } catch (_) {} return { ok: true }; }
-    case 'tab-select': { await chrome.tabs.update(args.tabId, { active: true }); return { ok: true }; }
+    case 'tab-select': {
+      // Accept either an explicit tabId or a sessionId — "switch to my X tab"
+      // tasks know the session, not the numeric tab id.
+      const _tid = args.tabId || await resolveTab(sessionId || args.sessionId, null, { activate: true });
+      // Dead binding → resolveTab mints an about:blank tab. For a named-service
+      // session, "go back to my ebay tab" with no ebay tab means "open ebay" —
+      // navigate the minted tab to the service home instead of activating blank.
+      let _t = await getTab(_tid);
+      if (_t && /^about:/i.test(_t.url || '')) {
+        const { key: _skey } = parseSession(sessionId || args.sessionId);
+        const _hints = hostHintsFor(null, _skey).hosts;
+        let _homeUrl = null;
+        for (const h of _hints) {
+          const m = String(h || '').replace(/\.$/, '');
+          if (/^[a-z0-9-]+$/i.test(m)) { _homeUrl = 'https://www.' + m + '.com/'; break; }
+          if (/^[a-z0-9.-]+\.[a-z]{2,}$/i.test(m)) { _homeUrl = 'https://www.' + m + '/'; break; }
+        }
+        if (_homeUrl) {
+          const _done = waitForTabComplete(_tid, 15000);
+          await chrome.tabs.update(_tid, { url: _homeUrl });
+          try { await _done; } catch (_) {}
+          _t = await getTab(_tid);
+        }
+      }
+      await chrome.tabs.update(_tid, { active: true });
+      try { const _t2 = await chrome.tabs.get(_tid); await chrome.windows.update(_t2.windowId, { focused: true }); } catch (_) {}
+      return { ok: true, tabId: _tid, url: _t?.url || null };
+    }
 
     case 'cookies': {
       const cookies = await chrome.cookies.getAll(args.domain ? { domain: args.domain } : (args.url ? { url: args.url } : {}));

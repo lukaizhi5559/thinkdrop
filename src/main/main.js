@@ -3314,6 +3314,64 @@ let pendingGatherBatchData = null; // { batchId, questions } stored for re-send 
 // tasks can register it at handoffRunner.init time — previously it only
 // registered after the first serial run, so handoff ask_user cards silently
 // never appeared (task_f605d60d ambiguous file picker).
+// Normalizes a credential key to the canonical `credential:<agent>:<field>` form.
+// Callers may already include the `credential:` prefix; this avoids double-prefixing.
+const _normalizeCredentialKey = (credentialKey) => {
+  const k = String(credentialKey || '').toLowerCase();
+  return k.startsWith('credential:') ? k : `credential:${k}`;
+};
+
+// gatherCredentialCallback factory — the ask_user credential path in
+// executeCommand needs this on state.gatherCredentialCallback. Module scope
+// (built per-run with the run's progressCallback, or null for handoff tasks)
+// so comms-graph handoff tasks get the same masked-input credential card as
+// serial runs — previously it lived inside runPromptThroughStateGraph so
+// handoff ask_user steps fell back to a guide_step with no input.
+function _makeGatherCredentialCallback(progressCallback) {
+  return (credentialKey, _opts = {}) => {
+    return new Promise((resolve) => {
+      // Emit credential prompt to Queue tab via progressCallback
+      // The UI shows a CLI-style masked input — user submits via gather:credential IPC
+      let pendingCredResolve = resolve;
+      const handleCredSubmit = async (_event, { key, value }) => {
+        if (key !== credentialKey) return; // not our credential
+        ipcMain.off('gather:credential', handleCredSubmit);
+        if (!value) { pendingCredResolve({ stored: false, value: null }); return; }
+        try {
+          const normalizedKey = _normalizeCredentialKey(credentialKey);
+          if (safeStorage.isEncryptionAvailable()) {
+            const encrypted = safeStorage.encryptString(String(value));
+            await mcpAdapter.callService('user-memory', 'profile.set', {
+              key: normalizedKey,
+              valueRef: `SAFE:${encrypted.toString('base64')}`,
+            }, { timeoutMs: 4000 }).catch(() => {});
+          } else {
+            const { spawnSync } = require('child_process');
+            spawnSync('security', ['add-generic-password', '-s', 'thinkdrop', '-a', normalizedKey, '-w', String(value), '-U'], { encoding: 'utf8' });
+          }
+          console.log(`[GatherContext] Stored credential: ${credentialKey} (key=${normalizedKey})`);
+          if (typeof progressCallback === 'function') {
+            progressCallback({ type: 'gather_credential_stored', credentialKey });
+          }
+          pendingCredResolve({ stored: true, value });
+        } catch (e) {
+          console.error(`[GatherContext] credential store failed for ${credentialKey}:`, e.message);
+          pendingCredResolve({ stored: false, value: null, error: e.message });
+        }
+      };
+      ipcMain.on('gather:credential', handleCredSubmit);
+      // 10-minute timeout
+      setTimeout(() => {
+        ipcMain.off('gather:credential', handleCredSubmit);
+        if (pendingCredResolve) {
+          pendingCredResolve({ stored: false, value: null });
+          pendingCredResolve = null;
+        }
+      }, 10 * 60 * 1000);
+    });
+  };
+}
+
 function gatherAnswerCallback(questionOrBatch) {
   // ── Batch mode (Grill-Me Phase C) ──────────────────────────────────────
   if (questionOrBatch && typeof questionOrBatch === 'object' && questionOrBatch.batch) {
@@ -4374,6 +4432,7 @@ function initStateGraph() {
         mcpClient,
         mcpAdapter,
         llmBackend,
+        gatherCredentialCallback: _makeGatherCredentialCallback(null),
         ipcBroadcast: (channel, data) => {
           // Credential-shaped ask_user from a cli-family agent → intercept into
           // the terminal setup lane instead of dead-ending on a chat card.
@@ -8971,59 +9030,11 @@ app.whenReady().then(async () => {
     // a harmless idempotent no-op kept for safety on older resume paths.
     require('./handoffRunner').setGatherAnswerCallback(gatherAnswerCallback);
 
-    // Normalizes a credential key to the canonical `credential:<agent>:<field>` form.
-    // Callers may already include the `credential:` prefix; this avoids double-prefixing.
-    const _normalizeCredentialKey = (credentialKey) => {
-      const k = String(credentialKey || '').toLowerCase();
-      return k.startsWith('credential:') ? k : `credential:${k}`;
-    };
-
     // gatherCredentialCallback: prompts the user for a sensitive value, stores it securely,
     // and resolves with { stored: true, value }.
     // value is returned so callers (e.g. ask_user handler) can propagate it to _gatheredVars
     // for the following profile.store_secret step.  It must NOT be logged or persisted to disk.
-    const gatherCredentialCallback = (credentialKey, _opts = {}) => {
-      return new Promise((resolve) => {
-        // Emit credential prompt to Queue tab via progressCallback
-        // The UI shows a CLI-style masked input — user submits via gather:credential IPC
-        let pendingCredResolve = resolve;
-        const handleCredSubmit = async (_event, { key, value }) => {
-          if (key !== credentialKey) return; // not our credential
-          ipcMain.off('gather:credential', handleCredSubmit);
-          if (!value) { pendingCredResolve({ stored: false, value: null }); return; }
-          try {
-            const normalizedKey = _normalizeCredentialKey(credentialKey);
-            if (safeStorage.isEncryptionAvailable()) {
-              const encrypted = safeStorage.encryptString(String(value));
-              await mcpAdapter.callService('user-memory', 'profile.set', {
-                key: normalizedKey,
-                valueRef: `SAFE:${encrypted.toString('base64')}`,
-              }, { timeoutMs: 4000 }).catch(() => {});
-            } else {
-              const { spawnSync } = require('child_process');
-              spawnSync('security', ['add-generic-password', '-s', 'thinkdrop', '-a', normalizedKey, '-w', String(value), '-U'], { encoding: 'utf8' });
-            }
-            console.log(`[GatherContext] Stored credential: ${credentialKey} (key=${normalizedKey})`);
-            if (typeof progressCallback === 'function') {
-              progressCallback({ type: 'gather_credential_stored', credentialKey });
-            }
-            pendingCredResolve({ stored: true, value });
-          } catch (e) {
-            console.error(`[GatherContext] credential store failed for ${credentialKey}:`, e.message);
-            pendingCredResolve({ stored: false, value: null, error: e.message });
-          }
-        };
-        ipcMain.on('gather:credential', handleCredSubmit);
-        // 10-minute timeout
-        setTimeout(() => {
-          ipcMain.off('gather:credential', handleCredSubmit);
-          if (pendingCredResolve) {
-            pendingCredResolve({ stored: false, value: null });
-            pendingCredResolve = null;
-          }
-        }, 10 * 60 * 1000);
-      });
-    };
+    const gatherCredentialCallback = _makeGatherCredentialCallback(progressCallback);
 
     // keytarCheckCallback: checks if a credential already exists in the store
     const keytarCheckCallback = async (credentialKey) => {

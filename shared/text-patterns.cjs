@@ -297,7 +297,7 @@ const SCREEN_OBSERVATION_RE = new RegExp([
  *  deictic→scan_page choice. 'screen' is intentionally absent — a screen
  *  referent routes to screen_intelligence (OCR/read_screen), not the 'url'
  *  doc pipeline these callers feed. */
-const LIVE_PAGE_REF_RE = /\b(?:this|the|current|open)\s+(?:page|tab|site|website|article|listing)\b|\bon\s+this\s+(?:page|site|website|tab)\b|\b(?:my|the|this|that)\s+\w+\s+tab\b|\bmy\s+open\s+tab\b/i;
+const LIVE_PAGE_REF_RE = /\b(?:this|the|current|open)\s+(?:page|tab|site|website|article|listing|form|dialog)\b|\bon\s+this\s+(?:page|site|website|tab|form)\b|\b(?:my|the|this|that)\s+\w+\s+tab\b|\bmy\s+open\s+tab\b|\bform\s+(?:on|in)\s+(?:my|the|this)\s+(?:screen|browser|tab|page|window)\b/i;
 
 /** Ordinal/deictic item referent — "the first three items", "the second
  *  listing", "click on it" won't match this (no ordinal) but FOLLOWUP_SHAPE

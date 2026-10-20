@@ -180,6 +180,10 @@ let _setPendingPreflightPrompt = null;
 // grill/batch-question UX in gatherPlanContext both need it; without it,
 // concurrent handoff tasks cannot ask the user clarifying questions.
 let _gatherAnswerCallback = null;
+// Credential gather (masked-input card) — same module-scope pattern as
+// _gatherAnswerCallback; without it handoff ask_user steps degraded to a
+// guide_step with no input field.
+let _gatherCredentialCallback = null;
 
 // Browser-session bridge — main.js owns the cross-prompt session vars; the
 // comms-graph path must inject prior context into initialState and persist the
@@ -188,13 +192,14 @@ let _getPriorBrowserContext = null;
 let _persistBrowserSession = null;
 let _closeBrowserSessions = null;
 
-function init({ mcpClient, mcpAdapter, llmBackend, ipcBroadcast, setPendingPreflightPrompt, gatherAnswerCallback, getPriorBrowserContext, persistBrowserSession, closeBrowserSessions }) {
+function init({ mcpClient, mcpAdapter, llmBackend, ipcBroadcast, setPendingPreflightPrompt, gatherAnswerCallback, gatherCredentialCallback, getPriorBrowserContext, persistBrowserSession, closeBrowserSessions }) {
   _mcpClient = mcpClient;
   _mcpAdapter = mcpAdapter;
   _llmBackend = llmBackend;
   _ipcBroadcast = ipcBroadcast;
   _setPendingPreflightPrompt = setPendingPreflightPrompt;
   if (gatherAnswerCallback) _gatherAnswerCallback = gatherAnswerCallback;
+  if (gatherCredentialCallback) _gatherCredentialCallback = gatherCredentialCallback;
   _getPriorBrowserContext = getPriorBrowserContext || null;
   _persistBrowserSession = persistBrowserSession || null;
   _closeBrowserSessions = closeBrowserSessions || null;
@@ -455,6 +460,7 @@ async function execute({ taskId, prompt, agentId, capabilityReason, source, orig
           progressCallback,
           streamCallback,
           gatherAnswerCallback: _taskGatherCallback(taskId),
+          gatherCredentialCallback: _gatherCredentialCallback,
           _handoffTaskId: taskId,
           _handoffSource: source,
           // Live value wins — a session may have been born/died while the task
@@ -492,6 +498,9 @@ async function execute({ taskId, prompt, agentId, capabilityReason, source, orig
           // emit gather:question_batch cards and await answers, same as the
           // serial path in main.js.
           gatherAnswerCallback: _taskGatherCallback(taskId),
+          // Masked-input credential card for ask_user steps — serial flow
+          // parity (module-scope factory in main.js).
+          gatherCredentialCallback: _gatherCredentialCallback,
           // RouteDecision envelope — comms-graph ran the canonical task
           // classification at ingress; resolveReferencesV2 consumes this
           // instead of paying for a second classifyTask.
