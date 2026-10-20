@@ -94,7 +94,11 @@ export function installFeedIpc(store: FeedStore, ui: FeedIpcUi): () => void {
       }
 
       const msgText = message?.text || message.payload?.text || '';
-      if (msgText.startsWith('\x00SOURCES\x00')) {
+      if (msgText.startsWith('\x00ENGINE\x00')) {
+        const engine = msgText.slice('\x00ENGINE\x00'.length).trim();
+        if (engine) s.set({ searchEngine: engine });
+        return;
+      } else if (msgText.startsWith('\x00SOURCES\x00')) {
         try {
           const sources = JSON.parse(msgText.slice('\x00SOURCES\x00'.length));
           if (Array.isArray(sources)) s.set({ searchSources: sources });
@@ -182,6 +186,7 @@ export function installFeedIpc(store: FeedStore, ui: FeedIpcUi): () => void {
             items: st.resultItems.length > 0 ? st.resultItems
               : (s.getTask(message.taskId || '')?.items ?? undefined),
             sources: st.searchSources,
+            engine: st.searchEngine || undefined,
             taskId: message.taskId || undefined,
             pending: wasPlaceholder || undefined,
             prompt: s.internal.lastPrompt || undefined,
@@ -190,7 +195,7 @@ export function installFeedIpc(store: FeedStore, ui: FeedIpcUi): () => void {
           if (wasPlaceholder) s.internal.placeholderStream = false;
           s.internal.streamSegment = '';
           s.clearStream();
-          s.set({ resultItems: [], searchSources: [] });
+          s.set({ resultItems: [], searchSources: [], searchEngine: null });
         }
         s.internal.streamAcc = '';
       }
@@ -315,6 +320,7 @@ export function installFeedIpc(store: FeedStore, ui: FeedIpcUi): () => void {
             result: j.result || null,
             thinking: j.thinking || null,
             sources: j.sources || null,
+            engine: j.engine || null,
             items: j.items || null,
             intent: 'handoff',
             source: j.source || 'text',
@@ -364,6 +370,7 @@ export function installFeedIpc(store: FeedStore, ui: FeedIpcUi): () => void {
         result: data.answer || t.result,
         thinking: data.thinking || t.thinking || null,
         sources: data.sources || t.sources || null,
+        engine: data.engine || t.engine || null,
         items: data.items || t.items || null,
         error: data.error || null,
         planFile: data.planFile || t.planFile || null,

@@ -5,6 +5,7 @@ import { ThinkDropLogo } from './SlideoutDrawer';
 import { RichContentRenderer } from './rich-content';
 import { WebResultsGrid, stripItemImageMarkdown } from './rich-content';
 import StreamingRichContent from './rich-content/StreamingRichContent';
+import EngineChip from './rich-content/EngineChip';
 import { perfRender } from '../utils/perfCounters';
 import { StepIcon, SkillBadge, SkillIcon } from './AutomationProgress';
 import type { RunSummary } from './AutomationProgress';
@@ -40,7 +41,7 @@ export interface FeedDraft {
 
 export type FeedEntry =
   | { id: string; ts: number; kind: 'user'; text: string; exchangeId?: string; historic?: boolean; attachments?: { kind: 'file' | 'folder' | 'context' | 'thought' | 'highlight'; label: string; path?: string }[] }
-  | { id: string; ts: number; kind: 'assistant'; text: string; items?: WebResultItem[]; sources?: { url: string; hostname: string; title?: string }[]; taskId?: string; pending?: boolean; prompt?: string; isError?: boolean; errorRaw?: string; exchangeId?: string; historic?: boolean; files?: string[]; drafts?: FeedDraft[]; steps?: { title: string; status: string; skill?: string; output?: string; savedFilePath?: string; draftPath?: string; openIn?: string[]; diff?: string | null }[] }
+  | { id: string; ts: number; kind: 'assistant'; text: string; items?: WebResultItem[]; sources?: { url: string; hostname: string; title?: string }[]; engine?: string; taskId?: string; pending?: boolean; prompt?: string; isError?: boolean; errorRaw?: string; exchangeId?: string; historic?: boolean; files?: string[]; drafts?: FeedDraft[]; steps?: { title: string; status: string; skill?: string; output?: string; savedFilePath?: string; draftPath?: string; openIn?: string[]; diff?: string | null }[] }
   | { id: string; ts: number; kind: 'run'; title: string; status: FeedRunStatus; steps?: { title: string; status: string; skill?: string; output?: string; savedFilePath?: string; draftPath?: string; openIn?: string[]; diff?: string | null }[]; savedFilePaths?: string[]; drafts?: FeedDraft[]; error?: string | null; taskId?: string; planFile?: string | null; durationMs?: number | null; prompt?: string; exchangeId?: string; historic?: boolean }
   | { id: string; ts: number; kind: 'proactive'; text: string; thoughtId?: string; pending?: boolean; exchangeId?: string; historic?: boolean }
   | { id: string; ts: number; kind: 'plan-check'; check: import('./PlanCheckCard').PlanCheckPayload; exchangeId?: string }
@@ -612,6 +613,13 @@ const FeedEntryRow = React.memo(function FeedEntryRow({
                   searchResults={entry.items}
                 />
               </CollapsibleContent>
+              {/* Engine transparency chip — names the provider that served
+                  the reply (Google Search / Bing Copilot Search / Brave…). */}
+              {entry.engine && (
+                <div className="flex flex-wrap gap-1.5" style={{ marginTop: 8 }}>
+                  <EngineChip engine={entry.engine} />
+                </div>
+              )}
               {entry.sources && entry.sources.length > 0 && (
                 <div className="flex flex-wrap gap-1.5" style={{ marginTop: 8 }}>
                   {entry.sources.map((s, i) => (

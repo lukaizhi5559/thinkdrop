@@ -16,6 +16,7 @@ import { parseRichSnippet } from './parseRichSnippet';
 export interface WebResultItem {
   title?: string;
   imageUrl?: string;
+  thumbnail?: string;
   url?: string;
   price?: string;
   snippet?: string;
@@ -56,11 +57,13 @@ const WebResultCard: React.FC<WebResultCardProps> = ({ item }) => {
   const [imgLoaded, setImgLoaded] = useState(false);
   // Direct thumbnail/CDN URLs (Brave imgs.search proxy, hotlink-protected
   // hosts) fail intermittently — walk the fallback chain before giving up.
+  // item.thumbnail first: providers send the engine-proxied thumb (fast,
+  // always reachable); imageUrl is often the original — hotlink-blocked.
   const thumbCandidates = React.useMemo(
-    () => [item.imageUrl, item.posterUrl, item.originalUrl]
+    () => [item.thumbnail, item.imageUrl, item.posterUrl, item.originalUrl]
       .filter((u): u is string => typeof u === 'string' && /^https?:|^data:|^thinkdrop-image:/.test(u))
       .filter((u, i, a) => a.indexOf(u) === i),
-    [item.imageUrl, item.posterUrl, item.originalUrl]
+    [item.thumbnail, item.imageUrl, item.posterUrl, item.originalUrl]
   );
   const [srcIdx, setSrcIdx] = useState(0);
   const thumbUrl = thumbCandidates[srcIdx];

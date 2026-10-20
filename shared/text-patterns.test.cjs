@@ -161,6 +161,10 @@ const CTXDEP_POS = [
   'how old is he',
   'where was it filmed',
   'what time is it',                          // impersonal — over-routes, safe
+  'sum up the comments on this page',         // determiner → live surface
+  'cancel that',                              // standalone demonstrative
+  'what is this',                             // demonstrative subject
+  'open that file',                           // demonstrative object
 ];
 const CTXDEP_NEG = [
   'how long is the movie',                    // no pronoun
@@ -169,6 +173,10 @@ const CTXDEP_NEG = [
   'who is the president',
   'what is quantum computing',
   'how long has NASA been around',
+  'what is the percentage of people that work out', // relative 'that' — the observed veto bug
+  'the book that i read last week',           // relative clause
+  'show me files that need review',           // relative clause
+  'percentage of users who skip ads',
 ];
 for (const s of CTXDEP_POS) it(`ctxdep+: "${s}"`, () => assert(P.isContextDependent(s), 'expected context-dependent'));
 for (const s of CTXDEP_NEG) it(`ctxdep-: "${s}"`, () => assert(!P.isContextDependent(s), 'false positive'));

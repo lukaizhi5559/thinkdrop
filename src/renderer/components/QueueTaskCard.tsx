@@ -5,6 +5,7 @@ import { playDropSound } from '../utils/thinkDropSound';
 import { Favicon } from './DefaultFaviconIcon';
 import RichContentRenderer from './rich-content/RichContentRenderer';
 import WebResultsGrid from './rich-content/WebResultsGrid';
+import EngineChip from './rich-content/EngineChip';
 import { stripItemImageMarkdown } from './rich-content/itemImages';
 import type { WebResultItem } from './rich-content/WebResultCard';
 import { perfRender } from '../utils/perfCounters';
@@ -32,6 +33,8 @@ export interface CommsTask {
   result: string | null;
   thinking?: string | null;
   sources?: { url: string; title: string; hostname: string; snippet?: string }[] | null;
+  /** Search engine that served the result (google-serp, bing-copilot, …). */
+  engine?: string | null;
   items?: WebResultItem[] | null;
   intent: string;
   source: string;
@@ -637,10 +640,14 @@ export function QueueTaskCard({ task, onContinueThread, onHeightChange, flash, o
           </div>
         )}
 
-        {/* Source pill (favicon stack + dropdown) — shown when sources exist */}
-        {task.sources && task.sources.length > 0 && (
-          <div style={{ margin: '0 12px 8px' }}>
-            <SourcePill sources={task.sources} />
+        {/* Engine chip + source pill — transparency on which provider served
+            the search and which sites grounded the answer */}
+        {(task.engine || (task.sources && task.sources.length > 0)) && (
+          <div className="flex items-center gap-2" style={{ margin: '0 12px 8px' }}>
+            <EngineChip engine={task.engine} />
+            {task.sources && task.sources.length > 0 && (
+              <SourcePill sources={task.sources} />
+            )}
           </div>
         )}
 

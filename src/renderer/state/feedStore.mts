@@ -30,6 +30,9 @@ export interface FeedState {
   streamText: string;
   resultItems: WebResultItem[];
   searchSources: SearchSource[];
+  /** Serving engine for the in-flight search reply (google-serp, bing-copilot…)
+   *  — rendered as the transparency chip on the committed entry. */
+  searchEngine: string | null;
   commsTasks: CommsTask[];
   historyLoading: boolean;
   hasMoreHistory: boolean;
@@ -426,6 +429,7 @@ export function createFeedStore(now: () => number = () => Date.now()): FeedStore
     streamText: '',
     resultItems: [],
     searchSources: [],
+    searchEngine: null,
     commsTasks: [],
     historyLoading: false,
     hasMoreHistory: false,
@@ -605,6 +609,7 @@ export function createFeedStore(now: () => number = () => Date.now()): FeedStore
       text,
       items: state.resultItems,
       sources: state.searchSources,
+      engine: state.searchEngine || undefined,
       prompt: internal.lastPrompt || undefined,
       exchangeId: internal.lastExchangeId || undefined,
     });

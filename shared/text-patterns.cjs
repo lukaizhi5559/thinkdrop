@@ -231,6 +231,20 @@ const DEICTIC_CONTINUATION_RE = new RegExp([
 /** Third-person / deictic pronouns that carry no referent of their own. */
 const THIRD_PERSON_SUBJECT_RE = /\b(he|she|they|him|her|them|his|their|it|that|this|those|these)\b/i;
 
+/** Hard pronouns — always referential when no named referent is present. */
+const _HARD_PRONOUN_RE = /\b(he|she|they|him|her|them|his|their|it)\b/i;
+
+/** Words allowed before a REFERENTIAL demonstrative: function words and
+ *  verbs/prepositions that take a demonstrative object ("open that",
+ *  "tell me about this"). A demonstrative directly after any other
+ *  (content) word is a RELATIVE pronoun whose referent is that preceding
+ *  noun — "the percentage of people that work out", "the file that
+ *  broke" — so the prompt carries its own subject and is not
+ *  context-dependent. Observed: "what is the percentage of people that
+ *  work out" matched 'that' as referential, vetoed general_quick into a
+ *  full handoff. */
+const _DEMO_PREV_FUNC_RE = /^(?:the|a|an|of|to|for|with|on|in|at|by|from|about|into|over|under|out|up|down|off|is|are|was|were|be|been|being|do|does|did|done|it|what|how|why|when|who|whom|whose|which|and|or|but|if|then|than|as|so|not|no|yes|all|any|some|every|each|both|can|could|will|would|shall|should|may|might|must|just|only|also|very|too|there|here|now|again|still|more|much|many|few|less|most|least|really|actually|please|me|my|you|your|we|us|our|tell|say|said|show|showed|give|gave|get|got|make|made|take|took|open|opened|close|closed|go|went|gone|run|ran|read|write|wrote|send|sent|email|emailed|print|printed|delete|deleted|copy|copied|paste|pasted|search|searched|check|checked|find|found|use|used|see|saw|seen|watch|watched|play|played|stop|stopped|start|started|cancel|canceled|cancelled|retry|retried|share|shared|save|saved|edit|edited|explain|explained|summarize|summarized|sum|describe|described|click|clicked|type|typed|fill|filled|submit|submitted|navigate|navigated|want|wanted|need|needed|like|liked|know|knew|known|think|thought|mean|meant|remember|remembered|forget|forgot|try|tried|let|put|keep|kept|bring|brought|come|came|pull|pulled|grab|grabbed|expand|expanded|translate|translated|rewrite|rewrote|brief|detail|detailed|list|listed|compare|compared|pick|picked|choose|chose|chosen|select|selected|highlight|highlighted|repeat|repeated|redo|undid|undo|does|doing)$/i;
+
 /** isContextDependent — the question's subject is a pronoun with no named
  *  referent in the prompt itself, so the answer lives in conversation
  *  history ("how long has he been in office"). A standalone-answer tier
@@ -239,10 +253,24 @@ const THIRD_PERSON_SUBJECT_RE = /\b(he|she|they|him|her|them|his|their|it|that|t
  *  heuristic: a capitalized word (≥2 chars, not "I") after the first word
  *  means the prompt carries its own subject ("how long has Trump been…").
  *  Impersonal "it" ("what time is it") over-routes to handoff — slower,
- *  never wrong. */
+ *  never wrong. Demonstratives (this/that/these/those) only count in
+ *  anaphor position — after a function word, verb, punctuation, or at
+ *  sentence start; after a content noun they are relative pronouns. */
 function isContextDependent(text) {
   const t = String(text || '');
   if (!THIRD_PERSON_SUBJECT_RE.test(t)) return false;
+  let dependent = _HARD_PRONOUN_RE.test(t);
+  if (!dependent) {
+    for (const m of t.matchAll(/\b(this|that|these|those)\b/gi)) {
+      const prevM = t.slice(0, m.index).match(/(\S+)\s*$/);
+      const prev = prevM ? prevM[1] : '';
+      if (!prev || /[^\w']/.test(prev) || _DEMO_PREV_FUNC_RE.test(prev)) {
+        dependent = true;
+        break;
+      }
+    }
+  }
+  if (!dependent) return false;
   const words = t.trim().split(/\s+/).slice(1);
   return !words.some(w => /^[A-Z][a-zA-Z]{1,}/.test(w) && w !== 'I');
 }

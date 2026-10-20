@@ -602,6 +602,9 @@ async function execute({ taskId, prompt, agentId, capabilityReason, source, orig
       else if (finalState.skillResults.some(r => r && r.ok !== false)) answer = 'Done.';
     }
     const intent = finalState?.intent?.type || 'command_automate';
+    // Serving engine for the engine chip on the queue card (google-serp /
+    // bing-copilot / brave-web / …). Null for non-search tasks — chip hidden.
+    const engine = finalState?.searchProvider || null;
 
     // Extract web search sources from finalState.contextDocs so the queue card
     // can render the Perplexity-style favicon pill + dropdown.
@@ -712,6 +715,7 @@ async function execute({ taskId, prompt, agentId, capabilityReason, source, orig
           prompt: originalPrompt || prompt,
           answer: '',
           sources,
+          engine,
           items,
           intent,
           status: 'awaiting-approval',
@@ -737,6 +741,7 @@ async function execute({ taskId, prompt, agentId, capabilityReason, source, orig
           prompt: originalPrompt || prompt,
           answer: '',
           sources,
+          engine,
           items,
           intent,
           error: finalState.planError,
@@ -786,6 +791,7 @@ async function execute({ taskId, prompt, agentId, capabilityReason, source, orig
           prompt: originalPrompt || prompt,
           answer: '',
           sources,
+          engine,
           items,
           intent,
           error: finalState.planError,
@@ -813,6 +819,7 @@ async function execute({ taskId, prompt, agentId, capabilityReason, source, orig
           prompt: originalPrompt || prompt,
           answer: '',
           sources,
+          engine,
           items,
           status: 'waiting-for-input',
           agentId,
@@ -837,6 +844,7 @@ async function execute({ taskId, prompt, agentId, capabilityReason, source, orig
           prompt: originalPrompt || prompt,
           answer: '',
           sources,
+          engine,
           items,
           status: 'cancelled',
           agentId,
@@ -869,6 +877,7 @@ async function execute({ taskId, prompt, agentId, capabilityReason, source, orig
           answer,
           thinking,
           sources,
+          engine,
           items,
           intent,
           status: 'done',

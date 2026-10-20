@@ -796,6 +796,7 @@ async function restoreQueueFromJournal() {
         error: t.error || null,
         items: t.items || null,
         sources: t.sources || null,
+        engine: t.engine || null,
         thinking: t.thinking || null,
         sessionId: t.sessionId || null,
         planFile: t.planFile || null,
@@ -7141,21 +7142,23 @@ app.whenReady().then(async () => {
             // For direct answers (general_quick, memory_quick), the response IS the
             // answer — isPlaceholder must be false so the water-drip sound plays.
             const isPlaceholder = intent === 0;
+            // Sentinels ride the same chunk channel in BOTH paths — streamed
+            // answers also carry sources/items/engine, not just painted text.
+            const _srcs = metadata?.sources, _its = metadata?.items, _eng = metadata?.engine;
+            if (typeof _eng === 'string' && _eng) {
+              safeSendUnified('ws-bridge:message', { type: 'chunk', text: '\x00ENGINE\x00' + _eng, taskId });
+            }
+            if (Array.isArray(_srcs) && _srcs.length) {
+              safeSendUnified('ws-bridge:message', { type: 'chunk', text: '\x00SOURCES\x00' + JSON.stringify(_srcs), taskId });
+            }
+            if (Array.isArray(_its) && _its.length) {
+              safeSendUnified('ws-bridge:message', { type: 'chunk', text: '\x00ITEMS\x00' + JSON.stringify(_its), taskId });
+            }
             if (streamedAny) {
               // Tokens already painted via SSE — close the stream only.
               safeSendUnified('ws-bridge:message', { type: 'done', taskId });
             } else {
               safeSendUnified('unified:set-prompt', prompt);
-              // Search-result cards ride the same sentinel channel the
-              // stategraph uses — feedIpc parses \x00SOURCES\x00/\x00ITEMS\x00
-              // chunks into searchSources/resultItems on the committed entry.
-              const _srcs = metadata?.sources, _its = metadata?.items;
-              if (Array.isArray(_srcs) && _srcs.length) {
-                safeSendUnified('ws-bridge:message', { type: 'chunk', text: '\x00SOURCES\x00' + JSON.stringify(_srcs), taskId });
-              }
-              if (Array.isArray(_its) && _its.length) {
-                safeSendUnified('ws-bridge:message', { type: 'chunk', text: '\x00ITEMS\x00' + JSON.stringify(_its), taskId });
-              }
               safeSendUnified('ws-bridge:message', { type: 'chunk', text: responseText, taskId, isPlaceholder });
               safeSendUnified('ws-bridge:message', { type: 'done', taskId });
             }
