@@ -1192,7 +1192,7 @@ export function UnifiedOverlay() {
       // guessedIntent filter is unreliable (comms regex can guess web_search
       // for a task the stategraph resolves as command_automate).
       const isTaskScoped = !!data?.taskId;
-      if (isTaskScoped && /^(plan:|step_|executing|preflight|pipeline:|ask_user|resuming)/.test(data?.type || '')) {
+      if (isTaskScoped && /^(plan:|step_|executing|preflight|pipeline:|ask_user|resuming|gather)/.test(data?.type || '')) {
         ensureRunEntry(data.taskId);
       }
       if (data?.type === 'reminder_fired') {
@@ -2108,6 +2108,8 @@ export function UnifiedOverlay() {
     ipcRenderer.on('voice:final', handleVoiceFinal, token);
     ipcRenderer.on('voice:level', handleVoiceLevel, token);
     ipcRenderer.on('unified:clear', handleClear, token);
+    // Resolved single ROpt tap — scroll the feed to the latest entry.
+    ipcRenderer.on('ropt:tap', () => scrollToBottom(), token);
     ipcRenderer.on('automation:progress', handleAutomationProgress, token);
     // Plan-check card — repeated emits for a planId patch the same feed entry.
     ipcRenderer.on('plan:check', (data: { planId: string | null; items: any[]; allClear: boolean; authOpened?: string; cancelled?: boolean; error?: string; surface?: boolean }) => {
@@ -2141,6 +2143,15 @@ export function UnifiedOverlay() {
               ? `Plan can't start yet — ${issues.length} issue${issues.length === 1 ? '' : 's'} need attention (see the checklist card below).`
               : 'Plan is almost ready — waiting for step generation to finish…',
           } as any);
+        }
+      } else {
+        // Stale-fallback cleanup — the blocked/waiting lines are append-only;
+        // once the plan clears, starts, or is cancelled they must leave the
+        // feed or it keeps saying "waiting for step generation" after the run
+        // already started.
+        const prefix = `plancheck-blocked:${data?.planId || 'unknown'}:`;
+        for (const e of feedStore.getState().entries) {
+          if (e.id.startsWith(prefix)) feedStore.removeEntry(e.id);
         }
       }
     }, token);

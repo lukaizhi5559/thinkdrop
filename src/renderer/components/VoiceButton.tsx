@@ -20,13 +20,16 @@ interface VoiceButtonProps {
   onTranscript?: (text: string, language: string) => void;
   onResponse?: (text: string, audioBase64: string, format: string) => void;
   icon?: 'mic' | 'voice';
+  /** ROpt-hold PTT active — amber pulse (distinct from session listening). */
+  ptt?: boolean;
   style?: React.CSSProperties;
 }
 
-export default function VoiceButton({ compact = false, icon = 'mic', style = {} }: VoiceButtonProps) {
+export default function VoiceButton({ compact = false, icon = 'mic', ptt = false, style = {} }: VoiceButtonProps) {
   const [active, setActive] = useState(false);
   const [voiceState, setVoiceState] = useState<VoiceState>('idle');
   const [talkMode, setTalkMode] = useState(false);
+  const [muted, setMuted] = useState(false); // ROpt-tap mute — amber while dead
 
   // Session + worker state events from main (relayed from the voice bridge)
   useEffect(() => {
@@ -46,15 +49,18 @@ export default function VoiceButton({ compact = false, icon = 'mic', style = {} 
       }
     };
     const onError = () => setVoiceState('error');
+    const onMute = (data: { muted?: boolean }) => setMuted(!!data?.muted);
     ipcRenderer.on('voice:session', onSession);
     ipcRenderer.on('voice:session-mode', onMode);
     ipcRenderer.on('voice:state', onState);
     ipcRenderer.on('voice:error', onError);
+    ipcRenderer.on('voice:mute-state', onMute);
     return () => {
       ipcRenderer.removeAllListeners?.('voice:session');
       ipcRenderer.removeAllListeners?.('voice:session-mode');
       ipcRenderer.removeAllListeners?.('voice:state');
       ipcRenderer.removeAllListeners?.('voice:error');
+      ipcRenderer.removeAllListeners?.('voice:mute-state');
     };
   }, []);
 
@@ -121,7 +127,17 @@ export default function VoiceButton({ compact = false, icon = 'mic', style = {} 
 
   const displayState: VoiceState = active ? voiceState : (voiceState === 'starting' ? 'starting' : 'idle');
 
-  const title = active
+  // ROpt-hold PTT overrides the idle look — amber means "dictating now".
+  // Muted (during a session) is a dimmer amber — the session stays up.
+  const pttColors = { bg: 'rgba(251,191,36,0.18)', border: 'rgba(251,191,36,0.45)', icon: '#fbbf24' };
+  const muteColors = { bg: 'rgba(251,191,36,0.10)', border: 'rgba(251,191,36,0.35)', icon: '#fbbf24' };
+  const btnBg = ptt && !active ? pttColors.bg : (active && muted ? muteColors.bg : stateColors[displayState]);
+  const btnBorder = ptt && !active ? pttColors.border : (active && muted ? muteColors.border : stateBorders[displayState]);
+  const btnIcon = ptt && !active ? pttColors.icon : (active && muted ? muteColors.icon : stateIconColors[displayState]);
+
+  const title = ptt && !active ? 'Dictating — release Right ⌥ to send'
+    : active && muted ? 'Muted — tap Right ⌥ to unmute'
+    : active
     ? voiceState === 'sleeping'
       ? 'Sleeping — click to wake'
       : voiceState === 'starting'
@@ -140,9 +156,9 @@ export default function VoiceButton({ compact = false, icon = 'mic', style = {} 
           gap: '4px',
           padding: '9px',
           borderRadius: '6px',
-          backgroundColor: stateColors[displayState],
-          border: `1px solid ${stateBorders[displayState]}`,
-          color: stateIconColors[displayState],
+          backgroundColor: btnBg,
+          border: `1px solid ${btnBorder}`,
+          color: btnIcon,
           cursor: 'pointer',
           fontSize: '0.7rem',
           userSelect: 'none',
@@ -167,14 +183,14 @@ export default function VoiceButton({ compact = false, icon = 'mic', style = {} 
           }
         }}
       >
-        {/* Pulse ring while active; faster amber pulse while starting up */}
-        {(active || displayState === 'starting') && (
+        {/* Pulse ring while active; faster amber pulse while starting up / PTT held */}
+        {(active || displayState === 'starting' || ptt) && (
           <span style={{
             position: 'absolute', inset: 0,
             borderRadius: '6px',
-            animation: displayState === 'starting' ? 'voice-pulse 0.7s ease-in-out infinite' : 'voice-pulse 1.4s ease-in-out infinite',
+            animation: (displayState === 'starting' || ptt) ? 'voice-pulse 0.7s ease-in-out infinite' : 'voice-pulse 1.4s ease-in-out infinite',
             backgroundColor: displayState === 'speaking' ? 'rgba(168,85,247,0.15)'
-              : displayState === 'starting' ? 'rgba(251,191,36,0.18)'
+              : (displayState === 'starting' || ptt) ? 'rgba(251,191,36,0.18)'
               : 'rgba(59,130,246,0.15)',
           }} />
         )}

@@ -4,6 +4,7 @@ import { Favicon } from './DefaultFaviconIcon';
 import { ThinkDropLogo } from './SlideoutDrawer';
 import AutomationProgress, { type RunSummary, type DraftRef } from './AutomationProgress';
 import { WebResultsGrid } from './rich-content';
+import EngineChip from './rich-content/EngineChip';
 import StreamingRichContent from './rich-content/StreamingRichContent';
 import SkillBuildProgress from './SkillBuildProgress';
 import { useFeedStore } from '../state/feedSelectors';
@@ -145,6 +146,9 @@ function ResultsContentImpl({
   const streamingResponse = useFeedStore(s => s.streamText);
   const resultItems = useFeedStore(s => s.resultItems);
   const searchSources = useFeedStore(s => s.searchSources);
+  // Engine currently being tried by an in-flight SERP fetch — rendered as a
+  // loading favicon chip; the real \x00ENGINE\x00 chip replaces it on arrival.
+  const searchPending = useFeedStore(s => s.searchPending);
   // Live-run collapse — manual toggle while running; the run auto-expands when
   // a new automation starts (isAutomationMode flips true). Once the terminal
   // summary commits, liveRunHidden removes the whole block — the feed's run
@@ -251,7 +255,7 @@ function ResultsContentImpl({
             ))}
           </div>
           <span style={{ color: '#9ca3af', fontSize: '0.7rem', fontWeight: 500, display: 'flex', alignItems: 'center', gap: 3 }}>
-            {searchSources.length} {searchSources.length === 1 ? 'site' : 'sites'}
+            Searched {searchSources.length} {searchSources.length === 1 ? 'website' : 'websites'}
             <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ color: '#abafb8', transform: showSourcesPanel ? 'rotate(180deg)' : 'rotate(0deg)', transition: 'transform 0.15s' }}>
               <polyline points="6 9 12 15 18 9" />
             </svg>
@@ -338,11 +342,28 @@ function ResultsContentImpl({
             </div>
             {thinkingText && <span className="text-gray-400 text-sm">{thinkingText}</span>}
           </div>
+          {searchPending && (
+            <div style={{ marginTop: 8 }}><EngineChip engine={searchPending} loading /></div>
+          )}
         </div>
       );
     }
 
-    if (!streamingResponse && !installPrompt && !isInstalling && !actionChips.length) return null;
+    if (!streamingResponse && !installPrompt && !isInstalling && !actionChips.length) {
+      // SERP fetch in flight with nothing painted yet — sentinel chunks don't
+      // append text, so the loading chip IS the whole render.
+      if (searchPending) {
+        return (
+          <div>
+            <div className="flex items-center gap-1.5 select-none" style={{ marginBottom: 5, opacity: 0.85 }}>
+              <ThinkDropLogo size={14} />
+            </div>
+            <EngineChip engine={searchPending} loading />
+          </div>
+        );
+      }
+      return null;
+    }
 
     // Approximate token count (1 token ≈ 4 chars) for the progress indicator
     const synthTokenCount = streamingResponse ? Math.ceil(streamingResponse.length / 4) : 0;
@@ -355,6 +376,9 @@ function ResultsContentImpl({
         </div>
         {renderInstallCard()}
         {searchSources.length > 0 && renderSourcePill()}
+        {searchPending && (
+          <div style={{ marginBottom: 8 }}><EngineChip engine={searchPending} loading /></div>
+        )}
 
         {/* Non-automation responses (plain LLM answers) */}
         {streamingResponse && !isAutomationMode && (

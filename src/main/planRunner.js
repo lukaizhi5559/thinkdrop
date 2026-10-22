@@ -223,6 +223,19 @@ async function _dispatchTask(run, task) {
     steps = null;
   }
 
+  // Context refs — the plan file is the durable carrier: re-read frontmatter
+  // refs at dispatch (not at run start) so mid-run revisions appended by a
+  // task.agent plan_update reach dependent tasks. The plan doc itself rides
+  // first as type:'plan' so task.agent can re-read its Task-N block.
+  let refs = null;
+  try {
+    const _content = fs.readFileSync(run.planPath, 'utf8');
+    const _taskRefs = (task.refs || []).map(r => (typeof r === 'string' ? { type: 'path', path: r } : r)).filter(r => r && r.path);
+    refs = [{ type: 'plan', path: run.planPath }, ...planFormat.parseRefs(_content), ..._taskRefs];
+  } catch (_) {
+    refs = [{ type: 'plan', path: run.planPath }];
+  }
+
   const resp = await _postToComms('/comms.proactive', {
     prompt,
     sessionId: run.sessionId,
@@ -240,6 +253,7 @@ async function _dispatchTask(run, task) {
     // _deterministicPlan and skips the LLM planning pass entirely.
     deterministicPlan: steps,
     priorResults: priorResults.length ? priorResults : null,
+    refs,
     source: 'plan',
   });
   if (!resp || !resp.taskId) {
@@ -333,6 +347,21 @@ function onTaskComplete(taskId, status, result) {
     for (const [taskNum, tid] of run.dispatched.entries()) {
       if (tid !== taskId) continue;
       const isDone = status === 'done';
+      // plan_update — task.agent pushed a mid-run discovery back to planning.
+      // Hold the run: mark the task blocked and stop scheduling; comms revises
+      // the .md and startPlan() re-enters below, resuming remaining tasks.
+      if (status === 'plan_update') {
+        let reason = '';
+        try { reason = JSON.parse(result || '{}').reason || ''; } catch (_) {}
+        _writeTaskStatus(run, taskNum, '⏸ blocked', `plan revision requested: ${reason}`.slice(0, 300));
+        // Clear the completed-dispatch bookkeeping — on resume the revised
+        // task must be re-dispatchable; a stale results entry would skip it.
+        run.dispatched.delete(taskNum);
+        run.results.delete(taskNum);
+        run.status = 'revising';
+        _emit('plan:status', { planId: run.planId, status: 'revising' });
+        return;
+      }
       const isFailed = status === 'failed' || status === 'cancelled' || status === 'auth-required';
       if (!isDone && !isFailed) return; // awaiting-approval / waiting-for-input — still active
       const summary = isDone ? (typeof result === 'string' ? result : (result?.answer || '')) : `Task ${status}: ${result || ''}`;
@@ -372,8 +401,19 @@ function bindTaskId(planId, taskNum, taskId) {
 async function startPlan(planPath, opts = {}) {
   const planId = _planIdFromPath(planPath);
   if (_runs.has(planId)) {
-    // Already running — just re-enter the scheduler (idempotent resume).
-    await _schedule(_runs.get(planId));
+    const run = _runs.get(planId);
+    // Re-read the plan file on every resume — a mid-run plan_update revision
+    // may have rewritten tasks/refs, and the in-memory snapshot went stale the
+    // moment it was written. Done tasks keep their results entries, so they
+    // are never re-dispatched; blocked (⏸) tasks reschedule.
+    try {
+      const fresh = _loadPlan(planPath);
+      run.tasks = fresh.tasks;
+      if (run.status === 'revising') run.status = 'running';
+    } catch (err) {
+      console.warn(`[PlanRunner] resume reload failed for ${planId}: ${err.message}`);
+    }
+    await _schedule(run);
     return { ok: true, planId, resumed: true };
   }
 

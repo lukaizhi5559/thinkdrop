@@ -155,6 +155,14 @@ function _artifactSnapshot(taskId) {
 // poisoned for every subsequent prompt.
 const RUN_STALL_MS = parseInt(process.env.TASK_RUN_STALL_MS || '240000', 10);
 
+// Absolute wall-clock cap. runWithHeartbeat emits skill:thinking every 15s
+// while a hung MCP call pends — each heartbeat re-armed the stall watchdog, so
+// a hung provider call could park a task 'running' for 6+ hours (observed:
+// journal entries at 395-497min). This deadline ignores progress entirely and
+// only suspends while a user-question wait is in flight (that path has its own
+// 10-minute answer timeout upstream).
+const RUN_HARD_CAP_MS = parseInt(process.env.TASK_RUN_HARD_CAP_MS || '1800000', 10);
+
 // ── Pending plan contexts (per task) ───────────────────────────────────────────
 /** @type {Map<string, { planFile: string, prompt: string, agentId: string|null, source: string, originalPrompt: string|null, sessionId: string|null }>} */
 const _pendingPlanContexts = new Map();
@@ -216,16 +224,48 @@ function setGatherAnswerCallback(cb) {
 function _taskGatherCallback(taskId) {
   if (typeof _gatherAnswerCallback !== 'function') return null;
   return async (q) => {
-    // Waiting on a user answer is not a stall — suspend the watchdog for the
-    // duration of the ask, then re-arm it so the run can't hang forever after.
+    // Waiting on a user answer is not a stall — suspend the watchdog (and the
+    // hard runtime cap) for the duration of the ask, then re-arm so the run
+    // can't hang forever after. Both timers pause: an orphaned resolver used
+    // to leave the task here indefinitely.
     const run = _activeRuns.get(taskId);
-    if (run) clearTimeout(run.stallTimer);
+    run?.pauseStall?.() ?? (run && clearTimeout(run.stallTimer));
     try {
-      return await _gatherAnswerCallback(
-        q && typeof q === 'object' && q.batch ? { ...q, taskId } : q
+      // Legacy string questions normalize to a task-scoped batch — the legacy
+      // singleton (pendingGatherResolve) can't distinguish concurrent handoff
+      // asks, and an untagged string also renders in the global card instead
+      // of this task's queue card. The answer unwraps back to a bare string
+      // so existing callers see the legacy contract.
+      const isBatch = q && typeof q === 'object' && q.batch;
+      const res = await _gatherAnswerCallback(
+        isBatch
+          ? { ...q, taskId }
+          : {
+              batch: true,
+              batchId: `ask_${taskId}_${Date.now()}`,
+              taskId,
+              questions: [{ id: 'answer', text: String(q ?? ''), type: 'text', freeText: true }],
+            }
       );
+      return isBatch ? res : (res && typeof res === 'object' ? (res.answer ?? null) : res);
     } finally {
-      run?.armStall?.();
+      run?.resumeStall?.() ?? run?.armStall?.();
+    }
+  };
+}
+
+// Same watchdog suspension for the credential/context card — an ask_user wait
+// is user-paced, not a stall. Previously only _taskGatherCallback paused the
+// timers, so a credential card left up >240s killed the task mid-question.
+function _taskCredentialCallback(taskId) {
+  if (typeof _gatherCredentialCallback !== 'function') return null;
+  return async (credentialKey, opts) => {
+    const run = _activeRuns.get(taskId);
+    run?.pauseStall?.() ?? (run && clearTimeout(run.stallTimer));
+    try {
+      return await _gatherCredentialCallback(credentialKey, opts);
+    } finally {
+      run?.resumeStall?.() ?? run?.armStall?.();
     }
   };
 }
@@ -392,7 +432,7 @@ function _makeProgressCallback(taskId, agentId) {
  * @param {string[]|null} [args.preflightAuthBypass] - Agent IDs to treat as authed for this run only
  * @param {Object|null}  [args._resumeState] - Paused finalState to resume from (ask_user answer)
  */
-async function execute({ taskId, prompt, agentId, capabilityReason, source, originalPrompt, detectedLanguage, sessionId, planFile, preflightAuthBypass, userApproved, thoughtContext, guessedIntent, planTask, _resumeState, _deterministicPlan, _deterministicTemplate, _deterministicLowRisk, _deterministicExternal, _deterministicServiceAgent, _priorResults, _resumeMultiIntent, _resumeIntentQueue, _resumeIntentResults, _resumeDataContext, routeDecision }) {
+async function execute({ taskId, prompt, agentId, capabilityReason, source, originalPrompt, detectedLanguage, sessionId, planFile, preflightAuthBypass, userApproved, thoughtContext, guessedIntent, planTask, planId, planTaskNum, _resumeState, _deterministicPlan, _deterministicTemplate, _deterministicLowRisk, _deterministicExternal, _deterministicServiceAgent, _priorResults, _refs, _resumeMultiIntent, _resumeIntentQueue, _resumeIntentResults, _resumeDataContext, routeDecision }) {
   if (!_mcpAdapter || !_llmBackend) {
     console.error('[HandoffRunner] Not initialized — call init() first');
     _notifyComplete(taskId, agentId, 'failed', 'HandoffRunner not initialized', null, sessionId);
@@ -427,8 +467,40 @@ async function execute({ taskId, prompt, agentId, capabilityReason, source, orig
         _stallReject(err);
       }, RUN_STALL_MS);
     };
-    _activeRuns.get(taskId).armStall = _armStall;
+    // Hard runtime cap — independent of progress. Heartbeats re-arm the stall
+    // timer but never this one; the only suspension is pauseStall() during a
+    // user-question wait.
+    let _hardRemaining = RUN_HARD_CAP_MS;
+    let _hardArmedAt = 0;
+    const _armHard = () => {
+      const run = _activeRuns.get(taskId);
+      if (!run) return;
+      clearTimeout(run.hardTimer);
+      _hardArmedAt = Date.now();
+      run.hardTimer = setTimeout(() => {
+        const err = new Error(`Task exceeded the ${Math.round(RUN_HARD_CAP_MS / 60000)}-minute runtime cap`);
+        err._stalled = true;
+        err._hardCap = true;
+        abortController.abort();
+        _stallReject(err);
+      }, _hardRemaining);
+    };
+    const _pauseHard = () => {
+      const run = _activeRuns.get(taskId);
+      if (!run || !_hardArmedAt) return;
+      clearTimeout(run.hardTimer);
+      run.hardTimer = null;
+      _hardRemaining = Math.max(0, _hardRemaining - (Date.now() - _hardArmedAt));
+      _hardArmedAt = 0;
+    };
+    {
+      const _entry = _activeRuns.get(taskId);
+      _entry.armStall = _armStall;
+      _entry.pauseStall = () => { clearTimeout(_entry.stallTimer); _pauseHard(); };
+      _entry.resumeStall = () => { _armStall(); _armHard(); };
+    }
     _armStall();
+    _armHard();
 
     console.log(`[HandoffRunner] Starting task ${taskId}: ${prompt.substring(0, 80)}${planFile ? ' (with plan)' : ''}`);
 
@@ -460,7 +532,7 @@ async function execute({ taskId, prompt, agentId, capabilityReason, source, orig
           progressCallback,
           streamCallback,
           gatherAnswerCallback: _taskGatherCallback(taskId),
-          gatherCredentialCallback: _gatherCredentialCallback,
+          gatherCredentialCallback: _taskCredentialCallback(taskId),
           _handoffTaskId: taskId,
           _handoffSource: source,
           // Live value wins — a session may have been born/died while the task
@@ -499,8 +571,9 @@ async function execute({ taskId, prompt, agentId, capabilityReason, source, orig
           // serial path in main.js.
           gatherAnswerCallback: _taskGatherCallback(taskId),
           // Masked-input credential card for ask_user steps — serial flow
-          // parity (module-scope factory in main.js).
-          gatherCredentialCallback: _gatherCredentialCallback,
+          // parity (module-scope factory in main.js), task-wrapped so the wait
+          // pauses the stall/hard watchdogs like _taskGatherCallback does.
+          gatherCredentialCallback: _taskCredentialCallback(taskId),
           // RouteDecision envelope — comms-graph ran the canonical task
           // classification at ingress; resolveReferencesV2 consumes this
           // instead of paying for a second classifyTask.
@@ -529,10 +602,16 @@ async function execute({ taskId, prompt, agentId, capabilityReason, source, orig
           // Plan-runner task — skip checkPlanCache hijack + gather/re-plan so
           // the already-approved Task executes exactly as written.
           ...(planTask ? { _planTask: true, _bypassGatherPlan: true } : {}),
+          ...(planTaskNum ? { _planTaskNum: planTaskNum } : {}),
+          ...(planId ? { _planId: planId } : {}),
           // Upstream task results — {{synthesisAnswer}}-style refs in this
           // task's steps resolve to the last prior result (the stepgen writes
           // those refs meaning "the previous task's output").
           ...(_priorResults?.length ? { _priorResults } : {}),
+          // Context refs — plan frontmatter refs + the plan file itself +
+          // per-task refs. planSkillsV2's task.agent collapse resolves them
+          // into the loop's prompt context.
+          ...(_refs?.length ? { _refs } : {}),
           // Reply to a proactive Thought card — resolveReferencesV2 splits the
           // card from the message, injects it as a labeled turn, and reports
           // the lifecycle outcome back to the thought engine.
@@ -680,7 +759,73 @@ async function execute({ taskId, prompt, agentId, capabilityReason, source, orig
           .slice(0, 24);
 
     // ── Detect the real final state ────────────────────────────────────────────
-    if (finalState.awaitingPlanApproval) {
+    if (finalState._planUpdate) {
+      // task.agent plan_update — the task discovered the plan itself is wrong
+      // or incomplete. Report 'plan_update' to comms-graph with the proposal;
+      // comms revises the SAME plan file and auto-resumes the run.
+      const _pu = finalState._planUpdate || {};
+      const _puResult = JSON.stringify({
+        reason: _pu.reason || '',
+        proposal: _pu.proposal || '',
+        addRefs: Array.isArray(_pu.addRefs) ? _pu.addRefs : [],
+        planId: _pu.planId || null,
+        taskNum: _pu.taskNum || null,
+      });
+      console.log(`[HandoffRunner] Task ${taskId} requested plan_update — ${_pu.reason || ''}`);
+      progressCallback({ type: 'pipeline:done', contract: finalState._contract });
+      _notifyComplete(taskId, agentId, 'plan_update', _puResult, null, finalState.resolvedSessionId || sessionId, null, null, _artifactSnapshot(taskId));
+      if (_ipcBroadcast) {
+        _ipcBroadcast('task:complete', {
+          taskId,
+          prompt: originalPrompt || prompt,
+          answer: '',
+          sources,
+          engine,
+          items,
+          intent,
+          status: 'plan_update',
+          agentId,
+          source,
+          sessionId: finalState.resolvedSessionId || sessionId || null,
+          artifacts: _artifactSnapshot(taskId),
+        });
+      }
+      return { ok: true, status: 'plan_update', planUpdate: _pu };
+
+    } else if (finalState._needsPlan) {
+      // Loop-back escalation — a node decided mid-run that this task needs a
+      // real plan (local multi-entity sweep, grill not converging). Report
+      // 'needs_plan' to comms-graph with the seed payload; comms re-enters
+      // the planning lane, drafts plan.md, and auto-runs it.
+      const _np = finalState._needsPlan || {};
+      const _npResult = JSON.stringify({
+        reason: _np.reason || 'unspecified',
+        seedPrompt: _np.seedPrompt || prompt,
+        refs: Array.isArray(_np.refs) ? _np.refs : [],
+        gatheredContext: Array.isArray(_np.gatheredContext) ? _np.gatheredContext : [],
+      });
+      console.log(`[HandoffRunner] Task ${taskId} escalated needs_plan (${_np.reason})`);
+      progressCallback({ type: 'pipeline:done', contract: finalState._contract });
+      _notifyComplete(taskId, agentId, 'needs_plan', _npResult, null, finalState.resolvedSessionId || sessionId, null, null, _artifactSnapshot(taskId));
+      if (_ipcBroadcast) {
+        _ipcBroadcast('task:complete', {
+          taskId,
+          prompt: originalPrompt || prompt,
+          answer: '',
+          sources,
+          engine,
+          items,
+          intent,
+          status: 'needs_plan',
+          agentId,
+          source,
+          sessionId: finalState.resolvedSessionId || sessionId || null,
+          artifacts: _artifactSnapshot(taskId),
+        });
+      }
+      return { ok: true, status: 'needs_plan', planSeed: _np };
+
+    } else if (finalState.awaitingPlanApproval) {
       // StateGraph paused for plan approval — store context for resume()
       const planFileFromState = finalState._skillPlanFile || finalState._planFile || finalState.planFile || null;
       _pendingPlanContexts.set(taskId, {
@@ -918,7 +1063,9 @@ async function execute({ taskId, prompt, agentId, capabilityReason, source, orig
     return { ok: false, status, error: err.message };
 
   } finally {
-    clearTimeout(_activeRuns.get(taskId)?.stallTimer);
+    const _doneRun = _activeRuns.get(taskId);
+    clearTimeout(_doneRun?.stallTimer);
+    clearTimeout(_doneRun?.hardTimer);
     _activeRuns.delete(taskId);
     _runArtifacts.delete(taskId);
   }
@@ -1315,6 +1462,10 @@ function cancel(taskId) {
     if (hadPendingPlan) console.log(`[HandoffRunner] Cancelled task ${taskId} (pending plan approval)`);
     return hadPendingPlan;
   }
+  // Idempotent — a cancelled-but-undrained run (aborted while execute() is
+  // still awaiting a hung node) must not re-log or re-abort on every press.
+  if (run.cancelled) return true;
+  run.cancelled = true;
   run.abortController.abort();
   // Parity with the serial path's automation:cancel — closing the task must not
   // leak its Playwright window.
@@ -1324,13 +1475,26 @@ function cancel(taskId) {
 }
 
 // ── Get active run count ───────────────────────────────────────────────────────
+// Cancelled-but-undrained entries (execute() still hung after abort) don't
+// count — the run is dead from the caller's view; the map entry is cleared by
+// execute()'s finally whenever the hung promise settles.
 function getActiveCount() {
-  return _activeRuns.size;
+  let n = 0;
+  for (const run of _activeRuns.values()) if (!run.cancelled) n++;
+  return n;
 }
 
 // ── Get active task IDs ────────────────────────────────────────────────────────
 function getActiveTaskIds() {
-  return Array.from(_activeRuns.keys());
+  return Array.from(_activeRuns.entries()).filter(([, run]) => !run.cancelled).map(([id]) => id);
+}
+
+// ── Get task IDs parked waiting-for-input ─────────────────────────────────────
+// These tasks already left _activeRuns (execute() returned 'waiting-for-input')
+// but are still cancellable via cancel() — expose them so the universal cancel
+// gesture sees them.
+function getPendingQuestionTaskIds() {
+  return Array.from(_pendingQuestions.keys());
 }
 
 // ── Get the progressCallback for a running task ────────────────────────────────
@@ -1349,4 +1513,4 @@ function getLiveRun(taskId) {
   return _activeRuns.get(taskId) || null;
 }
 
-module.exports = { init, execute, resume, answerQuestion, hasPendingQuestion, findPendingQuestionForAgent, getPendingPlanApprovals, cancel, getActiveCount, getActiveTaskIds, getProgressCallback, getLiveRun, setGatherAnswerCallback, setOnTaskComplete, _recordStepArtifact, _recordAllDoneArtifacts, _artifactSnapshot, _runArtifacts };
+module.exports = { init, execute, resume, answerQuestion, hasPendingQuestion, findPendingQuestionForAgent, getPendingPlanApprovals, getPendingQuestionTaskIds, cancel, getActiveCount, getActiveTaskIds, getProgressCallback, getLiveRun, setGatherAnswerCallback, setOnTaskComplete, _recordStepArtifact, _recordAllDoneArtifacts, _artifactSnapshot, _runArtifacts };

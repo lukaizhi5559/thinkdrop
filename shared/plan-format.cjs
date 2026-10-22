@@ -13,6 +13,8 @@
  *   ---
  *   id: plan_…        created: ISO      status: drafting|ready|running|done|failed|cancelled
  *   name: dot.syntax  plan_session_id:…  original_prompt: "…"   auth_bypass: []
+ *   refs: [{"type":"file|folder|plan","path":"…"}]   (JSON — context references
+ *   carried downstream to every task dispatch; the .md is the durable carrier)
  *   ---
  *   # Plan: <title>
  *   <description>
@@ -75,6 +77,37 @@ function setFrontmatterField(content, key, value) {
   return text.replace(/^(---\n[\s\S]*?)(\n---)/, `$1\n${key}: ${value}$2`);
 }
 
+// ── Context refs (frontmatter `refs:` JSON array) ────────────────────────────
+
+/**
+ * Parse the frontmatter `refs:` array.
+ * @returns {Array<{type:string,path:string,note?:string}>}
+ */
+function parseRefs(content) {
+  const fm = parseFrontmatter(content);
+  if (!fm || !fm.refs) return [];
+  try {
+    const parsed = JSON.parse(fm.refs);
+    return Array.isArray(parsed) ? parsed.filter(r => r && typeof r.path === 'string') : [];
+  } catch (_) {
+    return [];
+  }
+}
+
+/**
+ * Merge new refs into the frontmatter `refs:` array (dedupe by path).
+ */
+function upsertRefs(content, refs) {
+  const merged = parseRefs(content);
+  const seen = new Set(merged.map(r => r.path));
+  for (const r of (refs || [])) {
+    if (!r || typeof r.path !== 'string' || seen.has(r.path)) continue;
+    seen.add(r.path);
+    merged.push(r);
+  }
+  return setFrontmatterField(content, 'refs', JSON.stringify(merged));
+}
+
 // ── Task section parser ───────────────────────────────────────────────────────
 
 const _TASK_BLOCK_RE = /## Task (\d+)\s*[—\-–:]*\s*([^\n]*)\n([\s\S]*?)(?=## Task \d+|## |\n#[^#]|$)/g;
@@ -126,6 +159,7 @@ function parseTasks(content) {
       mode:      VALID_TASK_MODES.has((fields.mode || '').toLowerCase())
                    ? fields.mode.toLowerCase() : 'sequential',
       auth:      (fields.auth || 'unknown').trim(),
+      refs:      _parseAgents(fields.refs).map(p => ({ type: 'path', path: p })),
       stepsStatus: (fields['steps status'] || '').trim() || null,
       approval:  (fields.approval || '').trim().toLowerCase() === 'required' ? 'required' : null,
       doneWhen:  (fields['done when'] || '').trim() || null,
@@ -169,6 +203,9 @@ function serializeTask(task) {
   lines.push(`- **Mode**: ${task.mode || 'sequential'}`);
   lines.push(`- **Auth**: ${task.auth || 'unknown'}`);
   if (task.doneWhen) lines.push(`- **Done when**: ${task.doneWhen}`);
+  if (Array.isArray(task.refs) && task.refs.length) {
+    lines.push(`- **Refs**: ${task.refs.map(r => (typeof r === 'string' ? r : r.path)).filter(Boolean).join(' | ')}`);
+  }
   if (Array.isArray(task.steps) && task.steps.length) {
     lines.push('- **Steps**:');
     lines.push('```json');
@@ -184,9 +221,9 @@ function serializeTask(task) {
 
 /**
  * Build a fresh v2 plan document.
- * @param {Object} o - { id, title, description, originalPrompt, sessionId, tasks[] }
+ * @param {Object} o - { id, title, description, originalPrompt, sessionId, tasks[], refs[] }
  */
-function newPlanContent({ id, title, description, originalPrompt, sessionId, tasks }) {
+function newPlanContent({ id, title, description, originalPrompt, sessionId, tasks, refs }) {
   const now = new Date().toISOString();
   const safePrompt = String(originalPrompt || '').replace(/"/g, '\\"').slice(0, 300);
   const lines = [
@@ -198,6 +235,7 @@ function newPlanContent({ id, title, description, originalPrompt, sessionId, tas
     `original_prompt: "${safePrompt}"`,
     `plan_session_id: ${sessionId || 'unknown'}`,
     'auth_bypass: []',
+    `refs: ${JSON.stringify(Array.isArray(refs) ? refs : [])}`,
     '---',
     '',
     `# Plan: ${title}`,
@@ -373,6 +411,8 @@ module.exports = {
   parseFrontmatter,
   updateFrontmatterStatus,
   setFrontmatterField,
+  parseRefs,
+  upsertRefs,
   parseTasks,
   isTaskPlan,
   serializeTask,

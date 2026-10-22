@@ -154,7 +154,7 @@ function isLocalFileEdit(text, opts = {}) {
  * Netflix"). Used by intentGuesser; distinct from hasRelativeTimePhrase in
  * stategraph-module/parseDateRange.js which sanity-checks date-range output.
  */
-const EPISODIC_RE = /\b(yesterday|recently|last\s+(night|week|time|monday|tuesday|wednesday|thursday|friday|saturday|sunday)|this\s+(morning|afternoon)|earlier(\s+today)?|a\s+(few|couple)\s+(minutes|hours|days|weeks)\s+ago|the\s+other\s+day|what\s+was\s+i|was\s+i\s+(watching|listening|reading|playing|browsing|looking)|what\s+did\s+i|what\s+was\s+on\s+my\s+screen)\b/i;
+const EPISODIC_RE = /\b(yesterday|recently|last\s+(night|week|month|time|monday|tuesday|wednesday|thursday|friday|saturday|sunday)|this\s+(morning|afternoon)|earlier(\s+today)?|a\s+(few|couple)\s+(minutes|hours|days|weeks|months)\s+ago|\d+\s+(minutes|hours|days|weeks|months)\s+ago|the\s+other\s+day|what\s+was\s+i|was\s+i\s+(watching|listening|reading|playing|browsing|looking)|what\s+did\s+i|what\s+was\s+on\s+my\s+screen)\b/i;
 
 // ── Media / image requests ───────────────────────────────────────────────────
 
@@ -193,6 +193,17 @@ const ACTION_VERB_RE = /\b(open|close|send|post|share|create|make|new|delete|rem
  *  every site). Used as a fail-closed veto in webSearchExpress and a
  *  command_automate hint in the intent guesser. */
 const NAV_VERB_START_RE = /^\s*(?:goto|go\s+to|open|visit|navigate(?:\s+to)?|browse|launch|pull\s+up|bring\s+up|fire\s+up|log\s*(?:in|into)|sign\s*(?:in|into))\b/i;
+
+/** Departure verbs ANYWHERE in the prompt — the request sends the user
+ *  somewhere else ("go to gmail", "then take me to amazon", "leave this
+ *  page"). Unanchored counterpart to NAV_VERB_START_RE: mid-prompt navs
+ *  ("first check linkedin then go to github") count too. 'open' is
+ *  deliberately absent — "open the reply box" is on-page work; call sites
+ *  qualify 'open' by its object (destination = service/domain/site noun).
+ *  Consumers: resolveReferencesV2's on-screen referent binding (a departure
+ *  vetoes binding the live page), planHelpers' atomic-browser lint (a
+ *  url.first under no departure rewrites to tab-select on the bound tab). */
+const LEAD_AWAY_VERB_RE = /\b(?:goto|go\s+to|go\s+back\s+to|navigate(?:\s+to)?|head\s+(?:to|over\s+to|back\s+to)|take\s+me\s+to|visit|pull\s+up|bring\s+up|switch\s+to|launch|load|browse|fire\s+up|log\s*in(?:to)?|sign\s*in(?:to)?|leave\s+(?:this|the|these|for|to))\b/i;
 
 // ── Plan-template tokens ─────────────────────────────────────────────────────
 
@@ -630,6 +641,7 @@ module.exports = {
   NAMED_APP_RE,
   ACTION_VERB_RE,
   NAV_VERB_START_RE,
+  LEAD_AWAY_VERB_RE,
   stripUnresolvedTokens,
   PROFILE_QUERY_PATTERN,
   ALL_TIME_QUERY_PATTERN,

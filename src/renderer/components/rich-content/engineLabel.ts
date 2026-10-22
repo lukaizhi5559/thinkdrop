@@ -26,3 +26,19 @@ export function engineLabel(engine?: string | null): string | null {
   return ENGINE_LABELS[engine] || engine.replace(/[-_]+/g, ' ')
     .replace(/\b\w/g, c => c.toUpperCase());
 }
+
+/** Engine → domain for favicon lookup (Google s2/favicons). Null → magnifier glyph. */
+const ENGINE_DOMAINS: Record<string, string> = {
+  'google-serp': 'google.com',
+  'bing-serp': 'bing.com',
+  'bing-copilot': 'bing.com',
+  'duckduckgo': 'duckduckgo.com',
+  'searxng': 'searx.space',
+  'newsapi': 'newsapi.org',
+};
+
+export function engineFaviconDomain(engine?: string | null): string | null {
+  if (!engine || HIDDEN.has(engine)) return null;
+  if (engine.startsWith('brave-')) return 'brave.com';
+  return ENGINE_DOMAINS[engine] || null;
+}

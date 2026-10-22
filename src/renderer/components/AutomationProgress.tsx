@@ -136,6 +136,8 @@ interface GatherCredential {
   helpUrl: string | null;
   sensitive?: boolean;
   optional?: boolean;
+  // 'credential' = secret → keychain card; 'context' = transient question → QuestionCard
+  purpose?: string;
 }
 
 interface GatherConfirm {
@@ -2737,6 +2739,10 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
             helpUrl: data.helpUrl || null,
             sensitive: data.sensitive || false,
             optional: data.optional || false,
+            // Context-var asks ({{_ctx_*}}) render as a QuestionCard, not the
+            // keychain card — fall back to the varName prefix when the event
+            // predates `purpose`.
+            purpose: data.purpose || (/^_ctx_/.test(data.credentialKey || '') ? 'context' : 'credential'),
           });
           break;
 
@@ -3204,6 +3210,8 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
         if (text) {
           if (text.startsWith('\x00REPLACE\x00')) {
             setSynthesisAnswer(text.slice('\x00REPLACE\x00'.length));
+          } else if (text.startsWith('\x00')) {
+            return; // metadata sentinels (SOURCES/ITEMS/ENGINE/SEARCHING) — not text
           } else {
             setSynthesisAnswer(prev => prev + text);
           }
@@ -3240,6 +3248,13 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
           questions: data.questions,
           routeConfirmation: data.routeConfirmation || null,
         });
+      } else if (data?.batchId || data?.taskId) {
+        // Scoped deactivation (timeout/answer of ONE batch) — must not clear a
+        // different task's pending card. Only clear when the taskId and batchId
+        // match this instance's live batch.
+        if (taskId ? (data?.taskId && data.taskId !== taskId) : !!data?.taskId) return;
+        setQuestionBatch(prev => (data?.batchId && prev?.batchId && data.batchId !== prev.batchId) ? prev : null);
+        setGrillProcessing(false);
       } else {
         setQuestionBatch(null);
         setGrillProcessing(false);
@@ -4116,8 +4131,40 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
         </div>
       )}
 
+      {/* ── Gather: context question ({{_ctx_*}} / non-sensitive) — QuestionCard ──
+          Transient answers that feed _gatheredVars — NOT credentials. The old
+          keychain card mislabeled them and wrote them to the user's keychain. */}
+      {gatherCredential && gatherCredential.purpose === 'context' && (
+        <div className="mt-2">
+          <QuestionCard
+            batch={{
+              batchId: `gather_ctx_${gatherCredential.credentialKey}`,
+              questions: [{
+                id: 'ctx',
+                text: gatherCredential.question,
+                type: 'text',
+                options: [],
+                freeText: true,
+              }],
+            }}
+            onSubmit={(answers) => {
+              const answer = (answers['ctx'] || '').trim();
+              if (!answer) return;
+              ipcRenderer?.send('gather:credential', { key: gatherCredential.credentialKey, value: answer });
+              setGatherCredential(null);
+              setGatherCredentialValue('');
+            }}
+            onCancel={() => {
+              ipcRenderer?.send('gather:credential', { key: gatherCredential.credentialKey, value: '' });
+              setGatherCredential(null);
+              setGatherCredentialValue('');
+            }}
+          />
+        </div>
+      )}
+
       {/* ── Gather: credential input card ────────────────────────────────── */}
-      {gatherCredential && (
+      {gatherCredential && gatherCredential.purpose !== 'context' && (
         <div style={{ padding: '12px 14px', borderRadius: 10, backgroundColor: 'rgba(16,185,129,0.06)', border: '1px solid rgba(16,185,129,0.25)' }}>
           <div className="flex items-start gap-2" style={{ marginBottom: 8 }}>
             <div style={{ fontSize: '0.9rem', lineHeight: 1, marginTop: 1, flexShrink: 0 }}>🔑</div>
@@ -4228,12 +4275,12 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
         <QuestionCard
           batch={questionBatch}
           onSubmit={(answers) => {
-            ipcRenderer?.send('gather:answer_batch', { batchId: questionBatch.batchId, answers });
+            ipcRenderer?.send('gather:answer_batch', { batchId: questionBatch.batchId, taskId: taskId || undefined, answers });
             setQuestionBatch(null);
             setGrillProcessing(true);
           }}
           onCancel={() => {
-            ipcRenderer?.send('gather:answer_batch', { batchId: questionBatch.batchId, answers: {} });
+            ipcRenderer?.send('gather:answer_batch', { batchId: questionBatch.batchId, taskId: taskId || undefined, answers: {} });
             setQuestionBatch(null);
             setGrillProcessing(false);
           }}

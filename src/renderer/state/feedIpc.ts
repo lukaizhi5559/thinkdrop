@@ -96,7 +96,11 @@ export function installFeedIpc(store: FeedStore, ui: FeedIpcUi): () => void {
       const msgText = message?.text || message.payload?.text || '';
       if (msgText.startsWith('\x00ENGINE\x00')) {
         const engine = msgText.slice('\x00ENGINE\x00'.length).trim();
-        if (engine) s.set({ searchEngine: engine });
+        if (engine) s.set({ searchEngine: engine, searchPending: null });
+        return;
+      } else if (msgText.startsWith('\x00SEARCHING\x00')) {
+        const engine = msgText.slice('\x00SEARCHING\x00'.length).trim();
+        if (engine) s.set({ searchPending: engine });
         return;
       } else if (msgText.startsWith('\x00SOURCES\x00')) {
         try {
@@ -151,7 +155,7 @@ export function installFeedIpc(store: FeedStore, ui: FeedIpcUi): () => void {
       }
     } else if (message.type === 'done' || message.type === 'llm_stream_end') {
       const st = s.getState();
-      s.set({ isStreaming: false, isThinking: false });
+      s.set({ isStreaming: false, isThinking: false, searchPending: null });
       // Don't reset isSubmitting/isAutomationMode during automation — the plan
       // generation LLM stream ends before execution completes, which would
       // prematurely hide the cancel button. Automation cleanup is handled by
@@ -195,7 +199,7 @@ export function installFeedIpc(store: FeedStore, ui: FeedIpcUi): () => void {
           if (wasPlaceholder) s.internal.placeholderStream = false;
           s.internal.streamSegment = '';
           s.clearStream();
-          s.set({ resultItems: [], searchSources: [], searchEngine: null });
+          s.set({ resultItems: [], searchSources: [], searchEngine: null, searchPending: null });
         }
         s.internal.streamAcc = '';
       }
@@ -393,6 +397,11 @@ export function installFeedIpc(store: FeedStore, ui: FeedIpcUi): () => void {
     if (isRestored) return;
 
     // ── Feed: settle run card + placeholder answer ──────────────────────
+    // Task-scoped question batches (gather:question_batch) create a run card
+    // for ANY intent — a memory_retrieve task blocked on a question must show
+    // the card too — so the settle below can't be gated on command_automate
+    // alone, or the card would stay 'running' after the answer lands.
+    const _hasRunCard = s.getState().entries.some(e => e.kind === 'run' && e.taskId === data.taskId);
     const settlePendingAssistant = (text: string, items?: any[]) => {
       // The complete payload can lack items even when the comms task carries
       // them — fall back so the feed entry gets the same results grid.
@@ -444,12 +453,14 @@ export function installFeedIpc(store: FeedStore, ui: FeedIpcUi): () => void {
       return false;
     };
 
-    if (isCommandAutomate) {
+    if (isCommandAutomate || _hasRunCard) {
       // Patch (or append) the run card for this task — except on 'done': a
       // completed run leaves no card in the feed (the answer bubble carries the
       // result; details stay reachable via the Queue icon / Queue tab). Removal
       // matches by taskId only — never the recency fallback, which could eat a
       // neighbouring untagged card. Failed/cancelled keep their card + error.
+      // Non-automate intents only patch an existing card (created when a
+      // question batch or plan event surfaced it) — they don't append one.
       {
         const prev = s.getState().entries;
         if (status === 'done') {
@@ -458,7 +469,7 @@ export function installFeedIpc(store: FeedStore, ui: FeedIpcUi): () => void {
         } else {
           const runPatch = { status: status as any, error: data.error || null, planFile: data.planFile || undefined };
           let idx = prev.findIndex(e => e.kind === 'run' && e.taskId === data.taskId);
-          if (idx < 0) {
+          if (idx < 0 && isCommandAutomate) {
             for (let i = prev.length - 1; i >= 0; i--) {
               const e = prev[i];
               if (e.kind !== 'run') break;
@@ -467,14 +478,15 @@ export function installFeedIpc(store: FeedStore, ui: FeedIpcUi): () => void {
           }
           const exchangeId = s.exchangeForTask(data.taskId, data.prompt);
           let next;
-          if (idx < 0) {
+          if (idx < 0 && isCommandAutomate) {
             next = [...prev, { id: `fe_${Date.now()}_${s.internal.feedSeq++}`, ts: Date.now(), kind: 'run', taskId: data.taskId, title: data.prompt ? toDisplayPrompt(data.prompt) || 'Automation run' : 'Automation run', prompt: data.prompt || undefined, exchangeId, ...runPatch } as any];
-          } else {
+            s.set({ entries: next });
+          } else if (idx >= 0) {
             next = prev.slice();
             const prevRun = next[idx];
             next[idx] = { ...prevRun, taskId: (prevRun.kind === 'run' ? prevRun.taskId : undefined) || data.taskId, exchangeId: prevRun.exchangeId || exchangeId, ...runPatch } as any;
+            s.set({ entries: next });
           }
-          s.set({ entries: next });
         }
       }
       if (status === 'done' && data.answer) {
@@ -509,7 +521,7 @@ export function installFeedIpc(store: FeedStore, ui: FeedIpcUi): () => void {
       s.internal.streamAcc = '';
       s.internal.placeholderStream = false;
       s.internal.streamCompleted = true;
-      s.set({ streamText: '', resultItems: [], isStreaming: false, isTaskWorking: false });
+      s.set({ streamText: '', resultItems: [], isStreaming: false, isTaskWorking: false, searchPending: null });
       playDropSound();
     } else if (status === 'failed' || status === 'cancelled') {
       s.internal.taskStreamAcc.delete(data.taskId);
@@ -533,6 +545,21 @@ export function installFeedIpc(store: FeedStore, ui: FeedIpcUi): () => void {
       // Task deleted from Queue — drop its feed card too or it dangles as a
       // static fallback with no live data behind it.
       s.set({ entries: s.getState().entries.filter(e => !(e.kind === 'run' && e.taskId === data.taskId)) });
+    }
+  };
+
+  // ── gather:question_batch — a task-scoped question needs a feed surface ──
+  // Batch questions travel their own channel (not automation:progress), so the
+  // lazy ensureRunEntry in UnifiedOverlay never saw them: a task could be
+  // blocked on a QuestionCard in its queue card while the Results feed showed
+  // nothing — the app looked stalled. Creating the run entry here mounts the
+  // same task-scoped QueueTaskCard (with the live question) in the feed.
+  const handleQuestionBatch = (data: any) => {
+    const taskId = data?.taskId;
+    if (!taskId) return;
+    if (s.getState().commsTasks.some(t => t.id === taskId)) {
+      s.ensureRunEntry(taskId, s.internal.taskPrompts.get(taskId) || data.prompt || undefined);
+      ui.markUnread('results');
     }
   };
 
@@ -561,6 +588,7 @@ export function installFeedIpc(store: FeedStore, ui: FeedIpcUi): () => void {
   ipcRenderer.on('task:complete', handleTaskComplete, token);
   ipcRenderer.on('task:removed', handleTaskRemoved, token);
   ipcRenderer.on('automation:progress', handleAutomationProgress, token);
+  ipcRenderer.on('gather:question_batch', handleQuestionBatch, token);
 
   return () => {
     ipcRenderer.removeListenerByToken('ws-bridge:message', token);
@@ -572,5 +600,6 @@ export function installFeedIpc(store: FeedStore, ui: FeedIpcUi): () => void {
     ipcRenderer.removeListenerByToken('task:complete', token);
     ipcRenderer.removeListenerByToken('task:removed', token);
     ipcRenderer.removeListenerByToken('automation:progress', token);
+    ipcRenderer.removeListenerByToken('gather:question_batch', token);
   };
 }

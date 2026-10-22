@@ -427,11 +427,18 @@ async function resolveTab(sessionId, url, opts = {}) {
   const bound = sessionTabs.get(key);
   if (bound != null) {
     const t = await getTab(bound);
-    if (t && !/^about:|chrome:|chrome-extension:|edge:/i.test(t.url || '')) return t.id;
+    const _boundBlank = !!t && /^about:|chrome:|chrome-extension:|edge:/i.test(t.url || '');
+    // A strict nav (explicit url) may only reuse the bound tab when the tab
+    // is already on the url's host — driving a service-bound tab to a foreign
+    // site destroys the page the user is looking at (observed: ext:amazon_agent
+    // bound to the baby-clothes results tab was navigated to google.com by a
+    // mis-planned search step). Foreign navs fall through to adoption/create.
+    const _boundHostMismatch = strict && t && !_boundBlank && !tabMatches(t, hints, true);
+    if (t && !_boundBlank && !_boundHostMismatch) return t.id;
     if (!t) { await unbindSession(key); }
-    // Bound tab is dead or sitting on about:blank (e.g. a prior step minted a
-    // fresh tab and stole the binding) — try to re-adopt an open tab matching
-    // the session's host hints before falling back to the blank tab.
+    // Bound tab is dead, sitting on about:blank (e.g. a prior step minted a
+    // fresh tab and stole the binding), or off-host for a strict nav — try to
+    // re-adopt an open tab matching the target's host before falling back.
     try {
       const _cands = await chrome.tabs.query({});
       const _hit = _cands.find(c => c.id !== bound && tabMatches(c, hints, strict));
@@ -441,7 +448,10 @@ async function resolveTab(sessionId, url, opts = {}) {
         return _hit.id;
       }
     } catch (_) {}
-    if (t) return t.id;
+    // In-page commands (history.back, reload) must not land on a stale
+    // about:blank binding — fall through to adoption instead. A foreign-host
+    // nav likewise must not reuse the off-host bound tab.
+    if (t && !_boundHostMismatch && !(opts.noCreate && _boundBlank)) return t.id;
   }
   // Last-resort: a live tab already bound to another ext session. Worker
   // death/suspension can drop this session's own binding — a follow-up probe
@@ -481,18 +491,39 @@ async function resolveTab(sessionId, url, opts = {}) {
     }
     const fb = await fallbackBoundTab();
     if (fb) { await bindSession(key, fb.id); sendEvent('tabAdopted', { sessionId, tabId: fb.id, url: fb.url, title: fb.title, via: 'fallback', policy }); return fb.id; }
+    if (opts.noCreate) throw new Error(`no live tab for session '${sessionId}' — refusing to mint one for an in-page action`);
     return createBoundTab(key, sessionId, url, false);
   }
 
-  // plain → front-or-new: only the ACTIVE tab may be adopted.
+  // plain → front-or-new: the ACTIVE tab is the preferred adoption target.
   const [active] = await chrome.tabs.query({ active: true, lastFocusedWindow: true, windowType: 'normal' });
   if (active && tabMatches(active, hints, strict)) {
     await bindSession(key, active.id);
     sendEvent('tabAdopted', { sessionId, tabId: active.id, url: active.url, title: active.title, via: 'active-match', policy });
     return active.id;
   }
+  // Named sessions carry host hints — a matching tab in ANY window is this
+  // session's page. Adopt it before borrowing another session's bound tab or
+  // minting a blank one (observed: a dead ext:amazon_agent binding minted
+  // about:blank while the user's baby-clothes results tab sat unfocused —
+  // the active-tab check couldn't see it and every probe ran on the blank).
+  // Gated on real hints so generic names can't fuzzy-adopt unrelated tabs.
+  if (hints.hosts.length || (hints.name || '').replace(/\s/g, '').length >= 4) {
+    try {
+      const _all = await chrome.tabs.query({});
+      const _match = _all
+        .filter(c => tabMatches(c, hints, strict))
+        .sort((a, b) => (b.lastAccessed || 0) - (a.lastAccessed || 0))[0];
+      if (_match) {
+        await bindSession(key, _match.id);
+        sendEvent('tabAdopted', { sessionId, tabId: _match.id, url: _match.url, title: _match.title, via: 'adopt', policy });
+        return _match.id;
+      }
+    } catch (_) {}
+  }
   const fb = await fallbackBoundTab();
   if (fb) { await bindSession(key, fb.id); sendEvent('tabAdopted', { sessionId, tabId: fb.id, url: fb.url, title: fb.title, via: 'fallback', policy }); return fb.id; }
+  if (opts.noCreate) throw new Error(`no live tab for session '${sessionId}' — refusing to mint one for an in-page action`);
   return createBoundTab(key, sessionId, url, !!opts.activate);
 }
 
@@ -501,6 +532,16 @@ async function createBoundTab(key, sessionId, url, active) {
   await bindSession(key, tab.id);
   sendEvent('tabCreated', { sessionId, tabId: tab.id, url: url || 'about:blank', title: tab.title, active });
   return tab.id;
+}
+
+// Bring a tab (and its window) to the foreground — the shared "present to
+// the user" helper for navigate-activate and tab-select.
+async function activateTab(tabId) {
+  try { await chrome.tabs.update(tabId, { active: true }); } catch (_) {}
+  try {
+    const t = await chrome.tabs.get(tabId);
+    if (t?.windowId != null) await chrome.windows.update(t.windowId, { focused: true });
+  } catch (_) {}
 }
 
 // ---------------------------------------------------------------------------
@@ -749,18 +790,37 @@ async function handleCmd(msg) {
   }
 }
 
+// Actions that may legitimately create a tab when no binding exists.
+// Everything else acts on an EXISTING page and must fail rather than mint an
+// about:blank (observed: a dead ext:amazon_agent binding minted about:blank —
+// every probe "succeeded" on the empty page, then the agent navigated the
+// blank tab to an unrelated site). A caller can still opt a read back in
+// with an explicit noCreate:false.
+const _TAB_CREATING_ACTIONS = new Set(['navigate', 'goto', 'tab-select', 'tab-new']);
+
 async function dispatch(sessionId, action, args, timeoutMs) {
+  if (!_TAB_CREATING_ACTIONS.has(action) && args && args.noCreate !== false) {
+    args = { ...args, noCreate: true };
+  }
   switch (action) {
     case 'navigate':
     case 'goto': {
       // Resolve adopts an existing tab for the URL's host when available
       const tabId = await resolveTab(sessionId, args.url, args);
       const tab = await getTab(tabId);
-      if (tab && tab.url === args.url) return { ok: true, tabId, url: tab.url, reused: true };
+      if (tab && tab.url === args.url) {
+        if (args.activate) await activateTab(tabId);
+        return { ok: true, tabId, url: tab.url, reused: true };
+      }
       const done = waitForTabComplete(tabId, timeoutMs || 30000);
       navInProgress.add(tabId);
       await chrome.tabs.update(tabId, { url: args.url });
       try { await done; } finally { navInProgress.delete(tabId); }
+      // activate:true means "present this page to the user" — a bound/reused
+      // tab must come to front, not navigate silently in the background
+      // (observed: url-first steps with activate updated the bound tab's URL
+      // but left it buried; the user never saw the requested page).
+      if (args.activate) await activateTab(tabId);
       const t = await getTab(tabId);
       return { ok: true, tabId, url: t?.url || args.url };
     }
@@ -975,14 +1035,17 @@ async function dispatch(sessionId, action, args, timeoutMs) {
       return { ok: true, tabId, timedOut: true };
     }
 
-    case 'back':    { const t = await resolveTab(sessionId); await evaluate(t, 'history.back()'); return { ok: true, tabId: t }; }
-    case 'forward': { const t = await resolveTab(sessionId); await evaluate(t, 'history.forward()'); return { ok: true, tabId: t }; }
-    case 'reload':  { const t = await resolveTab(sessionId); await chrome.tabs.reload(t); return { ok: true, tabId: t }; }
+    // History/reload act on an EXISTING page — minting a fresh tab for them
+    // is never right (observed: "go back for me on this page" opened a new
+    // Amazon tab). noCreate fails instead of creating.
+    case 'back':    { const t = await resolveTab(sessionId, null, { ...args, noCreate: true }); await evaluate(t, 'history.back()'); return { ok: true, tabId: t }; }
+    case 'forward': { const t = await resolveTab(sessionId, null, { ...args, noCreate: true }); await evaluate(t, 'history.forward()'); return { ok: true, tabId: t }; }
+    case 'reload':  { const t = await resolveTab(sessionId, null, { ...args, noCreate: true }); await chrome.tabs.reload(t); return { ok: true, tabId: t }; }
 
     case 'close': {
       await registryHydrated;
       const { key } = parseSession(sessionId);
-      const tabId = sessionTabs.get(key) != null ? sessionTabs.get(key) : await resolveTab(sessionId).catch(() => null);
+      const tabId = sessionTabs.get(key) != null ? sessionTabs.get(key) : await resolveTab(sessionId, null, { ...args, noCreate: true }).catch(() => null);
       if (tabId != null) {
         await unbindSession(key);
         try { await chrome.tabs.remove(tabId); } catch (_) {}
@@ -1040,8 +1103,7 @@ async function dispatch(sessionId, action, args, timeoutMs) {
           _t = await getTab(_tid);
         }
       }
-      await chrome.tabs.update(_tid, { active: true });
-      try { const _t2 = await chrome.tabs.get(_tid); await chrome.windows.update(_t2.windowId, { focused: true }); } catch (_) {}
+      await activateTab(_tid);
       return { ok: true, tabId: _tid, url: _t?.url || null };
     }
 

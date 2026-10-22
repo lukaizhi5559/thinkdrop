@@ -156,6 +156,7 @@ function _releaseControlLock(reason) {
   if (!controlLock) return;
   controlLock = null;
   _sendGhost({ type: 'control_unlock' });
+  _dismissCancelAffordance();
   _applyScreenClickThrough();
   _updateEscShortcut();
 }
@@ -890,6 +891,27 @@ function _syncWebSearchState(attempt = 1) {
   req.end();
 }
 
+// The voice-bridge's hidden Chrome worker takes seconds to launch — warm it at
+// startup (resident, SR primed, NOT listening) so the first ROpt-hold PTT is
+// instant. Polls /voice.session.status until the service answers, then fires
+// the 'warm' session mode. Skipped once a real session is active.
+function _warmVoiceWorker(attempt = 1) {
+  const svcUrl = process.env.VOICE_SERVICE_URL || 'http://127.0.0.1:3006';
+  const url = new URL('/voice.session.status', svcUrl);
+  const retry = () => { if (attempt < 15) setTimeout(() => _warmVoiceWorker(attempt + 1), 2000); };
+  const req = http.get({ hostname: url.hostname, port: url.port, path: url.pathname, timeout: 2000 }, (res) => {
+    res.resume();
+    if (res.statusCode !== 200) { retry(); return; }
+    if (_voiceSessionActive) return;
+    _postJson(new URL('/voice.session.start', svcUrl), { mode: 'warm' })
+      .then(() => console.log('[Voice] Warm start — worker resident, SR primed, not listening'))
+      .catch(err => console.warn('[Voice] Warm start failed:', err.message));
+  });
+  req.on('timeout', () => { req.destroy(); });
+  req.on('error', retry); // voice-service still booting — keep polling
+  req.end();
+}
+
 // Active progressCallback for the currently running stategraph execution.
 // Set whenever an execution starts, cleared when it ends. Used by the overlay
 // server /agent-turn endpoint to forward real-time agent turn events from the
@@ -1297,12 +1319,29 @@ function startOverlayControlServer() {
     if (req.url === '/voice.event') {
       let body = '';
       req.on('data', chunk => { body += chunk; });
-      req.on('end', () => {
+      req.on('end', async () => {
         try {
           const evt = JSON.parse(body || '{}');
           switch (evt.type) {
             case 'interim':
               safeSendUnified('voice:interim', { text: evt.text || '', lang: evt.lang });
+              break;
+            case 'ptt-final': {
+              // ROpt-hold PTT transcript — PromptInputBar fills + auto-submits.
+              // An armed-confirm capture may still be in flight (AX → menu-copy
+              // → synthetic ⌘C ladder); drain it so the chip lands in
+              // highlightsStore before the transcript triggers the submit.
+              const waitStart = Date.now();
+              while (_captureInProgress && Date.now() - waitStart < 1500) {
+                await new Promise(r => setTimeout(r, 50));
+              }
+              const waited = Date.now() - waitStart;
+              if (waited > 60) console.log(`[PTT] drained in-flight selection capture before transcript relay (${waited}ms)`);
+              safeSendUnified('ptt:transcript', { transcript: evt.text || '', detectedLanguage: evt.lang || 'en' });
+              break;
+            }
+            case 'ptt-interim':
+              safeSendUnified('ptt:interim', { text: evt.text || '' });
               break;
             case 'level':
               safeSendUnified('voice:level', { level: evt.level || 0 });
@@ -1320,6 +1359,7 @@ function startOverlayControlServer() {
               _sendGhostChannel('voice:state', { state, reason: evt.reason });
               if (state === 'disconnected' || state === 'error') {
                 _voiceSessionActive = false;
+                _voiceMuted = false;
                 safeSendUnified('voice:session', { active: false, reason: evt.reason });
               }
               break;
@@ -1354,6 +1394,13 @@ function startOverlayControlServer() {
               safeSendUnified('voice:sleep-state', evt);
               if (evt.sleeping && !dropSessionActive && (!ghostLayerWindow || ghostLayerWindow.isDestroyed() || !ghostLayerWindow.isVisible())) showGhostLayer();
               _sendGhostChannel('voice:sleep-state', evt);
+              break;
+            case 'mute-state':
+              // ROpt-tap mute — GhostLayer pill + VoiceButton tint.
+              _voiceMuted = !!evt.muted;
+              safeSendUnified('voice:mute-state', { muted: _voiceMuted });
+              if (_voiceMuted && !dropSessionActive && (!ghostLayerWindow || ghostLayerWindow.isDestroyed() || !ghostLayerWindow.isVisible())) showGhostLayer();
+              _sendGhostChannel('voice:mute-state', { muted: _voiceMuted });
               break;
             case 'mode':
               // Server-side session mode change (spoken "talk mode", or the
@@ -1565,7 +1612,7 @@ function startOverlayControlServer() {
       req.on('data', chunk => { body += chunk; });
       req.on('end', () => {
         try {
-          const { taskId, prompt, agentId, source, originalPrompt, detectedLanguage, guessedIntent, sessionId: handoffSessionId, userApproved, thoughtContext, planId, planTaskNum, planTask, preflightAuthBypass, deterministicPlan, priorResults, capabilityReason, routeDecision } = JSON.parse(body || '{}');
+          const { taskId, prompt, agentId, source, originalPrompt, detectedLanguage, guessedIntent, sessionId: handoffSessionId, userApproved, thoughtContext, planId, planTaskNum, planTask, preflightAuthBypass, deterministicPlan, priorResults, refs, capabilityReason, routeDecision } = JSON.parse(body || '{}');
           console.log(`[CommsGraph] Handoff received — task=${taskId} agent=${agentId || 'auto'} source=${source} guessedIntent=${guessedIntent || 'null'} session=${handoffSessionId || 'none'}${thoughtContext?.id ? ` thought=${thoughtContext.id}` : ''}`);
 
           // Emit task:created BEFORE starting the stategraph run so the queue card
@@ -1599,6 +1646,8 @@ function startOverlayControlServer() {
             thoughtContext: thoughtContext || null,
             guessedIntent: guessedIntent ?? null,
             planTask: planTask === true,
+            planId: planId || null,
+            planTaskNum: planTaskNum || null,
             preflightAuthBypass: preflightAuthBypass || null,
             // Pre-generated task steps → stategraph _deterministicPlan skips
             // the LLM planning pass (planning.cjs generated them at draft time).
@@ -1607,6 +1656,9 @@ function startOverlayControlServer() {
             // Upstream plan-task results — seeded into the child run so
             // cross-task {{synthesisAnswer}}/prior-output refs resolve to data.
             _priorResults: Array.isArray(priorResults) && priorResults.length ? priorResults : null,
+            // Context refs — plan frontmatter refs + the plan file itself +
+            // per-task refs; task.agent resolves them into its prompt.
+            _refs: Array.isArray(refs) && refs.length ? refs : null,
             // RouteDecision envelope — comms-graph's single upstream
             // classification; resolveReferencesV2 consumes it in place of
             // running classifyTask again.
@@ -1628,6 +1680,34 @@ function startOverlayControlServer() {
           res.writeHead(200).end(JSON.stringify({ ok: true, taskId }));
         } catch (err) {
           console.error('[CommsGraph] Handoff error:', err.message);
+          res.writeHead(500).end(JSON.stringify({ error: err.message }));
+        }
+      });
+      return;
+    }
+
+    // ── POST /plan.run — comms-graph loop-back escalation (needs_plan /
+    // task.agent plan_update) finished drafting/revising and wants the plan
+    // executed. Same path as a conversational "run it" — the plan-check card
+    // fires autoStart and begins once every checklist item clears; auth and
+    // Approval:required gates still hold.
+    if (req.url === '/plan.run') {
+      let body = '';
+      req.on('data', chunk => { body += chunk; });
+      req.on('end', () => {
+        try {
+          const evt = JSON.parse(body || '{}');
+          console.log(`[PlanRunner] /plan.run — ${evt.planId || 'unknown'}${evt.escalated ? ' (escalated)' : ''}`);
+          const planFile = evt.planFile
+            || (evt.planId ? path.join(os.homedir(), '.thinkdrop', 'plans', `${evt.planId}.md`) : null);
+          if (planFile && fs.existsSync(planFile)) {
+            _emitPlanCheck(evt.planId || null, planFile, { autoStart: true, surface: true })
+              .catch(err => console.warn('[PlanRunner] /plan.run check failed:', err.message));
+          } else {
+            console.warn(`[PlanRunner] /plan.run — no plan file for ${evt.planId || 'unknown'}`);
+          }
+          res.writeHead(200).end(JSON.stringify({ ok: true }));
+        } catch (err) {
           res.writeHead(500).end(JSON.stringify({ error: err.message }));
         }
       });
@@ -2408,6 +2488,29 @@ function startOverlayControlServer() {
       return;
     }
 
+    // GET /overlay/bounds — the screen rect(s) of every visible ThinkDrop
+    // window, converted to screenshot pixel space. The monitor masks these
+    // rects before OCR so overlay chrome can never taint an episodic capture
+    // (the old text-signature filter ended up flagging ~every capture).
+    if (req.method === 'GET' && req.url === '/overlay/bounds') {
+      try {
+        const rects = [];
+        for (const win of [unifiedWindow, resultsWindow, promptCaptureWindow, ghostLayerWindow]) {
+          if (!win || win.isDestroyed() || !win.isVisible()) continue;
+          const b = win.getBounds(); // DIP
+          const display = screen.getDisplayMatching(b);
+          const px = screen.dipToScreenRect(null, b); // uses primary-point origin
+          rects.push({ x: px.x, y: px.y, w: px.width, h: px.height, scale: display.scaleFactor });
+        }
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ ok: true, rects }));
+      } catch (e) {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ ok: false, rects: [], error: e.message }));
+      }
+      return;
+    }
+
     // POST /overlay/suppress-esc — app.agent is about to send a synthetic
     // Escape (find-bar close, dialog dismiss). Unregister the global shortcut
     // briefly so the keystroke actually reaches the app instead of triggering
@@ -2716,6 +2819,7 @@ function startOverlayControlServer() {
   server.listen(OVERLAY_CONTROL_PORT, '127.0.0.1', () => {
     console.log(`[Overlay Control] HTTP server listening on http://127.0.0.1:${OVERLAY_CONTROL_PORT}`);
     _syncWebSearchState();
+    _warmVoiceWorker();
   });
 
   server.on('error', (err) => {
@@ -2814,6 +2918,76 @@ function closeActiveBrowserSessions(reason = 'cancel') {
   _pendingPreflightPrompt = null;
   currentBrowserSessionId = null;
   currentBrowserUrl = null;
+}
+
+/**
+ * Full cancel of a running automation — the old automation:cancel IPC body,
+ * extracted so the LOpt-hold→ROpt-tap gesture hits the same path as the button.
+ */
+function _cancelAutomationRun() {
+  console.log('🛑 [Automation] Cancel requested by user');
+  if (activeAbortController) {
+    activeAbortController.abort();
+    activeAbortController = null;
+  }
+  // Comms→stategraph handoff runs hold their own AbortControllers — the serial
+  // abort above never reaches them, so a cancel (button or ⌥L+⌥R) during the
+  // handed-off phase did nothing while the run kept going.
+  try {
+    const handoff = require('./handoffRunner');
+    // Live runs + tasks parked at plan-approval or waiting-for-input — cancel()
+    // tears down all three lanes; _cancellableTaskIds() merges them.
+    for (const tid of _cancellableTaskIds()) {
+      console.log(`🛑 [Automation] Cancelling handoff run: ${tid}`);
+      try { handoff.cancel(tid); } catch (_) {}
+    }
+  } catch (_) {}
+  try {
+    const planRunner = require('./planRunner');
+    const live = (planRunner.listRuns?.() || []).find(r => r.status === 'running');
+    if (live) {
+      console.log(`🛑 [Automation] Cancelling live plan run: ${live.planId}`);
+      planRunner.cancelPlan(live.planId);
+    }
+  } catch (_) {}
+  closeActiveBrowserSessions('cancel');
+  // Tell the command-service to abort all in-flight command.automate runs
+  // AND forcibly kill the playwright-cli daemon + Chrome processes. This is
+  // the reliable fallback: even if graceful signal propagation races (the
+  // playwright agent is mid-action), the processes are killed so the browser
+  // actually stops and no orphan Chrome holds the profile lock.
+  const cancelBody = JSON.stringify({});
+  const cancelReq = http.request({
+    hostname: '127.0.0.1', port: 3007, path: '/automation.cancel', method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(cancelBody) },
+    timeout: 8000,
+  }, (res) => { res.resume(); });
+  cancelReq.on('error', () => {});
+  cancelReq.on('timeout', () => { cancelReq.destroy(); });
+  cancelReq.write(cancelBody);
+  cancelReq.end();
+  // Keep newly built agents that were never authenticated — the user cancelled
+  // before signing in, but the agent descriptor is still valid. Keeping it lets
+  // a retry skip the build step and go straight to auth. (Previously these were
+  // deleted, forcing a full rebuild on every retry.)
+  if (_pendingNewlyBuiltAgents.size > 0) {
+    console.log(`📋 [Automation] Keeping ${_pendingNewlyBuiltAgents.size} newly built agent(s) for retry: ${[..._pendingNewlyBuiltAgents].join(', ')}`);
+  }
+  _pendingNewlyBuiltAgents.clear();
+  // Safety: a cancel may interrupt a capture-heavy app.agent step mid-session,
+  // so tear down the drop session and bring the panel back explicitly (the
+  // cancel all_done below uses safeSend, which bypasses the drop driver).
+  _restorePanelFromDrop();
+  if (resultsWindow && !resultsWindow.isDestroyed()) {
+    safeSend(resultsWindow, 'automation:progress', { type: 'all_done', cancelled: true, completedCount: 0, totalCount: 0 });
+  }
+  if (promptCaptureWindow && !promptCaptureWindow.isDestroyed()) {
+    safeSend(promptCaptureWindow, 'automation:progress', { type: 'all_done', cancelled: true, completedCount: 0, totalCount: 0 });
+  }
+  // Send to unifiedWindow so cancel button resets to send icon
+  if (unifiedWindow && !unifiedWindow.isDestroyed()) {
+    safeSend(unifiedWindow, 'automation:progress', { type: 'all_done', cancelled: true, completedCount: 0, totalCount: 0 });
+  }
 }
 let _pendingPreflightPromptsByTask = new Map(); // Per-task pending preflight prompts for handoff tasks: taskId → { prompt, agentId, source, originalPrompt, sessionId }
 let _pendingNewlyBuiltAgents = new Set(); // Tracks newly built agents pending auth — retained on cancel for retry
@@ -3295,12 +3469,14 @@ let sessionFileCreations = []; // Track all file creation operations in current 
 let pendingGatherResolve = null;
 let pendingGatherQuestion = null; // Stored so we can re-send gather:pending on window re-activation
 
-// ── Grill-Me Phase C: batched question resolver ──────────────────────────────
+// ── Grill-Me Phase C: batched question resolvers (per-batch map) ─────────────
 // Parallel to pendingGatherResolve but for the new batched question flow.
 // Set when gatherPlanContext emits a batch of questions, resolved when the
 // renderer sends gather:answer_batch with a map of { questionId: answer }.
-let pendingGatherBatchResolve = null;
-let pendingGatherBatchData = null; // { batchId, questions } stored for re-send on window re-activation
+// Keyed by batchId — a module-level singleton let a second concurrent handoff
+// task overwrite the first task's resolve, orphaning its promise forever while
+// its stall watchdog was suspended (tasks parked 'running' for hours).
+const pendingGatherBatches = new Map(); // batchId → { resolve, data, timer }
 
 // gatherAnswerCallback: waits for user to type/speak an answer in StandalonePromptCapture.
 // NOTE: the actual ipcMain.on('gather:answer') listener is registered ONCE at module level
@@ -3338,6 +3514,12 @@ function _makeGatherCredentialCallback(progressCallback) {
         if (key !== credentialKey) return; // not our credential
         ipcMain.off('gather:credential', handleCredSubmit);
         if (!value) { pendingCredResolve({ stored: false, value: null }); return; }
+        // Context-var answers ({{_ctx_*}} tokens, non-sensitive questions) are
+        // transient — they feed _gatheredVars, not the keychain. Skip storage.
+        if (_opts.noStore) {
+          pendingCredResolve({ stored: false, value: String(value) });
+          return;
+        }
         try {
           const normalizedKey = _normalizeCredentialKey(credentialKey);
           if (safeStorage.isEncryptionAvailable()) {
@@ -3379,12 +3561,25 @@ function gatherAnswerCallback(questionOrBatch) {
     const { batchId, questions, routeConfirmation } = questionOrBatch;
     const batchTaskId = questionOrBatch.taskId || null;
     return new Promise((resolve) => {
-      pendingGatherBatchResolve = resolve;
-      pendingGatherBatchData = { batchId, questions, routeConfirmation: routeConfirmation || null, taskId: batchTaskId };
-      console.log(`[GatherContext] Waiting for batch answers (batchId=${batchId}, ${questions?.length || 0} questions)…`);
+      const key = batchId || `batch_${Date.now()}`;
+      // A re-asked batchId (or a collision) must not orphan the earlier wait —
+      // resolve it empty so its task resumes instead of hanging.
+      const stale = pendingGatherBatches.get(key);
+      if (stale) {
+        clearTimeout(stale.timer);
+        try { stale.resolve({}); } catch (_) {}
+        pendingGatherBatches.delete(key);
+      }
+      const entry = {
+        resolve,
+        data: { batchId: key, questions, routeConfirmation: routeConfirmation || null, taskId: batchTaskId },
+        timer: null,
+      };
+      pendingGatherBatches.set(key, entry);
+      console.log(`[GatherContext] Waiting for batch answers (batchId=${key}, task=${batchTaskId || 'global'}, ${questions?.length || 0} questions)…`);
       safeSendUnified('gather:question_batch', {
         active: true,
-        batchId,
+        batchId: key,
         questions: questions || [],
         routeConfirmation: routeConfirmation || null,
         // Task-scoped batches render inside the feed's QueueTaskCard
@@ -3396,13 +3591,13 @@ function gatherAnswerCallback(questionOrBatch) {
         questions?.[0]?.question || questions?.[0]?.text || 'I have a few questions before I start',
         'results'
       );
-      // 10-minute timeout
-      setTimeout(() => {
-        if (pendingGatherBatchResolve === resolve) {
-          console.warn('[GatherContext] Timed out waiting for batch answers — skipping');
-          pendingGatherBatchResolve = null;
-          pendingGatherBatchData = null;
-          safeSendUnified('gather:question_batch', { active: false, batchId: null, questions: null });
+      // 10-minute timeout — scoped to THIS batch so a timeout can't clear
+      // another task's pending card.
+      entry.timer = setTimeout(() => {
+        if (pendingGatherBatches.get(key) === entry) {
+          pendingGatherBatches.delete(key);
+          console.warn(`[GatherContext] Timed out waiting for batch answers (batchId=${key}) — skipping`);
+          safeSendUnified('gather:question_batch', { active: false, batchId: key, questions: null, taskId: batchTaskId });
           _postThoughtInput('User did not answer the clarifying questions — they went unanswered until timeout.');
           resolve({});
         }
@@ -4700,6 +4895,25 @@ let _selectionArmGen = 0;            // bumped on every arm — stale async capt
 let _lastExternalKeyDownAt = 0;      // last keydown outside our overlay — delays synthetic copy
 let _synthKeyUntil = 0;              // uiohook sees our own synthetic keys — ignore them
 
+// ── Option-key gesture state ────────────────────────────────────────────────
+// uiohook reports modifier press/release as keydown/keyup. ROpt = action key
+// (hold → PTT, double-tap → overlay, press-while-armed → confirm); LOpt =
+// cancel key (hold → ghost affordance, ROpt tap → cancel / during PTT → abort).
+let _roptDownAt = 0;
+let _loptDownAt = 0;
+let _roptHoldTimer = null;
+let _loptArmTimer = null;
+let _roptPendingTapTimer = null;   // single-tap waits out the double-tap window
+let _voiceMuted = false;           // ROpt-tap voice mute state (mute-state relay)
+let _roptOtherKey = false;           // non-modifier key seen while ROpt held — aborts tap/hold
+let _roptConsumed = false;           // this ROpt press already acted (confirm/cancel/chord)
+let _roptLastTapAt = 0;
+let _pttActive = false;              // ROpt-hold PTT in flight
+let _cancelAffordance = false;       // LOpt-hold affordance armed on the GhostLayer
+const ROPT_HOLD_MS = 200;
+const ROPT_DTAP_MS = 350;
+const LOPT_ARM_MS = 150;
+
 const SELECTION_ARM_TTL_MS = 90000;
 
 // SelectCtx logging that also lands in a file — stdout doesn't reliably reach
@@ -5357,6 +5571,230 @@ function _createCopyFile(text) {
  * Start the global selection monitor (uiohook-napi). Detection only — arms the
  * selection-context state; the clipboard is never written here.
  */
+// ── Unified overlay show/hide — driven by the ROpt double-tap gesture ───────
+function showUnifiedOverlay() {
+  if (!unifiedWindow || unifiedWindow.isDestroyed()) return;
+  // Re-anchor to bottom-right, preserving current width + content height.
+  // The renderer owns collapsing to UNIFIED_COLLAPSED_HEIGHT when content is
+  // empty (via useDynamicHeight), so we just re-anchor without forcing a size.
+  _userHasMovedPanel = false;
+  const bounds = unifiedWindow.getBounds();
+  applyUnifiedBounds({ contentHeight: bounds.height, width: bounds.width, animate: false });
+  unifiedWindow.show();
+  unifiedWindow.focus();
+  startClipboardMonitoring(true);
+  // Re-send gather:pending if a gather answer is still in flight — the previous
+  // hide/show cycle would have reset the renderer's gatherPending state.
+  if (pendingGatherResolve) {
+    safeSendUnified('gather:pending', { active: true, question: pendingGatherQuestion });
+  }
+  for (const [, entry] of pendingGatherBatches) {
+    safeSendUnified('gather:question_batch', {
+      active: true,
+      batchId: entry.data.batchId,
+      questions: entry.data.questions,
+      routeConfirmation: entry.data.routeConfirmation || null,
+      taskId: entry.data.taskId || null,
+    });
+  }
+}
+
+function toggleUnifiedOverlay() {
+  if (!unifiedWindow) return;
+  if (unifiedWindow.isVisible()) {
+    _intentionalHide = true; // Flag so hide handler knows this is user-initiated
+    unifiedWindow.hide();
+    stopClipboardMonitoring();
+  } else {
+    showUnifiedOverlay();
+    console.log('[Unified Window] Activated via Right-Option gesture.');
+  }
+}
+
+// ── PTT via the voice-bridge (webkitSpeechRecognition worker) ───────────────
+function _pttServiceUrl(path) {
+  return new URL(path, process.env.VOICE_SERVICE_URL || 'http://127.0.0.1:3006');
+}
+
+function pttStart() {
+  if (_pttActive) return;
+  _pttActive = true;
+  console.log('🎙️ [PTT] ROpt hold — start (voice-bridge SR)');
+  _postJson(_pttServiceUrl('/voice.ptt.start'), {}).catch(err =>
+    console.warn('[PTT] voice.ptt.start failed:', err.message));
+  safeSendUnified('voice:ptt-start');
+  // PTT fired with the panel hidden — surface it so the transcript is visible.
+  if (unifiedWindow && !unifiedWindow.isDestroyed() && !unifiedWindow.isVisible()) {
+    showUnifiedOverlay();
+  }
+}
+
+function _pttEnd(discard) {
+  if (!_pttActive) return;
+  _pttActive = false;
+  console.log(`🎙️ [PTT] ROpt release — ${discard ? 'abort' : 'stop'}`);
+  _postJson(_pttServiceUrl('/voice.ptt.stop'), { discard }).catch(err =>
+    console.warn('[PTT] voice.ptt.stop failed:', err.message));
+  safeSendUnified('voice:ptt-stop');
+}
+const pttStop = () => _pttEnd(false);
+const pttAbort = () => _pttEnd(true);
+
+// ── Option-key gesture handlers ─────────────────────────────────────────────
+/**
+ * Task ids cancelable through handoffRunner.cancel() — live runs plus tasks
+ * parked at the plan-approval gate or waiting-for-input (both already left
+ * _activeRuns but cancel() still tears them down).
+ */
+function _cancellableTaskIds() {
+  const handoff = require('./handoffRunner');
+  const ids = new Set(handoff.getActiveTaskIds?.() || []);
+  try { for (const p of handoff.getPendingPlanApprovals?.() || []) ids.add(p.taskId); } catch (_) {}
+  try { for (const tid of handoff.getPendingQuestionTaskIds?.() || []) ids.add(tid); } catch (_) {}
+  return [...ids];
+}
+
+function _cancelableExists() {
+  let livePlan = false;
+  try { livePlan = (require('./planRunner').listRuns?.() || []).some(r => r.status === 'running'); } catch (_) {}
+  return !!(controlLock || _taskInFlight || _cancellableTaskIds().length || livePlan
+    || _voiceSessionActive || _planningMode?.active || _selectionArmed);
+}
+
+/**
+ * LOpt-hold + ROpt-tap confirm — the universal "exit the current interaction".
+ * First hit wins: running automation/handoff/plan → voice session → planning
+ * lane → armed selection.
+ */
+function _gestureCancel() {
+  let livePlanId = null;
+  try { livePlanId = (require('./planRunner').listRuns?.() || []).find(r => r.status === 'running')?.planId || null; } catch (_) {}
+  if (controlLock || _taskInFlight || _cancellableTaskIds().length || livePlanId) {
+    _cancelAutomationRun(); // covers handoff + planRunner runs too
+    if (controlLock) _cancelLockedTask();
+    return;
+  }
+  if (_voiceSessionActive) {
+    console.log('[Gesture] ⌥L+⌥R — stopping voice session');
+    _postJson(_pttServiceUrl('/voice.session.stop'), {}).catch(err =>
+      console.warn('[Gesture] voice.session.stop failed:', err.message));
+    return;
+  }
+  if (_planningMode?.active) {
+    console.log('[Gesture] ⌥L+⌥R — exiting planning lane');
+    _handlePlanCheckAction({ action: 'cancel-plan', planId: _planningMode.planId, planFile: _planningMode.planFile });
+    return;
+  }
+  if (_selectionArmed) {
+    console.log('[Gesture] ⌥L+⌥R — disarming selection');
+    _disarmSelection('gesture-cancel');
+  }
+}
+
+function _dismissCancelAffordance() {
+  if (!_cancelAffordance) return;
+  _cancelAffordance = false;
+  _sendGhost({ type: 'cancel-affordance', armed: false });
+}
+
+function _onRoptDown() {
+  _roptDownAt = Date.now();
+  _roptOtherKey = false;
+  _roptConsumed = false;
+  if (_loptDownAt) {
+    // Option+Option chord — only meaningful as the cancel confirm. Fire on any
+    // cancelable target, not only after the affordance's arm delay — a fast
+    // LOpt→ROpt chord (< LOPT_ARM_MS) must not dead-end. The pill is visual
+    // confirmation, not the gate.
+    _roptConsumed = true;
+    if (_cancelAffordance || _cancelableExists()) {
+      _dismissCancelAffordance();
+      _gestureCancel();
+    }
+    return;
+  }
+  // Armed selection: the press itself confirms — keep holding to speak about it.
+  if (_selectionArmed) {
+    _roptConsumed = true;
+    console.log('[Gesture] ROpt — selection armed → confirm; continued hold → PTT');
+    void _captureArmedToChip(unifiedWindow);
+  } else {
+    console.log('[Gesture] ROpt — no armed selection (hold → PTT, double-tap → toggle)');
+  }
+  clearTimeout(_roptHoldTimer);
+  _roptHoldTimer = setTimeout(() => {
+    if (!_roptDownAt || _roptOtherKey) return;
+    if (_voiceSessionActive) {
+      console.log('[Gesture] ROpt hold — voice session owns the mic, PTT skipped');
+      return;
+    }
+    pttStart();
+  }, ROPT_HOLD_MS);
+}
+
+function _onRoptUp() {
+  const heldMs = _roptDownAt ? Date.now() - _roptDownAt : Infinity;
+  _roptDownAt = 0;
+  clearTimeout(_roptHoldTimer);
+  if (_pttActive) { pttStop(); return; }
+  if (_roptConsumed || _roptOtherKey || heldMs >= ROPT_HOLD_MS) { _roptLastTapAt = 0; return; }
+  // A real tap — double-tap toggles the overlay; a resolved single tap is
+  // context-aware (mute / run-plan / scroll-to-bottom).
+  if (Date.now() - _roptLastTapAt < ROPT_DTAP_MS) {
+    _roptLastTapAt = 0;
+    clearTimeout(_roptPendingTapTimer);
+    toggleUnifiedOverlay();
+  } else {
+    _roptLastTapAt = Date.now();
+    clearTimeout(_roptPendingTapTimer);
+    _roptPendingTapTimer = setTimeout(() => {
+      _roptLastTapAt = 0;
+      _roptSingleTap();
+    }, ROPT_DTAP_MS);
+  }
+}
+
+/**
+ * Resolved single ROpt tap — the double-tap window elapsed with no second tap.
+ * Priority: voice-session mute toggle → planning run-ready → feed scroll.
+ */
+function _roptSingleTap() {
+  if (_voiceSessionActive) {
+    _postJson(_pttServiceUrl('/voice.mute'), { on: !_voiceMuted })
+      .catch(err => console.warn('[Gesture] voice.mute failed:', err.message));
+    return;
+  }
+  if (_planningMode?.active) {
+    console.log('[Gesture] ROpt tap — planning run-ready');
+    _handlePlanCheckAction({ action: 'run-ready', planId: _planningMode.planId, planFile: _planningMode.planFile });
+    return;
+  }
+  safeSendUnified('ropt:tap'); // renderer scrolls the feed to bottom
+}
+
+function _onLoptDown() {
+  _loptDownAt = Date.now();
+  // During ROpt-hold PTT, the other Option key aborts the recording.
+  if (_pttActive) { pttAbort(); return; }
+  // Squeezing both options isn't a PTT — kill any pending ROpt-hold intent.
+  if (_roptDownAt) { _roptOtherKey = true; clearTimeout(_roptHoldTimer); }
+  if (_cancelableExists()) {
+    clearTimeout(_loptArmTimer);
+    _loptArmTimer = setTimeout(() => {
+      if (!_loptDownAt) return;
+      _cancelAffordance = true;
+      if (!dropSessionActive) showGhostLayer();
+      _sendGhost({ type: 'cancel-affordance', armed: true });
+    }, LOPT_ARM_MS);
+  }
+}
+
+function _onLoptUp() {
+  _loptDownAt = 0;
+  clearTimeout(_loptArmTimer);
+  _dismissCancelAffordance();
+}
+
 function startMouseSelectionMonitor() {
   if (_uIOhookInstance) return;
   try {
@@ -5373,6 +5811,17 @@ function startMouseSelectionMonitor() {
       _shiftHeld = !!e.shiftKey;
       const outside = !overlayHasFocus();
       if (outside) _lastExternalKeyDownAt = Date.now();
+
+      // ── Option-key gesture dispatch ────────────────────────────────────
+      // ROpt (3640) = action key, LOpt (56) = cancel key. Any non-modifier
+      // key while an Option is held means it was a real modifier use
+      // (⌥-char / chord) — abort the pending gesture; nothing is swallowed
+      // so the keystroke always lands normally in the front app.
+      if (e.keycode === UiohookKey.AltRight) _onRoptDown();
+      else if (e.keycode === UiohookKey.Alt) _onLoptDown();
+      else if (_roptDownAt) { _roptOtherKey = true; clearTimeout(_roptHoldTimer); _dismissCancelAffordance(); }
+      else if (_loptDownAt) { clearTimeout(_loptArmTimer); _dismissCancelAffordance(); }
+
       if ((e.metaKey || e.ctrlKey) && outside) {
         // Plain Cmd/Ctrl+C (not the Shift+Cmd+C tag chord) → the user's own
         // copy IS the selection; capture can read the clipboard directly
@@ -5452,6 +5901,8 @@ function startMouseSelectionMonitor() {
     });
 
     uIOhook.on('keyup', (e) => {
+      if (e.keycode === UiohookKey.AltRight) _onRoptUp();
+      else if (e.keycode === UiohookKey.Alt) _onLoptUp();
       if (!(e.metaKey || e.ctrlKey)) _cmdHeld = false;
       if (!e.shiftKey) _shiftHeld = false;
     });
@@ -7098,9 +7549,19 @@ app.whenReady().then(async () => {
           let evt;
           try { evt = JSON.parse(trimmed.slice(5).trim()); } catch (_) { continue; }
           if (evt.type === 'chunk' && evt.text) {
-            if (!streamedAny) safeSendUnified('unified:set-prompt', prompt);
-            streamedAny = true;
-            streamedText += evt.text;
+            // Sentinel chunks (\x00SEARCHING\x00/\x00ITEMS\x00/\x00SOURCES\x00/
+            // \x00ENGINE\x00) are metadata, not painted text — they must not
+            // flip streamedAny or the done handler drops the real answer, and
+            // their JSON payloads must not land in the TTS transcript.
+            if (evt.text.startsWith('\x00REPLACE\x00')) {
+              if (!streamedAny) safeSendUnified('unified:set-prompt', prompt);
+              streamedAny = true;
+              streamedText = evt.text.slice('\x00REPLACE\x00'.length);
+            } else if (!evt.text.startsWith('\x00')) {
+              if (!streamedAny) safeSendUnified('unified:set-prompt', prompt);
+              streamedAny = true;
+              streamedText += evt.text;
+            }
             safeSendUnified('ws-bridge:message', { type: 'chunk', text: evt.text });
           } else if (evt.type === 'done') {
             doneHandled = true;
@@ -8062,51 +8523,7 @@ app.whenReady().then(async () => {
   // cancel paths and passed to handoffRunner.init for comms-graph parity.)
 
   // ─── Automation: Cancel active run ───────────────────────────────────────
-  ipcMain.on('automation:cancel', () => {
-    console.log('🛑 [Automation] Cancel requested by user');
-    if (activeAbortController) {
-      activeAbortController.abort();
-      activeAbortController = null;
-    }
-    closeActiveBrowserSessions('cancel');
-    // Tell the command-service to abort all in-flight command.automate runs
-    // AND forcibly kill the playwright-cli daemon + Chrome processes. This is
-    // the reliable fallback: even if graceful signal propagation races (the
-    // playwright agent is mid-action), the processes are killed so the browser
-    // actually stops and no orphan Chrome holds the profile lock.
-    const cancelBody = JSON.stringify({});
-    const cancelReq = http.request({
-      hostname: '127.0.0.1', port: 3007, path: '/automation.cancel', method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(cancelBody) },
-      timeout: 8000,
-    }, (res) => { res.resume(); });
-    cancelReq.on('error', () => {});
-    cancelReq.on('timeout', () => { cancelReq.destroy(); });
-    cancelReq.write(cancelBody);
-    cancelReq.end();
-    // Keep newly built agents that were never authenticated — the user cancelled
-    // before signing in, but the agent descriptor is still valid. Keeping it lets
-    // a retry skip the build step and go straight to auth. (Previously these were
-    // deleted, forcing a full rebuild on every retry.)
-    if (_pendingNewlyBuiltAgents.size > 0) {
-      console.log(`📋 [Automation] Keeping ${_pendingNewlyBuiltAgents.size} newly built agent(s) for retry: ${[..._pendingNewlyBuiltAgents].join(', ')}`);
-    }
-    _pendingNewlyBuiltAgents.clear();
-    // Safety: a cancel may interrupt a capture-heavy app.agent step mid-session,
-    // so tear down the drop session and bring the panel back explicitly (the
-    // cancel all_done below uses safeSend, which bypasses the drop driver).
-    _restorePanelFromDrop();
-    if (resultsWindow && !resultsWindow.isDestroyed()) {
-      safeSend(resultsWindow, 'automation:progress', { type: 'all_done', cancelled: true, completedCount: 0, totalCount: 0 });
-    }
-    if (promptCaptureWindow && !promptCaptureWindow.isDestroyed()) {
-      safeSend(promptCaptureWindow, 'automation:progress', { type: 'all_done', cancelled: true, completedCount: 0, totalCount: 0 });
-    }
-    // Send to unifiedWindow so cancel button resets to send icon
-    if (unifiedWindow && !unifiedWindow.isDestroyed()) {
-      safeSend(unifiedWindow, 'automation:progress', { type: 'all_done', cancelled: true, completedCount: 0, totalCount: 0 });
-    }
-  });
+  ipcMain.on('automation:cancel', () => _cancelAutomationRun());
 
   // ─── Phase 9: Browser Take Over — human-in-the-loop escalation ──────────
   // User clicks "Take over and train" or "Something wrong?" in AutomationProgress.
@@ -8299,6 +8716,7 @@ app.whenReady().then(async () => {
       const url = new URL('/voice.session.start', VOICE_SERVICE_URL);
       await _postJson(url, { mode: opts?.mode || 'auto' });
       _voiceSessionActive = true;
+      _voiceMuted = false;
       _voiceMode = null; // server confirms via a 'mode' event once connected
       safeSendUnified('voice:session', { active: true });
     } catch (err) {
@@ -8333,6 +8751,7 @@ app.whenReady().then(async () => {
       console.warn('[Voice] session stop failed:', err.message);
     }
     _voiceSessionActive = false;
+    _voiceMuted = false;
     safeSendUnified('voice:session', { active: false });
   });
 
@@ -8343,282 +8762,6 @@ app.whenReady().then(async () => {
     const wins = [promptCaptureWindow, resultsWindow];
     for (const win of wins) {
       safeSend(win, 'voice:status', { status: 'idle' });
-    }
-  });
-
-  // voice:push-to-talk-start — renderer signals voice-activate pressed
-  ipcMain.on('voice:push-to-talk-start', () => {
-    console.log('🎙️ [Voice] Push-to-talk: start');
-    voiceJournal.setVoiceStatus('listening');
-    // Voice-activation is an intent moment — capture the armed selection now.
-    if (_selectionArmed && !_capturedSelectionText) void _captureArmedToChip(null, { auto: true });
-    const wins = [promptCaptureWindow, resultsWindow];
-    for (const win of wins) {
-      safeSend(win, 'voice:listening', { active: true });
-    }
-  });
-
-  // voice:push-to-talk-end — renderer signals PTT button released (audio chunk ready)
-  ipcMain.on('voice:push-to-talk-end', () => {
-    console.log('🎙️ [Voice] Push-to-talk: end — awaiting audio');
-    voiceJournal.setVoiceStatus('processing');
-  });
-
-  // voice:audio-chunk — renderer sends base64 audio for processing
-  let _voiceChunkActive = 0; // count of concurrent voice chunk processings
-  ipcMain.on('voice:audio-chunk', async (event, { audioBase64, format = 'webm', pushToTalk = true, skipWakeWordCheck: rendererSkipWWC = null, sessionId = null, pttTextOnly = false }) => {
-    console.log(`🎙️ [Voice] Audio chunk received (${format}, ${audioBase64?.length || 0} b64 chars, pttTextOnly=${pttTextOnly})`);
-    // For PTT: drop duplicates (shouldn't overlap). For wake word: allow up to 2 concurrent.
-    const maxConcurrent = pushToTalk ? 1 : 2;
-    if (_voiceChunkActive >= maxConcurrent) {
-      console.log(`🎙️ [Voice] Skipping chunk — ${_voiceChunkActive} already in flight`);
-      return;
-    }
-    _voiceChunkActive++;
-
-    const wins = [promptCaptureWindow, resultsWindow];
-
-    try {
-      voiceJournal.setVoiceStatus('processing');
-
-      const response = await new Promise((resolve, reject) => {
-        const http_module = require('http');
-        const body = JSON.stringify({
-          audioBase64,
-          format,
-          pushToTalk,
-          skipWakeWordCheck: rendererSkipWWC !== null ? rendererSkipWWC : pushToTalk,
-          skipInject: pttTextOnly,
-          sessionId: sessionId || currentSessionId,
-        });
-
-        const url = new URL('/voice.process', VOICE_SERVICE_URL);
-        const req = http_module.request({
-          hostname: url.hostname,
-          port: parseInt(url.port || '3006', 10),
-          path: url.pathname,
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) },
-        }, (res) => {
-          const chunks = [];
-          res.on('data', chunk => { chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)); });
-          res.on('end', () => {
-            try {
-              const respBody = Buffer.concat(chunks).toString('utf8');
-              const parsed = JSON.parse(respBody);
-              console.log(`🎙️ [Voice] Raw response keys: ${Object.keys(parsed).join(',')}, dataKeys: ${parsed.data ? Object.keys(parsed.data).join(',') : 'no-data'}, bodyLen: ${respBody.length}`);
-              resolve(parsed);
-            } catch (e) {
-              console.error('🎙️ [Voice] JSON parse error:', e.message);
-              resolve({});
-            }
-          });
-        });
-        req.on('error', reject);
-        req.setTimeout(180000, () => req.destroy(new Error('Voice process timeout')));
-        req.write(body);
-        req.end();
-      });
-
-      const result = response.data || response;
-      console.log(`🎙️ [Voice] Pipeline result: lane=${result.lane}, hasAudio=${!!result.audioBase64}, skipped=${result.skipped}, reason=${result.reason || ''}, transcript=${result.transcript?.substring(0,40) || ''}`);
-
-      // KWS wake-word detected — open session in renderer, skip full pipeline
-      if (result.wakeActivated) {
-        console.log(`🎙️ [Voice] Wake activated (${result.keyword}) — signalling renderer to open session`);
-        safeSend(promptCaptureWindow, 'voice:wake-activated', { keyword: result.keyword });
-        voiceJournal.setVoiceStatus('idle');
-        _voiceChunkActive = Math.max(0, _voiceChunkActive - 1);
-        return;
-      }
-
-      // PTT text-only mode: just return the transcript to the renderer, skip LLM/TTS
-      if (pttTextOnly) {
-        const transcript = result.transcript || '';
-        // Use englishText for StateGraph injection when translation occurred (e.g. Chinese → English).
-        // The renderer's submitPTTRef sends this to stategraph:process — must be English.
-        const promptText = (result.wasTranslated && result.englishText) ? result.englishText : transcript;
-        console.log(`🎙️ [PTT] Text-only — transcript: "${transcript}"${result.wasTranslated ? ` → englishText: "${promptText}"` : ''}`);
-        if (promptCaptureWindow && !promptCaptureWindow.isDestroyed()) {
-          safeSend(promptCaptureWindow, 'ptt:transcript', {
-            transcript: promptText,
-            detectedLanguage: result.detectedLanguage || 'en',
-            wasTranslated: result.wasTranslated || false,
-          });
-        }
-        _voiceChunkActive--;
-        voiceJournal.setVoiceStatus('idle');
-        return;
-      }
-
-      // Only show transcript in UI when actually processed (not noise-filtered/skipped)
-      if (result.transcript && !result.skipped) {
-        for (const win of wins) {
-          if (win && !win.isDestroyed()) {
-            safeSend(win, 'voice:transcript', { text: result.transcript, language: result.detectedLanguage });
-          }
-        }
-      }
-
-      // Forward responses to unifiedWindow:
-      // - stategraph: full answer (always send full answer to ensure display)
-      // - fast: response text (butler reply — show so user can read what was spoken)
-      if (result.lane === 'stategraph' && result.fullAnswer) {
-        // Send ws-bridge messages to unifiedWindow (outside resultsWindow guard)
-        // Note: removed !result._hadLiveStream check to ensure answer always displays
-        console.log(`[MAIN] Sending chunk to unifiedWindow, text length: ${result.fullAnswer?.length || 0}`);
-        safeSendUnified('ws-bridge:message', { type: 'chunk', text: result.fullAnswer, lane: 'stategraph' });
-        safeSendUnified('ws-bridge:message', { type: 'done', lane: 'stategraph' });
-        console.log('[MAIN] Sent chunk and done to unifiedWindow');
-        // Show unifiedWindow for results
-        if (unifiedWindow && !unifiedWindow.isDestroyed()) {
-          unifiedWindow.showInactive();
-          unifiedWindow.moveTop();
-        }
-        if (result.transcript) safeSendUnified('unified:set-prompt', result.transcript);
-      } else if (result.lane === 'fast' && result.responseEnglish && !result.skipped) {
-        // Send ws-bridge messages to unifiedWindow (outside resultsWindow guard)
-        safeSendUnified('ws-bridge:message', { type: 'chunk', text: result.responseEnglish, lane: 'fast' });
-        safeSendUnified('ws-bridge:message', { type: 'done', lane: 'fast' });
-        // Show unifiedWindow for results
-        if (unifiedWindow && !unifiedWindow.isDestroyed()) {
-          unifiedWindow.showInactive();
-          unifiedWindow.moveTop();
-        }
-        if (result.transcript) safeSendUnified('unified:set-prompt', result.transcript);
-      }
-
-      if (result.audioBase64) {
-        console.log(`🎙️ [Voice] Sending voice:response (${result.audioBase64.length} b64, format=${result.audioFormat})`);
-        // Send ONLY to promptCaptureWindow — VoiceButton lives there and handles TTS playback.
-        // Sending to both windows causes duplicate audio playback.
-        safeSend(promptCaptureWindow, 'voice:response', {
-            text: result.responseFinal || result.responseEnglish || '',
-            fullAnswer: result.fullAnswer || '',
-            audioBase64: result.audioBase64,
-            audioFormat: result.audioFormat || 'wav',
-            language: result.detectedLanguage,
-            lane: result.lane,
-            durationEstimateMs: result.durationEstimateMs || null,
-            triggered: !!(result.triggered),
-          });
-      } else {
-        console.log('🎙️ [Voice] No audioBase64 in result — no TTS to play');
-      }
-
-      voiceJournal.setVoiceStatus('idle');
-    } catch (err) {
-      console.error('❌ [Voice] Audio processing error:', err.message);
-      voiceJournal.setVoiceStatus('idle');
-      for (const win of wins) {
-        safeSend(win, 'voice:error', { error: err.message });
-      }
-    } finally {
-      _voiceChunkActive = Math.max(0, _voiceChunkActive - 1);
-    }
-  });
-
-  // voice:transcript-direct — renderer pre-transcribed via Web Speech API, skip STT
-  ipcMain.on('voice:transcript-direct', async (event, { transcript, pushToTalk = true, sessionId = null }) => {
-    console.log(`🎙️ [Voice] Transcript direct: "${transcript?.substring(0, 60)}" (pushToTalk=${pushToTalk})`);
-    const wins = [promptCaptureWindow, resultsWindow];
-    try {
-      voiceJournal.setVoiceStatus('processing');
-      const response = await new Promise((resolve, reject) => {
-        const http_module = require('http');
-        const body = JSON.stringify({
-          transcript,
-          skipSTT: true,
-          skipTTS: false,   // renderer handles TTS via speechSynthesis — skip Cartesia
-          pushToTalk,
-          skipWakeWordCheck: pushToTalk,
-          sessionId: sessionId || currentSessionId,
-        });
-        const url = new URL('/voice.process', VOICE_SERVICE_URL);
-        const req = http_module.request({
-          hostname: url.hostname,
-          port: parseInt(url.port || '3006', 10),
-          path: url.pathname,
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) },
-        }, (res) => {
-          const chunks = [];
-          res.on('data', chunk => chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)));
-          res.on('end', () => {
-            try { resolve(JSON.parse(Buffer.concat(chunks).toString('utf8'))); }
-            catch (e) { resolve({}); }
-          });
-        });
-        req.on('error', reject);
-        req.setTimeout(180000, () => req.destroy(new Error('Voice process timeout')));
-        req.write(body);
-        req.end();
-      });
-
-      const result = response.data || response;
-      console.log(`🎙️ [Voice] Direct transcript result: lane=${result.lane}, hasAudio=${!!result.audioBase64}, skipped=${result.skipped}`);
-
-      if (result.transcript && !result.skipped) {
-        for (const win of wins) {
-          safeSend(win, 'voice:transcript', { text: result.transcript, language: result.detectedLanguage });
-        }
-      }
-      if (result.lane === 'stategraph' && result.fullAnswer) {
-        // Send ws-bridge messages to unifiedWindow (outside resultsWindow guard)
-        // Note: removed !result._hadLiveStream check to ensure answer always displays
-        console.log(`[MAIN] Sending chunk to unifiedWindow, text length: ${result.fullAnswer?.length || 0}`);
-        safeSendUnified('ws-bridge:message', { type: 'chunk', text: result.fullAnswer, lane: 'stategraph' });
-        safeSendUnified('ws-bridge:message', { type: 'done', lane: 'stategraph' });
-        console.log('[MAIN] Sent chunk and done to unifiedWindow');
-        // Show unifiedWindow for results
-        if (unifiedWindow && !unifiedWindow.isDestroyed()) {
-          unifiedWindow.showInactive();
-          unifiedWindow.moveTop();
-        }
-        if (result.transcript) safeSendUnified('unified:set-prompt', result.transcript);
-      } else if (result.lane === 'fast' && result.responseEnglish && !result.skipped) {
-        // Send ws-bridge messages to unifiedWindow (outside resultsWindow guard)
-        safeSendUnified('ws-bridge:message', { type: 'chunk', text: result.responseEnglish, lane: 'fast' });
-        safeSendUnified('ws-bridge:message', { type: 'done', lane: 'fast' });
-        // Show unifiedWindow for results
-        if (unifiedWindow && !unifiedWindow.isDestroyed()) {
-          unifiedWindow.showInactive();
-          unifiedWindow.moveTop();
-        }
-        if (result.transcript) safeSendUnified('unified:set-prompt', result.transcript);
-      }
-      if (result.audioBase64) {
-        // Send ONLY to promptCaptureWindow to avoid duplicate TTS
-        safeSend(promptCaptureWindow, 'voice:response', {
-            text: result.responseFinal || result.responseEnglish || '',
-            fullAnswer: result.fullAnswer || '',
-            audioBase64: result.audioBase64,
-            audioFormat: result.audioFormat || 'wav',
-            language: result.detectedLanguage,
-            lane: result.lane,
-            durationEstimateMs: result.durationEstimateMs || null,
-            triggered: !!(result.triggered),
-          });
-      } else if ((result.responseFinal || result.responseEnglish) && !result.skipped) {
-        // Text-only (skipTTS) — send without audio so renderer uses speechSynthesis
-        safeSend(promptCaptureWindow, 'voice:response', {
-            text: result.responseFinal || result.responseEnglish || '',
-            fullAnswer: result.fullAnswer || '',
-            audioBase64: '',
-            audioFormat: '',
-            language: result.detectedLanguage,
-            lane: result.lane || 'fast',
-            durationEstimateMs: null,
-            triggered: !!(result.triggered),
-          });
-      }
-      voiceJournal.setVoiceStatus('idle');
-    } catch (err) {
-      console.error('❌ [Voice] Direct transcript error:', err.message);
-      voiceJournal.setVoiceStatus('idle');
-      for (const win of wins) {
-        if (win && !win.isDestroyed()) safeSend(win, 'voice:error', { error: err.message });
-      }
     }
   });
 
@@ -8639,15 +8782,27 @@ app.whenReady().then(async () => {
   });
 
   // ─── gather:answer_batch — Grill-Me Phase C: batched question answers ────
-  // Registered ONCE. Resolves pendingGatherBatchResolve with a map of answers.
-  ipcMain.on('gather:answer_batch', (_event, { batchId, answers }) => {
-    console.log(`[GatherContext] IPC received: gather:answer_batch — batchId=${batchId}, keys=${Object.keys(answers || {}).join(',')}`);
-    if (pendingGatherBatchResolve) {
-      const resolve = pendingGatherBatchResolve;
-      pendingGatherBatchResolve = null;
-      const questions = pendingGatherBatchData?.questions || [];
-      pendingGatherBatchData = null;
-      safeSendUnified('gather:question_batch', { active: false, batchId: null, questions: null });
+  // Registered ONCE. Resolves the pending batch keyed by batchId (falling back
+  // to taskId when the renderer didn't echo a batchId) — concurrent handoff
+  // tasks can each hold a pending batch, and an answer must resolve only its
+  // own.
+  ipcMain.on('gather:answer_batch', (_event, { batchId, answers, taskId }) => {
+    console.log(`[GatherContext] IPC received: gather:answer_batch — batchId=${batchId}, task=${taskId || '-'}, keys=${Object.keys(answers || {}).join(',')}`);
+    let key = batchId && pendingGatherBatches.has(batchId) ? batchId : null;
+    if (!key && taskId) {
+      for (const [k, e] of pendingGatherBatches) { if (e.data?.taskId === taskId) { key = k; break; } }
+    }
+    // Last resort: exactly one pending batch — an old renderer that didn't
+    // echo the batchId still resolves correctly.
+    if (!key && pendingGatherBatches.size === 1) key = [...pendingGatherBatches.keys()][0];
+    const entry = key ? pendingGatherBatches.get(key) : null;
+    if (entry) {
+      pendingGatherBatches.delete(key);
+      clearTimeout(entry.timer);
+      const resolve = entry.resolve;
+      const questions = entry.data?.questions || [];
+      const batchTaskId = entry.data?.taskId || null;
+      safeSendUnified('gather:question_batch', { active: false, batchId: key, questions: null, taskId: batchTaskId });
       // Engagement → thought engine. Empty answers = the user dismissed the card.
       const answered = Object.entries(answers || {}).filter(([, v]) => String(v ?? '').trim());
       if (answered.length) {
@@ -10725,69 +10880,9 @@ app.whenReady().then(async () => {
     return true;
   }
 
-  globalShortcut.register('CommandOrControl+Shift+Space', () => {
-    if (unifiedWindow) {
-      if (unifiedWindow.isVisible()) {
-        _intentionalHide = true; // Flag so hide handler knows this is user-initiated
-        unifiedWindow.hide();
-        stopClipboardMonitoring();
-      } else {
-        // Re-show: reanchor to bottom-right, preserving current width + content height.
-        // The renderer owns collapsing to UNIFIED_COLLAPSED_HEIGHT when content is empty
-        // (via useDynamicHeight), so we just re-anchor here without forcing a size.
-        _userHasMovedPanel = false; // Reset so subsequent resizes reanchor to bottom-right
-        const bounds = unifiedWindow.getBounds();
-        applyUnifiedBounds({
-          contentHeight: bounds.height,
-          width: bounds.width,
-          animate: false,
-        });
-        unifiedWindow.show();
-        unifiedWindow.focus();
-
-        startClipboardMonitoring(true);
-        console.log('[Unified Window] Activated via global shortcut.');
-
-        // Re-send gather:pending if a gather answer is still in flight — the
-        // previous hide/show cycle would have reset the renderer's gatherPending state.
-        if (pendingGatherResolve) {
-          safeSendUnified('gather:pending', { active: true, question: pendingGatherQuestion });
-          console.log('[GatherContext] Re-sent gather:pending on window re-activation');
-        }
-        // Grill-Me Phase C: re-send batch question state on re-activation
-        if (pendingGatherBatchResolve && pendingGatherBatchData) {
-          safeSendUnified('gather:question_batch', {
-            active: true,
-            batchId: pendingGatherBatchData.batchId,
-            questions: pendingGatherBatchData.questions,
-            routeConfirmation: pendingGatherBatchData.routeConfirmation || null,
-            taskId: pendingGatherBatchData.taskId || null,
-          });
-          console.log('[GatherContext] Re-sent gather:question_batch on window re-activation');
-        }
-      }
-    }
-  });
-
-  // Backtick PTT — toggle mode: press once to start, press again to stop.
-  let pttGlobalActive = false;
-  const safeSendToWins = (channel) => {
-    if (unifiedWindow && !unifiedWindow.isDestroyed()) {
-      try { unifiedWindow.webContents.send(channel); } catch (_) {}
-    }
-  };
-
-  globalShortcut.register('`', () => {
-    if (!pttGlobalActive) {
-      pttGlobalActive = true;
-      console.log('🎙️ [PTT] backtick — start');
-      safeSendToWins('voice:ptt-start');
-    } else {
-      pttGlobalActive = false;
-      console.log('🎙️ [PTT] backtick — stop');
-      safeSendToWins('voice:ptt-stop');
-    }
-  });
+  // Overlay toggle, PTT, and selection-confirm are driven by the Option-key
+  // gesture engine in startMouseSelectionMonitor (ROpt/LOpt via uiohook) —
+  // the old Cmd+Shift+Space / backtick / Cmd+; shortcuts are retired.
 
   // Shift+Cmd+C — explicit tag shortcut. Captures the current selection NOW
   // (works even without a detected drag — e.g. keyboard selection), writes it
@@ -10802,15 +10897,6 @@ app.whenReady().then(async () => {
       _chipAutoDelivered = false;
       _createCopyFile(text);
     })();
-  });
-
-  // Cmd+; — "paste context": capture the current selection into a chip.
-  // Pressed while the source app holds key, so the focus-free capture tiers
-  // (AX read → menu Copy → synthetic Cmd+C) land cleanly. Works un-armed too
-  // — grabs whatever's selected, for selections detection missed.
-  globalShortcut.register('CommandOrControl+;', () => {
-    _selLog('Cmd+; pressed — paste-context capture.');
-    void _captureArmedToChip(unifiedWindow);
   });
 
   // Selection context clear — renderer asks to drop the armed state / pending
@@ -11762,7 +11848,11 @@ app.whenReady().then(async () => {
 
   ipcMain.on('window:hide', () => {
     if (unifiedWindow) {
+      // Same path as the ROpt double-tap hide — without _intentionalHide the
+      // NSPanel hide-guard immediately re-shows the overlay.
+      _intentionalHide = true;
       unifiedWindow.hide();
+      stopClipboardMonitoring();
     }
   });
 

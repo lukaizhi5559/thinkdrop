@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import RoptKeyIcon from './RoptKeyIcon';
 import { ThinkDropLogo } from './SlideoutDrawer';
 import { ScreenStage } from './screen/ScreenStage';
 
@@ -24,7 +25,8 @@ interface HighlightElement {
 interface HighlightData {
   type: 'highlight' | 'clear' | 'scanning_start' | 'scanning_complete' | 'highlight_update'
     | 'progress_drop' | 'capture_begin' | 'capture_end' | 'progress_clear'
-    | 'boundary_set' | 'boundary_clear' | 'control_lock' | 'control_unlock';
+    | 'boundary_set' | 'boundary_clear' | 'control_lock' | 'control_unlock'
+    | 'cancel-affordance';
   elements?: HighlightElement[];
   duration?: number;
   cx?: number;
@@ -36,6 +38,8 @@ interface HighlightData {
   totalSteps?: number | null;
   // control_lock fields
   taskId?: string | null;
+  // cancel-affordance field
+  armed?: boolean;
   // boundary_set fields (persistent app-window border for the whole plan)
   element?: HighlightElement;
 }
@@ -87,6 +91,10 @@ function GhostLayer() {
   const [controlLock, setControlLock] = useState<{ taskId: string | null; label: string } | null>(null);
   const [lockVisible, setLockVisible] = useState(false);
 
+  // LOpt-hold cancel affordance — main arms it via cancel-affordance while a
+  // cancelable task/control-lock exists; a tap of ROpt then executes cancel.
+  const [cancelArmed, setCancelArmed] = useState(false);
+
   // Camera-flash overlay — briefly brightens the screen during screenshots.
   // Triggered by /overlay/flash (main.js) before a screen capture, cleared by
   // /overlay/unflash after. Gives the user visual feedback that a screenshot
@@ -111,6 +119,8 @@ function GhostLayer() {
   // Web-search worker boot — "Web search starting up…" pill while the hidden
   // Chrome warms (mirrors voiceStarting; driven by 'websearch:state').
   const [webSearchStarting, setWebSearchStarting] = useState(false);
+  // Voice mute — ROpt tap toggles; pill shows "tap ⌥R to unmute".
+  const [voiceMuted, setVoiceMuted] = useState(false);
   // Selection context — pill shown while a text selection is armed for the
   // next prompt (main captures the text at submit time).
   const [selectionCtx, setSelectionCtx] = useState(false);
@@ -238,6 +248,8 @@ function GhostLayer() {
         setBoundary(null);
         setControlLock(null);
         setLockVisible(false);
+      } else if (data.type === 'cancel-affordance') {
+        setCancelArmed(!!data.armed);
       } else if (data.type === 'clear') {
         setHighlights([]);
         setIsVisible(false);
@@ -331,6 +343,16 @@ function GhostLayer() {
     };
   }, []);
 
+  // Voice mute state — pill while muted (ROpt tap toggles back).
+  useEffect(() => {
+    if (!ipcRenderer) return;
+    const handleMute = (data: { muted?: boolean }) => setVoiceMuted(!!data?.muted);
+    ipcRenderer.on('voice:mute-state', handleMute, GHOST_TOKEN);
+    return () => {
+      ipcRenderer.removeListenerByToken('voice:mute-state', GHOST_TOKEN);
+    };
+  }, []);
+
   // Web-search browser state — 'starting' shows a pill until Chrome is ready.
   useEffect(() => {
     if (!ipcRenderer) return;
@@ -377,7 +399,7 @@ function GhostLayer() {
   // Tell main when the window goes fully idle — highlights gone, not scanning,
   // no drop/boundary, and no screen-output displays. Main then hides the
   // window + clears its display tracking (restores click-through).
-  const ghostOccupied = screenOccupied || isVisible || isScanning || !!drop || !!boundary || !!controlLock || !!fillerProgress || voiceSleeping || voiceStarting || webSearchStarting || selectionCtx;
+  const ghostOccupied = screenOccupied || isVisible || isScanning || !!drop || !!boundary || !!controlLock || !!fillerProgress || voiceSleeping || voiceStarting || webSearchStarting || selectionCtx || cancelArmed || voiceMuted;
   const prevOccupied = useRef(ghostOccupied);
   useEffect(() => {
     if (prevOccupied.current && !ghostOccupied) {
@@ -406,6 +428,13 @@ function GhostLayer() {
   // Selection context pill — "Text Highlighted Context" while armed.
   const selNode = selectionCtx ? <SelectionContextPill /> : null;
 
+  // Voice-muted pill — "Muted — tap ⌥R" while the session mic is dead.
+  const muteNode = voiceMuted ? <MutedPill /> : null;
+
+  // LOpt-hold cancel affordance — red "tap ⌥R to cancel" pill; stacks under
+  // the control-lock pill when both are up.
+  const cancelNode = cancelArmed ? <CancelAffordancePill top={controlLock ? 72 : 24} /> : null;
+
   // "AI in Control" lock — renders in every path (independent of highlights).
   const lockNode = controlLock ? (
     <ControlLock
@@ -421,7 +450,7 @@ function GhostLayer() {
 
   // Show scanning overlay with dark background
   if (isScanning) {
-    return <>{stageNode}{fillerNode}{startNode}{webSearchNode}{sleepNode}{selNode}{lockNode}<ScanningOverlay timer={scanTimer} /></>;
+    return <>{stageNode}{fillerNode}{startNode}{webSearchNode}{sleepNode}{selNode}{lockNode}{cancelNode}{muteNode}<ScanningOverlay timer={scanTimer} /></>;
   }
 
   // The progress drop renders independently of bounding-box highlights — it is
@@ -433,7 +462,7 @@ function GhostLayer() {
   const boundaryNode = boundary ? <PersistentBoundary element={boundary} visible={dropVisible} /> : null;
 
   if (!isVisible || highlights.length === 0) {
-    return <>{stageNode}{boundaryNode}{dropNode}{fillerNode}{startNode}{webSearchNode}{sleepNode}{selNode}{lockNode}</>;
+    return <>{stageNode}{boundaryNode}{dropNode}{fillerNode}{startNode}{webSearchNode}{sleepNode}{selNode}{lockNode}{cancelNode}{muteNode}</>;
   }
 
   return (
@@ -476,6 +505,8 @@ function GhostLayer() {
       {sleepNode}
       {selNode}
       {lockNode}
+      {cancelNode}
+      {muteNode}
       {highlights.map((element, index) => (
         <BoundingBox
           key={element.id ?? index}
@@ -843,6 +874,86 @@ function ControlLock({ label, visible, onCancel }: { label: string; visible: boo
 }
 
 /**
+ * MutedPill — shown while the voice session mic is muted via the ROpt-tap
+ * toggle (server 'mute-state'). Click-through; tap ⌥R again to unmute.
+ */
+function MutedPill() {
+  return (
+    <div
+      style={{
+        position: 'fixed',
+        bottom: 28,
+        left: '50%',
+        transform: 'translateX(-50%)',
+        zIndex: 100000,
+        pointerEvents: 'none',
+        display: 'flex',
+        alignItems: 'center',
+        gap: 8,
+        padding: '7px 14px',
+        borderRadius: 9999,
+        background: 'rgba(12,10,20,0.88)',
+        backdropFilter: 'blur(8px)',
+        WebkitBackdropFilter: 'blur(8px)',
+        border: '1px solid rgba(251,191,36,0.45)',
+        boxShadow: '0 6px 24px rgba(0,0,0,0.35), 0 0 16px rgba(251,191,36,0.2)',
+        color: '#e5e7eb',
+        fontFamily: 'system-ui, -apple-system, sans-serif',
+      }}
+    >
+      {/* muted mic icon */}
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#fbbf24" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <line x1="1" y1="1" x2="23" y2="23" />
+        <path d="M9 9v3a3 3 0 0 0 5.12 2.12M15 9.34V4a3 3 0 0 0-5.94-.6" />
+        <path d="M17 16.95A7 7 0 0 1 5 12v-2m14 0v2a7 7 0 0 1-.11 1.23" />
+        <line x1="12" y1="19" x2="12" y2="23" />
+      </svg>
+      <span style={{ fontSize: 11, fontWeight: 600, color: '#fcd34d' }}>Muted — tap</span>
+      <RoptKeyIcon size={16} tone="amber" />
+      <span style={{ fontSize: 11, fontWeight: 600, color: '#fcd34d' }}>to unmute</span>
+    </div>
+  );
+}
+
+/**
+ * CancelAffordancePill — armed while LOpt is held with a cancelable task/lock
+ * up (main.js arms via 'cancel-affordance'). "tap ⌥R to cancel" — the ROpt
+ * tap then executes the cancel while LOpt stays held. Click-through.
+ */
+function CancelAffordancePill({ top }: { top: number }) {
+  return (
+    <div
+      style={{
+        position: 'fixed',
+        top,
+        left: '50%',
+        transform: 'translateX(-50%)',
+        zIndex: 100002,
+        pointerEvents: 'none',
+        display: 'flex',
+        alignItems: 'center',
+        gap: 8,
+        padding: '7px 14px',
+        borderRadius: 9999,
+        background: 'rgba(28,10,10,0.88)',
+        backdropFilter: 'blur(8px)',
+        WebkitBackdropFilter: 'blur(8px)',
+        border: '1px solid rgba(239,68,68,0.5)',
+        boxShadow: '0 6px 24px rgba(0,0,0,0.35), 0 0 18px rgba(239,68,68,0.28)',
+        color: '#e5e7eb',
+        fontFamily: 'system-ui, -apple-system, sans-serif',
+        animation: 'td-drop-bob 1.6s ease-in-out infinite',
+      }}
+    >
+      <span style={{ fontSize: 11, fontWeight: 600, color: '#fca5a5' }}>
+        Cancel — tap
+      </span>
+      <RoptKeyIcon size={18} tone="amber" pulse detail="icon" />
+    </div>
+  );
+}
+
+/**
  * FillerProgressPill — bottom-center pill shown while the voice-service
  * batch-generates the cached voice filler library in the background.
  * voiceKey looks like "openai:marin:gpt-4o-mini-tts" — middle segment is
@@ -887,20 +998,8 @@ function SelectionContextPill() {
       </span>
       <span style={{ fontSize: 13, fontWeight: 600 }}>Text Highlighted Context</span>
       <span style={{ fontSize: 11, fontWeight: 500, color: '#9ca3af', display: 'flex', alignItems: 'center', gap: 5 }}>
-        add to overlay
-        <span
-          style={{
-            padding: '1px 6px',
-            borderRadius: 4,
-            fontSize: 11,
-            fontWeight: 600,
-            color: '#fdba74',
-            background: 'rgba(251,146,60,0.12)',
-            border: '1px solid rgba(251,146,60,0.35)',
-          }}
-        >
-          ⌘;
-        </span>
+        add to overlay — tap
+        <RoptKeyIcon size={14} tone="amber" detail="icon" />
       </span>
     </div>
   );

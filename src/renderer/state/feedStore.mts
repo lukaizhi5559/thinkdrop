@@ -33,6 +33,9 @@ export interface FeedState {
   /** Serving engine for the in-flight search reply (google-serp, bing-copilot…)
    *  — rendered as the transparency chip on the committed entry. */
   searchEngine: string | null;
+  /** Engine currently being tried while a SERP fetch is in flight — rendered
+   *  as a loading chip that the real searchEngine replaces on arrival. */
+  searchPending: string | null;
   commsTasks: CommsTask[];
   historyLoading: boolean;
   hasMoreHistory: boolean;
@@ -350,8 +353,16 @@ export function mapHistoryMessage(m: any): FeedEntry | null {
     const files = art?.savedFilePaths?.length ? art.savedFilePaths : undefined;
     const drafts = art?.drafts?.length ? art.drafts : undefined;
     const steps = art?.steps?.length ? art.steps : undefined;
+    // Search display metadata (comms-graph logs it for quick-lane answers) —
+    // without it, express-lane replies lose their cards, source pills, and
+    // engine chip on every feed reload. Handoff answers recover the same
+    // fields via the task journal in stampTaskArtifacts.
+    const items = Array.isArray(m?.metadata?.items) && m.metadata.items.length ? m.metadata.items : undefined;
+    const sources = Array.isArray(m?.metadata?.sources) && m.metadata.sources.length ? m.metadata.sources : undefined;
+    const engine = typeof m?.metadata?.engine === 'string' && m.metadata.engine ? m.metadata.engine : undefined;
     return { id, ts, kind: 'assistant', text, taskId: m?.metadata?.taskId || undefined,
-      ...(files ? { files } : {}), ...(drafts ? { drafts } : {}), ...(steps ? { steps } : {}) } as FeedEntry;
+      ...(files ? { files } : {}), ...(drafts ? { drafts } : {}), ...(steps ? { steps } : {}),
+      ...(items ? { items } : {}), ...(sources ? { sources } : {}), ...(engine ? { engine } : {}) } as FeedEntry;
   }
   return null; // 'system' rows (recovery/ask_user) stay out of the feed
 }
@@ -430,6 +441,7 @@ export function createFeedStore(now: () => number = () => Date.now()): FeedStore
     resultItems: [],
     searchSources: [],
     searchEngine: null,
+    searchPending: null,
     commsTasks: [],
     historyLoading: false,
     hasMoreHistory: false,

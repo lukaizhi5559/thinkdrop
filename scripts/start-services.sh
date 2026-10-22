@@ -184,7 +184,7 @@ sleep 1
 # Do NOT use `export DB_PATH` — other services (web-search, conversation)
 # also read DB_PATH from env and must NOT inherit user_memory.duckdb's path
 # since DuckDB is single-writer and sharing would cause a lock conflict.
-start_node_direct_service "user-memory" "$PROJECT_ROOT/mcp-services/thinkdrop-user-memory-service" "src/server.js" 512 \
+start_node_direct_service "user-memory" "$PROJECT_ROOT/mcp-services/thinkdrop-user-memory-service" "src/server.js" 1024 \
     "DB_PATH=$PROJECT_ROOT/mcp-services/thinkdrop-user-memory-service/data/user_memory.duckdb"
 sleep 2
 

@@ -176,6 +176,10 @@ export default function ResultsWindow() {
             if (Array.isArray(sources)) setSearchSources(sources);
           } catch (_) {}
           return; // don't append to response text
+        } else if (msgText.startsWith('\x00ENGINE\x00')
+          || msgText.startsWith('\x00SEARCHING\x00')
+          || msgText.startsWith('\x00ITEMS\x00')) {
+          return; // metadata sentinels — never paint as text
         } else if (msgText.startsWith('\x00REPLACE\x00')) {
           setStreamingResponse(msgText.slice('\x00REPLACE\x00'.length));
         } else {

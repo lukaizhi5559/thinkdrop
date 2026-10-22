@@ -2,6 +2,7 @@ import React, { useState, useRef, useEffect, useImperativeHandle, forwardRef, us
 import { flushSync } from 'react-dom';
 import VoiceButton from './VoiceButton';
 import VoiceBars from './VoiceBars';
+import RoptKeyIcon from './RoptKeyIcon';
 import type { RefObject } from 'react';
 import type { AIActivityPanelHandle } from './AIActivityPanel';
 import { BrainIcon } from './QueueTaskCard';
@@ -145,6 +146,53 @@ function PromptInputBarImpl(
   // Guard against double-submit during the brief window before the parent's
   // isSubmitting prop updates (parent state is now in a startTransition).
   const localSubmittingRef = useRef(false);
+
+  // ── ROpt-hold PTT ─────────────────────────────────────────────────────────
+  // 'voice:ptt-start/stop' come from main (ui + service dispatched together);
+  // 'ptt:interim' shows live text; 'ptt:transcript' is the final — auto-submit
+  // with the current highlight chips (an armed selection confirmed by the same
+  // keypress rides along).
+  const [pttActive, setPttActive] = useState(false);
+  const [pttInterim, setPttInterim] = useState('');
+  // ⓘ legend tooltip open state (hover + click-toggle).
+  const [legendOpen, setLegendOpen] = useState(false);
+  const promptTextRef = useRef(promptText);
+  promptTextRef.current = promptText;
+  const onSubmitRef = useRef(onSubmit);
+  onSubmitRef.current = onSubmit;
+  const gatherPendingRef = useRef(gatherPending);
+  gatherPendingRef.current = gatherPending;
+
+  useEffect(() => {
+    const ipc = (window as any).electron?.ipcRenderer;
+    if (!ipc) return;
+    const T = 'inputbar-ptt';
+    const onStart = () => { setPttActive(true); setPttInterim(''); };
+    const onStop = () => { setPttActive(false); setPttInterim(''); };
+    const onInterim = (data: { text?: string }) => setPttInterim(data?.text || '');
+    const onTranscript = (data: { transcript?: string }) => {
+      const said = (data?.transcript || '').trim();
+      setPttActive(false);
+      setPttInterim('');
+      if (!said) return;
+      // Typed text already in the box stays — prepend it to the dictation.
+      const typed = promptTextRef.current.trim();
+      const text = typed ? `${typed} ${said}` : said;
+      const chips = highlightsStore.get();
+      flushSync(() => setPromptText(''));
+      setTimeout(() => onSubmitRef.current(text, chips, gatherPendingRef.current), 10);
+    };
+    ipc.on('voice:ptt-start', onStart, T);
+    ipc.on('voice:ptt-stop', onStop, T);
+    ipc.on('ptt:interim', onInterim, T);
+    ipc.on('ptt:transcript', onTranscript, T);
+    return () => {
+      ipc.removeListenerByToken?.('voice:ptt-start', T);
+      ipc.removeListenerByToken?.('voice:ptt-stop', T);
+      ipc.removeListenerByToken?.('ptt:interim', T);
+      ipc.removeListenerByToken?.('ptt:transcript', T);
+    };
+  }, []);
 
   // Imperative handle — lets parent inject text (voice) and focus the textarea.
   useImperativeHandle(ref, () => ({
@@ -362,7 +410,7 @@ function PromptInputBarImpl(
             <button
               onClick={() => (window as any).electron?.ipcRenderer?.send('selection:capture-request')}
               className="relative flex items-center gap-1.5 px-2 py-1 rounded-md text-xs selection-pending-chip"
-              title="Paste highlighted text into the overlay (⌘;)"
+              title="Paste highlighted text into the overlay (tap Right ⌥)"
               style={{
                 backgroundColor: 'rgba(251, 146, 60, 0.14)',
                 border: '1px solid rgba(251, 146, 60, 0.35)',
@@ -372,16 +420,7 @@ function PromptInputBarImpl(
             >
               <ClipboardPasteIcon />
               <span>Paste context</span>
-              <kbd
-                className="px-1 rounded text-[10px]"
-                style={{
-                  backgroundColor: 'rgba(251, 146, 60, 0.12)',
-                  border: '1px solid rgba(251, 146, 60, 0.3)',
-                  fontFamily: 'inherit',
-                }}
-              >
-                ⌘;
-              </kbd>
+              <RoptKeyIcon size={16} tone="amber" detail="icon" />
             </button>
             <button
               onClick={() => (window as any).electron?.ipcRenderer?.send('selection:clear')}
@@ -441,6 +480,29 @@ function PromptInputBarImpl(
     >
       {/* Highlights */}
       {renderHighlightChips()}
+
+      {/* ROpt-hold PTT: amber key + live interim while dictating */}
+      {pttActive && (
+        <div
+          className="mb-3 flex items-center justify-center gap-2 px-2"
+          style={{ minHeight: '24px' }}
+        >
+          <RoptKeyIcon size={20} tone="amber" pulse />
+          <span
+            className="text-sm"
+            style={{
+              color: pttInterim ? '#fbbf24' : '#9ca3af',
+              fontStyle: pttInterim ? 'italic' : 'normal',
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+              whiteSpace: 'nowrap',
+            }}
+            title={pttInterim || 'Listening…'}
+          >
+            {pttInterim || 'Listening…'}
+          </span>
+        </div>
+      )}
 
       {/* Voice session: bars + live transcript replace the textarea */}
       {voiceSession?.active ? (
@@ -545,6 +607,58 @@ function PromptInputBarImpl(
           </button> */}
         </div>
 
+        {/* Gesture legend — centered "Key Cmds ⓘ", hover/click shows all
+            Right-Option commands */}
+        <div className="flex-1 flex items-center justify-center">
+          <div
+            className="relative flex items-center"
+            onMouseEnter={() => setLegendOpen(true)}
+            onMouseLeave={() => setLegendOpen(false)}
+          >
+            <button
+              type="button"
+              onClick={() => setLegendOpen(v => !v)}
+              className="flex items-center gap-1 px-2 py-1 rounded-md text-gray-500 hover:text-gray-300 hover:bg-white/5 transition-colors"
+              style={{ fontSize: 11, fontWeight: 500 }}
+              title="Right-Option shortcuts"
+            >
+              Key Cmds
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <circle cx="12" cy="12" r="10" />
+                <line x1="12" y1="16" x2="12" y2="12" />
+                <line x1="12" y1="8" x2="12.01" y2="8" />
+              </svg>
+            </button>
+            {legendOpen && (
+              <div
+                className="absolute flex flex-col gap-2 px-3 py-2.5 rounded-lg"
+                style={{
+                  bottom: 46,
+                  left: '50%',
+                  transform: 'translateX(-50%)',
+                  zIndex: 60,
+                  width: 268,
+                  backgroundColor: 'rgba(12,16,24,0.96)',
+                  border: '1px solid rgba(255,255,255,0.14)',
+                  boxShadow: '0 8px 28px rgba(0,0,0,0.5)',
+                }}
+              >
+                {[
+                  { keys: <><RoptKeyIcon size={16} /><span>double-tap</span></>, desc: 'show / hide' },
+                  { keys: <><RoptKeyIcon size={16} /><span>hold</span></>, desc: 'talk (PTT)' },
+                  { keys: <><RoptKeyIcon size={16} /><span>tap</span></>, desc: 'confirm · run plan · mute · latest' },
+                  { keys: <><RoptKeyIcon size={16} side="left" /><span>hold +</span><RoptKeyIcon size={16} /><span>tap</span></>, desc: 'cancel / exit' },
+                ].map((row, i) => (
+                  <div key={i} className="flex items-center justify-between" style={{ fontSize: 11 }}>
+                    <span className="flex items-center gap-1.5" style={{ color: '#d1d5db', fontWeight: 500, whiteSpace: 'nowrap' }}>{row.keys}</span>
+                    <span style={{ color: '#6b7280' }}>{row.desc}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+
         {/* Submit/Cancel Button - Matching StandalonePromptCapture style */}
         <div className="flex items-center gap-2">
           <div
@@ -612,7 +726,7 @@ function PromptInputBarImpl(
               </svg>
             )}
           </div>
-          <VoiceButton compact={true} icon="voice" style={{ width: '36px', height: '36px', borderRadius: '8px' }} />
+          <VoiceButton compact={true} icon="voice" ptt={pttActive} style={{ width: '36px', height: '36px', borderRadius: '8px' }} />
         </div>
       </div>
     </div>
