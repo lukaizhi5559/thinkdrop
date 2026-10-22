@@ -55,7 +55,7 @@ function toItem(r) {
     ratingMax: r.ratingMax !== undefined ? r.ratingMax : undefined,
     reviewCount: r.reviewCount !== undefined ? r.reviewCount : undefined,
     priceRange: r.priceRange || undefined,
-    mediaType: isVideo ? 'video' : undefined,
+    mediaType: isVideo ? 'video' : (isImage ? 'image' : undefined),
     duration: isVideo ? (r.metadata?.duration || r.duration || undefined) : undefined,
     channel: isVideo ? (r.metadata?.channel || r.channel || undefined) : undefined,
   };

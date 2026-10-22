@@ -28,7 +28,7 @@ export interface WebResultItem {
   reviewCount?: number;
   priceRange?: string;
   // Media fields (videos / rich cards)
-  mediaType?: 'video' | 'product' | 'article' | 'card';
+  mediaType?: 'video' | 'image' | 'product' | 'article' | 'card';
   videoUrl?: string;
   embedUrl?: string;
   posterUrl?: string;
@@ -40,6 +40,9 @@ export interface WebResultItem {
 
 interface WebResultCardProps {
   item: WebResultItem;
+  /** 'card' = 220px media card (default); 'row' = full-width vertical-list
+   * row with a small left thumb — link results where title/snippet matter. */
+  variant?: 'card' | 'row';
 }
 
 const openUrl = (url: string) => {
@@ -52,7 +55,7 @@ const openUrl = (url: string) => {
   }
 };
 
-const WebResultCard: React.FC<WebResultCardProps> = ({ item }) => {
+const WebResultCard: React.FC<WebResultCardProps> = ({ item, variant = 'card' }) => {
   const [imgFailed, setImgFailed] = useState(false);
   const [imgLoaded, setImgLoaded] = useState(false);
   // Direct thumbnail/CDN URLs (Brave imgs.search proxy, hotlink-protected
@@ -94,6 +97,106 @@ const WebResultCard: React.FC<WebResultCardProps> = ({ item }) => {
   const ratingMax = item.ratingMax ?? parsed.ratingMax ?? 5;
   const reviewCount = item.reviewCount ?? parsed.reviewCount;
   const priceChip = item.price || item.priceRange || parsed.priceRange;
+
+  // 'row' variant — link results in a vertical list: small left thumb,
+  // full-width title + readable snippet. Same click + thumb-fallback logic.
+  if (variant === 'row') {
+    return (
+      <div
+        onClick={handleClick}
+        className="web-result-card"
+        style={{
+          display: 'flex', gap: 10, alignItems: 'flex-start',
+          padding: '8px 10px', borderRadius: 8,
+          background: 'rgba(255,255,255,0.03)',
+          border: '1px solid rgba(255,255,255,0.08)',
+          cursor: 'pointer',
+          transition: 'border-color 0.15s, background 0.15s',
+        }}
+        onMouseEnter={(e) => {
+          e.currentTarget.style.borderColor = 'rgba(59,130,246,0.4)';
+          e.currentTarget.style.background = 'rgba(59,130,246,0.05)';
+        }}
+        onMouseLeave={(e) => {
+          e.currentTarget.style.borderColor = 'rgba(255,255,255,0.08)';
+          e.currentTarget.style.background = 'rgba(255,255,255,0.03)';
+        }}
+      >
+        {thumbUrl && !imgFailed && (
+          <div style={{ position: 'relative', width: 72, height: 56, flexShrink: 0, borderRadius: 6, overflow: 'hidden', background: 'rgba(255,255,255,0.04)' }}>
+            {!imgLoaded && <div className="image-skeleton" style={{ position: 'absolute', inset: 0 }} />}
+            <img
+              src={thumbUrl}
+              alt={item.title || ''}
+              referrerPolicy="no-referrer"
+              loading="lazy"
+              onError={handleImgError}
+              onLoad={handleImgLoad}
+              style={{ width: '100%', height: '100%', objectFit: 'cover', opacity: imgLoaded ? 1 : 0, transition: 'opacity 0.2s' }}
+            />
+            {isVideo && imgLoaded && (
+              <div style={{
+                position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%, -50%)',
+                width: 24, height: 24, borderRadius: '50%', background: 'rgba(0,0,0,0.65)',
+                display: 'flex', alignItems: 'center', justifyContent: 'center', pointerEvents: 'none',
+              }}>
+                <svg width="10" height="10" viewBox="0 0 24 24" fill="white"><polygon points="6,4 20,12 6,20" /></svg>
+              </div>
+            )}
+          </div>
+        )}
+        <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 3 }}>
+          {item.title && (
+            <div style={{
+              fontSize: 12, fontWeight: 500, lineHeight: 1.3,
+              color: 'rgba(255,255,255,0.9)',
+              display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical',
+              overflow: 'hidden',
+            }}>
+              {item.title}
+            </div>
+          )}
+          {priceChip && (
+            <span style={{
+              display: 'inline-block', alignSelf: 'flex-start',
+              fontSize: 12, fontWeight: 600, color: '#4ade80',
+              background: 'rgba(74,222,128,0.1)', padding: '1px 6px', borderRadius: 4,
+            }}>
+              {priceChip}
+            </span>
+          )}
+          {rating !== undefined && (
+            <StarRating value={rating} max={ratingMax} count={reviewCount} size={11} />
+          )}
+          {parsed.text && (
+            <div style={{
+              fontSize: 11, lineHeight: 1.35, color: 'rgba(255,255,255,0.5)',
+              display: '-webkit-box', WebkitLineClamp: 3, WebkitBoxOrient: 'vertical',
+              overflow: 'hidden',
+            }}>
+              {parsed.text}
+            </div>
+          )}
+          {hostname && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 4, paddingTop: 2 }}>
+              <img
+                src={`https://www.google.com/s2/favicons?domain=${encodeURIComponent(hostname)}&sz=32`}
+                alt=""
+                width={12}
+                height={12}
+                referrerPolicy="no-referrer"
+                style={{ borderRadius: 2, flexShrink: 0 }}
+                onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }}
+              />
+              <span style={{ fontSize: 10, color: 'rgba(255,255,255,0.4)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                {hostname}
+              </span>
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div
