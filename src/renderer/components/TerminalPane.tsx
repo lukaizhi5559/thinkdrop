@@ -203,6 +203,7 @@ export function TerminalPane({ visible }: TerminalPaneProps) {
 
   const isPassword = prompt === 'password';
   const isInput = prompt === 'input';
+  const isPager = prompt === 'pager';
 
   // Warp-style prompt prefix — show the session's working directory.
   const activeMeta = sessions.find(s => s.id === activeId)?.meta;
@@ -302,6 +303,11 @@ export function TerminalPane({ visible }: TerminalPaneProps) {
             Waiting for input — type below and press Enter (arrow keys work too — click the screen first for menus).
           </div>
         )}
+        {isPager && exited === null && (
+          <div className="px-3 py-1 bg-blue-500/15 text-blue-300 text-xs">
+            Pager open — click the screen and press q to close it.
+          </div>
+        )}
         {exited !== null && (
           <div className="px-3 py-1 bg-white/5 text-gray-400 text-xs">
             {exited < 0 ? 'Session closed — open a new one or select another above.' : `Session exited (code ${exited}).`}
@@ -332,7 +338,7 @@ export function TerminalPane({ visible }: TerminalPaneProps) {
               e.stopPropagation();
             }}
             disabled={!activeId || exited !== null}
-            placeholder={activeId ? (isPassword ? 'type password, Enter to send' : isInput ? 'type your answer, Enter to send' : 'Enter to run · Shift+Enter for newline') : 'select or open a session'}
+            placeholder={activeId ? (isPassword ? 'type password, Enter to send' : isInput ? 'type your answer, Enter to send' : isPager ? 'pager open — press q to close' : 'Enter to run · Shift+Enter for newline') : 'select or open a session'}
             className="flex-1 bg-transparent text-gray-200 text-xs outline-none resize-none disabled:opacity-40 placeholder:text-gray-600"
             style={{
               fontFamily: 'Menlo, Monaco, "Courier New", monospace', fontSize: 12, lineHeight: '18px', maxHeight: 90, overflowY: 'auto',
