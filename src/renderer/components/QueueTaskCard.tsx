@@ -39,6 +39,11 @@ export interface CommsTask {
   intent: string;
   source: string;
   planFile?: string | null;
+  /** Plan identity for plan-dispatched tasks — keeps their run cards out of
+   *  the Thoughts group and badges them "Plan · Task N". */
+  planId?: string | null;
+  planTask?: boolean;
+  planTaskNum?: number | null;
   /** Conversation session this task's discussion lives in — used by Continue Thread. */
   sessionId?: string | null;
   /** Run artifacts persisted at completion (journal) — steps/files/drafts that
@@ -575,7 +580,7 @@ export function QueueTaskCard({ task, onContinueThread, onHeightChange, flash, o
         borderTop: expanded ? `1px solid ${cfg.border}` : 'none',
         backgroundColor: 'rgba(0,0,0,0.15)',
       }}>
-        {/* Inner padding so AutomationProgress/PlanPanel/QuestionCard don't touch edges */}
+        {/* Inner padding so AutomationProgress/QuestionCard don't touch edges */}
         {(isActive || hasExpanded) && (
           <div style={{ padding: '12px' }}>
             <AutomationProgress

@@ -78,8 +78,16 @@ export interface PlanCheckPayload {
   authOpened?: string;
   cancelled?: boolean;
   error?: string;
-  /** Run actually started — card flips to a dimmed, read-only state. */
+  /** Run actually started — card flips to a read-only run surface. */
   started?: boolean;
+  /** Task num → title, emitted by main so the card can render live run rows. */
+  taskTitles?: { num: number; title: string }[];
+  /** Live per-task run state, patched by plan:task_progress events. */
+  taskStatuses?: Record<number, { status: string; result?: string | null }>;
+  /** Plan reached a terminal state — {status:'done'|'failed', failedTasks}. */
+  finished?: { status: string; failedTasks: number[] };
+  /** Frontmatter status mirrors (running/done/failed/revising…). */
+  planStatus?: string;
   /** A different plan took over the active session — card is inert. */
   superseded?: boolean;
 }
@@ -119,6 +127,17 @@ function _send(planId: string | null, itemId: string | undefined, action: string
   ipcRenderer?.send('plan:check:action', { planId, itemId, action, ...extra });
 }
 
+// plan-format TASK_STATUS strings carry emoji prefixes ('🔄 running',
+// '✅ done'…) — normalize by substring so both raw and prefixed values work.
+function _runGlyph(status: string | undefined): { glyph: string; color: string; text: string } {
+  const s = String(status || '').toLowerCase();
+  if (s.includes('running')) return { glyph: '◔', color: '#60a5fa', text: 'running' };
+  if (s.includes('done'))    return { glyph: '✓', color: '#4ade80', text: 'done' };
+  if (s.includes('failed'))  return { glyph: '✕', color: '#f87171', text: 'failed' };
+  if (s.includes('skipped')) return { glyph: '»', color: '#9ca3af', text: 'skipped' };
+  return { glyph: '◦', color: '#64748b', text: 'queued' };
+}
+
 export function PlanCheckCard({ check, compact = true }: PlanCheckCardProps) {
   const [confirmBypass, setConfirmBypass] = useState<string | null>(null);
   const [keyInputs, setKeyInputs] = useState<Record<string, string>>({});
@@ -135,6 +154,14 @@ export function PlanCheckCard({ check, compact = true }: PlanCheckCardProps) {
   const detailItems = compact ? check.items.filter(i => i.status !== 'pass') : check.items;
   const runnable = check.allClear;
 
+  // Run-state: once started (or task progress arrived), the card is the live
+  // run surface — readiness rows swap for per-task status rows.
+  const isRunning = !!check.started && !check.finished;
+  const isFinished = !!check.finished;
+  const titleByNum = new Map<number, string>((check.taskTitles || []).map(t => [t.num, t.title]));
+  const statusNums = Object.keys(check.taskStatuses || {}).map(Number).filter(n => Number.isFinite(n));
+  const runNums = [...new Set([...titleByNum.keys(), ...statusNums])].sort((a, b) => a - b);
+
   const _submitKey = (item: PlanCheckItem, envName: string) => {
     const field = `${item.id}:${envName}`;
     const value = (keyInputs[field] || '').trim();
@@ -149,7 +176,7 @@ export function PlanCheckCard({ check, compact = true }: PlanCheckCardProps) {
       padding: '10px 12px',
       backgroundColor: COLORS.cardBg,
       border: COLORS.cardBorder,
-      opacity: check.started || check.superseded ? 0.55 : 1,
+      opacity: check.superseded || isFinished ? 0.6 : 1,
       transition: 'opacity 0.25s ease',
     }}>
       {/* Header — AP blue-dot + title pattern */}
@@ -157,7 +184,7 @@ export function PlanCheckCard({ check, compact = true }: PlanCheckCardProps) {
         <div className="flex items-center gap-2">
           <div className="flex-shrink-0 w-3 h-3 rounded-full" style={{ backgroundColor: '#3b82f6' }} />
           <span style={{ color: COLORS.headerText, fontSize: '0.78rem', fontWeight: 600 }}>
-            {check.started ? 'Plan readiness — running' : 'Plan readiness'}
+            {isFinished ? `Plan run — ${check.finished!.status}` : isRunning ? 'Plan run' : 'Plan readiness'}
           </span>
         </div>
         <button
@@ -178,15 +205,36 @@ export function PlanCheckCard({ check, compact = true }: PlanCheckCardProps) {
             opacity: checking || check.started ? 0.6 : 1,
           }}
         >
-          {check.started ? 'run started' : checking ? 'checking…' : check.allClear
+          {isFinished ? check.finished!.status : isRunning ? 'running…' : checking ? 'checking…' : check.allClear
             ? (warns.length ? `${warns.length} warning${warns.length === 1 ? '' : 's'}` : 'all clear')
             : `${issues.length} issue${issues.length === 1 ? '' : 's'}`}
         </button>
       </div>
 
-      {compact && (
+      {compact && !check.started && !check.taskStatuses && (
         <div style={{ marginBottom: detailItems.length ? 8 : 0 }}>
           <TaskRows tasks={summarizeTasks(check.items)} compact />
+        </div>
+      )}
+
+      {/* Live run rows — the card IS the run surface once started; per-task
+          status patches land on taskStatuses via plan:task_progress. */}
+      {(check.started || check.taskStatuses) && runNums.length > 0 && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 3, marginBottom: detailItems.length ? 8 : 0 }}>
+          {runNums.map(num => {
+            const st = check.taskStatuses?.[num]?.status;
+            const g = _runGlyph(st);
+            return (
+              <div key={num} style={{ display: 'flex', alignItems: 'baseline', gap: 8, fontSize: '0.72rem', lineHeight: '18px' }}>
+                <span style={{ color: g.color, fontWeight: 800, flexShrink: 0, width: 12, textAlign: 'center' }}>{g.glyph}</span>
+                <span style={{ color: '#94a3b8', flexShrink: 0 }}>Task {num}</span>
+                <span style={{ color: COLORS.bodyText, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', flex: 1, minWidth: 0 }}>
+                  — {titleByNum.get(num) || `Task ${num}`}
+                </span>
+                <span style={{ color: g.color, fontSize: '0.66rem', flexShrink: 0 }}>{g.text}</span>
+              </div>
+            );
+          })}
         </div>
       )}
 
@@ -318,13 +366,17 @@ export function PlanCheckCard({ check, compact = true }: PlanCheckCardProps) {
         </div>
       )}
 
-      {/* Started — run is underway; the card is read-only history now. */}
-      {check.started && (
+      {/* Finished — terminal run summary. Live progress is the task rows
+          above; this is the closing line. */}
+      {isFinished && (
         <div style={{
           marginTop: 12, borderTop: '1px solid rgba(255,255,255,0.07)', paddingTop: 10,
-          color: COLORS.secondaryText, fontSize: '0.72rem',
+          color: check.finished!.status === 'done' ? COLORS.secondaryText : COLORS.issueText,
+          fontSize: '0.72rem',
         }}>
-          Run started — watch the run card above for progress.
+          {check.finished!.status === 'done'
+            ? 'Plan finished — all tasks complete.'
+            : `Plan finished with failures${check.finished!.failedTasks?.length ? ` — task${check.finished!.failedTasks.length === 1 ? '' : 's'} ${check.finished!.failedTasks.join(', ')}` : ''}.`}
         </div>
       )}
 

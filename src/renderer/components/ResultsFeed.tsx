@@ -1140,10 +1140,13 @@ function ResultsFeedImpl({
       // Thought items: proactive nudge entries (text bubbles) plus
       // thought-engine run cards — the live task is source:'proactive';
       // after purge the prompt's brain-outdir tail is the surviving marker.
-      const isThought = e.kind === 'proactive' || (e.kind === 'run' && (
-        resolveTask?.(e.taskId || '')?.source === 'proactive' ||
-        /\.thinkdrop[\/\\]brain[\/\\]/.test(e.prompt || '')
-      ));
+      // Plan-dispatched tasks are NOT thoughts even if an old journal record
+      // tagged them 'proactive' — they render inline as normal run cards.
+      const isThought = e.kind === 'proactive' || (e.kind === 'run' && (() => {
+        const t = resolveTask?.(e.taskId || '');
+        if (t?.planId || t?.planTask) return false;
+        return t?.source === 'proactive' || /\.thinkdrop[\/\\]brain[\/\\]/.test(e.prompt || '');
+      })());
       if (isThought) {
         runBuf.push(e);
         continue;

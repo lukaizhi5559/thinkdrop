@@ -1100,7 +1100,7 @@ export function UnifiedOverlay() {
       feedStore.internal.streamCompleted = false;
       feedStore.internal.streamAcc = '';
       feedStore.internal.streamSegment = '';
-      feedStore.set({ resultItems: [], searchSources: [] });
+      feedStore.set({ resultItems: [], searchSources: [], searchEngine: null, searchPending: null });
       setFeedEntries([]);
       setLiveRunHidden(false);
     };
@@ -1126,6 +1126,9 @@ export function UnifiedOverlay() {
       setStreamingResponse('');
       setResultItems([]);
       setSearchSources([]);
+      // Engine/pending chips belong to this response — a stale one must not
+      // leak onto the next prompt's committed entry.
+      feedStore.set({ searchEngine: null, searchPending: null });
       setShowSourcesPanel(false);
       setIsStreaming(false);
       setIsThinking(true);
@@ -2153,6 +2156,44 @@ export function UnifiedOverlay() {
         for (const e of feedStore.getState().entries) {
           if (e.id.startsWith(prefix)) feedStore.removeEntry(e.id);
         }
+      }
+    }, token);
+    // Plan run lifecycle → the readiness card evolves into the run card:
+    // per-task progress rows + finish state patch onto the same feed entry.
+    ipcRenderer.on('plan:task_progress', (data: { planId: string; taskNum: number; status: string; result?: string }) => {
+      if (!data?.planId || data?.taskNum == null) return;
+      const entryId = `plancheck:${data.planId}`;
+      const existing = feedStore.getState().entries.find(e => e.id === entryId) as any;
+      const taskStatuses = {
+        ...(existing?.check?.taskStatuses || {}),
+        [data.taskNum]: { status: data.status, result: data.result || null },
+      };
+      if (existing) {
+        feedStore.patchEntry(entryId, { check: { ...existing.check, started: true, taskStatuses } } as any);
+      } else {
+        // No readiness card (feed reloaded/cleared mid-run) — create the run card.
+        feedStore.appendEntry({
+          id: entryId, ts: Date.now(), kind: 'plan-check',
+          check: { planId: data.planId, items: [], allClear: true, started: true, taskStatuses },
+        } as any);
+      }
+    }, token);
+    ipcRenderer.on('plan:complete', (data: { planId: string; status: string; failedTasks?: number[]; results?: any[] }) => {
+      if (!data?.planId) return;
+      const entryId = `plancheck:${data.planId}`;
+      const existing = feedStore.getState().entries.find(e => e.id === entryId) as any;
+      if (existing) {
+        feedStore.patchEntry(entryId, {
+          check: { ...existing.check, finished: { status: data.status || 'done', failedTasks: data.failedTasks || [] } },
+        } as any);
+      }
+    }, token);
+    ipcRenderer.on('plan:status', (data: { planId: string; status: string }) => {
+      if (!data?.planId) return;
+      const entryId = `plancheck:${data.planId}`;
+      const existing = feedStore.getState().entries.find(e => e.id === entryId) as any;
+      if (existing) {
+        feedStore.patchEntry(entryId, { check: { ...existing.check, planStatus: data.status } } as any);
       }
     }, token);
     // Capability-discovery choices (<choices> from the planner) → QuestionCard.

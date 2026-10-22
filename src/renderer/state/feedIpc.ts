@@ -264,6 +264,9 @@ export function installFeedIpc(store: FeedStore, ui: FeedIpcUi): () => void {
         intent: data.guessedIntent || 'handoff',
         source: data.source || 'text',
         sessionId: data.sessionId || null,
+        planId: data.planId || null,
+        planTask: data.planTask === true,
+        planTaskNum: data.planTaskNum ?? null,
       }];
     });
     if (data.prompt) s.internal.taskPrompts.set(data.taskId, data.prompt);
@@ -275,7 +278,9 @@ export function installFeedIpc(store: FeedStore, ui: FeedIpcUi): () => void {
         const xid = s.appendUserEntry(data.prompt);
         if (xid) s.internal.taskExchange.set(data.taskId, xid);
       }
-      if (data.guessedIntent === 'command_automate') {
+      // Plan tasks get a run card immediately — the plan-check card above is
+      // a gate summary; this card is the live execution surface.
+      if (data.guessedIntent === 'command_automate' || data.planTask === true) {
         s.ensureRunEntry(data.taskId, data.prompt);
       }
     }
@@ -329,6 +334,9 @@ export function installFeedIpc(store: FeedStore, ui: FeedIpcUi): () => void {
             intent: 'handoff',
             source: j.source || 'text',
             planFile: j.planFile || null,
+            planId: j.planId || null,
+            planTask: j.planTask === true,
+            planTaskNum: j.planTaskNum ?? null,
             sessionId: j.sessionId || null,
             artifacts: j.artifacts || null,
           } as CommsTask;
@@ -391,6 +399,10 @@ export function installFeedIpc(store: FeedStore, ui: FeedIpcUi): () => void {
     // task:complete is their only reliable "finished" signal. Paused states
     // keep the glow on as an attention signal.
     if (status === 'done' || status === 'failed' || status === 'cancelled') {
+      // The pending "Searching …" chip outlives every settle path below —
+      // run-card branch, non-automate branch, and lanes that never emit an
+      // ENGINE/done chunk — clear it once here on any terminal status.
+      s.set({ searchPending: null });
       scheduleGlowOff(() => s.set({ isGlowActive: false }), 400);
     }
 
@@ -508,6 +520,9 @@ export function installFeedIpc(store: FeedStore, ui: FeedIpcUi): () => void {
         s.internal.taskStreamAcc.delete(data.taskId);
         s.internal.taskStreamEntry.delete(data.taskId);
         s.internal.synthTasks.delete(data.taskId);
+        // No 'done' arrives for aborted work — drop the "Searching …" chip or
+        // it floats in the live region until the next prompt.
+        s.set({ searchPending: null, isStreaming: false, isTaskWorking: false });
         settleError();
       }
       // Water-drip used to live on TaskCompleteBanner — moved here.
@@ -527,6 +542,7 @@ export function installFeedIpc(store: FeedStore, ui: FeedIpcUi): () => void {
       s.internal.taskStreamAcc.delete(data.taskId);
       s.internal.taskStreamEntry.delete(data.taskId);
       s.internal.synthTasks.delete(data.taskId);
+      s.set({ searchPending: null, isStreaming: false, isTaskWorking: false });
       if (!settleError()) {
         const raw = data.error || `Task ${status}`;
         s.appendEntry({

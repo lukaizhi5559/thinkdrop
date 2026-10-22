@@ -35,6 +35,17 @@ check('folder-anchored iterate prompt → localMultiEntity',
   isLocalMultiEntityTask('find all repos under ~/Desktop/projects and commit each one') === true);
 check('plain question is not multi-entity',
   isLocalMultiEntityTask('what time is it') === false);
+// STT-mangled anchor — "in this directly" is "in this directory" transcribed.
+// The loose `\bin this\b` fallback still anchors the repo sweep, but requires
+// a real entity word so single-entity work doesn't escalate.
+check('STT "in this directly" anchors the sweep → localMultiEntity',
+  isLocalMultiEntityTask('I need you to find all of the repos in this directly see on stage changes and commit') === true);
+check('"commit all changes in this branch" → NOT multi-entity (no entity word)',
+  isLocalMultiEntityTask('commit all changes in this branch') === false);
+check('single named repo without iterate marker → not multi-entity',
+  isLocalMultiEntityTask('commit the fix in this repo') === false);
+check('"update all the files in this" → localMultiEntity',
+  isLocalMultiEntityTask('update all the files in this') === true);
 
 // ── plan-format round-trip ────────────────────────────────────────────────
 {

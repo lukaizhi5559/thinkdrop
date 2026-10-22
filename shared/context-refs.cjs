@@ -106,13 +106,21 @@ function mergeRefs(...lists) {
 // routing) and stategraph gatherPlanContext (needs_plan escalation — a task
 // with this shape should be drafted, not grilled).
 const _LOCAL_ANCHOR_RE = /\[(?:File|Folder|Context):|~\/?[\w.-]|\/[\w.-]+(?:\/[\w .-]+)+|\bthis (?:directory|folder|repo|repository|project|workspace)\b/i;
+// `\bin this\b` — STT-tolerant fallback: "in this directly" is a voice
+// transcription of "in this directory". It's loose enough to need a real
+// entity word (not bare "all") so "commit all changes in this branch" stays
+// a single task.
+const _LOCAL_ANCHOR_LOOSE_RE = /\bin\s+this\b/i;
 const _ITERATE_EACH_RE = /\b(?:each|every|all|per[- ]|repos\b|repositories|nested|subdirector(?:y|ies)|recursiv\w*)/i;
+const _ENTITY_RE = /\b(?:repos\b|repositories|files\b|folders\b|director(?:y|ies)|projects?|packages|modules|libraries|each|every|nested|subdirector(?:y|ies)|recursiv\w*)/i;
 const _SIDE_EFFECT_RE = /\b(?:commit|stage|push|update|fix|clean|build|scan|examine|inspect|rename|delete|install|test|deploy|organize|audit|report)\w*\b/i;
 
 function isLocalMultiEntityTask(text) {
   // Scrub URLs/emails so path-looking fragments inside them don't anchor.
   const s = String(text || '').replace(/\S+@\S+/g, ' ').replace(/https?:\/\/\S+/gi, ' ');
-  return _LOCAL_ANCHOR_RE.test(s) && _ITERATE_EACH_RE.test(s) && _SIDE_EFFECT_RE.test(s);
+  if (!_SIDE_EFFECT_RE.test(s)) return false;
+  return (_LOCAL_ANCHOR_RE.test(s) && _ITERATE_EACH_RE.test(s))
+      || (_LOCAL_ANCHOR_LOOSE_RE.test(s) && _ENTITY_RE.test(s));
 }
 
 module.exports = { extractContextRefs, mergeRefs, isLocalMultiEntityTask };

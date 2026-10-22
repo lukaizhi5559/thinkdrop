@@ -772,6 +772,12 @@ async function restoreQueueFromJournal() {
   try {
     const resp = await _commsGet('/tasks');
     const tasks = resp?.tasks || [];
+    // Replay the last plan:check emit — the readiness/run card lives in the
+    // feed only, so a renderer reload (or a cleared feed) loses it entirely.
+    // Re-sending restores it patched against the same entry id.
+    if (_lastPlanCheckEmit && _lastPlanCheckEmit.planId) {
+      safeSendUnified('plan:check', _lastPlanCheckEmit);
+    }
     if (tasks.length === 0) return true;
     const TERMINAL = ['done', 'failed', 'cancelled'];
     const active = tasks.filter(t => !TERMINAL.includes(t.status));
@@ -803,6 +809,11 @@ async function restoreQueueFromJournal() {
         planFile: t.planFile || null,
         progress: t.progress || null,
         artifacts: t.artifacts || null,
+        // Plan identity survives reloads — restored plan-task cards keep
+        // their badge and stay out of the Thoughts bucket.
+        ...(t.planMeta?.planId ? { planId: t.planMeta.planId } : {}),
+        ...(t.planMeta?.planTask ? { planTask: true } : {}),
+        ...(t.planMeta?.planTaskNum ? { planTaskNum: t.planMeta.planTaskNum } : {}),
       })),
     });
     console.log('[QueueRestore] Done');
@@ -1627,6 +1638,11 @@ function startOverlayControlServer() {
             parked: false,
             source: source || 'text',
             guessedIntent: guessedIntent !== undefined ? guessedIntent : null,
+            // Plan identity — the feed needs it to keep plan-task run cards
+            // out of the "Thoughts" group and to badge them by plan/task num.
+            ...(planId ? { planId } : {}),
+            ...(planTask === true ? { planTask: true } : {}),
+            ...(planTaskNum ? { planTaskNum } : {}),
           });
           // Voice-sourced tasks are the spoken-cancel target.
           if (source === 'voice') _lastVoiceTaskId = taskId;
@@ -3790,6 +3806,9 @@ function _triggerPlanRun(metadata) {
 // by _matchPlanCheckAction before prompts reach comms-graph.
 /** @type {{planId:string|null, planFile:string, items:Array, bypassed:Set<string>, autoStart:boolean}|null} */
 let _pendingPlanCheck = null;
+/** Last emitted plan:check payload — replayed on renderer restore so the
+ *  card remounts if the feed was reloaded/cleared after the emit landed. */
+let _lastPlanCheckEmit = null;
 /** @type {{planId:string|null, question:string, options:Array}|null} */
 let _pendingChoices = null;
 /** @type {Map<string, {planId:string, taskNum:number, title:string, prompt:string, priorResults:Array, acked:boolean, fallbackTimer:any}>} key = planId:taskNum */
@@ -3823,12 +3842,16 @@ async function _emitPlanCheck(planId, planFile, { autoStart = false, bypassed, s
     const tasks = planFormat.parseTasks(content);
     const bypass = bypassed || _pendingPlanCheck?.bypassed || new Set();
     const { items, allClear } = await computePlanCheck(tasks, { bypassed: bypass });
+    // Task num → title map so the card can render live per-task progress
+    // rows once the run starts (plan:task_progress only carries taskNum).
+    const taskTitles = tasks.map(t => ({ num: t.num, title: String(t.prompt || t.title || `Task ${t.num}`).slice(0, 80) }));
     // A recheck for the same plan keeps a pending autoStart — the readiness
     // strip's debounced plan:check invoke must not cancel a conversational
     // run trigger that's waiting on issue resolution.
     const keepAuto = autoStart || (_pendingPlanCheck?.planFile === planFile && _pendingPlanCheck?.autoStart === true);
     _pendingPlanCheck = { planId, planFile, items, bypassed: bypass, autoStart: keepAuto };
-    safeSendUnified('plan:check', { planId, planFile, items, allClear, surface });
+    _lastPlanCheckEmit = { planId, planFile, items, allClear, surface, taskTitles };
+    safeSendUnified('plan:check', _lastPlanCheckEmit);
     console.log(`[PlanCheck] ${planId || planFile}: ${items.filter(i => i.status === 'issue').length} issue(s), allClear=${allClear}`);
     // Approval-gated tasks carry status 'pass' — they don't block the start;
     // they pause mid-run at their own review gates. An explicit run request
@@ -3841,7 +3864,8 @@ async function _emitPlanCheck(planId, planFile, { autoStart = false, bypassed, s
         // Patch the card into a read-only "running" state before clearing —
         // otherwise the feed keeps the last live-looking payload with enabled
         // buttons while the run is actually underway.
-        safeSendUnified('plan:check', { planId, planFile, items, allClear: true, started: true });
+        _lastPlanCheckEmit = { planId, planFile, items, allClear: true, started: true, taskTitles };
+        safeSendUnified('plan:check', _lastPlanCheckEmit);
         _pendingPlanCheck = null;
         _setPlanningMode({ active: false });
       } else {
@@ -4424,7 +4448,8 @@ async function _handlePlanCheckAction({ planId, itemId, action, value, envName, 
         autoApprove: action === 'run-all',
       });
       if (r?.ok) {
-        safeSendUnified('plan:check', { planId: pc.planId, planFile: pc.planFile, items: pc.items, allClear: true, started: true });
+        _lastPlanCheckEmit = { planId: pc.planId, planFile: pc.planFile, items: pc.items, allClear: true, started: true, taskTitles: _lastPlanCheckEmit?.planId === pc.planId ? _lastPlanCheckEmit.taskTitles : undefined };
+        safeSendUnified('plan:check', _lastPlanCheckEmit);
         _pendingPlanCheck = null;
         _setPlanningMode({ active: false });
       } else {
@@ -7526,6 +7551,11 @@ app.whenReady().then(async () => {
     let doneHandled = false;
     let sseBuffer = '';
     let streamedText = '';
+    // unified:set-prompt must reach the renderer BEFORE the first chunk of any
+    // kind — handleSetPrompt clears resultItems/searchSources, so a sentinel
+    // (\x00ITEMS\x00/\x00SOURCES\x00/\x00ENGINE\x00) that lands earlier gets wiped
+    // the moment it fires. Fire once, on the first forwarded chunk or done.
+    let promptSent = false;
     const commsReq = http.request({
       hostname: '127.0.0.1',
       port: commsPort,
@@ -7549,16 +7579,15 @@ app.whenReady().then(async () => {
           let evt;
           try { evt = JSON.parse(trimmed.slice(5).trim()); } catch (_) { continue; }
           if (evt.type === 'chunk' && evt.text) {
+            if (!promptSent) { promptSent = true; safeSendUnified('unified:set-prompt', prompt); }
             // Sentinel chunks (\x00SEARCHING\x00/\x00ITEMS\x00/\x00SOURCES\x00/
             // \x00ENGINE\x00) are metadata, not painted text — they must not
             // flip streamedAny or the done handler drops the real answer, and
             // their JSON payloads must not land in the TTS transcript.
             if (evt.text.startsWith('\x00REPLACE\x00')) {
-              if (!streamedAny) safeSendUnified('unified:set-prompt', prompt);
               streamedAny = true;
               streamedText = evt.text.slice('\x00REPLACE\x00'.length);
             } else if (!evt.text.startsWith('\x00')) {
-              if (!streamedAny) safeSendUnified('unified:set-prompt', prompt);
               streamedAny = true;
               streamedText += evt.text;
             }
@@ -7603,6 +7632,9 @@ app.whenReady().then(async () => {
             // For direct answers (general_quick, memory_quick), the response IS the
             // answer — isPlaceholder must be false so the water-drip sound plays.
             const isPlaceholder = intent === 0;
+            // Prompt reset first — the sentinels below populate the same store
+            // fields handleSetPrompt clears, so they must land AFTER it.
+            if (!promptSent) { promptSent = true; safeSendUnified('unified:set-prompt', prompt); }
             // Sentinels ride the same chunk channel in BOTH paths — streamed
             // answers also carry sources/items/engine, not just painted text.
             const _srcs = metadata?.sources, _its = metadata?.items, _eng = metadata?.engine;
@@ -7619,7 +7651,6 @@ app.whenReady().then(async () => {
               // Tokens already painted via SSE — close the stream only.
               safeSendUnified('ws-bridge:message', { type: 'done', taskId });
             } else {
-              safeSendUnified('unified:set-prompt', prompt);
               safeSendUnified('ws-bridge:message', { type: 'chunk', text: responseText, taskId, isPlaceholder });
               safeSendUnified('ws-bridge:message', { type: 'done', taskId });
             }
@@ -8079,7 +8110,7 @@ app.whenReady().then(async () => {
     }
   });
 
-  // plan:approve — user clicked "Run Plan" in PlanPanel
+  // plan:approve — user approved the plan for execution
   ipcMain.on('plan:approve', async (_event, { planFile, taskId, scanBeforeRun = true } = {}) => {
     // ── Handoff path: resume via handoffRunner ──────────────────────────────
     if (taskId) {
@@ -8874,7 +8905,7 @@ app.whenReady().then(async () => {
 
     const isAskUserResume = !!pausedAutomationState;
     // Send unified:set-prompt so streamingResponse reset arrives at unifiedWindow BEFORE the first token.
-    // Skip for skill-plan re-runs — PlanPanel already shows the plan in executing state.
+    // Skip for skill-plan re-runs — the plan UI already shows executing state.
     // Skip for plan execution runs — the optimistic UI already transitioned to 'executing'
     // and sending unified:set-prompt would wipe that state via handleNewPrompt → resetToIdle.
     if (!_skillPlan && !isAskUserResume && !_planFile) safeSendUnified('unified:set-prompt', prompt);
