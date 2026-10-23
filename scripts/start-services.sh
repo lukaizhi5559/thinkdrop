@@ -200,7 +200,12 @@ sleep 2
 start_python_service "coreference" "$PROJECT_ROOT/mcp-services/coreference-service"
 sleep 2
 
-# 5. Phi4 Service — port 3005 (heavy, load last among core services)
+# 5. Phi4 Service — port 3009 (heavy, load last among core services)
+#    Ensure Ollama is up first — phi4's decision.answer route is the local
+#    typed-decision backend. Fail-open: if Ollama is missing the route
+#    returns DECISION_UNAVAILABLE and callers use the remote fallback.
+export PROJECT_ROOT PIDS_FILE
+bash "$SCRIPT_DIR/ensure-ollama.sh" || echo "   (ollama check skipped — remote fallback active)"
 start_node_service "phi4" "$PROJECT_ROOT/mcp-services/thinkdrop-phi4-service" 768
 sleep 3
 
@@ -262,6 +267,7 @@ echo "   • User Memory:         http://localhost:3001/service.health"
 echo "   • Web Search:          http://localhost:3002/service.health"
 echo "   • Conversation:        http://localhost:3004/service.health"
 echo "   • Phi4:                http://localhost:3009/service.health"
+echo "   • Ollama (decisions):  ${OLLAMA_HOST:-http://localhost:11434}/api/tags"
 echo "   • Coreference:         http://localhost:3005/health"
 echo "   • Command:             http://localhost:3007/health"
 echo "   • Screen Intelligence: http://localhost:3008/service.health"

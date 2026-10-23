@@ -2959,6 +2959,7 @@ function closeActiveBrowserSessions(reason = 'cancel') {
  */
 function _cancelAutomationRun() {
   console.log('🛑 [Automation] Cancel requested by user');
+  const _serialAbortedNow = !!activeAbortController; // untagged question batches belong to this run
   if (activeAbortController) {
     activeAbortController.abort();
     activeAbortController = null;
@@ -2966,11 +2967,14 @@ function _cancelAutomationRun() {
   // Comms→stategraph handoff runs hold their own AbortControllers — the serial
   // abort above never reaches them, so a cancel (button or ⌥L+⌥R) during the
   // handed-off phase did nothing while the run kept going.
+  // Capture before cancelling — cancel() flips run.cancelled so
+  // _cancellableTaskIds() is empty by the time the question drain runs below.
+  const _killedTaskIds = _cancellableTaskIds();
   try {
     const handoff = require('./handoffRunner');
     // Live runs + tasks parked at plan-approval or waiting-for-input — cancel()
     // tears down all three lanes; _cancellableTaskIds() merges them.
-    for (const tid of _cancellableTaskIds()) {
+    for (const tid of _killedTaskIds) {
       console.log(`🛑 [Automation] Cancelling handoff run: ${tid}`);
       try { handoff.cancel(tid); } catch (_) {}
     }
@@ -2983,6 +2987,28 @@ function _cancelAutomationRun() {
       planRunner.cancelPlan(live.planId);
     }
   } catch (_) {}
+  // Drain pending question cards parked on the cancelled work — otherwise the
+  // card stays live and a late answer resolves a dead task's wait (observed:
+  // grill answers processed + memory written after the run was cancelled).
+  {
+    const deadTaskIds = new Set(_killedTaskIds);
+    const serialAborted = _serialAbortedNow;
+    for (const [k, e] of pendingGatherBatches) {
+      const btid = e.data?.taskId || null;
+      // Untagged batches belong to the serial run — drain only when it aborted.
+      if (btid ? !deadTaskIds.has(btid) : !serialAborted) continue;
+      clearTimeout(e.timer);
+      pendingGatherBatches.delete(k);
+      safeSendUnified('gather:question_batch', { active: false, batchId: k, questions: null, taskId: btid });
+      try { e.resolve({}); } catch (_) {}
+    }
+    if (pendingGatherResolve) {
+      try { pendingGatherResolve(''); } catch (_) {}
+      pendingGatherResolve = null;
+      pendingGatherQuestion = null;
+      safeSendUnified('gather:pending', { active: false, question: null });
+    }
+  }
   closeActiveBrowserSessions('cancel');
   // Tell the command-service to abort all in-flight command.automate runs
   // AND forcibly kill the playwright-cli daemon + Chrome processes. This is
@@ -4188,13 +4214,14 @@ async function _secretSet(key, value) {
     if (safeStorage.isEncryptionAvailable() && mcpAdapter) {
       const valueRef = `SAFE:${safeStorage.encryptString(String(value)).toString('base64')}`;
       const r = await mcpAdapter.callService('user-memory', 'profile.set', { key: k, valueRef }, { timeoutMs: 4000 }).catch(() => null);
-      if (r !== null) return true;
+      if (r !== null) { _secretCacheInvalidate(k); return true; }
     }
     // Bridge unavailable — macOS keychain + KEYTAR: ref (profile.get resolves it).
     const { spawnSync } = require('child_process');
     const pr = spawnSync('security', ['add-generic-password', '-s', 'thinkdrop', '-a', k, '-w', String(value), '-U'], { encoding: 'utf8' });
     if (pr.status !== 0) return false;
     if (mcpAdapter) await mcpAdapter.callService('user-memory', 'profile.set', { key: k, valueRef: `KEYTAR:${k}` }, { timeoutMs: 4000 }).catch(() => {});
+    _secretCacheInvalidate(k);
     return true;
   } catch (err) {
     console.warn(`[Secrets] set failed for ${k}:`, err.message);
@@ -4203,19 +4230,43 @@ async function _secretSet(key, value) {
 }
 
 /** profile.get → plaintext (SAFE: decrypts through the bridge; KEYTAR: via keychain).
- *  store_secret rows live under `<key>_ref`; plain rows under `<key>`. */
+ *  store_secret rows live under `<key>_ref`; plain rows under `<key>`.
+ *  Read-through cache (60s) + in-flight dedupe — the skills enumeration at
+ *  startup fires ~86 profile.get calls for the same keys in a burst; secrets
+ *  don't change mid-burst, and writes/deletes invalidate their key below. */
+const _secretCache = new Map();   // key → { v, exp }
+const _secretInflight = new Map(); // key → Promise
+const _SECRET_CACHE_TTL_MS = 60_000;
+function _secretCacheInvalidate(key) {
+  const k = String(key).toLowerCase();
+  _secretCache.delete(k); _secretCache.delete(`${k}_ref`);
+}
 async function _secretGet(key) {
   try {
     if (!mcpAdapter) return null;
     const k = String(key).toLowerCase();
-    for (const probe of [k, `${k}_ref`]) {
-      const r = await mcpAdapter.callService('user-memory', 'profile.get', { key: probe }, { timeoutMs: 4000 }).catch(() => null);
-      const v = r?.data?.valueRef ?? r?.valueRef ?? null;
-      // An undecrypted SAFE:/KEYTAR: ref means the backing store couldn't resolve —
-      // treat as missing rather than leaking the ref string to callers.
-      if (typeof v === 'string' && v.length && !v.startsWith('SAFE:') && !v.startsWith('KEYTAR:')) return v;
+    const hit = _secretCache.get(k);
+    if (hit && hit.exp > Date.now()) return hit.v;
+    const inFlight = _secretInflight.get(k);
+    if (inFlight) return inFlight;
+    const p = (async () => {
+      for (const probe of [k, `${k}_ref`]) {
+        const r = await mcpAdapter.callService('user-memory', 'profile.get', { key: probe }, { timeoutMs: 4000 }).catch(() => null);
+        const v = r?.data?.valueRef ?? r?.valueRef ?? null;
+        // An undecrypted SAFE:/KEYTAR: ref means the backing store couldn't resolve —
+        // treat as missing rather than leaking the ref string to callers.
+        if (typeof v === 'string' && v.length && !v.startsWith('SAFE:') && !v.startsWith('KEYTAR:')) return v;
+      }
+      return null;
+    })();
+    _secretInflight.set(k, p);
+    try {
+      const v = await p;
+      _secretCache.set(k, { v, exp: Date.now() + _SECRET_CACHE_TTL_MS });
+      return v;
+    } finally {
+      _secretInflight.delete(k);
     }
-    return null;
   } catch (_) { return null; }
 }
 
@@ -4226,6 +4277,7 @@ async function _secretDelete(key) {
     const k = String(key).toLowerCase();
     const a = await mcpAdapter.callService('user-memory', 'profile.delete', { key: k }, { timeoutMs: 4000 }).catch(() => null);
     const b = await mcpAdapter.callService('user-memory', 'profile.delete', { key: `${k}_ref` }, { timeoutMs: 4000 }).catch(() => null);
+    _secretCacheInvalidate(k);
     return a?.status === 'ok' || a?.ok === true || b?.status === 'ok' || b?.ok === true;
   } catch (_) { return false; }
 }
@@ -5047,7 +5099,6 @@ let _cancelAffordance = false;       // LOpt-hold affordance armed on the GhostL
 let _rshiftDownAt = 0;               // ⇧R held — arms the expand/history chord
 let _rshiftChordTapAt = 0;           // last ⌥R press inside the ⇧R chord
 let _rshiftExpandTimer = null;       // pending expand toggle (waits out double-tap)
-let _loptChordTapAt = 0;             // last ⌥R press inside the ⌥L chord
 let _historyViewOpen = false;        // GhostLayer conversation-timeline strip
 let _preHistoryOverlayVisible = false; // restore overlay on history close
 let _contextAskPending = 0;          // gatherCredentialCallback waits in flight
@@ -5959,24 +6010,11 @@ function _onRoptDown() {
     return;
   }
   if (_loptDownAt) {
-    // Option+Option chord — single ⌥R tap is the universal cancel confirm;
-    // a second tap inside the double-tap window is the hard reset (cancel +
-    // hide the overlay). Fires on any cancelable target, not only after the
-    // affordance's arm delay — the pill is visual confirmation, not the gate.
+    // Option+Option chord — only meaningful as the cancel confirm. Fire on any
+    // cancelable target, not only after the affordance's arm delay — a fast
+    // LOpt→ROpt chord (< LOPT_ARM_MS) must not dead-end. The pill is visual
+    // confirmation, not the gate.
     _roptConsumed = true;
-    if (Date.now() - _loptChordTapAt < ROPT_DTAP_MS) {
-      _loptChordTapAt = 0;
-      _dismissCancelAffordance();
-      _gestureCancel(); // idempotent — second press is a no-op if nothing's left
-      if (unifiedWindow && !unifiedWindow.isDestroyed() && unifiedWindow.isVisible()) {
-        _intentionalHide = true;
-        unifiedWindow.hide();
-        stopClipboardMonitoring();
-      }
-      console.log('[Gesture] ⌥L+⌥R double-tap — hard reset (cancel + hide)');
-      return;
-    }
-    _loptChordTapAt = Date.now();
     if (_cancelAffordance || _cancelableExists()) {
       _dismissCancelAffordance();
       _gestureCancel();
@@ -6064,7 +6102,6 @@ function _onLoptDown() {
 
 function _onLoptUp() {
   _loptDownAt = 0;
-  _loptChordTapAt = 0;
   clearTimeout(_loptArmTimer);
   _dismissCancelAffordance();
 }
