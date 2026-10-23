@@ -36,7 +36,7 @@ fi
 
 # 2. Version check — decision.answer relies on format:'json' + keep_alive.
 #    Warn rather than auto-upgrade a brew-managed install.
-MIN_OLLAMA="0.3.5"
+MIN_OLLAMA="0.35.0"
 OLLAMA_VER="$(ollama --version 2>/dev/null | sed -E 's/[^0-9.]*([0-9]+\.[0-9]+\.[0-9]+).*/\1/')"
 if [ -n "$OLLAMA_VER" ]; then
     if [ "$(printf '%s\n%s\n' "$MIN_OLLAMA" "$OLLAMA_VER" | sort -V | head -1)" != "$MIN_OLLAMA" ]; then
