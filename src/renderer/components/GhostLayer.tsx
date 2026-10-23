@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import RoptKeyIcon from './RoptKeyIcon';
 import { ThinkDropLogo } from './SlideoutDrawer';
 import { ScreenStage } from './screen/ScreenStage';
+import HistoryTimeline from './HistoryTimeline';
 
 const ipcRenderer = (window as any).electron?.ipcRenderer;
 // Listener token — untokened listeners can't be removed across contextBridge.
@@ -26,7 +27,7 @@ interface HighlightData {
   type: 'highlight' | 'clear' | 'scanning_start' | 'scanning_complete' | 'highlight_update'
     | 'progress_drop' | 'capture_begin' | 'capture_end' | 'progress_clear'
     | 'boundary_set' | 'boundary_clear' | 'control_lock' | 'control_unlock'
-    | 'cancel-affordance';
+    | 'cancel-affordance' | 'history:view';
   elements?: HighlightElement[];
   duration?: number;
   cx?: number;
@@ -40,6 +41,8 @@ interface HighlightData {
   taskId?: string | null;
   // cancel-affordance field
   armed?: boolean;
+  // history:view field — ⇧R+⌥R double-tap timeline strip
+  open?: boolean;
   // boundary_set fields (persistent app-window border for the whole plan)
   element?: HighlightElement;
 }
@@ -94,6 +97,7 @@ function GhostLayer() {
   // LOpt-hold cancel affordance — main arms it via cancel-affordance while a
   // cancelable task/control-lock exists; a tap of ROpt then executes cancel.
   const [cancelArmed, setCancelArmed] = useState(false);
+  const [historyOpen, setHistoryOpen] = useState(false); // ⇧R+⌥R ×2 timeline strip
 
   // Camera-flash overlay — briefly brightens the screen during screenshots.
   // Triggered by /overlay/flash (main.js) before a screen capture, cleared by
@@ -250,6 +254,8 @@ function GhostLayer() {
         setLockVisible(false);
       } else if (data.type === 'cancel-affordance') {
         setCancelArmed(!!data.armed);
+      } else if (data.type === 'history:view') {
+        setHistoryOpen(!!data.open);
       } else if (data.type === 'clear') {
         setHighlights([]);
         setIsVisible(false);
@@ -399,7 +405,7 @@ function GhostLayer() {
   // Tell main when the window goes fully idle — highlights gone, not scanning,
   // no drop/boundary, and no screen-output displays. Main then hides the
   // window + clears its display tracking (restores click-through).
-  const ghostOccupied = screenOccupied || isVisible || isScanning || !!drop || !!boundary || !!controlLock || !!fillerProgress || voiceSleeping || voiceStarting || webSearchStarting || selectionCtx || cancelArmed || voiceMuted;
+  const ghostOccupied = screenOccupied || isVisible || isScanning || !!drop || !!boundary || !!controlLock || !!fillerProgress || voiceSleeping || voiceStarting || webSearchStarting || selectionCtx || cancelArmed || voiceMuted || historyOpen;
   const prevOccupied = useRef(ghostOccupied);
   useEffect(() => {
     if (prevOccupied.current && !ghostOccupied) {
@@ -431,6 +437,15 @@ function GhostLayer() {
   // Voice-muted pill — "Muted — tap ⌥R" while the session mic is dead.
   const muteNode = voiceMuted ? <MutedPill /> : null;
 
+  // Conversation-history timeline strip — ⇧R+⌥R double-tap toggles; the
+  // overlay hides while it's open (main.js drives show/hide + click-through).
+  const historyNode = historyOpen ? (
+    <HistoryTimeline onClose={() => {
+      setHistoryOpen(false);
+      ipcRenderer?.send('history:view-close');
+    }} />
+  ) : null;
+
   // LOpt-hold cancel affordance — red "tap ⌥R to cancel" pill; stacks under
   // the control-lock pill when both are up.
   const cancelNode = cancelArmed ? <CancelAffordancePill top={controlLock ? 72 : 24} /> : null;
@@ -450,7 +465,7 @@ function GhostLayer() {
 
   // Show scanning overlay with dark background
   if (isScanning) {
-    return <>{stageNode}{fillerNode}{startNode}{webSearchNode}{sleepNode}{selNode}{lockNode}{cancelNode}{muteNode}<ScanningOverlay timer={scanTimer} /></>;
+    return <>{stageNode}{fillerNode}{startNode}{webSearchNode}{sleepNode}{selNode}{lockNode}{cancelNode}{muteNode}{historyNode}<ScanningOverlay timer={scanTimer} /></>;
   }
 
   // The progress drop renders independently of bounding-box highlights — it is
@@ -462,7 +477,7 @@ function GhostLayer() {
   const boundaryNode = boundary ? <PersistentBoundary element={boundary} visible={dropVisible} /> : null;
 
   if (!isVisible || highlights.length === 0) {
-    return <>{stageNode}{boundaryNode}{dropNode}{fillerNode}{startNode}{webSearchNode}{sleepNode}{selNode}{lockNode}{cancelNode}{muteNode}</>;
+    return <>{stageNode}{boundaryNode}{dropNode}{fillerNode}{startNode}{webSearchNode}{sleepNode}{selNode}{lockNode}{cancelNode}{muteNode}{historyNode}</>;
   }
 
   return (
@@ -507,6 +522,7 @@ function GhostLayer() {
       {lockNode}
       {cancelNode}
       {muteNode}
+      {historyNode}
       {highlights.map((element, index) => (
         <BoundingBox
           key={element.id ?? index}

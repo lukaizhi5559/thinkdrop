@@ -420,6 +420,45 @@ const PROBE_VERBS = new Map([
 
 const PROBE_DENY_RE = /^(exec|run|eval|init|login|logout|install|uninstall|set|unset|add|remove|delete|create|write|edit|open|update|upgrade|push|pull|send|publish|deploy|apply|--exec|-c|--output|-o|--config|--write|--eval|--command)$/i;
 
+// First-token denylist for raw-command validation — the probe contract is
+// "<cli-tool> <read-only verb>", so shells, interpreters, privilege
+// escalators, and package runners can never be the probed tool.
+const PROBE_TOOL_DENY_RE = /^(sudo|su|doas|env|eval|exec|bash|sh|zsh|fish|dash|ksh|node|deno|bun|python\d*|python3|ruby|perl|php|osascript|xargs|nohup|watch|time|command|builtin|source|\.|npx|uvx|pipx|yarn|pnpm|docker|podman|kubectl|ssh|scp|rsync|curl|wget|git|make)$/i;
+
+// Shell metacharacters — harmless under capabilityProbe's spawn-without-shell,
+// but the diagnosis-pane path runs the raw string through a real shell, so
+// chaining/substitution/redirect must be rejected outright.
+const PROBE_METACHAR_RE = /[;|&<>`$()\\{}\[\]\n\r#!*?]/;
+
+/**
+ * Validate a raw "tool arg…" probe command string against the same verb/
+ * denylist contract capabilityProbe enforces — for callers that execute the
+ * command through a shell (visible PTY), where metacharacters are dangerous.
+ * Returns { ok, tool, argv } or { ok:false, denied }.
+ */
+function validateProbeCommand(cmd) {
+  const raw = String(cmd || '').trim();
+  const deny = (reason) => {
+    _logProbe({ tool: raw.split(/\s+/)[0] || '', argv: raw.split(/\s+/).slice(1), denied: reason, raw: true });
+    return { ok: false, denied: reason };
+  };
+  if (!raw) return deny('empty');
+  if (PROBE_METACHAR_RE.test(raw)) return deny('metacharacters');
+  const parts = raw.split(/\s+/).filter(Boolean);
+  const tool = parts[0] || '';
+  const argv = parts.slice(1);
+  if (!/^[a-zA-Z0-9_.-]+$/.test(tool)) return deny('bad-tool-name');
+  if (PROBE_TOOL_DENY_RE.test(tool)) return deny(`tool-denied:${tool}`);
+  const verb = argv[0] || '--help';
+  const constraint = PROBE_VERBS.get(verb);
+  if (constraint === undefined) return deny(`verb-not-allowed:${verb}`);
+  if (constraint && !constraint.has(argv[1])) return deny(`second-token-not-allowed:${verb} ${argv[1] || ''}`);
+  for (const tok of argv) {
+    if (PROBE_DENY_RE.test(tok)) return deny(`token-denied:${tok}`);
+  }
+  return { ok: true, tool, argv };
+}
+
 const PROBE_TIMEOUT_MS = 15000;
 const PROBE_MAX_OUT = 4096;
 
@@ -987,4 +1026,4 @@ function mergeRouteOptions(results, inferred, pick) {
   return out.slice(0, 8);
 }
 
-module.exports = { searchCapabilities, capabilityProbe, selectCapability, inferCapabilities, selectBestCapability, decideGate, verbFit, stampDescriptor, whichCli, SETUP_SUMMARIES, SETUP_ETA, PLATFORM_AFFORDANCES, mergeRouteOptions };
+module.exports = { searchCapabilities, capabilityProbe, validateProbeCommand, selectCapability, inferCapabilities, selectBestCapability, decideGate, verbFit, stampDescriptor, whichCli, SETUP_SUMMARIES, SETUP_ETA, PLATFORM_AFFORDANCES, mergeRouteOptions };

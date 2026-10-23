@@ -12,6 +12,7 @@
 import React, { useState, useCallback } from 'react';
 import StarRating from './StarRating';
 import { parseRichSnippet } from './parseRichSnippet';
+import logoUrl from '../../assets/logo.jpg';
 
 export interface WebResultItem {
   title?: string;
@@ -85,6 +86,7 @@ const WebResultCard: React.FC<WebResultCardProps> = ({ item, variant = 'card' })
   const handleImgLoad = useCallback(() => setImgLoaded(true), []);
 
   const isVideo = item.mediaType === 'video';
+  const isMedia = isVideo || item.mediaType === 'image';
 
   const hostname = item.hostname || (() => {
     try { return new URL(item.url || item.imageUrl || '').hostname.replace(/^www\./, ''); } catch (_) { return ''; }
@@ -272,7 +274,32 @@ const WebResultCard: React.FC<WebResultCardProps> = ({ item, variant = 'card' })
           )}
         </div>
       )}
-      {thumbUrl && imgFailed && (
+      {/* Placeholder — media cards get the ThinkDrop logo when no thumb is
+        * available or every candidate failed; other cards keep the icon. */}
+      {isMedia && (!thumbUrl || imgFailed) && (
+        <div style={{
+          position: 'relative', width: '100%', height: 140,
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          background: 'rgba(255,255,255,0.04)',
+        }}>
+          <img src={logoUrl} alt="" style={{ width: 44, height: 44, objectFit: 'cover', borderRadius: 10, opacity: 0.45 }} />
+          {isVideo && (
+            <div style={{
+              position: 'absolute', top: '50%', left: '50%',
+              transform: 'translate(-50%, -50%)',
+              width: 40, height: 40, borderRadius: '50%',
+              background: 'rgba(0,0,0,0.65)',
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              pointerEvents: 'none',
+            }}>
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="white">
+                <polygon points="6,4 20,12 6,20" />
+              </svg>
+            </div>
+          )}
+        </div>
+      )}
+      {!isMedia && thumbUrl && imgFailed && (
         <div style={{
           width: '100%', height: 140,
           display: 'flex', alignItems: 'center', justifyContent: 'center',

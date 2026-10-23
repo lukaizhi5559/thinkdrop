@@ -755,7 +755,7 @@ async function getElementRect(tabId, selector) {
     if (!el) return null;
     el.scrollIntoView({ block: 'center', inline: 'center' });
     const r = el.getBoundingClientRect();
-    return { x: r.x + r.width / 2, y: r.y + r.height / 2, width: r.width, height: r.height, tag: el.tagName, ref: el.getAttribute('data-td-ref'), href: el.href || null };
+    return { x: r.x + r.width / 2, y: r.y + r.height / 2, width: r.width, height: r.height, tag: el.tagName, ref: el.getAttribute('data-td-ref'), href: el.href || null, label: (el.innerText || el.getAttribute('aria-label') || el.getAttribute('title') || el.getAttribute('placeholder') || '').trim().slice(0, 80) };
   })()`;
   return evaluate(tabId, code);
 }
@@ -920,6 +920,22 @@ async function dispatch(sessionId, action, args, timeoutMs) {
       const sel = args.selector || args.ref || '';
       const rect = await getElementRect(tabId, sel);
       if (!rect) return { ok: false, tabId, error: `element not found: ${sel}` };
+      // Ref-stale guard: the scanner renumbers data-td-refs on every snapshot,
+      // so a tdN captured N generations ago can silently resolve to a totally
+      // different element after a re-render (observed: Gmail SPA rows). The
+      // caller sends the fingerprint it expected (tag + label); if the live
+      // element doesn't match, refuse the click so the caller re-snapshots
+      // instead of clicking the wrong thing.
+      if (/^(td|e|ff)\d+$/i.test(sel) && (args.expectTag || args.expectLabel)) {
+        const tagBad = args.expectTag && String(rect.tag || '').toUpperCase() !== String(args.expectTag).toUpperCase();
+        const norm = s => String(s || '').trim().toLowerCase().replace(/\s+/g, ' ');
+        const expL = norm(args.expectLabel), actL = norm(rect.label);
+        const labelBad = expL && actL && !(actL.includes(expL) || expL.includes(actL));
+        const labelMissing = expL && !actL; // element re-rendered to something unlabeled
+        if (tagBad || labelBad || labelMissing) {
+          return { ok: false, tabId, error: `ref-stale`, detail: `ref ${sel} resolved to ${rect.tag} "${(rect.label || '').slice(0, 60)}" but expected ${args.expectTag || '?'} "${String(args.expectLabel || '').slice(0, 60)}" — DOM re-rendered since snapshot; re-snapshot and retry` };
+        }
+      }
       if (rect.tag === 'A' && rect.href) {
         const domClicked = await evaluate(tabId, `(() => {
           const want = ${JSON.stringify(rect.href)};
@@ -954,7 +970,7 @@ async function dispatch(sessionId, action, args, timeoutMs) {
       const rect = await evaluate(tabId, `(() => {
         const needle = ${JSON.stringify(String(args.text || '').trim().toLowerCase())};
         if (!needle) return null;
-        const CAND = 'a, button, [role="button"], [role="link"], [role="tab"], [role="menuitem"], [role="option"], input[type="submit"], input[type="button"], [onclick], summary, li';
+        const CAND = 'a, button, [role="button"], [role="link"], [role="tab"], [role="menuitem"], [role="option"], input[type="submit"], input[type="button"], [onclick], summary, li, tr[role="row"], tr.zA, [role="row"], [role="listitem"]';
         const vis = el => {
           const r = el.getBoundingClientRect();
           if (r.width < 1 || r.height < 1) return false;

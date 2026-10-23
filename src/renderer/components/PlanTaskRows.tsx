@@ -1,5 +1,7 @@
 /** One row per task — grouped from plan-check items, used by the feed
  *  checklist card's compact mode. */
+import { StepIcon } from './AutomationProgress';
+
 export interface TaskRow {
   taskIndex: number;
   /** Short imperative summary of what the task does (plan task title). */
@@ -59,13 +61,15 @@ export function allReady(tasks: TaskRow[]): boolean {
   return tasks.length > 0 && tasks.every(t => t.status === 'ready' || t.status === 'running');
 }
 
-export function statusIcon(status: TaskRow['status']): { glyph: string; color: string } {
+/** TaskRow status → AutomationProgress StepIcon status — one icon language
+ *  across the readiness card and the run card (16px circular, not glyphs). */
+export function statusStep(status: TaskRow['status']): 'done' | 'running' | 'replanning' | 'needs_input' | 'failed' {
   switch (status) {
-    case 'ready':       return { glyph: '✓', color: '#4ade80' };
-    case 'running':     return { glyph: '◔', color: '#60a5fa' };
-    case 'needs-steps': return { glyph: '◔', color: '#fbbf24' };
-    case 'needs-agent': return { glyph: '⚠', color: '#fbbf24' };
-    case 'failed':      return { glyph: '✕', color: '#f87171' };
+    case 'ready':       return 'done';
+    case 'running':     return 'running';
+    case 'needs-steps': return 'replanning';
+    case 'needs-agent': return 'needs_input';
+    case 'failed':      return 'failed';
   }
 }
 
@@ -74,23 +78,20 @@ export function TaskRows({ tasks, compact }: { tasks: TaskRow[]; compact?: boole
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: compact ? 2 : 4 }}>
       {tasks.map(t => {
-        const icon = statusIcon(t.status);
         return (
           <div
             key={t.taskIndex}
             title={t.notes.length ? t.notes.join('\n') : t.title}
             style={{
               display: 'flex',
-              alignItems: 'baseline',
+              alignItems: 'center',
               gap: 8,
               fontSize: compact ? 11.5 : 12,
               fontFamily: 'system-ui, -apple-system, sans-serif',
               lineHeight: compact ? '18px' : '20px',
             }}
           >
-            <span style={{ color: icon.color, fontWeight: 800, flexShrink: 0, width: 12, textAlign: 'center' }}>
-              {icon.glyph}
-            </span>
+            <StepIcon status={statusStep(t.status)} />
             <span style={{ color: '#94a3b8', flexShrink: 0 }}>Task {t.taskIndex}</span>
             <span style={{
               color: t.status === 'ready' ? '#cbd5e1' : '#e5e7eb',

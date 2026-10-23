@@ -468,3 +468,40 @@ test('prependHistory stamps entries historic; live appendEntry does not', () => 
   assert.equal((entries[1] as any).historic, true);   // prepended assistant
   assert.equal((entries[2] as any).historic, undefined); // live entry untouched
 });
+
+// ── plan surfaces + activity line ─────────────────────────────────────────────
+// The pinned plans strip / plan-card feed entries and the terminal-activity
+// ticker read these state fields — they must exist on a fresh store and patch
+// via set() like every other feed field.
+
+test('initial state carries plans, planRuns, and an empty activity line', () => {
+  const s = mkStore();
+  assert.deepEqual(s.getState().plans, []);
+  assert.deepEqual(s.getState().planRuns, {});
+  assert.equal(s.getState().activityLine, null);
+  assert.equal(s.getState().activityTs, 0);
+});
+
+test('set() patches plans/planRuns and the activity ticker together', () => {
+  const s = mkStore();
+  s.set({
+    plans: [{ planId: 'p1', status: 'running' }] as any,
+    planRuns: { p1: { status: 'running' } },
+    activityLine: 'probe: gh auth status',
+    activityTs: 1234,
+  });
+  const st = s.getState();
+  assert.equal(st.plans.length, 1);
+  assert.equal(st.planRuns.p1.status, 'running');
+  assert.equal(st.activityLine, 'probe: gh auth status');
+  assert.equal(st.activityTs, 1234);
+});
+
+test('plan-card entries append and patch by stable planId', () => {
+  const s = mkStore();
+  s.appendEntry({ id: 'plancard:p1', kind: 'plan-card', plan: { planId: 'p1', status: 'drafting' } } as any);
+  s.patchEntry('plancard:p1', { plan: { planId: 'p1', status: 'running' } } as any);
+  const entries = s.getState().entries;
+  assert.equal(entries.filter(e => e.id === 'plancard:p1').length, 1);
+  assert.equal((entries[0] as any).plan.status, 'running');
+});

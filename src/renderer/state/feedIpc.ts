@@ -155,7 +155,7 @@ export function installFeedIpc(store: FeedStore, ui: FeedIpcUi): () => void {
       }
     } else if (message.type === 'done' || message.type === 'llm_stream_end') {
       const st = s.getState();
-      s.set({ isStreaming: false, isThinking: false, searchPending: null });
+      s.set({ isStreaming: false, isThinking: false, searchPending: null, activityLine: null });
       // Don't reset isSubmitting/isAutomationMode during automation — the plan
       // generation LLM stream ends before execution completes, which would
       // prematurely hide the cancel button. Automation cleanup is handled by
@@ -514,7 +514,7 @@ export function installFeedIpc(store: FeedStore, ui: FeedIpcUi): () => void {
         s.internal.taskStreamEntry.delete(data.taskId);
         s.internal.synthTasks.delete(data.taskId);
         s.clearStream();
-        s.set({ streamText: '', isStreaming: false });
+        s.set({ streamText: '', isStreaming: false, activityLine: null });
         settlePendingAssistant(data.answer, Array.isArray(data.items) ? data.items : undefined);
       } else if (status === 'failed' || status === 'cancelled') {
         s.internal.taskStreamAcc.delete(data.taskId);
@@ -522,7 +522,7 @@ export function installFeedIpc(store: FeedStore, ui: FeedIpcUi): () => void {
         s.internal.synthTasks.delete(data.taskId);
         // No 'done' arrives for aborted work — drop the "Searching …" chip or
         // it floats in the live region until the next prompt.
-        s.set({ searchPending: null, isStreaming: false, isTaskWorking: false });
+        s.set({ searchPending: null, isStreaming: false, isTaskWorking: false, activityLine: null });
         settleError();
       }
       // Water-drip used to live on TaskCompleteBanner — moved here.
@@ -536,13 +536,13 @@ export function installFeedIpc(store: FeedStore, ui: FeedIpcUi): () => void {
       s.internal.streamAcc = '';
       s.internal.placeholderStream = false;
       s.internal.streamCompleted = true;
-      s.set({ streamText: '', resultItems: [], isStreaming: false, isTaskWorking: false, searchPending: null });
+      s.set({ streamText: '', resultItems: [], isStreaming: false, isTaskWorking: false, searchPending: null, activityLine: null });
       playDropSound();
     } else if (status === 'failed' || status === 'cancelled') {
       s.internal.taskStreamAcc.delete(data.taskId);
       s.internal.taskStreamEntry.delete(data.taskId);
       s.internal.synthTasks.delete(data.taskId);
-      s.set({ searchPending: null, isStreaming: false, isTaskWorking: false });
+      s.set({ searchPending: null, isStreaming: false, isTaskWorking: false, activityLine: null });
       if (!settleError()) {
         const raw = data.error || `Task ${status}`;
         s.appendEntry({

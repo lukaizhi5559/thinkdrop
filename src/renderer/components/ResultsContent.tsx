@@ -149,6 +149,11 @@ function ResultsContentImpl({
   // Engine currently being tried by an in-flight SERP fetch — rendered as a
   // loading favicon chip; the real \x00ENGINE\x00 chip replaces it on arrival.
   const searchPending = useFeedStore(s => s.searchPending);
+  // Real-work ticker — terminal:activity lines (planning tool calls, setup
+  // lanes). Rendered while work is in flight so tool use is visible in the
+  // feed, not just in the collapsed terminal drawer.
+  const activityLine = useFeedStore(s => s.activityLine);
+  const activityTs = useFeedStore(s => s.activityTs);
   // Live-run collapse — manual toggle while running; the run auto-expands when
   // a new automation starts (isAutomationMode flips true). Once the terminal
   // summary commits, liveRunHidden removes the whole block — the feed's run
@@ -317,6 +322,27 @@ function ResultsContentImpl({
     );
   };
 
+  // Live-region activity ticker — one dim line under the avatar naming the
+  // real operation in flight (planning tool calls write these via
+  // terminal:activity). Renders only while something is actively streaming/
+  // thinking so a stale "checking X" line can't outlive the work.
+  const renderActivityLine = () => {
+    // Stale guard — a ticker older than ~2 min reflects dead work (cleared on
+    // stream end anyway; this covers abandoned lanes).
+    if (!activityLine || Date.now() - activityTs > 120_000) return null;
+    return (
+      <div className="flex items-center gap-1.5" style={{ marginTop: 6, opacity: 0.75 }}>
+        <span style={{
+          display: 'inline-block', width: 8, height: 8, borderRadius: '50%',
+          backgroundColor: '#22d3ee', animation: 'pulse 1.2s ease-in-out infinite', flexShrink: 0,
+        }} />
+        <span style={{ color: '#9ca3af', fontSize: '0.7rem', fontStyle: 'italic', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+          {activityLine}
+        </span>
+      </div>
+    );
+  };
+
   const renderResults = () => {
     // In automation mode, only render if there's streaming content (synthesis answer below steps)
     if (isAutomationMode && !streamingResponse && !installPrompt && !isInstalling) return null;
@@ -345,6 +371,7 @@ function ResultsContentImpl({
           {searchPending && (
             <div style={{ marginTop: 8 }}><EngineChip engine={searchPending} loading /></div>
           )}
+          {renderActivityLine()}
         </div>
       );
     }
@@ -359,6 +386,17 @@ function ResultsContentImpl({
               <ThinkDropLogo size={14} />
             </div>
             <EngineChip engine={searchPending} loading />
+            {renderActivityLine()}
+          </div>
+        );
+      }
+      if (activityLine) {
+        return (
+          <div>
+            <div className="flex items-center gap-1.5 select-none" style={{ marginBottom: 5, opacity: 0.85 }}>
+              <ThinkDropLogo size={14} />
+            </div>
+            {renderActivityLine()}
           </div>
         );
       }
@@ -379,6 +417,7 @@ function ResultsContentImpl({
         {searchPending && (
           <div style={{ marginBottom: 8 }}><EngineChip engine={searchPending} loading /></div>
         )}
+        {renderActivityLine()}
 
         {/* Non-automation responses (plain LLM answers) */}
         {streamingResponse && !isAutomationMode && (

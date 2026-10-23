@@ -637,21 +637,25 @@ function PromptInputBarImpl(
                   left: '50%',
                   transform: 'translateX(-50%)',
                   zIndex: 60,
-                  width: 268,
+                  width: 330,
                   backgroundColor: 'rgba(12,16,24,0.96)',
                   border: '1px solid rgba(255,255,255,0.14)',
                   boxShadow: '0 8px 28px rgba(0,0,0,0.5)',
                 }}
               >
                 {[
-                  { keys: <><RoptKeyIcon size={16} /><span>double-tap</span></>, desc: 'show / hide' },
-                  { keys: <><RoptKeyIcon size={16} /><span>hold</span></>, desc: 'talk (PTT)' },
-                  { keys: <><RoptKeyIcon size={16} /><span>tap</span></>, desc: 'confirm · run plan · mute · latest' },
-                  { keys: <><RoptKeyIcon size={16} side="left" /><span>hold +</span><RoptKeyIcon size={16} /><span>tap</span></>, desc: 'cancel / exit' },
+                  { keys: <><RoptKeyIcon size={22} /><span>double-tap</span></>, desc: 'show / hide' },
+                  { keys: <><RoptKeyIcon size={22} /><span>hold</span></>, desc: 'talk (PTT)' },
+                  { keys: <><RoptKeyIcon size={22} /><span>tap</span></>, desc: 'confirm · approve · run plan · mute' },
+                  { keys: <><RoptKeyIcon size={22} /><span>tap (scrolled up)</span></>, desc: 'jump to latest' },
+                  { keys: <><RoptKeyIcon size={22} mod="shift" /><span>hold +</span><RoptKeyIcon size={22} /><span>tap</span></>, desc: 'expand / collapse' },
+                  { keys: <><RoptKeyIcon size={22} mod="shift" /><span>hold +</span><RoptKeyIcon size={22} /><span>double-tap</span></>, desc: 'history' },
+                  { keys: <><RoptKeyIcon size={22} side="left" /><span>hold +</span><RoptKeyIcon size={22} /><span>tap</span></>, desc: 'cancel / exit' },
+                  { keys: <><RoptKeyIcon size={22} side="left" /><span>hold +</span><RoptKeyIcon size={22} /><span>double-tap</span></>, desc: 'cancel + hide' },
                 ].map((row, i) => (
-                  <div key={i} className="flex items-center justify-between" style={{ fontSize: 11 }}>
+                  <div key={i} className="flex items-center justify-between" style={{ fontSize: 11.5 }}>
                     <span className="flex items-center gap-1.5" style={{ color: '#d1d5db', fontWeight: 500, whiteSpace: 'nowrap' }}>{row.keys}</span>
-                    <span style={{ color: '#6b7280' }}>{row.desc}</span>
+                    <span style={{ color: '#6b7280', textAlign: 'right' }}>{row.desc}</span>
                   </div>
                 ))}
               </div>

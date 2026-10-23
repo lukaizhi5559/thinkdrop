@@ -15,6 +15,10 @@ import type { WebResultItem } from './rich-content/WebResultCard';
 import { deriveRunDrafts, feedStore } from '../state/feedStore.mts';
 import { PlanCheckCard } from './PlanCheckCard';
 import { QuestionCard } from './QuestionCard';
+import { PlanCard } from './PlanCard';
+import type { PlanSummary } from './PlanCard';
+import * as planActions from './planActions';
+import { useFeedStore } from '../state/feedSelectors';
 
 const ipcRenderer = (window as any).electron?.ipcRenderer;
 
@@ -47,6 +51,7 @@ export type FeedEntry =
   | { id: string; ts: number; kind: 'plan-check'; check: import('./PlanCheckCard').PlanCheckPayload; exchangeId?: string }
   | { id: string; ts: number; kind: 'plan-question'; planId: string | null; question: string; options: import('./QuestionCard').QuestionOption[]; answered?: string; exchangeId?: string }
   | { id: string; ts: number; kind: 'plan-review'; review: { planId: string; taskNum: number; title?: string; prompt?: string; gate?: 'commit' | 'step' | 'auto'; priorResults?: { taskNum: number; result: string }[]; resolved?: boolean; skipped?: boolean }; exchangeId?: string }
+  | { id: string; ts: number; kind: 'plan-card'; plan: PlanSummary; exchangeId?: string }
   | { id: string; ts: number; kind: 'system'; text: string; exchangeId?: string; historic?: boolean };
 
 interface ResultsFeedProps {
@@ -81,6 +86,8 @@ interface ResultsFeedProps {
   onIsolateContext?: (text: string) => void;
   /** Is this body's [Context:] chip currently in the input bar? (icon tint) */
   isContextActive?: (text: string) => boolean;
+  /** "All plans →" on the pinned strip — switches the overlay to the Plans tab. */
+  onOpenPlansTab?: () => void;
   /** Live exchange region — rendered at the bottom of the measured zone. */
   children?: React.ReactNode;
 }
@@ -451,6 +458,89 @@ interface FeedEntryRowProps {
   onOpenQueue?: (taskId: string) => void;
   onIsolateContext?: (text: string) => void;
   isContextActive?: (text: string) => boolean;
+}
+
+/** PlanCard wired for the feed — actions go through planActions; failures
+ *  surface as honest system entries instead of silently doing nothing. */
+function FeedPlanCard({ plan }: { plan: PlanSummary }) {
+  const runState = useFeedStore(s => s.planRuns[plan.planId]);
+  const _note = (text: string) => feedStore.appendEntry({
+    id: `planerr:${plan.planId}:${Date.now()}`, ts: Date.now(), kind: 'system', text,
+  } as any);
+  return (
+    <PlanCard
+      plan={plan}
+      runState={runState}
+      onContinue={p => planActions.continuePlan(p)}
+      onRun={async p => {
+        const res = await planActions.runPlan(p);
+        if (!res?.ok) _note(`Couldn't run "${p.name || p.title}": ${res?.error || (res?.blockers?.length ? `${res.blockers.length} readiness blocker(s)` : 'unknown error')}`);
+      }}
+      onCancelRun={async p => {
+        const res = await planActions.cancelPlanRun(p);
+        if (!res?.ok) _note(`Couldn't stop "${p.name || p.title}": ${res?.error || 'unknown error'}`);
+      }}
+      onDelete={async p => {
+        const res = await planActions.deletePlan(p);
+        if (!res?.ok) _note(`Couldn't delete "${p.name || p.title}": ${res?.error || 'unknown error'}`);
+        else feedStore.removeEntry(`plancard:${p.planId}`);
+      }}
+    />
+  );
+}
+
+const _PLAN_STRIP_ORDER: Record<string, number> = { running: 0, drafting: 1, ready: 2, done: 3, failed: 4, cancelled: 5 };
+const _PLAN_STRIP_LIMIT = 6;
+
+/** Pinned plans strip — the plan library's live status surface inside the
+ *  conversational feed, so plan state is visible without opening the Plans
+ *  tab. Reflects feedStore.plans (kept fresh by plan:* events). */
+function PlansStrip({ onOpenPlansTab }: { onOpenPlansTab?: () => void }) {
+  const plans = useFeedStore(s => s.plans);
+  const planRuns = useFeedStore(s => s.planRuns);
+  const [open, setOpen] = useState(true);
+  const sorted = useMemo(() => {
+    const weight = (p: PlanSummary) =>
+      (planRuns[p.planId]?.status === 'running' ? 0 : (_PLAN_STRIP_ORDER[p.status] ?? 5));
+    return [...plans].sort((a, b) =>
+      weight(a) - weight(b)
+      || new Date(b.created).getTime() - new Date(a.created).getTime());
+  }, [plans, planRuns]);
+  if (!sorted.length) return null;
+  const shown = sorted.slice(0, _PLAN_STRIP_LIMIT);
+  const runningCount = sorted.filter(p => p.status === 'running' || planRuns[p.planId]?.status === 'running').length;
+  return (
+    <div style={{ marginBottom: 10 }}>
+      <button
+        onClick={() => setOpen(o => !o)}
+        style={{
+          display: 'flex', alignItems: 'center', gap: 6, width: '100%',
+          background: 'none', border: 'none', cursor: 'pointer', padding: '2px 0 6px',
+          color: '#9ca3af', fontSize: '0.66rem', fontWeight: 600, letterSpacing: '0.04em',
+        }}
+      >
+        <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"
+          style={{ transform: open ? 'rotate(90deg)' : 'none', transition: 'transform 0.15s' }}>
+          <polyline points="9 18 15 12 9 6"/>
+        </svg>
+        PLANS · {sorted.length}
+        {runningCount > 0 && <span style={{ color: '#60a5fa' }}>· {runningCount} running</span>}
+      </button>
+      {open && (
+        <div>
+          {shown.map(p => <FeedPlanCard key={p.planId} plan={p} />)}
+          {sorted.length > _PLAN_STRIP_LIMIT && (
+            <button
+              onClick={onOpenPlansTab}
+              style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '2px 0 4px', color: '#22d3ee', fontSize: '0.64rem' }}
+            >
+              All {sorted.length} plans →
+            </button>
+          )}
+        </div>
+      )}
+    </div>
+  );
 }
 
 const FeedEntryRow = React.memo(function FeedEntryRow({
@@ -1005,6 +1095,16 @@ const FeedEntryRow = React.memo(function FeedEntryRow({
       );
     }
 
+    case 'plan-card':
+      // PlansTab-style card inside the conversation — appears for plan
+      // lifecycle events that have no readiness card in this feed (e.g. a run
+      // kicked off from the Plans tab or a draft from another lane).
+      return (
+        <div className="feed-entry" style={{ margin: '4px 0 12px', position: 'relative', paddingBottom: 10 }}>
+          <FeedPlanCard plan={entry.plan} />
+        </div>
+      );
+
     case 'system':
       return (
         <div style={{ margin: '6px 0', textAlign: 'center' }}>
@@ -1033,6 +1133,7 @@ function ResultsFeedImpl({
   onOpenQueue,
   onIsolateContext,
   isContextActive,
+  onOpenPlansTab,
   children,
 }: ResultsFeedProps) {
   perfRender('ResultsFeed');
@@ -1163,6 +1264,9 @@ function ResultsFeedImpl({
   return (
     <>
       <style>{`.feed-entry:hover .feed-actions { opacity: 1 !important; } .feed-run-toggle:hover { background-color: rgba(255,255,255,0.04) !important; }`}</style>
+
+      {/* Pinned plans strip — live plan library status in the conversation. */}
+      <PlansStrip onOpenPlansTab={onOpenPlansTab} />
 
       {/* History zone — unmeasured: window height ignores it. */}
       {(historyEntries.length > 0 || hasMoreHistory || historyLoading) && (

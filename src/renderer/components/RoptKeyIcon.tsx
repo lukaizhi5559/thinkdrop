@@ -10,6 +10,7 @@
  * tone:   'blue' idle hint · 'amber' held/active PTT
  * pulse:  animated ring while PTT is held
  * side:   'right' = action key (default) · 'left' = cancel key
+ * mod:    'option' = ⌥ keycap (default) · 'shift' = ⇧ keycap (expand/history modifier)
  */
 
 interface RoptKeyIconProps {
@@ -18,6 +19,7 @@ interface RoptKeyIconProps {
   pulse?: boolean;
   detail?: 'auto' | 'icon' | 'full';
   side?: 'right' | 'left';
+  mod?: 'option' | 'shift';
 }
 
 const TONES = {
@@ -25,11 +27,12 @@ const TONES = {
   amber: { keyFill: 'rgba(251,191,36,0.35)',  keyStroke: '#fbbf24', glow: 'rgba(251,191,36,0.45)' },
 };
 
-export default function RoptKeyIcon({ size = 22, tone = 'blue', pulse = false, detail = 'auto', side = 'right' }: RoptKeyIconProps) {
+export default function RoptKeyIcon({ size = 22, tone = 'blue', pulse = false, detail = 'auto', side = 'right', mod = 'option' }: RoptKeyIconProps) {
   const t = TONES[tone];
   const deck = detail === 'full' || (detail === 'auto' && size >= 28);
   const h = deck ? (size * 36) / 56 : (size * 18) / 24;
   const glyph = side === 'right' ? 'R' : 'L';
+  const modGlyph = mod === 'shift' ? '⇧' : '⌥';
   return (
     <span style={{ position: 'relative', display: 'inline-flex', width: size, height: h, flexShrink: 0 }}>
       {pulse && (
@@ -68,11 +71,11 @@ export default function RoptKeyIcon({ size = 22, tone = 'blue', pulse = false, d
         </svg>
       ) : (
         <svg width={size} height={h} viewBox="0 0 24 18" fill="none" aria-hidden="true">
-          {/* single lit keycap: ⌥ glyph + R/L badge */}
+          {/* single lit keycap: ⌥/⇧ glyph + R/L badge */}
           <rect x="0.5" y="0.5" width="23" height="17" rx="4" fill={t.keyFill} stroke={t.keyStroke} />
-          <text x="11" y="12.5" textAnchor="middle" fontSize="10" fill="#fff"
-            fontFamily="system-ui, -apple-system, sans-serif">⌥</text>
-          <text x="18.6" y="7" textAnchor="middle" fontSize="6" fontWeight="700" fill={t.keyStroke}
+          <text x="9.5" y="13" textAnchor="middle" fontSize="12" fill="#fff"
+            fontFamily="system-ui, -apple-system, sans-serif">{modGlyph}</text>
+          <text x="18.8" y="7.5" textAnchor="middle" fontSize="7.5" fontWeight="700" fill={t.keyStroke}
             fontFamily="system-ui, -apple-system, sans-serif">{glyph}</text>
         </svg>
       )}

@@ -185,7 +185,7 @@ function _applyScreenClickThrough() {
   if (!ghostLayerWindow || ghostLayerWindow.isDestroyed()) return;
   const blocking = [...screenDisplays.values()].some(d => d && d.blocking);
   try {
-    if (blocking || _hoverInteractive || controlLock || _sceneControlMode) {
+    if (blocking || _hoverInteractive || controlLock || _sceneControlMode || _historyViewOpen) {
       ghostLayerWindow.setIgnoreMouseEvents(false);
     } else {
       ghostLayerWindow.setIgnoreMouseEvents(true, { forward: true });
@@ -1746,6 +1746,23 @@ function startOverlayControlServer() {
           if (pc && evt.planId && (pc.planId === evt.planId
               || path.basename(pc.planFile || '', '.md') === evt.planId)) {
             _emitPlanCheck(pc.planId, pc.planFile, { autoStart: pc.autoStart }).catch(() => {});
+          } else if (evt.planId && _planningMode?.active && !pc) {
+            // Persistent readiness — while planning mode is open the card
+            // tracks the session plan as it drafts (tasks/steps land via
+            // background writes; each is a plan.updated). Skip when a live
+            // run owns the plan — the run surface already covers it.
+            const planId = _planningMode.planId || evt.planId;
+            if (evt.planId === planId) {
+              try {
+                const planRunner = require('./planRunner');
+                if (planRunner.getRun(planId)) return res.writeHead(200).end(JSON.stringify({ ok: true }));
+              } catch (_) {}
+              const file = _planningMode.planFile
+                || path.join(os.homedir(), '.thinkdrop', 'plans', `${planId}.md`);
+              if (fs.existsSync(file)) {
+                _emitPlanCheck(planId, file, { surface: false }).catch(() => {});
+              }
+            }
           }
           res.writeHead(200).end(JSON.stringify({ ok: true }));
         } catch (err) {
@@ -3523,17 +3540,19 @@ const _normalizeCredentialKey = (credentialKey) => {
 function _makeGatherCredentialCallback(progressCallback) {
   return (credentialKey, _opts = {}) => {
     return new Promise((resolve) => {
+      _contextAskPending++;
       // Emit credential prompt to Queue tab via progressCallback
       // The UI shows a CLI-style masked input — user submits via gather:credential IPC
-      let pendingCredResolve = resolve;
+      const _wrapResolve = (r) => { _contextAskPending = Math.max(0, _contextAskPending - 1); resolve(r); };
+      let pendingCredResolve = _wrapResolve;
       const handleCredSubmit = async (_event, { key, value }) => {
         if (key !== credentialKey) return; // not our credential
         ipcMain.off('gather:credential', handleCredSubmit);
-        if (!value) { pendingCredResolve({ stored: false, value: null }); return; }
+        if (!value) { _wrapResolve({ stored: false, value: null }); return; }
         // Context-var answers ({{_ctx_*}} tokens, non-sensitive questions) are
         // transient — they feed _gatheredVars, not the keychain. Skip storage.
         if (_opts.noStore) {
-          pendingCredResolve({ stored: false, value: String(value) });
+          _wrapResolve({ stored: false, value: String(value) });
           return;
         }
         try {
@@ -3552,10 +3571,10 @@ function _makeGatherCredentialCallback(progressCallback) {
           if (typeof progressCallback === 'function') {
             progressCallback({ type: 'gather_credential_stored', credentialKey });
           }
-          pendingCredResolve({ stored: true, value });
+          _wrapResolve({ stored: true, value });
         } catch (e) {
           console.error(`[GatherContext] credential store failed for ${credentialKey}:`, e.message);
-          pendingCredResolve({ stored: false, value: null, error: e.message });
+          _wrapResolve({ stored: false, value: null, error: e.message });
         }
       };
       ipcMain.on('gather:credential', handleCredSubmit);
@@ -3563,7 +3582,7 @@ function _makeGatherCredentialCallback(progressCallback) {
       setTimeout(() => {
         ipcMain.off('gather:credential', handleCredSubmit);
         if (pendingCredResolve) {
-          pendingCredResolve({ stored: false, value: null });
+          _wrapResolve({ stored: false, value: null });
           pendingCredResolve = null;
         }
       }, 10 * 60 * 1000);
@@ -3834,12 +3853,33 @@ function _markPlanAuthLedger(agentId) {
  * With autoStart, an all-clear plan dispatches through planRunner directly.
  * @returns {Promise<boolean>} allClear
  */
+// Extract the directories a plan touches — used to scope MCP servers whose
+// seed args carry a {dirs} placeholder (e.g. the filesystem server's allowed
+// dirs). File-looking paths collapse to their parent dir.
+function _planAllowedDirs(planFile) {
+  const dirs = new Set();
+  try {
+    const content = fs.readFileSync(planFile, 'utf8');
+    const re = /(~[\/\\][\w.\/\\-]+|\/(?:Users|home|tmp|var|opt|srv|mnt|data|Volumes)\/[\w.\/\\-]+)/g;
+    let m;
+    while ((m = re.exec(content)) && dirs.size < 8) {
+      let p = m[1].replace(/[.,;:'")\]]+$/, '');
+      if (/\.[A-Za-z0-9]{1,8}$/.test(p)) p = path.posix.dirname(p);
+      if (p.startsWith('~')) p = path.join(os.homedir(), p.slice(2));
+      if (p && p !== '/' && p.length > 2) dirs.add(p);
+    }
+  } catch (_) {}
+  if (!dirs.size) dirs.add(os.homedir());
+  return [...dirs];
+}
+
 async function _emitPlanCheck(planId, planFile, { autoStart = false, bypassed, surface = false } = {}) {
   try {
     const planFormat = require('../../shared/plan-format.cjs');
     const { computePlanCheck } = require('../../shared/plan-check.cjs');
     const content = fs.readFileSync(planFile, 'utf8');
     const tasks = planFormat.parseTasks(content);
+    const fm = planFormat.parseFrontmatter(content) || {};
     const bypass = bypassed || _pendingPlanCheck?.bypassed || new Set();
     const { items, allClear } = await computePlanCheck(tasks, { bypassed: bypass });
     // Task num → title map so the card can render live per-task progress
@@ -3850,7 +3890,7 @@ async function _emitPlanCheck(planId, planFile, { autoStart = false, bypassed, s
     // run trigger that's waiting on issue resolution.
     const keepAuto = autoStart || (_pendingPlanCheck?.planFile === planFile && _pendingPlanCheck?.autoStart === true);
     _pendingPlanCheck = { planId, planFile, items, bypassed: bypass, autoStart: keepAuto };
-    _lastPlanCheckEmit = { planId, planFile, items, allClear, surface, taskTitles };
+    _lastPlanCheckEmit = { planId, planFile, items, allClear, surface, taskTitles, taskCount: tasks.length, planStatus: fm.status || null };
     safeSendUnified('plan:check', _lastPlanCheckEmit);
     console.log(`[PlanCheck] ${planId || planFile}: ${items.filter(i => i.status === 'issue').length} issue(s), allClear=${allClear}`);
     // Approval-gated tasks carry status 'pass' — they don't block the start;
@@ -4341,9 +4381,12 @@ async function _handlePlanCheckAction({ planId, itemId, action, value, envName, 
           const evt = await _setupEventBase(service);
           await _enrichSetupEvent(evt, service);
           try { await _openSetupSession(evt, null); }
-          catch (err) { console.warn('[PlanCheck] cli-login setup failed:', err.message); }
+          catch (err) {
+            console.warn('[PlanCheck] cli-login setup failed:', err.message);
+            safeSendUnified('plan:check', { planId: pc.planId, planFile: pc.planFile, items: pc.items.map(i => i.id === item.id ? { ...i, label: `${item.agentId} — sign-in failed: ${String(err.message).slice(0, 80)}`, status: 'issue' } : i), allClear: false });
+          }
         })();
-        safeSendUnified('plan:check', { planId: pc.planId, planFile: pc.planFile, items: pc.items.map(i => i.id === item.id ? { ...i, label: `${item.agentId} — sign-in running in terminal…`, status: 'pending', kind: 'missing-steps' } : i), allClear: false });
+        safeSendUnified('plan:check', { planId: pc.planId, planFile: pc.planFile, items: pc.items.map(i => i.id === item.id ? { ...i, label: `${item.agentId} — sign-in running in terminal…`, status: 'pending' } : i), allClear: false });
       }
       break;
     }
@@ -4351,21 +4394,44 @@ async function _handlePlanCheckAction({ planId, itemId, action, value, envName, 
       // Draft agent selected via capability.select — build the real
       // descriptor (cli-build registers + upgrades status:draft → active),
       // install the declared tool, then recheck so cli-key rows surface.
+      // Failures are emitted back onto the row — a silent revert reads as
+      // "the button did nothing".
       if (item?.agentId) {
         const service = item.agentId.replace(/\.agent$/, '');
+        const _patchRow = (patch) => safeSendUnified('plan:check', {
+          planId: pc.planId, planFile: pc.planFile,
+          items: pc.items.map(i => i.id === item.id ? { ...i, ...patch } : i),
+          allClear: false,
+        });
+        const _fail = (msg) => {
+          console.warn(`[PlanCheck] cli-setup ${item.agentId}: ${msg}`);
+          _patchRow({ label: `${item.agentId} — setup failed: ${String(msg).slice(0, 90)}` });
+        };
         (async () => {
           try {
             if (item.mcpServer) {
-              await _cmdHttp('/mcp.install', { name: item.mcpServer, agentId: item.agentId }, { timeoutMs: 60000 }).catch(() => {});
+              // Seeds like the filesystem server carry a {dirs} arg —
+              // substituting plan-referenced paths, else the handshake fails.
+              const dirs = _planAllowedDirs(pc.planFile);
+              const r = await _cmdHttp('/mcp.install',
+                { name: item.mcpServer, agentId: item.agentId, dirs }, { timeoutMs: 90000 })
+                .catch(err => ({ ok: false, error: err.message }));
+              if (r?.ok === false) return _fail(r.error || 'install failed');
             } else {
-              const built = await _cmdHttp('/agent.cli-build', { service, cliTool: item.cliTool || undefined }, { timeoutMs: 60000 }).catch(() => null);
-              await _cmdHttp('/agent.cli-install', { agentId: built?.agentId || item.agentId }, { timeoutMs: 120000 }).catch(() => {});
+              const built = await _cmdHttp('/agent.cli-build',
+                { service, cliTool: item.cliTool || undefined }, { timeoutMs: 60000 })
+                .catch(err => ({ ok: false, error: err.message }));
+              if (built?.ok === false) return _fail(built.error || 'agent build failed');
+              const inst = await _cmdHttp('/agent.cli-install',
+                { agentId: built?.agentId || item.agentId }, { timeoutMs: 120000 })
+                .catch(err => ({ ok: false, error: err.message }));
+              if (inst?.ok === false) return _fail(inst.error || 'install failed');
             }
-          } catch (_) {}
+          } catch (err) { return _fail(err.message); }
           await recheck();
         })();
         // Immediate UI feedback — row flips to pending while setup runs
-        safeSendUnified('plan:check', { planId: pc.planId, planFile: pc.planFile, items: pc.items.map(i => i.id === item.id ? { ...i, label: `${item.agentId} — setting up…`, status: 'pending', kind: 'missing-steps' } : i), allClear: false });
+        _patchRow({ label: `${item.agentId} — setting up…`, status: 'pending' });
       }
       break;
     }
@@ -4379,8 +4445,24 @@ async function _handlePlanCheckAction({ planId, itemId, action, value, envName, 
           if (task) {
             const nextAgents = (task.agents || []).map(a =>
               (a === item.agentId || a === item.agentId.replace('.agent', '')) ? item.suggested : a);
-            fs.writeFileSync(pc.planFile, planFormat.updateTaskAgents(content, item.taskNum, nextAgents), 'utf8');
-            console.log(`[PlanCheck] Task ${item.taskNum}: ${item.agentId} → ${item.suggested}`);
+            let next = planFormat.updateTaskAgents(content, item.taskNum, nextAgents);
+            // Steps were generated for the old agent — clear them so the
+            // background step-gen rewrites for the new lane.
+            next = planFormat.updateTaskSteps(next, item.taskNum, null);
+            next = planFormat.updateTaskStepsStatus(next, item.taskNum, null);
+            fs.writeFileSync(pc.planFile, next, 'utf8');
+            console.log(`[PlanCheck] Task ${item.taskNum}: ${item.agentId} → ${item.suggested} (steps cleared for regen)`);
+            // Kick the step generator — the file write alone doesn't notify
+            // comms-graph's planning session.
+            const _rp = JSON.stringify({ planId: pc.planId, taskNum: item.taskNum });
+            await new Promise((resolve) => {
+              const req = require('http').request(
+                { hostname: '127.0.0.1', port: COMMS_GRAPH_PORT, path: '/plan.retry-steps', method: 'POST',
+                  headers: { 'Content-Type': 'application/json' } },
+                () => resolve());
+              req.on('error', () => resolve());
+              req.write(_rp); req.end();
+            });
           }
         } catch (err) { console.warn('[PlanCheck] use-agent rewrite failed:', err.message); }
       }
@@ -4415,18 +4497,45 @@ async function _handlePlanCheckAction({ planId, itemId, action, value, envName, 
     }
     case 'retry-steps': {
       // Failed step generation — ask comms-graph's planning lane to regenerate,
-      // then recheck once it has had time to land.
+      // then recheck once it has had time to land. Response is inspected and
+      // rechecks are polled (one fixed delay used to beat the generator and
+      // leave the card looking unchanged — "the button did nothing").
       if (item?.taskNum) {
         const payload = JSON.stringify({ planId: pc.planId, taskNum: item.taskNum });
-        await new Promise((resolve) => {
+        const reply = await new Promise((resolve) => {
           const req = require('http').request(
             { hostname: '127.0.0.1', port: COMMS_GRAPH_PORT, path: '/plan.retry-steps', method: 'POST',
               headers: { 'Content-Type': 'application/json' } },
-            () => resolve());
-          req.on('error', () => resolve());
+            (res) => {
+              let data = '';
+              res.on('data', c => { data += c; });
+              res.on('end', () => { try { resolve(JSON.parse(data)); } catch (_) { resolve({}); } });
+            });
+          req.on('error', (e) => resolve({ ok: false, error: e.message }));
           req.write(payload); req.end();
         });
-        setTimeout(() => recheck().catch(() => {}), 6000);
+        if (reply?.ok === false) {
+          console.warn(`[PlanCheck] retry-steps task ${item.taskNum}: ${reply.error || 'failed'}`);
+          safeSendUnified('plan:check', {
+            planId: pc.planId, planFile: pc.planFile,
+            items: pc.items.map(i => i.id === item.id
+              ? { ...i, label: `Task ${item.taskNum} — regen failed: ${String(reply.error || 'unknown').slice(0, 80)}` }
+              : i),
+            allClear: false,
+          });
+        } else {
+          // Optimistic row + polled rechecks — generation lands when it lands.
+          safeSendUnified('plan:check', {
+            planId: pc.planId, planFile: pc.planFile,
+            items: pc.items.map(i => i.id === item.id
+              ? { ...i, label: `Task ${item.taskNum} — regenerating steps…`, status: 'pending', kind: 'missing-steps' }
+              : i),
+            allClear: false,
+          });
+          for (const ms of [3000, 8000, 15000]) {
+            setTimeout(() => recheck().catch(() => {}), ms);
+          }
+        }
       }
       break;
     }
@@ -4935,6 +5044,13 @@ let _roptConsumed = false;           // this ROpt press already acted (confirm/c
 let _roptLastTapAt = 0;
 let _pttActive = false;              // ROpt-hold PTT in flight
 let _cancelAffordance = false;       // LOpt-hold affordance armed on the GhostLayer
+let _rshiftDownAt = 0;               // ⇧R held — arms the expand/history chord
+let _rshiftChordTapAt = 0;           // last ⌥R press inside the ⇧R chord
+let _rshiftExpandTimer = null;       // pending expand toggle (waits out double-tap)
+let _loptChordTapAt = 0;             // last ⌥R press inside the ⌥L chord
+let _historyViewOpen = false;        // GhostLayer conversation-timeline strip
+let _preHistoryOverlayVisible = false; // restore overlay on history close
+let _contextAskPending = 0;          // gatherCredentialCallback waits in flight
 const ROPT_HOLD_MS = 200;
 const ROPT_DTAP_MS = 350;
 const LOPT_ARM_MS = 150;
@@ -5599,6 +5715,9 @@ function _createCopyFile(text) {
 // ── Unified overlay show/hide — driven by the ROpt double-tap gesture ───────
 function showUnifiedOverlay() {
   if (!unifiedWindow || unifiedWindow.isDestroyed()) return;
+  // The history timeline owns the screen while open — nothing resurrects the
+  // overlay until _toggleHistoryView(false) clears the flag first.
+  if (_historyViewOpen) return;
   // Re-anchor to bottom-right, preserving current width + content height.
   // The renderer owns collapsing to UNIFIED_COLLAPSED_HEIGHT when content is
   // empty (via useDynamicHeight), so we just re-anchor without forcing a size.
@@ -5722,16 +5841,142 @@ function _dismissCancelAffordance() {
   _sendGhost({ type: 'cancel-affordance', armed: false });
 }
 
+/**
+ * ⇧R-hold + ⌥R — expand chord. First ⌥R press waits out the double-tap window
+ * then fires the width toggle; a second press inside 350ms cancels it and
+ * toggles the GhostLayer conversation-timeline instead.
+ */
+function _fireExpandToggle() {
+  _rshiftChordTapAt = 0;
+  if (!unifiedWindow || unifiedWindow.isDestroyed()) return;
+  if (!unifiedWindow.isVisible()) showUnifiedOverlay();
+  safeSendUnified('ropt:expand');
+}
+
+/**
+ * ⌥R-tap approval/focus — if a plan gate, review, or question card is on top,
+ * approve it through the same path its own button uses; otherwise focus the
+ * pending input. Returns true when a card consumed the tap.
+ */
+function _approveOrFocusPending() {
+  if (_pendingPlanCheck) {
+    console.log('[Gesture] ⌥R tap — approving pending plan check');
+    _handlePlanCheckAction({ action: 'run-ready', planId: _pendingPlanCheck.planId, planFile: _pendingPlanCheck.planFile });
+    return true;
+  }
+  const review = _pendingPlanReviews.values().next().value;
+  if (review) {
+    console.log(`[Gesture] ⌥R tap — approving plan review ${review.taskNum}`);
+    _dispatchPlanCheckHit({ planId: review.planId, taskNum: review.taskNum, action: 'approve-task' });
+    return true;
+  }
+  let handoffApproval = null;
+  try { handoffApproval = (require('./handoffRunner').getPendingPlanApprovals?.() || [])[0] || null; } catch (_) {}
+  if (handoffApproval?.taskId && handoffApproval?.planFile) {
+    console.log(`[Gesture] ⌥R tap — approving handoff plan ${handoffApproval.taskId}`);
+    // Same entry point as the card's own approve button.
+    ipcMain.emit('plan:approve', {}, { planFile: handoffApproval.planFile, taskId: handoffApproval.taskId });
+    return true;
+  }
+  let pendingQuestion = null;
+  try { pendingQuestion = (require('./handoffRunner').getPendingQuestionTaskIds?.() || [])[0] || null; } catch (_) {}
+  if (_pendingChoices || pendingQuestion || _contextAskPending > 0 || pendingGatherResolve || pendingGatherBatches.size) {
+    console.log('[Gesture] ⌥R tap — focusing pending question input');
+    if (unifiedWindow && !unifiedWindow.isDestroyed() && !unifiedWindow.isVisible()) showUnifiedOverlay();
+    safeSendUnified('ropt:focus-answer');
+    return true;
+  }
+  return false;
+}
+
+/**
+ * ⇧R-hold + ⌥R double-tap — conversation-history timeline on the GhostLayer.
+ * Opens by hiding the overlay (restored on close); closes via the chord,
+ * Esc, or the strip's ✕.
+ */
+function _toggleHistoryView(force) {
+  const open = typeof force === 'boolean' ? force : !_historyViewOpen;
+  if (open === _historyViewOpen) return;
+  _historyViewOpen = open;
+  if (open) {
+    _preHistoryOverlayVisible = !!(unifiedWindow && !unifiedWindow.isDestroyed() && unifiedWindow.isVisible());
+    if (_preHistoryOverlayVisible) {
+      _intentionalHide = true;
+      unifiedWindow.hide();
+      stopClipboardMonitoring();
+    }
+    if (!dropSessionActive) showGhostLayer();
+    _sendGhost({ type: 'history:view', open: true });
+    _applyScreenClickThrough(); // strip needs real clicks
+    // The ghost window may still be creating — re-apply once it's up.
+    setTimeout(() => { if (_historyViewOpen) _applyScreenClickThrough(); }, 500);
+    console.log('[History] timeline opened');
+  } else {
+    _sendGhost({ type: 'history:view', open: false });
+    _applyScreenClickThrough();
+    if (_preHistoryOverlayVisible) showUnifiedOverlay();
+    _preHistoryOverlayVisible = false;
+    console.log('[History] timeline closed');
+  }
+}
+
+function _onRshiftDown() {
+  _rshiftDownAt = Date.now();
+  // ⇧R pressed while ⌥R held → it's a ⇧⌥ chord, not a bare-Option gesture.
+  if (_roptDownAt) { _roptOtherKey = true; clearTimeout(_roptHoldTimer); }
+}
+
+function _onRshiftUp() {
+  _rshiftDownAt = 0;
+  // Releasing ⇧R with a committed ⌥R tap still pending — the expand decision
+  // was already made; fire it now rather than letting the chord dead-end.
+  const t = _rshiftExpandTimer;
+  _rshiftExpandTimer = null;
+  if (t) {
+    clearTimeout(t);
+    _fireExpandToggle();
+  }
+}
+
 function _onRoptDown() {
   _roptDownAt = Date.now();
   _roptOtherKey = false;
   _roptConsumed = false;
-  if (_loptDownAt) {
-    // Option+Option chord — only meaningful as the cancel confirm. Fire on any
-    // cancelable target, not only after the affordance's arm delay — a fast
-    // LOpt→ROpt chord (< LOPT_ARM_MS) must not dead-end. The pill is visual
-    // confirmation, not the gate.
+  if (_rshiftDownAt) {
+    // ⇧R+⌥R chord — single tap toggles width (after the double-tap window);
+    // a second press inside it opens the history timeline instead.
     _roptConsumed = true;
+    if (Date.now() - _rshiftChordTapAt < ROPT_DTAP_MS) {
+      _rshiftChordTapAt = 0;
+      clearTimeout(_rshiftExpandTimer);
+      _rshiftExpandTimer = null; // a cleared-but-truthy id looked "pending" to _onRshiftUp
+      _toggleHistoryView();
+    } else {
+      _rshiftChordTapAt = Date.now();
+      clearTimeout(_rshiftExpandTimer);
+      _rshiftExpandTimer = setTimeout(_fireExpandToggle, ROPT_DTAP_MS);
+    }
+    return;
+  }
+  if (_loptDownAt) {
+    // Option+Option chord — single ⌥R tap is the universal cancel confirm;
+    // a second tap inside the double-tap window is the hard reset (cancel +
+    // hide the overlay). Fires on any cancelable target, not only after the
+    // affordance's arm delay — the pill is visual confirmation, not the gate.
+    _roptConsumed = true;
+    if (Date.now() - _loptChordTapAt < ROPT_DTAP_MS) {
+      _loptChordTapAt = 0;
+      _dismissCancelAffordance();
+      _gestureCancel(); // idempotent — second press is a no-op if nothing's left
+      if (unifiedWindow && !unifiedWindow.isDestroyed() && unifiedWindow.isVisible()) {
+        _intentionalHide = true;
+        unifiedWindow.hide();
+        stopClipboardMonitoring();
+      }
+      console.log('[Gesture] ⌥L+⌥R double-tap — hard reset (cancel + hide)');
+      return;
+    }
+    _loptChordTapAt = Date.now();
     if (_cancelAffordance || _cancelableExists()) {
       _dismissCancelAffordance();
       _gestureCancel();
@@ -5781,7 +6026,9 @@ function _onRoptUp() {
 
 /**
  * Resolved single ROpt tap — the double-tap window elapsed with no second tap.
- * Priority: voice-session mute toggle → planning run-ready → feed scroll.
+ * Priority: voice-session mute → planning run-ready → pending card
+ * approve/focus → feed scroll. ⌥R means "confirm the thing on top"
+ * everywhere; ⌥L+⌥R is always its cancel.
  */
 function _roptSingleTap() {
   if (_voiceSessionActive) {
@@ -5794,6 +6041,7 @@ function _roptSingleTap() {
     _handlePlanCheckAction({ action: 'run-ready', planId: _planningMode.planId, planFile: _planningMode.planFile });
     return;
   }
+  if (_approveOrFocusPending()) return;
   safeSendUnified('ropt:tap'); // renderer scrolls the feed to bottom
 }
 
@@ -5816,6 +6064,7 @@ function _onLoptDown() {
 
 function _onLoptUp() {
   _loptDownAt = 0;
+  _loptChordTapAt = 0;
   clearTimeout(_loptArmTimer);
   _dismissCancelAffordance();
 }
@@ -5838,12 +6087,15 @@ function startMouseSelectionMonitor() {
       if (outside) _lastExternalKeyDownAt = Date.now();
 
       // ── Option-key gesture dispatch ────────────────────────────────────
-      // ROpt (3640) = action key, LOpt (56) = cancel key. Any non-modifier
-      // key while an Option is held means it was a real modifier use
-      // (⌥-char / chord) — abort the pending gesture; nothing is swallowed
-      // so the keystroke always lands normally in the front app.
+      // ROpt (3640) = action key, LOpt (56) = cancel key, ⇧R (54) = expand/
+      // history modifier. Any non-modifier key while an Option is held means
+      // it was a real modifier use (⌥-char / chord) — abort the pending
+      // gesture; nothing is swallowed so the keystroke always lands
+      // normally in the front app.
       if (e.keycode === UiohookKey.AltRight) _onRoptDown();
       else if (e.keycode === UiohookKey.Alt) _onLoptDown();
+      else if (e.keycode === UiohookKey.ShiftRight) _onRshiftDown();
+      else if (e.keycode === UiohookKey.Escape && _historyViewOpen) _toggleHistoryView(false);
       else if (_roptDownAt) { _roptOtherKey = true; clearTimeout(_roptHoldTimer); _dismissCancelAffordance(); }
       else if (_loptDownAt) { clearTimeout(_loptArmTimer); _dismissCancelAffordance(); }
 
@@ -5928,6 +6180,7 @@ function startMouseSelectionMonitor() {
     uIOhook.on('keyup', (e) => {
       if (e.keycode === UiohookKey.AltRight) _onRoptUp();
       else if (e.keycode === UiohookKey.Alt) _onLoptUp();
+      else if (e.keycode === UiohookKey.ShiftRight) _onRshiftUp();
       if (!(e.metaKey || e.ctrlKey)) _cmdHeld = false;
       if (!e.shiftKey) _shiftHeld = false;
     });
@@ -6392,6 +6645,9 @@ function createUnifiedWindow() {
       _intentionalHide = false;
       return; // Don't re-show, user wants it hidden
     }
+    // History timeline owns the screen while open — the ghost taking focus
+    // fires a second (non-intentional) auto-hide that must not re-show.
+    if (_historyViewOpen) return;
     // A capture-heavy app.agent drop session used to keep the panel hidden so it
     // didn't taint screenshots. Now the panel stays visible during App-Flow and
     // /overlay/flash (via _withFlash) briefly hides it during actual screenshots.
@@ -6552,7 +6808,7 @@ ipcMain.on('app-agent:highlight', (event, data) => {
   } else if (data.type === 'highlight' && data.elements && data.elements.length > 0) {
     // Restore UnifiedOverlay when showing results — but not during a drop
     // session, where the panel must stay hidden for clean captures.
-    if (!dropSessionActive && unifiedWindow && !unifiedWindow.isDestroyed() && !unifiedWindow.isVisible()) {
+    if (!dropSessionActive && !_historyViewOpen && unifiedWindow && !unifiedWindow.isDestroyed() && !unifiedWindow.isVisible()) {
       unifiedWindow.showInactive();
     }
     showGhostLayer();
@@ -6563,7 +6819,7 @@ ipcMain.on('app-agent:highlight', (event, data) => {
     // maybeHideGhostLayer keeps the window up while a screen-output display
     // is live.
     if (!dropSessionActive) {
-      if (unifiedWindow && !unifiedWindow.isDestroyed() && !unifiedWindow.isVisible()) {
+      if (!_historyViewOpen && unifiedWindow && !unifiedWindow.isDestroyed() && !unifiedWindow.isVisible()) {
         unifiedWindow.showInactive();
       }
       maybeHideGhostLayer();
@@ -7438,6 +7694,72 @@ app.whenReady().then(async () => {
       req.end();
     });
     safeSendUnified('conversation:list', { messages: res?.data?.messages || [] });
+  });
+
+  // ─── Conversation-history timeline (⇧R + ⌥R double-tap) ──────────────────
+  // Shared POST into the conversation service — same auth/timeout pattern as
+  // conversation:list above. Returns the parsed envelope or null.
+  const _convPost = (servicePath, action, payload, timeoutMs = 8000) => new Promise((resolve) => {
+    const body = JSON.stringify({
+      version: 'mcp.v1', service: 'conversation', action,
+      payload, requestId: `conv_${action}_${Date.now()}`,
+    });
+    const req = http.request({
+      hostname: '127.0.0.1', port: CONVERSATION_PORT, path: servicePath,
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Content-Length': Buffer.byteLength(body),
+        ...(CONV_API_KEY ? { 'x-api-key': CONV_API_KEY } : {}),
+      },
+      timeout: timeoutMs,
+    }, (resp) => {
+      let raw = '';
+      resp.on('data', c => { raw += c; });
+      resp.on('end', () => { try { resolve(JSON.parse(raw)); } catch (_) { resolve(null); } });
+    });
+    req.on('error', () => resolve(null));
+    req.on('timeout', () => { req.destroy(); resolve(null); });
+    req.write(body);
+    req.end();
+  });
+
+  // Per-bucket message counts for the GhostLayer timeline strip.
+  ipcMain.handle('history:histogram', async (_event, { startDate, endDate, bucket } = {}) => {
+    const res = await _convPost('/message.histogram', 'message.histogram',
+      { startDate, endDate, bucket: bucket || 'day' }, 10000);
+    return { buckets: res?.data?.buckets || [] };
+  });
+
+  // Messages for a timeline bucket — {day} (preview popover) or a raw
+  // {startDate,endDate} range (drill-down list panel).
+  ipcMain.handle('history:messages', async (_event, { day, startDate, endDate, limit = 8 } = {}) => {
+    let range = null;
+    if (day && /^\d{4}-\d{2}-\d{2}$/.test(String(day))) {
+      range = { startDate: `${day}T00:00:00.000Z`, endDate: `${day}T23:59:59.999Z` };
+    } else if (startDate && endDate) {
+      range = { startDate, endDate };
+    }
+    if (!range) return { messages: [] };
+    const res = await _convPost('/message.listByDate', 'message.listByDate', {
+      ...range, limit: Math.min(limit, 200), sortOrder: 'ASC',
+    });
+    const messages = (res?.data?.messages || []).map(m => ({
+      role: m.sender, content: String(m.text || '').slice(0, 300), created_at: m.timestamp,
+    }));
+    return { messages };
+  });
+
+  // Hover-strip ✕ click → same as the close chord.
+  ipcMain.on('history:view-close', () => _toggleHistoryView(false));
+
+  // Clicking a timeline point → reopen the overlay paged to that day.
+  ipcMain.on('history:jump', (_event, { endDate } = {}) => {
+    _toggleHistoryView(false);
+    if (unifiedWindow && !unifiedWindow.isDestroyed() && !unifiedWindow.isVisible()) {
+      showUnifiedOverlay();
+    }
+    safeSendUnified('history:jump', { endDate });
   });
 
   // Ensure the Brain artifact directory exists — prompt actions save generated
@@ -8545,6 +8867,15 @@ app.whenReady().then(async () => {
   // planning:set — renderer pins/unpins planning mode (toggle, continue, exit)
   ipcMain.on('planning:set', (_e, mode = {}) => {
     _setPlanningMode(mode);
+    // Pinning a plan surfaces its readiness card immediately — the card is
+    // the planning companion, not just a pre-run gate.
+    if (mode?.active) {
+      const file = mode.planFile
+        || (mode.planId ? path.join(os.homedir(), '.thinkdrop', 'plans', `${mode.planId}.md`) : null);
+      if (file && fs.existsSync(file)) {
+        _emitPlanCheck(mode.planId || null, file, { surface: true }).catch(() => {});
+      }
+    }
   });
 
   // planning:get — current mode (renderer mount)

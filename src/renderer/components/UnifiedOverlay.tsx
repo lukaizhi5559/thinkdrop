@@ -166,7 +166,7 @@ export function UnifiedOverlay() {
   const commitInFlightStream = feedStore.commitInFlightStream;
 
   const [thinkingElapsed, setThinkingElapsed] = useState(0);
-  const pendingPrependRef = useRef<{ prevScrollHeight: number; committed: boolean } | null>(null);
+  const pendingPrependRef = useRef<{ prevScrollHeight: number; committed: boolean; jumpToTop?: boolean } | null>(null);
   // Track elapsed time while thinking — for progressive status messages
   useEffect(() => {
     if (!isThinking) { setThinkingElapsed(0); return; }
@@ -441,6 +441,8 @@ export function UnifiedOverlay() {
     const container = scrollContainerRef.current;
     if (!pending || !container || !pending.committed) return;
     pendingPrependRef.current = null;
+    // Timeline jump — land on the just-prepended block instead of staying put.
+    if (pending.jumpToTop) { container.scrollTop = 0; return; }
     container.scrollTop += container.scrollHeight - pending.prevScrollHeight;
   }, [feedEntries]);
 
@@ -2113,6 +2115,21 @@ export function UnifiedOverlay() {
     ipcRenderer.on('unified:clear', handleClear, token);
     // Resolved single ROpt tap — scroll the feed to the latest entry.
     ipcRenderer.on('ropt:tap', () => scrollToBottom(), token);
+    // ⇧R-hold + ⌥R tap — same as the header expand/collapse button.
+    ipcRenderer.on('ropt:expand', () => toggleWidth(), token);
+    // ⌥R tap with a question card on top — focus its input.
+    ipcRenderer.on('ropt:focus-answer', () => {
+      const el = document.querySelector<HTMLElement>('[data-qc-input], .question-card input, .question-card textarea');
+      el?.focus();
+    }, token);
+    // Timeline click — page history to that day and scroll to the fetched block.
+    ipcRenderer.on('history:jump', ({ endDate }: { endDate: string }) => {
+      const container = scrollContainerRef.current;
+      pendingPrependRef.current = container
+        ? { prevScrollHeight: container.scrollHeight, committed: false, jumpToTop: true }
+        : null;
+      requestHistoryPage(endDate);
+    }, token);
     ipcRenderer.on('automation:progress', handleAutomationProgress, token);
     // Plan-check card — repeated emits for a planId patch the same feed entry.
     ipcRenderer.on('plan:check', (data: { planId: string | null; items: any[]; allClear: boolean; authOpened?: string; cancelled?: boolean; error?: string; surface?: boolean }) => {
@@ -2132,7 +2149,8 @@ export function UnifiedOverlay() {
       } else {
         feedStore.appendEntry({ id: entryId, ts: Date.now(), kind: 'plan-check', check: data } as any);
       }
-      // Text-level fallback — if the card can't render (stale bundle, render
+      // The richer readiness/run card supersedes a plain plan-card entry.
+      feedStore.removeEntry(`plancard:${data?.planId || 'unknown'}`);
       // bug) the block is still visible as a plain line. Deduped per planId +
       // issue count so rechecks don't spam.
       if (data && data.allClear === false && !data.cancelled) {
@@ -2196,6 +2214,59 @@ export function UnifiedOverlay() {
         feedStore.patchEntry(entryId, { check: { ...existing.check, planStatus: data.status } } as any);
       }
     }, token);
+    // Real-work ticker — terminal:activity lines (planning tool notes, setup
+    // lanes, probe commands) land in the feed's live region instead of only
+    // the hidden terminal drawer, so "I'm checking X" claims are verifiable.
+    ipcRenderer.on('terminal:activity', (evt: { line?: string }) => {
+      const line = String(evt?.line || '').trim();
+      if (!line) return;
+      const s = feedStore.getState();
+      if (s.activityLine === line) return;
+      feedStore.set({ activityLine: line, activityTs: Date.now() });
+    }, token);
+    // PTY session events → honest ticker states: a session opening or waiting
+    // on input IS visible activity (labeled, not "working on it…" vagueness).
+    ipcRenderer.on('terminal:session', (evt: { type?: string; label?: string; sessionId?: string }) => {
+      const label = evt?.label || evt?.sessionId || 'terminal';
+      if (evt?.type === 'terminal:prompt_wait') {
+        feedStore.set({ activityLine: `${label} is waiting for input — open the terminal pane`, activityTs: Date.now() });
+      } else if (evt?.type === 'terminal:session_open') {
+        feedStore.set({ activityLine: `terminal opened: ${label}`, activityTs: Date.now() });
+      }
+    }, token);
+    // Plan library → feed surfaces. The pinned plans strip reads plans/planRuns
+    // from the store; lifecycle events also upsert a `plancard:<id>` feed entry
+    // for plans that have no readiness card in this feed (e.g. a run kicked
+    // off from the Plans tab), so the card renders where the conversation is.
+    const refreshPlanLibrary = async (evtPlanId?: string | null) => {
+      try {
+        const [listRes, runsRes] = await Promise.all([
+          ipcRenderer.invoke('plan:list'),
+          ipcRenderer.invoke('plan:runs').catch(() => ({ runs: [] })),
+        ]);
+        const plans = listRes?.plans || [];
+        const planRuns: Record<string, { status: string }> = {};
+        for (const r of (runsRes?.runs || [])) planRuns[r.planId] = { status: r.status };
+        feedStore.set({ plans, planRuns });
+        if (!evtPlanId) return;
+        const plan = plans.find((p: any) => p.planId === evtPlanId);
+        const entryId = `plancard:${evtPlanId}`;
+        const existing = feedStore.getState().entries.find(e => e.id === entryId);
+        const hasCheckCard = feedStore.getState().entries.some(e => e.id === `plancheck:${evtPlanId}`);
+        if (!plan || hasCheckCard) {
+          // Gone, or the richer readiness/run card already covers this plan.
+          if (existing) feedStore.removeEntry(entryId);
+        } else if (existing) {
+          feedStore.patchEntry(entryId, { plan } as any);
+        } else {
+          feedStore.appendEntry({ id: entryId, ts: Date.now(), kind: 'plan-card', plan } as any);
+        }
+      } catch (_) {}
+    };
+    refreshPlanLibrary();
+    for (const ch of ['plan:updated', 'plan:status', 'plan:task_progress', 'plan:complete']) {
+      ipcRenderer.on(ch, (d: any) => refreshPlanLibrary(d?.planId), token);
+    }
     // Capability-discovery choices (<choices> from the planner) → QuestionCard.
     ipcRenderer.on('plan:question', (data: { planId: string | null; question: string; options: any[] }) => {
       feedStore.appendEntry({
@@ -2659,6 +2730,7 @@ export function UnifiedOverlay() {
               onOpenQueue={handleFeedOpenQueue}
               onIsolateContext={handleIsolateContext}
               isContextActive={isContextActive}
+              onOpenPlansTab={() => setActiveTab('plans')}
             >
               {/* Proactive alert cards — question blocks + thought-engine outreach */}
               {questionAlert && (

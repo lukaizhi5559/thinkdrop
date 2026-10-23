@@ -375,6 +375,7 @@ export function QuestionCard({ batch, onSubmit, onCancel }: QuestionCardProps) {
                 <div style={{ display: 'flex', gap: 6, marginTop: 4 }}>
                   <input
                     type="text"
+                    data-qc-input
                     value={otherText}
                     onChange={e => setOtherText(e.target.value)}
                     onKeyDown={e => { if (e.key === 'Enter') _submitOther(currentQ.id); }}
@@ -458,6 +459,7 @@ export function QuestionCard({ batch, onSubmit, onCancel }: QuestionCardProps) {
         <div style={{ marginBottom: 8 }}>
           <input
             type="text"
+            data-qc-input
             value={answers[currentQ.id] || otherText}
             onChange={e => {
               setOtherText(e.target.value);
@@ -674,6 +676,7 @@ export function PartialFailureCard({ partialFailure, options, onSubmit, onCancel
             <div style={{ display: 'flex', gap: 6, marginTop: 4 }}>
               <input
                 type="text"
+                data-qc-input
                 value={otherText}
                 onChange={e => setOtherText(e.target.value)}
                 onKeyDown={e => { if (e.key === 'Enter') _submitOther(); }}

@@ -30,6 +30,11 @@ function _preflight() {
 
 const LOCAL = new Set(['shell', 'none', 'general_knowledge', 'synthesize']);
 
+// Draft MCP servers that duplicate a built-in local lane — the readiness row
+// can offer the lane as a one-click alternative to installing a server for
+// work the runtime already does (e.g. filesystem reads → shell/fs.read).
+const LOCAL_LANE_EQUIVALENTS = { filesystem: 'shell' };
+
 function _taskStepsState(task) {
   // 'failed' → issue; pending/generating/no steps → pending; else pass.
   const status = String(task.stepsStatus || '').toLowerCase();
@@ -125,6 +130,8 @@ async function computePlanCheck(tasks, opts = {}) {
             serviceType: desc.type,
             cliTool: desc.cliTool || null,
             mcpServer: desc.mcpServer || null,
+            // Local-lane escape hatch — "don't install anything, use shell".
+            suggested: LOCAL_LANE_EQUIVALENTS[desc.mcpServer || desc.service] || null,
             bypassed: authState === 'bypassed',
           });
           continue;

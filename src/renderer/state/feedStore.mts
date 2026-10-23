@@ -36,6 +36,19 @@ export interface FeedState {
   /** Engine currently being tried while a SERP fetch is in flight — rendered
    *  as a loading chip that the real searchEngine replaces on arrival. */
   searchPending: string | null;
+  /** Latest real-work activity line (terminal:activity — planning tool calls,
+   *  setup lanes, probe commands). Rendered as the live-region ticker so tool
+   *  work is visible where the reply streams instead of only in the terminal
+   *  drawer. Null when nothing has run recently. */
+  activityLine: string | null;
+  /** ts of the last activityLine update — renderer expires stale lines. */
+  activityTs: number;
+  /** Saved plans (mirror of 'plan:list') — drives the pinned plans strip and
+   *  plan-card feed entries in ResultsFeed. Plain objects; typed loosely here
+   *  to keep this file free of component imports. */
+  plans: any[];
+  /** planId → { status } from 'plan:runs' — live run state for the strip. */
+  planRuns: Record<string, { status: string }>;
   commsTasks: CommsTask[];
   historyLoading: boolean;
   hasMoreHistory: boolean;
@@ -442,6 +455,10 @@ export function createFeedStore(now: () => number = () => Date.now()): FeedStore
     searchSources: [],
     searchEngine: null,
     searchPending: null,
+    activityLine: null,
+    activityTs: 0,
+    plans: [],
+    planRuns: {},
     commsTasks: [],
     historyLoading: false,
     hasMoreHistory: false,

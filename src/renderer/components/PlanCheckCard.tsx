@@ -22,7 +22,7 @@
  * "Cancel" button pair.
  */
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { StepIcon } from './AutomationProgress';
 import { TaskRows, summarizeTasks } from './PlanTaskRows';
 
@@ -63,6 +63,8 @@ export interface PlanCheckItem {
   kind?: 'signin' | 'cli-key' | 'cli-login' | 'cli-setup' | 'unknown-agent' | 'missing-steps' | 'steps-failed' | 'approval-required';
   suggested?: string | null;
   envNames?: string[];
+  cliTool?: string | null;
+  mcpServer?: string | null;
   serviceType?: string;
   authState?: string;
   bypassed?: boolean;
@@ -88,6 +90,8 @@ export interface PlanCheckPayload {
   finished?: { status: string; failedTasks: number[] };
   /** Frontmatter status mirrors (running/done/failed/revising…). */
   planStatus?: string;
+  /** Parsed task count at emit time — an empty plan reads allClear otherwise. */
+  taskCount?: number;
   /** A different plan took over the active session — card is inert. */
   superseded?: boolean;
 }
@@ -129,13 +133,13 @@ function _send(planId: string | null, itemId: string | undefined, action: string
 
 // plan-format TASK_STATUS strings carry emoji prefixes ('🔄 running',
 // '✅ done'…) — normalize by substring so both raw and prefixed values work.
-function _runGlyph(status: string | undefined): { glyph: string; color: string; text: string } {
+function _runStep(status: string | undefined): { step: 'running' | 'done' | 'failed' | 'skipped' | 'pending'; color: string; text: string } {
   const s = String(status || '').toLowerCase();
-  if (s.includes('running')) return { glyph: '◔', color: '#60a5fa', text: 'running' };
-  if (s.includes('done'))    return { glyph: '✓', color: '#4ade80', text: 'done' };
-  if (s.includes('failed'))  return { glyph: '✕', color: '#f87171', text: 'failed' };
-  if (s.includes('skipped')) return { glyph: '»', color: '#9ca3af', text: 'skipped' };
-  return { glyph: '◦', color: '#64748b', text: 'queued' };
+  if (s.includes('running')) return { step: 'running', color: '#60a5fa', text: 'running' };
+  if (s.includes('done'))    return { step: 'done', color: '#4ade80', text: 'done' };
+  if (s.includes('failed'))  return { step: 'failed', color: '#f87171', text: 'failed' };
+  if (s.includes('skipped')) return { step: 'skipped', color: '#9ca3af', text: 'skipped' };
+  return { step: 'pending', color: '#64748b', text: 'queued' };
 }
 
 export function PlanCheckCard({ check, compact = true }: PlanCheckCardProps) {
@@ -145,14 +149,44 @@ export function PlanCheckCard({ check, compact = true }: PlanCheckCardProps) {
   // 'all clear' / 'N issues' is a live refresh control — shows a transient
   // "checking…" state until the re-emitted plan:check payload lands.
   const [checking, setChecking] = useState(false);
-  useEffect(() => { setChecking(false); }, [check]);
+  // Per-action busy state (item id or 'run-all'/'run-review') — cleared when
+  // the next plan:check payload lands, so clicked buttons can't look dead.
+  const [busy, setBusy] = useState<string | null>(null);
+  // Read-only task inspector — fetched on demand via plan:get.
+  const [inspecting, setInspecting] = useState(false);
+  const [inspectTasks, setInspectTasks] = useState<any[] | null>(null);
+  const [inspectErr, setInspectErr] = useState<string | null>(null);
+  // Narrow-overlay footer — measured from the card itself (the unified
+  // window's width isn't the card's; a ResizeObserver is exact).
+  const rootRef = useRef<HTMLDivElement | null>(null);
+  const [narrow, setNarrow] = useState(false);
+  useEffect(() => { setChecking(false); setBusy(null); }, [check]);
+  useEffect(() => {
+    const el = rootRef.current;
+    if (!el || typeof ResizeObserver === 'undefined') return;
+    const ro = new ResizeObserver((ents) => {
+      const w = ents[0]?.contentRect?.width || 0;
+      setNarrow(w > 0 && w < 430);
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
 
   const issues = check.items.filter(i => i.status === 'issue');
   const warns = check.items.filter(i => i.status === 'warn');
   // Compact: pass rows are folded into the task summary; issues/warns/pending
   // still render in detail so their action buttons stay reachable.
   const detailItems = compact ? check.items.filter(i => i.status !== 'pass') : check.items;
-  const runnable = check.allClear;
+  // Drafting phase — an empty task list makes allClear vacuously true; the
+  // run controls stay off until there's something to run.
+  const isDrafting = (check.taskCount === 0) || check.planStatus === 'drafting';
+  const runnable = check.allClear && !isDrafting;
+  const blockers = check.items.filter(i => i.status === 'issue' || i.status === 'pending');
+  const blockerTitle = isDrafting
+    ? 'Still drafting — tasks appear as they are planned'
+    : blockers.length
+      ? `Blocked: ${blockers.map(b => b.label).join(' · ')}`
+      : undefined;
 
   // Run-state: once started (or task progress arrived), the card is the live
   // run surface — readiness rows swap for per-task status rows.
@@ -171,7 +205,7 @@ export function PlanCheckCard({ check, compact = true }: PlanCheckCardProps) {
   };
 
   return (
-    <div style={{
+    <div ref={rootRef} style={{
       borderRadius: 10,
       padding: '10px 12px',
       backgroundColor: COLORS.cardBg,
@@ -223,10 +257,10 @@ export function PlanCheckCard({ check, compact = true }: PlanCheckCardProps) {
         <div style={{ display: 'flex', flexDirection: 'column', gap: 3, marginBottom: detailItems.length ? 8 : 0 }}>
           {runNums.map(num => {
             const st = check.taskStatuses?.[num]?.status;
-            const g = _runGlyph(st);
+            const g = _runStep(st);
             return (
-              <div key={num} style={{ display: 'flex', alignItems: 'baseline', gap: 8, fontSize: '0.72rem', lineHeight: '18px' }}>
-                <span style={{ color: g.color, fontWeight: 800, flexShrink: 0, width: 12, textAlign: 'center' }}>{g.glyph}</span>
+              <div key={num} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: '0.72rem', lineHeight: '18px' }}>
+                <StepIcon status={g.step} />
                 <span style={{ color: '#94a3b8', flexShrink: 0 }}>Task {num}</span>
                 <span style={{ color: COLORS.bodyText, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', flex: 1, minWidth: 0 }}>
                   — {titleByNum.get(num) || `Task ${num}`}
@@ -252,9 +286,14 @@ export function PlanCheckCard({ check, compact = true }: PlanCheckCardProps) {
                   <span style={{ color: '#93c5fd', fontSize: '0.65rem' }}> — approve before it runs</span>
                 )}
               </span>
-              {(item.kind === 'steps-failed' || item.kind === 'missing-steps') && (
-                <button onClick={() => _send(check.planId, item.id, 'retry-steps')} style={{ ..._rowBtn, flexShrink: 0 }}>
-                  {item.kind === 'steps-failed' ? 'Retry generation' : 'Regenerate'}
+              {/* Regenerate — step rows only (they carry no agentId); agent
+                  rows patched to 'pending' mid-setup must not show this. */}
+              {(item.kind === 'steps-failed' || item.kind === 'missing-steps') && !item.agentId && (
+                <button
+                  onClick={() => { setBusy(item.id); _send(check.planId, item.id, 'retry-steps'); }}
+                  style={{ ..._rowBtn, flexShrink: 0, opacity: busy === item.id ? 0.6 : 1 }}
+                >
+                  {busy === item.id ? 'Working…' : item.kind === 'steps-failed' ? 'Retry generation' : 'Regenerate'}
                 </button>
               )}
               {item.status === 'issue' && item.kind !== 'steps-failed' && (
@@ -280,9 +319,26 @@ export function PlanCheckCard({ check, compact = true }: PlanCheckCardProps) {
                     </button>
                   )}
                   {item.kind === 'cli-setup' && (
-                    <button onClick={() => _send(check.planId, item.id, 'cli-setup')} style={_rowBtn}>
-                      Set up
-                    </button>
+                    <>
+                      <button
+                        onClick={() => { setBusy(item.id); _send(check.planId, item.id, 'cli-setup'); }}
+                        style={{ ..._rowBtn, opacity: busy === item.id ? 0.6 : 1 }}
+                      >
+                        {busy === item.id ? 'Working…' : 'Set up'}
+                      </button>
+                      {/* Local-lane escape hatch — a draft that duplicates a
+                          built-in lane (filesystem → shell) can be swapped
+                          without installing anything. */}
+                      {item.suggested && (
+                        <button
+                          onClick={() => { setBusy(item.id); _send(check.planId, item.id, 'use-agent'); }}
+                          title={`Skip setup — rewrite the task to use ${item.suggested}`}
+                          style={{ ..._rowBtnGhost, opacity: busy === item.id ? 0.6 : 1 }}
+                        >
+                          Use {item.suggested}
+                        </button>
+                      )}
+                    </>
                   )}
                   {item.kind === 'unknown-agent' && (
                     <>
@@ -380,23 +436,79 @@ export function PlanCheckCard({ check, compact = true }: PlanCheckCardProps) {
         </div>
       )}
 
-      {/* All-clear nudge — the gate is open but nothing has started yet; make
-          the required action explicit so nobody waits on a silent card. */}
-      {!check.started && !check.cancelled && check.allClear && (
-        <div style={{ marginTop: 8, color: COLORS.secondaryText, fontSize: '0.68rem' }}>
-          Ready — say "run it" or press Run all to start{check.items.some(i => i.kind === 'approval-required') ? ' · Review task steps through each approval' : ''}.
+      {/* Inspect tasks — read-only expansion: prompt + generated steps per
+          task. Always available (even while issues block the run) — it
+          answers "what will this plan actually do?" without starting it. */}
+      {inspecting && (
+        <div style={{ marginTop: 10, borderTop: '1px solid rgba(255,255,255,0.07)', paddingTop: 8 }}>
+          {inspectTasks === null && !inspectErr && (
+            <div style={{ color: COLORS.mutedText, fontSize: '0.70rem' }}>Loading tasks…</div>
+          )}
+          {inspectErr && (
+            <div style={{ color: COLORS.issueText, fontSize: '0.70rem' }}>{inspectErr}</div>
+          )}
+          {(inspectTasks || []).map(t => (
+            <div key={t.num} style={{ marginBottom: 8 }}>
+              <div style={{ color: '#94a3b8', fontSize: '0.68rem', fontWeight: 600 }}>
+                Task {t.num} — {t.title || String(t.prompt || '').slice(0, 60)}
+              </div>
+              {t.prompt && (
+                <div style={{ color: COLORS.secondaryText, fontSize: '0.66rem', marginTop: 2, lineHeight: 1.4 }}>
+                  {String(t.prompt).slice(0, 220)}{String(t.prompt).length > 220 ? '…' : ''}
+                </div>
+              )}
+              {Array.isArray(t.steps) && t.steps.length > 0 && (
+                <div style={{ marginTop: 3, marginLeft: 8 }}>
+                  {t.steps.map((s: any, i: number) => (
+                    <div key={i} style={{ color: COLORS.mutedText, fontSize: '0.64rem', lineHeight: 1.5 }}>
+                      {i + 1}. {s.description || s.skill}
+                      <span style={{ color: '#4b5563' }}> ({s.skill})</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+              {(!Array.isArray(t.steps) || !t.steps.length) && (
+                <div style={{ color: '#4b5563', fontSize: '0.64rem', marginTop: 2, marginLeft: 8, fontStyle: 'italic' }}>
+                  steps still generating
+                </div>
+              )}
+            </div>
+          ))}
         </div>
       )}
 
-      {/* Footer — Cancel / Open plan / Review task / Run all (one line) */}
+      {/* All-clear nudge — the gate is open but nothing has started yet; make
+          the required action explicit so nobody waits on a silent card. */}
+      {!check.started && !check.cancelled && check.allClear && !isDrafting && (
+        <div style={{ marginTop: 8, color: COLORS.secondaryText, fontSize: '0.68rem' }}>
+          Ready — say "run it" or press Run all to start{check.items.some(i => i.kind === 'approval-required') ? ' · Review run pauses before each task' : ''}.
+        </div>
+      )}
+      {isDrafting && !check.cancelled && !check.started && (
+        <div style={{ marginTop: 8, color: COLORS.mutedText, fontSize: '0.68rem', fontStyle: 'italic' }}>
+          Drafting — tasks and readiness appear as the plan takes shape.
+        </div>
+      )}
+
+      {/* Footer — narrow overlay stacks vertically in order:
+          Open Plan / Inspect Tasks / Review run / Run all / Cancel.
+          Full width keeps the side-by-side row. */}
       {!check.cancelled && !check.started && !check.superseded && (
-        <div className="flex" style={{ gap: 6, marginTop: 12, borderTop: '1px solid rgba(255,255,255,0.07)', paddingTop: 10, flexWrap: 'nowrap' }}>
-          <button
-            onClick={() => _send(check.planId, undefined, 'cancel')}
-            style={{ ..._btnBase, backgroundColor: COLORS.dangerBg, border: COLORS.dangerBorder, color: COLORS.dangerText }}
-            onMouseEnter={e => (e.currentTarget.style.backgroundColor = 'rgba(239,68,68,0.18)')}
-            onMouseLeave={e => (e.currentTarget.style.backgroundColor = COLORS.dangerBg)}
-          >Cancel</button>
+        <div
+          className="flex"
+          style={{
+            gap: 6, marginTop: 12, borderTop: '1px solid rgba(255,255,255,0.07)', paddingTop: 10,
+            flexDirection: narrow ? 'column' : 'row', flexWrap: 'nowrap',
+          }}
+        >
+          {!narrow && (
+            <button
+              onClick={() => _send(check.planId, undefined, 'cancel')}
+              style={{ ..._btnBase, backgroundColor: COLORS.dangerBg, border: COLORS.dangerBorder, color: COLORS.dangerText }}
+              onMouseEnter={e => (e.currentTarget.style.backgroundColor = 'rgba(239,68,68,0.18)')}
+              onMouseLeave={e => (e.currentTarget.style.backgroundColor = COLORS.dangerBg)}
+            >Cancel</button>
+          )}
           <button
             onClick={() => _send(check.planId, undefined, 'open-plan', { planFile: check.planFile || '' })}
             title="Open the full plan in the on-screen document view"
@@ -404,11 +516,29 @@ export function PlanCheckCard({ check, compact = true }: PlanCheckCardProps) {
             onMouseEnter={e => (e.currentTarget.style.backgroundColor = 'rgba(255,255,255,0.06)')}
             onMouseLeave={e => (e.currentTarget.style.backgroundColor = 'transparent')}
           >Open plan</button>
-          <span style={{ flex: 1 }} />
           <button
-            onClick={() => _send(check.planId, undefined, 'run-review')}
+            onClick={() => {
+              if (inspecting) { setInspecting(false); return; }
+              setInspecting(true);
+              if (inspectTasks !== null || inspectErr) return;
+              if (!check.planFile) { setInspectErr('No plan file yet — still drafting.'); return; }
+              ipcRenderer?.invoke('plan:get', { planFile: check.planFile })
+                .then((res: any) => {
+                  if (res?.error) setInspectErr(res.error);
+                  else setInspectTasks(res?.tasks || []);
+                })
+                .catch((e: any) => setInspectErr(e?.message || 'Failed to load tasks'));
+            }}
+            title="Inspect each task's prompt and generated steps (read-only)"
+            style={{ ..._btnBase, backgroundColor: 'transparent', border: COLORS.ghostBorder, color: inspecting ? '#93c5fd' : COLORS.secondaryText }}
+            onMouseEnter={e => (e.currentTarget.style.backgroundColor = 'rgba(255,255,255,0.06)')}
+            onMouseLeave={e => (e.currentTarget.style.backgroundColor = 'transparent')}
+          >{inspecting ? 'Hide tasks' : 'Inspect tasks'}</button>
+          {!narrow && <span style={{ flex: 1 }} />}
+          <button
+            onClick={() => { setBusy('run-review'); _send(check.planId, undefined, 'run-review'); }}
             disabled={!runnable}
-            title="Run each task in order, pausing for approval before every task"
+            title={blockerTitle || 'Run each task in order, pausing for approval before every task'}
             style={{
               ..._btnBase, fontWeight: 600,
               backgroundColor: 'transparent',
@@ -419,13 +549,13 @@ export function PlanCheckCard({ check, compact = true }: PlanCheckCardProps) {
             }}
             onMouseEnter={e => { if (runnable) e.currentTarget.style.backgroundColor = 'rgba(59,130,246,0.14)'; }}
             onMouseLeave={e => (e.currentTarget.style.backgroundColor = 'transparent')}
-          >Review task</button>
+          >{busy === 'run-review' ? 'Starting…' : 'Review run'}</button>
           <button
-            onClick={() => _send(check.planId, undefined, 'run-all')}
+            onClick={() => { setBusy('run-all'); _send(check.planId, undefined, 'run-all'); }}
             disabled={!runnable}
-            title="Run all tasks back-to-back — review gates are auto-approved"
+            title={blockerTitle || 'Run all tasks back-to-back — review gates are auto-approved'}
             style={{
-              ..._btnBase, display: 'flex', alignItems: 'center', gap: 6, fontWeight: 600,
+              ..._btnBase, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, fontWeight: 600,
               backgroundColor: runnable ? COLORS.primaryBg : 'transparent',
               border: runnable ? COLORS.primaryBorder : '1px solid rgba(255,255,255,0.08)',
               color: runnable ? COLORS.primaryText : COLORS.mutedText,
@@ -436,8 +566,16 @@ export function PlanCheckCard({ check, compact = true }: PlanCheckCardProps) {
             onMouseLeave={e => { if (runnable) e.currentTarget.style.backgroundColor = COLORS.primaryBg; }}
           >
             <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"/></svg>
-            Run all
+            {busy === 'run-all' ? 'Starting…' : 'Run all'}
           </button>
+          {narrow && (
+            <button
+              onClick={() => _send(check.planId, undefined, 'cancel')}
+              style={{ ..._btnBase, backgroundColor: COLORS.dangerBg, border: COLORS.dangerBorder, color: COLORS.dangerText }}
+              onMouseEnter={e => (e.currentTarget.style.backgroundColor = 'rgba(239,68,68,0.18)')}
+              onMouseLeave={e => (e.currentTarget.style.backgroundColor = COLORS.dangerBg)}
+            >Cancel</button>
+          )}
         </div>
       )}
     </div>
