@@ -907,7 +907,17 @@ async function selectBestCapability(query, opts = {}) {
 
   const table = pool.map((c, i) => `${i + 1}. ${_candidateFacts(c)}`).join('\n');
   let verdict = null;
-  try {
+  // ── Local decision fast path — bounded pick + fit over the same pool ────
+  // opts.localCaller(pool, query) → {pick, fit}|null. The pick is validated
+  // through the same _resolvePick path below, so a hallucinated id dies the
+  // same way a remote one would.
+  if (typeof opts.localCaller === 'function') {
+    try {
+      const local = await opts.localCaller(pool, String(query || '').slice(0, 400), table);
+      if (local && typeof local === 'object') verdict = local;
+    } catch (_) { /* fail-open → remote llmCaller */ }
+  }
+  if (!verdict) try {
     const raw = await llmCaller(`${_selectPrompt(!!opts.extConnected)}${JSON.stringify(String(query || '').slice(0, 400))}\n\nCANDIDATES:\n${table}`);
     const m = String(raw || '').match(/\{[\s\S]*\}/);
     verdict = m ? JSON.parse(m[0]) : null;
