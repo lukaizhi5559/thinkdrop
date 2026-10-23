@@ -143,8 +143,12 @@ class ThinkDropMCPClient {
       this.logger.error(`[MCPClient] ${serviceName}.${action} failed:`, error.message);
       // Trip the breaker only on transport-level failures — an MCP error
       // envelope means the service answered (it's alive), and caller-initiated
-      // aborts don't implicate the service either.
-      if (error.message !== 'aborted' &&
+      // aborts don't implicate the service either. options.noCircuit opts a
+      // call out of failure counting entirely (e.g. phi4 decision.answer —
+      // a slow local model timeout is not a dead service, and its fail-open
+      // design already has its own fallback; counting it was tripping the
+      // shared breaker and starving real phi4 callers like embedding).
+      if (!options.noCircuit && error.message !== 'aborted' &&
           /timeout|ECONNREFUSED|ENOTFOUND|EHOSTUNREACH|ENETUNREACH|ECONNRESET|socket hang up/i.test(error.message)) {
         const rec = this._circuit.get(serviceName) || { failures: 0, openUntil: 0 };
         rec.failures += 1;

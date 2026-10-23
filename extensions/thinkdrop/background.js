@@ -68,6 +68,12 @@ function persistRegistry() {
 // gateway sees the tab, or a worker suspend in the gap orphans it (the exact
 // adopt→duplicate-create failure observed in command.log).
 async function bindSession(key, tabId) {
+  // 'browser' is a generic alias, not a real session — it must never take
+  // ownership. Binding it evicts the service session that legitimately owns
+  // the tab (observed: a 'browser'-sessioned READ step adopted the gmail tab,
+  // evicting ext:gmail_agent; the follow-up dom.act then hit
+  // bound-page-missing). Generic reads resolve the tab fresh each call.
+  if (key === 'browser') return;
   // One session per tab — a navigate issued under the wrong session must not
   // leave two sessions claiming the same tab (the loser then drives a page it
   // never opened).
@@ -1061,7 +1067,12 @@ async function dispatch(sessionId, action, args, timeoutMs) {
     case 'close': {
       await registryHydrated;
       const { key } = parseSession(sessionId);
-      const tabId = sessionTabs.get(key) != null ? sessionTabs.get(key) : await resolveTab(sessionId, null, { ...args, noCreate: true }).catch(() => null);
+      // Generic sessions never own tabs — resolveTab would adopt the ACTIVE
+      // tab and close a page this session doesn't own (observed class: the
+      // 'browser' alias stealing service bindings). Unbound generic close is
+      // a no-op, not an adoption.
+      const tabId = sessionTabs.get(key) != null ? sessionTabs.get(key)
+        : (key === 'browser' ? null : await resolveTab(sessionId, null, { ...args, noCreate: true }).catch(() => null));
       if (tabId != null) {
         await unbindSession(key);
         try { await chrome.tabs.remove(tabId); } catch (_) {}

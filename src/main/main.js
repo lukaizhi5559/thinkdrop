@@ -2916,7 +2916,13 @@ function persistBrowserSessionFromFinalState(finalState) {
   if (!finalState) return;
   if (finalState.activeBrowserSessionId) {
     currentBrowserSessionId = finalState.activeBrowserSessionId;
-    currentBrowserUrl = finalState.activeBrowserUrl || currentBrowserUrl;
+    // Prefer the bound tab's LIVE url over the step-reported activeBrowserUrl —
+    // a failed/retried step can leave activeBrowserUrl pointing at a stale
+    // page (observed: ext:chatgpt_agent persisted @ amazon product URL, which
+    // then poisoned same-domain checks on the next prompt).
+    const _liveSess = (Array.isArray(finalState._extSessions) ? finalState._extSessions : [])
+      .find(x => x && x.sessionId === currentBrowserSessionId && x.url);
+    currentBrowserUrl = _liveSess?.url || finalState.activeBrowserUrl || currentBrowserUrl;
     console.log(`[StateGraph] Persisted browser session: ${currentBrowserSessionId} @ ${currentBrowserUrl}`);
   } else if ('activeBrowserSessionId' in finalState && finalState.activeBrowserSessionId === null) {
     console.log(`[StateGraph] Browser session cleared (was: ${currentBrowserSessionId}) — next prompt will open a new tab`);
