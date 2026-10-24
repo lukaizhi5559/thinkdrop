@@ -112,6 +112,32 @@ function t(name, cond) {
     t('approval row does not block', r.allClear === true);
   }
 
+  // ── Steps calling uninstalled MCP servers → issue row ─────────────────────
+  {
+    const r = await computePlanCheck([{
+      num: 1, prompt: 'Read files', agents: ['shell'],
+      steps: [
+        { skill: 'mcp.agent', args: { action: 'call', server: 'nonexistent-xyz', tool: 'read_file' } },
+        { skill: 'fs.read', args: { path: '/x' } },
+      ],
+    }]);
+    const row = r.items.find(i => i.kind === 'steps-mcp-missing');
+    t('uninstalled mcp.server step → issue row', !!row);
+    t('row names the missing server', row && row.label.includes('nonexistent-xyz'));
+    t('row blocks the run', r.allClear === false);
+  }
+  {
+    const r = await computePlanCheck([{
+      num: 1, prompt: 'Read files', agents: ['shell'],
+      steps: [
+        { skill: 'mcp.agent', args: { action: 'call', server: 'memory', tool: 'search_nodes' } },
+        { skill: 'synthesize', args: { prompt: 'x' } },
+      ],
+    }]);
+    // 'memory' IS installed in ~/.thinkdrop/mcp-servers.json
+    t('installed mcp.server step → no row', !r.items.some(i => i.kind === 'steps-mcp-missing'));
+  }
+
   console.log(`\n${pass} passed, ${fail} failed`);
   process.exit(fail ? 1 : 0);
 })().catch(e => { console.error(e); process.exit(1); });

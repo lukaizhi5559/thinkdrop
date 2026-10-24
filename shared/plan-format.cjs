@@ -113,6 +113,77 @@ function upsertRefs(content, refs) {
 const _TASK_BLOCK_RE = /## Task (\d+)\s*[—\-–:]*\s*([^\n]*)\n([\s\S]*?)(?=## Task \d+|## |\n#[^#]|$)/g;
 const _FIELD_RE = /- \*\*([^*]+)\*\*:\s*(.+)/g;
 
+/**
+ * Blank out the CONTENT of ``` fenced blocks, keeping the fence markers and
+ * every newline — output is the same length as input so match offsets line up
+ * with the original string. Structural regexes (task boundaries, `- **Field**:`
+ * lines) must run against the masked copy: step JSON routinely contains
+ * markdown-looking text (`## ` headings, `- **Status**:` lines) that would
+ * otherwise truncate a task body mid-fence or spoof a field write.
+ */
+function _maskCodeFences(text) {
+  return String(text).replace(/```([\s\S]*?)(```|$)/g,
+    (m, inner, close) => '```' + inner.replace(/[^\n]/g, ' ') + close);
+}
+
+/**
+ * Locate `## Task N`'s body span — N is digit-boundaried (Task 1 ≠ Task 12)
+ * and the body boundary is computed on the fence-masked copy so `## ` inside
+ * step JSON can't end the task early, and the span can never run into the
+ * next task's body.
+ */
+function _taskSpan(content, taskNum) {
+  const text = String(content || '');
+  const masked = _maskCodeFences(text);
+  const re = new RegExp(
+    `## Task ${taskNum}(?![0-9])[^\\n]*\\n([\\s\\S]*?)(?=## Task \\d+|## |\\n#[^#]|$)`);
+  const m = re.exec(masked);
+  if (!m) return null;
+  const bodyEnd = m.index + m[0].length;
+  return {
+    bodyStart: bodyEnd - m[1].length,
+    bodyEnd,
+    body: text.slice(bodyEnd - m[1].length, bodyEnd),
+  };
+}
+
+/** Run `fn(body)` inside `## Task N`'s body and splice the result back. */
+function _rewriteTaskBody(content, taskNum, fn) {
+  const text = String(content || '');
+  const span = _taskSpan(text, taskNum);
+  if (!span) return text;
+  const nextBody = fn(span.body, _maskCodeFences(span.body));
+  if (nextBody === span.body) return text;
+  return text.slice(0, span.bodyStart) + nextBody + text.slice(span.bodyEnd);
+}
+
+/** Replace the whole `- **Field**: …` line inside a task body (masked-located). */
+function _setFieldLine(body, field, value) {
+  const masked = _maskCodeFences(body);
+  const re = new RegExp(`- \\*\\*${field}\\*\\*: ?[^\\n]*`);
+  const m = re.exec(masked);
+  if (!m) return body;
+  return body.slice(0, m.index) + `- **${field}**: ${value}` + body.slice(m.index + m[0].length);
+}
+
+/** Remove the `- **Field**: …` line (with its newline) inside a task body. */
+function _dropFieldLine(body, field) {
+  const masked = _maskCodeFences(body);
+  const re = new RegExp(`- \\*\\*${field}\\*\\*: ?[^\\n]*\\n?`);
+  const m = re.exec(masked);
+  if (!m) return body;
+  return body.slice(0, m.index) + body.slice(m.index + m[0].length);
+}
+
+/** Insert `line` before `- **Field**:` inside a task body (masked-located). */
+function _insertBeforeField(body, field, line) {
+  const masked = _maskCodeFences(body);
+  const re = new RegExp(`- \\*\\*${field}\\*\\*: `);
+  const m = re.exec(masked);
+  if (!m) return body;
+  return body.slice(0, m.index) + line + body.slice(m.index);
+}
+
 function _parseDependsOn(raw) {
   const out = [];
   const nums = String(raw || '').match(/\bTask\s+(\d+)/gi) || [];
@@ -137,17 +208,27 @@ function _parseAgents(raw) {
 function parseTasks(content) {
   const tasks = [];
   const text = String(content || '');
+  // Task/field boundaries are matched on the fence-masked copy — markdown
+  // inside a steps JSON block (## headings, - **Field**: lines) is invisible
+  // there, so it can't truncate the body or spoof a field.
+  const masked = _maskCodeFences(text);
   _TASK_BLOCK_RE.lastIndex = 0;
   let m;
-  while ((m = _TASK_BLOCK_RE.exec(text)) !== null) {
+  while ((m = _TASK_BLOCK_RE.exec(masked)) !== null) {
     const num = parseInt(m[1], 10);
     const title = (m[2] || '').trim() || `Task ${num}`;
-    const body = m[3] || '';
+    const maskedBody = m[3] || '';
+    const bodyEnd = m.index + m[0].length;
+    const body = text.slice(bodyEnd - maskedBody.length, bodyEnd);
     const fields = {};
     _FIELD_RE.lastIndex = 0;
     let fm;
-    while ((fm = _FIELD_RE.exec(body)) !== null) {
-      fields[fm[1].trim().toLowerCase()] = fm[2].trim();
+    while ((fm = _FIELD_RE.exec(maskedBody)) !== null) {
+      // Field value comes from the ORIGINAL line (masked slice is identical
+      // outside fences, but a value may itself contain backticks).
+      const line = body.slice(fm.index, fm.index + fm[0].length);
+      const v = line.match(/- \*\*[^*]+\*\*:\s*(.+)/);
+      fields[fm[1].trim().toLowerCase()] = (v ? v[1] : '').trim();
     }
     tasks.push({
       num,
@@ -259,18 +340,14 @@ function newPlanContent({ id, title, description, originalPrompt, sessionId, tas
  * Mirrors planScanner.updateStepStatus semantics for the Task layout.
  */
 function updateTaskStatus(content, taskNum, status, result) {
-  let updated = String(content || '');
-  const statusRe = new RegExp(
-    `(## Task ${taskNum}[^\\n]*\\n[\\s\\S]*?)(- \\*\\*Status\\*\\*: )[^\\n]+(\\n)`, 'g');
-  updated = updated.replace(statusRe, (m, before, label, nl) => before + label + status + nl);
-  if (result !== undefined && result !== null) {
-    const resultRe = new RegExp(
-      `(## Task ${taskNum}[^\\n]*\\n[\\s\\S]*?)(- \\*\\*Result\\*\\*: )[^\\n]+(\\n)`, 'g');
-    const snippet = String(result).slice(0, 300).replace(/\n/g, ' ');
-    updated = updated.replace(resultRe, (m, before, label, nl) =>
-      before + label + (snippet || '(no result)') + nl);
-  }
-  return updated;
+  return _rewriteTaskBody(content, taskNum, (body) => {
+    let next = _setFieldLine(body, 'Status', status);
+    if (result !== undefined && result !== null) {
+      const snippet = String(result).slice(0, 300).replace(/\n/g, ' ');
+      next = _setFieldLine(next, 'Result', snippet || '(no result)');
+    }
+    return next;
+  });
 }
 
 /**
@@ -278,24 +355,23 @@ function updateTaskStatus(content, taskNum, status, result) {
  * Keeps user edits to other fields intact; replaces only the steps block.
  */
 function updateTaskSteps(content, taskNum, steps) {
-  let updated = String(content || '');
   const block = `- **Steps**:\n\`\`\`json\n${JSON.stringify(steps)}\n\`\`\`\n`;
-  const taskRe = new RegExp(`(## Task ${taskNum}[^\\n]*\\n)([\\s\\S]*?)(?=## Task \\d+|## |\\n#[^#]|$)`);
-  updated = updated.replace(taskRe, (m, head, body) => {
-    if (/- \*\*Steps\*\*:[^\n]*\n\s*```(?:json)?\s*\n[\s\S]*?```\n?/.test(body)) {
-      return head + body.replace(/- \*\*Steps\*\*:[^\n]*\n\s*```(?:json)?\s*\n[\s\S]*?```\n?/, block);
-    }
+  return _rewriteTaskBody(content, taskNum, (body, maskedBody) => {
+    // Locate the existing steps block in the MASKED body (fence content is
+    // blank there, so a `## ` inside step JSON can't hide the fence) — then
+    // splice the replacement into the original by offset.
+    const m = /- \*\*Steps\*\*:[^\n]*\n\s*```(?:[^\n])*?\n[\s\S]*?```\n?/.exec(maskedBody);
+    if (m) return body.slice(0, m.index) + block + body.slice(m.index + m[0].length);
     // No steps block yet — insert before the **Status** line.
-    return head + body.replace(/(- \*\*Status\*\*:)/, `${block}$1`);
+    const next = _insertBeforeField(body, 'Status', block);
+    if (next !== body) return next;
+    return body + (body.endsWith('\n') ? '' : '\n') + block;
   });
-  return updated;
 }
 
 function updateTaskAgents(content, taskNum, agents) {
   const value = (agents && agents.length ? agents.join(' | ') : '—');
-  return String(content || '').replace(
-    new RegExp(`(## Task ${taskNum}[^\\n]*\\n[\\s\\S]*?)(- \\*\\*Agents\\*\\*: )[^\\n]+(\\n)`, 'g'),
-    (m, before, label, nl) => before + label + value + nl);
+  return _rewriteTaskBody(content, taskNum, (body) => _setFieldLine(body, 'Agents', value));
 }
 
 /**
@@ -303,15 +379,11 @@ function updateTaskAgents(content, taskNum, agents) {
  * `status=null` removes the line entirely.
  */
 function updateTaskStepsStatus(content, taskNum, status) {
-  let updated = String(content || '');
-  const lineRe = new RegExp(
-    `(## Task ${taskNum}[^\\n]*\\n[\\s\\S]*?)- \\*\\*Steps Status\\*\\*: [^\\n]*\\n`, 'g');
-  updated = updated.replace(lineRe, '$1');
-  if (!status) return updated;
-  const insertRe = new RegExp(
-    `(## Task ${taskNum}[^\\n]*\\n[\\s\\S]*?)(- \\*\\*Status\\*\\*: )`, 'g');
-  return updated.replace(insertRe,
-    `$1- **Steps Status**: ${status}\n$2`);
+  return _rewriteTaskBody(content, taskNum, (body) => {
+    let next = _dropFieldLine(body, 'Steps Status');
+    if (status) next = _insertBeforeField(next, 'Status', `- **Steps Status**: ${status}\n`);
+    return next;
+  });
 }
 
 /**
@@ -319,21 +391,15 @@ function updateTaskStepsStatus(content, taskNum, status) {
  * `value=null` removes the line entirely.
  */
 function updateTaskApproval(content, taskNum, value) {
-  let updated = String(content || '');
-  const lineRe = new RegExp(
-    `(## Task ${taskNum}[^\\n]*\\n[\\s\\S]*?)- \\*\\*Approval\\*\\*: [^\\n]*\\n`, 'g');
-  updated = updated.replace(lineRe, '$1');
-  if (!value) return updated;
-  const insertRe = new RegExp(
-    `(## Task ${taskNum}[^\\n]*\\n[\\s\\S]*?)(- \\*\\*Status\\*\\*: )`, 'g');
-  return updated.replace(insertRe,
-    `$1- **Approval**: ${value}\n$2`);
+  return _rewriteTaskBody(content, taskNum, (body) => {
+    let next = _dropFieldLine(body, 'Approval');
+    if (value) next = _insertBeforeField(next, 'Status', `- **Approval**: ${value}\n`);
+    return next;
+  });
 }
 
 function updateTaskAuth(content, taskNum, auth) {
-  return String(content || '').replace(
-    new RegExp(`(## Task ${taskNum}[^\\n]*\\n[\\s\\S]*?)(- \\*\\*Auth\\*\\*: )[^\\n]+(\\n)`, 'g'),
-    (m, before, label, nl) => before + label + auth + nl);
+  return _rewriteTaskBody(content, taskNum, (body) => _setFieldLine(body, 'Auth', auth));
 }
 
 // ── Dot-syntax plan names (canonical home — planCacheHelpers re-exports) ───────

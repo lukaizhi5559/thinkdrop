@@ -1906,13 +1906,25 @@ function startOverlayControlServer() {
       req.on('data', chunk => { body += chunk; });
       req.on('end', async () => {
         try {
-          const { url } = JSON.parse(body || '{}');
+          const { url, planId } = JSON.parse(body || '{}');
           if (typeof url !== 'string' || !/^https?:\/\//i.test(url)) {
             res.writeHead(400).end(JSON.stringify({ ok: false, error: 'http(s) url required' }));
             return;
           }
+          // F16: correlate the open to a live plan before touching the user's
+          // real browser — a planning-lane url.open only exists inside a live
+          // plan session, so anything else is a phantom (observed: a stale
+          // azure setup retry auto-opened portal.azure.com).
+          const planRunner = require('./planRunner');
+          const _live = planId
+            && (planRunner.getRun(planId) || (_planningMode?.active && _planningMode.planId === planId));
+          if (!_live) {
+            console.log(`[UrlOpen] REJECTED ${url} — no live plan (planId=${planId || 'none'})`);
+            res.writeHead(409).end(JSON.stringify({ ok: false, error: 'no live plan for this url.open' }));
+            return;
+          }
           await require('electron').shell.openExternal(url);
-          console.log(`[UrlOpen] ${url}`);
+          console.log(`[UrlOpen] ${url} (plan=${planId})`);
           res.writeHead(200).end(JSON.stringify({ ok: true, url }));
         } catch (err) {
           res.writeHead(500).end(JSON.stringify({ ok: false, error: err.message }));
@@ -3268,17 +3280,13 @@ async function _openSetupSession(evt, taskId) {
 
   safeSendUnified('automation:progress', { type: 'agent:setup_opened', agentId: normalizedAgentId, serviceName: service, authType, taskId: taskId || undefined });
 
-  // Dashboard/console URL — open it once in the user's browser so the key or
-  // OAuth consent is one click away, and narrate it in the terminal for the
-  // transcript. Deduped per service so a re-entry doesn't spam windows.
+  // Dashboard/console URL — narrate it in the terminal note so the user can
+  // open it themselves. NEVER auto-openExternal: setup sessions can resume
+  // from restored/queued tasks, and an unprompted browser launch to e.g.
+  // portal.azure.com (→ login.microsoftonline.com) hijacks the user's real
+  // browser with a page they never asked for.
   if (si.setupUrl && /^https?:\/\//i.test(si.setupUrl)) {
-    const _urlKey = `url:${service}`;
-    if (!_openSetupSessions.has(_urlKey)) {
-      _openSetupSessions.add(_urlKey);
-      require('electron').shell.openExternal(si.setupUrl)
-        .then(() => _setupNote(label, `# Dashboard opened in your browser: ${si.setupUrl}`))
-        .catch(() => {});
-    }
+    _setupNote(label, `# Dashboard: ${si.setupUrl} — open this in your browser to get the key/consent`).catch(() => {});
   }
 
   // ── Browser OAuth: terminal narrates, headed window does the sign-in ──────
@@ -3659,7 +3667,10 @@ function gatherAnswerCallback(questionOrBatch) {
         'results'
       );
       // 10-minute timeout — scoped to THIS batch so a timeout can't clear
-      // another task's pending card.
+      // another task's pending card. Route-confirmation-only batches (no
+      // actual questions, just a "start task?" card) auto-proceed after 45s —
+      // a task that only needs a route confirm shouldn't stall the queue.
+      const _routeConfirmOnly = !!routeConfirmation && !(questions && questions.length);
       entry.timer = setTimeout(() => {
         if (pendingGatherBatches.get(key) === entry) {
           pendingGatherBatches.delete(key);
@@ -3668,7 +3679,7 @@ function gatherAnswerCallback(questionOrBatch) {
           _postThoughtInput('User did not answer the clarifying questions — they went unanswered until timeout.');
           resolve({});
         }
-      }, 10 * 60 * 1000);
+      }, _routeConfirmOnly ? 45 * 1000 : 10 * 60 * 1000);
     });
   }
   // ── Legacy single-string mode ──────────────────────────────────────────

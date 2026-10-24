@@ -60,7 +60,7 @@ export interface PlanCheckItem {
   label: string;
   detail?: string;
   status: 'pass' | 'pending' | 'issue' | 'warn';
-  kind?: 'signin' | 'cli-key' | 'cli-login' | 'cli-setup' | 'unknown-agent' | 'missing-steps' | 'steps-failed' | 'approval-required';
+  kind?: 'signin' | 'cli-key' | 'cli-login' | 'cli-setup' | 'unknown-agent' | 'missing-steps' | 'steps-failed' | 'steps-mcp-missing' | 'approval-required';
   suggested?: string | null;
   envNames?: string[];
   cliTool?: string | null;
@@ -288,7 +288,7 @@ export function PlanCheckCard({ check, compact = true }: PlanCheckCardProps) {
               </span>
               {/* Regenerate — step rows only (they carry no agentId); agent
                   rows patched to 'pending' mid-setup must not show this. */}
-              {(item.kind === 'steps-failed' || item.kind === 'missing-steps') && !item.agentId && (
+              {(item.kind === 'steps-failed' || item.kind === 'missing-steps' || item.kind === 'steps-mcp-missing') && !item.agentId && (
                 <button
                   onClick={() => { setBusy(item.id); _send(check.planId, item.id, 'retry-steps'); }}
                   style={{ ..._rowBtn, flexShrink: 0, opacity: busy === item.id ? 0.6 : 1 }}

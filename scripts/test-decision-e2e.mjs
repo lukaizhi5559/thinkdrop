@@ -81,10 +81,53 @@ async function send(text) {
       body: JSON.stringify({ text, source: 'text' }),
     });
     const body = await res.json().catch(() => null);
-    return { ok: res.ok && body?.ok !== false, ms: Date.now() - t0, body };
+    const taskId = body?.data?.taskId || body?.data?.metadata?.taskId || body?.data?.task?.id || null;
+    return { ok: res.ok && body?.ok !== false, ms: Date.now() - t0, body, taskId };
   } catch (e) {
     return { ok: false, ms: Date.now() - t0, error: e.message };
   }
+}
+
+// Poll the task journal until our task reaches a terminal state, so each
+// prompt's log window closes only after its work actually finished (browser
+// tasks run 30–90s; a fixed sleep closed windows before sessions persisted).
+async function taskStatus(taskId) {
+  try {
+    const res = await fetch(`${COMMS}/tasks`);
+    const list = await res.json().catch(() => null);
+    const tasks = Array.isArray(list) ? list : (list?.tasks || list?.data || []);
+    return tasks.find(t => t.id === taskId) || null;
+  } catch { return null; }
+}
+
+const TERMINAL = new Set(['done', 'failed', 'cancelled', 'error', 'completed']);
+async function waitForTask(taskId, capMs, promptText) {
+  // Some lanes (general_quick, recall) don't hand off — no task exists. For
+  // those, match the newest task by prompt text so queued-then-run tasks are
+  // still tracked; pure no-task lanes return 'no-task' quickly.
+  const t0 = Date.now();
+  let last = null;
+  while (Date.now() - t0 < capMs) {
+    const task = taskId ? await taskStatus(taskId) : null;
+    const t = task || (promptText ? await (async () => {
+      try {
+        const res = await fetch(`${COMMS}/tasks`);
+        const list = await res.json().catch(() => null);
+        const tasks = Array.isArray(list) ? list : (list?.tasks || list?.data || []);
+        return tasks.filter(x => (x.prompt || '').trim().toLowerCase() === promptText.trim().toLowerCase())
+          .sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0))[0] || null;
+      } catch { return null; }
+    })() : null);
+    last = t;
+    if (!t) {
+      // no task after 8s → this lane never hands off; done waiting
+      if (Date.now() - t0 > 8000) return { status: 'no-task', waited: Date.now() - t0 };
+      await sleep(1500); continue;
+    }
+    if (TERMINAL.has(String(t.status))) return { status: String(t.status), waited: Date.now() - t0, task: t };
+    await sleep(2000);
+  }
+  return { status: last?.status ? `stuck:${last.status}` : 'timeout', waited: Date.now() - t0, task: last };
 }
 
 const suite = PROMPTS.filter(p =>
@@ -96,8 +139,12 @@ const results = [];
 for (const p of suite) {
   const off = { comms: fileLen(LOGS.comms), main: fileLen(LOGS.main), command: fileLen(LOGS.command) };
   const r = await send(p.text);
-  // let post-response async work (review/logging/decisions) flush to disk
-  await sleep(args.includes('--fast') ? 800 : 2500);
+  // wait for the task to actually finish, not a fixed sleep — browser tasks
+  // take 30–90s and previously the window closed before sessions persisted
+  const cap = args.includes('--fast') ? 20000 : (p.kind === 'browser' ? 120000 : 45000);
+  const wt = await waitForTask(r.taskId, cap, p.text);
+  r.taskStatus = wt.status;
+  await sleep(1500); // flush trailing async log lines
 
   const win = {
     comms: tailSince(LOGS.comms, off.comms),
@@ -108,22 +155,28 @@ for (const p of suite) {
 
   const shadows = [...all.matchAll(/\[DecisionShadow\] site=(\S+) agree=(\S+?) local=(\S+?) remote=(\S+?) localMs=(\S+)/g)]
     .map(m => ({ site: m[1], agree: m[2], local: m[3], remote: m[4], ms: +m[5] }));
-  const session = [...all.matchAll(/session=?(ext:[\w:.-]+|[a-z_]+_agent|'ext:[^']+')/g)].map(m => m[1]).slice(-3);
+  // session: only real bindings — persisted sessions and tab adoptions,
+  // not incidental `session=` mentions in unrelated async lines
+  const session = [...all.matchAll(/(?:Persisted|tabAdopted|bound-session|Enforced active session)[^\n]*?(ext:[\w.-]+|[a-z_]+_agent)/g)].map(m => m[1]).slice(-3);
   const planSteps = [...win.main.matchAll(/Step \d+:\s*([^\n]+)/g)].map(m => m[1].trim());
-  const svcM = all.match(/targetService['":= ]+["']?(\w+)/);
-  const typeM = all.match(/taskType['":= ]+["']?(\w+)/);
+  const svcAll = [...all.matchAll(/targetService['":= ]+["']?(\w+)/g)];
+  const svcM = svcAll.at(-1);
+  const typeAll = [...all.matchAll(/taskType['":= ]+["']?(\w+)/g)];
+  const typeM = typeAll.at(-1);
   const bad = {
     foreignRewrite: /foreign-host→bound-tab-select/.test(all),
     boundMissing: /bound-page-missing/.test(all),
     browserSteal: /tabAdopted session=ext:browser/.test(all),
-    engineSpawn: /playwright\.agent.*no engine page|turn-loop.*engine/i.test(all),
+    engineSpawn: /no engine page|Launching (Playwright|browser engine)|engine launch/i.test(all),
     circuit: /Circuit OPEN/.test(all),
     timeout: /Request timeout|DECISION_TIMEOUT|AbortError/i.test(all),
+    stuck: /^stuck:|timeout$/.test(r.taskStatus || ''),
+    webSearchDetour: /web_search|web\.agent/.test(all) && p.expect.session,
   };
 
   results.push({ p, r, shadows, session, planSteps, svc: svcM?.[1], type: typeM?.[1], bad });
   const flag = Object.values(bad).some(Boolean) ? ' ⚠' : '';
-  console.log(`${r.ok ? '✓' : '✗'} ${p.id} "${p.text.slice(0, 60)}" — ${r.ms}ms svc=${svcM?.[1] || '-'} type=${typeM?.[1] || '-'} sess=${session.at(-1) || '-'} shadow=${shadows.map(s => `${s.site}:${s.agree}`).join(',') || 'none'}${flag}`);
+  console.log(`${r.ok ? '✓' : '✗'} ${p.id} "${p.text.slice(0, 60)}" — ${r.ms}ms task=${r.taskStatus || '?'} svc=${svcM?.[1] || '-'} type=${typeM?.[1] || '-'} sess=${session.at(-1) || '-'} shadow=${shadows.map(s => `${s.site}:${s.agree}`).join(',') || 'none'}${flag}`);
 }
 
 // ── Report ───────────────────────────────────────────────────────────────────

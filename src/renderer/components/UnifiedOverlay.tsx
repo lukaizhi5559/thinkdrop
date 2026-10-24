@@ -398,6 +398,12 @@ export function UnifiedOverlay() {
     console.log('[Width Toggle] Sent IPC unified:set-content-height');
   }, [isExpanded, measureNow]);
 
+  // Latest toggleWidth for IPC listeners — the registration effect runs once
+  // ([] deps), so a direct capture would freeze isExpanded=false and only
+  // ever expand. Route through the ref instead.
+  const toggleWidthRef = useRef(toggleWidth);
+  toggleWidthRef.current = toggleWidth;
+
   // --- Feed helpers moved to state/feedStore.mts (appendEntry, patchEntry,
   // patchByTaskId, exchangeForTask, ensureRunEntry, toDisplayPrompt,
   // dedupePlannerTail, appendUserEntry, commitInFlightStream — aliases above).
@@ -2116,7 +2122,7 @@ export function UnifiedOverlay() {
     // Resolved single ROpt tap — scroll the feed to the latest entry.
     ipcRenderer.on('ropt:tap', () => scrollToBottom(), token);
     // ⇧R-hold + ⌥R tap — same as the header expand/collapse button.
-    ipcRenderer.on('ropt:expand', () => toggleWidth(), token);
+    ipcRenderer.on('ropt:expand', () => toggleWidthRef.current(), token);
     // ⌥R tap with a question card on top — focus its input.
     ipcRenderer.on('ropt:focus-answer', () => {
       const el = document.querySelector<HTMLElement>('[data-qc-input], .question-card input, .question-card textarea');

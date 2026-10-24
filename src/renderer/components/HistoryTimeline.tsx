@@ -27,7 +27,7 @@ type Level = 'days' | 'hours' | 'list';
 const STRIP_H = 196;
 const LIST_STRIP_H = 260;
 const STRIP_MIN_H = 140;
-const STRIP_MAX_H = 520;
+const STRIP_MAX_H = Math.min(880, Math.round((typeof window !== 'undefined' ? window.innerHeight : 900) * 0.8));
 
 function _fmtDay(day: string) {
   const d = new Date(`${day}T12:00:00`);

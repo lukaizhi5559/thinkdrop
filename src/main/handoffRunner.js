@@ -237,7 +237,7 @@ function _taskGatherCallback(taskId) {
       // of this task's queue card. The answer unwraps back to a bare string
       // so existing callers see the legacy contract.
       const isBatch = q && typeof q === 'object' && q.batch;
-      const res = await _gatherAnswerCallback(
+      const askP = _gatherAnswerCallback(
         isBatch
           ? { ...q, taskId }
           : {
@@ -247,6 +247,17 @@ function _taskGatherCallback(taskId) {
               questions: [{ id: 'answer', text: String(q ?? ''), type: 'text', freeText: true }],
             }
       );
+      // Race against cancel — without this the pending question keeps waiting
+      // after the run is dead, and late answers feed a zombie gather loop that
+      // only stops at the next node boundary.
+      const sig = run?.abortController?.signal;
+      const res = sig
+        ? await Promise.race([askP, new Promise(r => {
+            if (sig.aborted) return r(null);
+            sig.addEventListener('abort', () => r(null), { once: true });
+          })])
+        : await askP;
+      if (res == null && sig?.aborted) return null;
       return isBatch ? res : (res && typeof res === 'object' ? (res.answer ?? null) : res);
     } finally {
       run?.resumeStall?.() ?? run?.armStall?.();
@@ -263,7 +274,15 @@ function _taskCredentialCallback(taskId) {
     const run = _activeRuns.get(taskId);
     run?.pauseStall?.() ?? (run && clearTimeout(run.stallTimer));
     try {
-      return await _gatherCredentialCallback(credentialKey, opts);
+      const sig = run?.abortController?.signal;
+      if (!sig) return await _gatherCredentialCallback(credentialKey, opts);
+      return await Promise.race([
+        _gatherCredentialCallback(credentialKey, opts),
+        new Promise(r => {
+          if (sig.aborted) return r(null);
+          sig.addEventListener('abort', () => r(null), { once: true });
+        }),
+      ]);
     } finally {
       run?.resumeStall?.() ?? run?.armStall?.();
     }

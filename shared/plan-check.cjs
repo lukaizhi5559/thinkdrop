@@ -13,6 +13,7 @@
  *   unknown-agent      — name matches no registry agent (suggested? attached)
  *   missing-steps      — task steps still generating (pending, not an issue)
  *   steps-failed       — step generation failed (warn — executor replans at runtime)
+ *   steps-mcp-missing  — a generated step calls an MCP server that isn't installed
  *   approval-required  — task pauses mid-run for user review (info row)
  *
  * Items are what PlanCheckCard renders; actions resolve through
@@ -20,9 +21,22 @@
  * 'warn' and 'pending' are advisory.
  */
 
+const fs = require('fs');
+const os = require('os');
+const path = require('path');
 const serviceMap = require('./service-map.cjs');
 const { resolveAgentSecrets } = require('./secret-resolve.cjs');
 const skillIndex = require('./skill-index.cjs');
+
+const _MCP_SERVERS_PATH = path.join(os.homedir(), '.thinkdrop', 'mcp-servers.json');
+
+/** Names of installed MCP servers — read fresh each call (installs change it). */
+function _installedMcpServers() {
+  try {
+    const cfg = JSON.parse(fs.readFileSync(_MCP_SERVERS_PATH, 'utf8'));
+    return new Set(Object.keys(cfg.mcpServers || cfg || {}));
+  } catch (_) { return new Set(); }
+}
 
 function _preflight() {
   return require('../comms-graph/src/planPreflight.cjs');
@@ -72,6 +86,27 @@ async function computePlanCheck(tasks, opts = {}) {
       status: stepsState === 'pass' ? 'pass' : (stepsState === 'failed' ? 'warn' : 'pending'),
       kind: stepsState === 'pass' ? undefined : (stepsState === 'failed' ? 'steps-failed' : 'missing-steps'),
     });
+
+    // Steps that call an MCP server which isn't installed — readiness only
+    // inspects the Agents line, so an invented `mcp.agent {server}` step would
+    // look clear then fail at run. Regenerate routes through 'retry-steps'.
+    if (Array.isArray(task.steps)) {
+      const installed = _installedMcpServers();
+      const missing = [...new Set(task.steps
+        .filter(s => s && s.skill === 'mcp.agent')
+        .map(s => String(s?.args?.server || '').trim())
+        .filter(sv => sv && !installed.has(sv)))];
+      if (missing.length) {
+        items.push({
+          id: `t${n}-mcp-steps`,
+          taskNum: n,
+          label: `Task ${n} — steps call uninstalled MCP server${missing.length > 1 ? 's' : ''} (${missing.join(', ')})`,
+          detail: 'regenerate the steps to use installed tools',
+          status: 'issue',
+          kind: 'steps-mcp-missing',
+        });
+      }
+    }
 
     // Commit tasks pause mid-run for review — surface as an info row so the
     // user knows the run will stop and ask before booking/sending.

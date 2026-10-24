@@ -651,7 +651,6 @@ function PromptInputBarImpl(
                   { keys: <><RoptKeyIcon size={22} mod="shift" /><span>hold +</span><RoptKeyIcon size={22} /><span>tap</span></>, desc: 'expand / collapse' },
                   { keys: <><RoptKeyIcon size={22} mod="shift" /><span>hold +</span><RoptKeyIcon size={22} /><span>double-tap</span></>, desc: 'history' },
                   { keys: <><RoptKeyIcon size={22} side="left" /><span>hold +</span><RoptKeyIcon size={22} /><span>tap</span></>, desc: 'cancel / exit' },
-                  { keys: <><RoptKeyIcon size={22} side="left" /><span>hold +</span><RoptKeyIcon size={22} /><span>double-tap</span></>, desc: 'cancel + hide' },
                 ].map((row, i) => (
                   <div key={i} className="flex items-center justify-between" style={{ fontSize: 11.5 }}>
                     <span className="flex items-center gap-1.5" style={{ color: '#d1d5db', fontWeight: 500, whiteSpace: 'nowrap' }}>{row.keys}</span>
