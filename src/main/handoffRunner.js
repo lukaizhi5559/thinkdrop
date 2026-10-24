@@ -787,6 +787,7 @@ async function execute({ taskId, prompt, agentId, capabilityReason, source, orig
         reason: _pu.reason || '',
         proposal: _pu.proposal || '',
         addRefs: Array.isArray(_pu.addRefs) ? _pu.addRefs : [],
+        missingInputs: Array.isArray(_pu.missingInputs) ? _pu.missingInputs : [],
         planId: _pu.planId || null,
         taskNum: _pu.taskNum || null,
       });
