@@ -1011,24 +1011,22 @@ export function UnifiedOverlay() {
     setQueueFocus({ taskId, status, nonce: Date.now() });
   }, []);
 
-  // Target-icon on a feed body → pin it as an isolated-context chip. On submit
-  // any [Context:] chip pins a fresh iso_* session — the model sees only the
-  // tagged bodies + prompt, no conversation history. Clicking an already-
-  // isolated body toggles off — removes its chip.
-  const _contextTag = (text: string) => `[Context: ${text.replace(/\s+/g, ' ').trim()}]`;
-  const handleIsolateContext = useCallback((text: string) => {
-    const tagged = _contextTag(text);
-    highlightsStore.set(prev => prev.includes(tagged)
-      ? prev.filter(h => h !== tagged)          // toggle off — remove chip
-      : [...prev, tagged]);
-    promptInputBarRef.current?.focus();
+  // Screen-icon on a feed body → paint it on the GhostLayer screen surface.
+  // Markdown-ish bodies go as 'doc' cards; plain text as 'text'. Fires
+  // straight at main's overlay-control port — CORS is open on localhost.
+  const handleShowOnScreen = useCallback((text: string) => {
+    const t = String(text || '').slice(0, 150000);
+    if (!t) return;
+    const looksMarkdown = /^#{1,6}\s|^\s*[-*]\s|\*\*[^*]+\*\*|\[[^\]]+\]\(|```|^>\s|\|.*\|/m.test(t);
+    const payload = looksMarkdown
+      ? { kind: 'doc', title: 'Response', doc: { markdown: t } }
+      : { kind: 'text', title: 'Response', text: t };
+    fetch('http://127.0.0.1:3010/screen/display', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    }).catch(() => {});
   }, []);
-  // Row active-state: is this body's [Context:] chip currently in the input bar?
-  // ResultsContent subscribes to the store itself, so this stays fresh per row.
-  const isContextActive = useCallback(
-    (text: string) => highlightsStore.get().includes(_contextTag(text)),
-    [],
-  );
 
   const handleToggleSlideout = useCallback(() => {
     setIsSlideoutOpen(prev => !prev);
@@ -2734,8 +2732,7 @@ export function UnifiedOverlay() {
               onContinueThread={handleContinueThread}
               onRunSummaryForTask={handleFeedRunSummary}
               onOpenQueue={handleFeedOpenQueue}
-              onIsolateContext={handleIsolateContext}
-              isContextActive={isContextActive}
+              onShowOnScreen={handleShowOnScreen}
               onOpenPlansTab={() => setActiveTab('plans')}
             >
               {/* Proactive alert cards — question blocks + thought-engine outreach */}

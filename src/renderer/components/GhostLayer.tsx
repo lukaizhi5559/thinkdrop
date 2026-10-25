@@ -555,13 +555,14 @@ function BoundingBox({ element, index, onExited }: { element: HighlightElement; 
   useEffect(() => {
     if (timerRef.current) clearTimeout(timerRef.current);
     if (localAnim === 'enter') {
-      // After enter animation, transition to pulse
+      // After enter animation, hold a static highlight (no pulse — the old
+      // pulse read as a shake/glitch on the box outline).
       timerRef.current = setTimeout(() => setLocalAnim('pulse'), 300);
     } else if (localAnim === 'pulse' && role === 'panel') {
-      // Non-scroll panels: pulse longer so user can see boundaries, then fade out after ~7s
+      // Non-scroll panels: hold the highlight so user can see boundaries, then fade out after ~7s
       timerRef.current = setTimeout(() => setLocalAnim('exit'), 7000);
     } else if (localAnim === 'active') {
-      // Confirmed scroll region: pulse green for 12s then exit
+      // Confirmed scroll region: green hold for 12s then exit
       timerRef.current = setTimeout(() => setLocalAnim('exit'), 12000);
     } else if (localAnim === 'exit') {
       // After exit animation completes, notify parent
@@ -571,11 +572,13 @@ function BoundingBox({ element, index, onExited }: { element: HighlightElement; 
   }, [localAnim, role]);
 
   const animation = localAnim === 'enter' ? 'ghostlayer-fade-in 0.3s ease-out forwards'
-    : localAnim === 'pulse' ? 'ghostlayer-pulse 1.5s ease-in-out 3'
-    : localAnim === 'active' ? 'ghostlayer-pulse-active 1.5s ease-in-out infinite'
-    : 'ghostlayer-fade-out 0.7s ease-in forwards';
+    : localAnim === 'exit' ? 'ghostlayer-fade-out 0.7s ease-in forwards'
+    : 'none';
 
   const opacity = localAnim === 'exit' ? 0 : 1;
+  const glow = localAnim === 'active'
+    ? '0 0 10px rgba(0,255,0,0.55), 0 0 24px rgba(0,255,0,0.3)'
+    : `0 0 6px ${color}`;
 
   return (
     <div
@@ -585,12 +588,13 @@ function BoundingBox({ element, index, onExited }: { element: HighlightElement; 
         top: y,
         width: width,
         height: height,
-        border: `2px solid ${color}`,
+        border: `2px solid ${localAnim === 'active' ? '#00ff00' : color}`,
         borderRadius: '2px',
-        boxShadow: `0 0 4px ${color}`,
+        boxShadow: glow,
         pointerEvents: 'none',
         animation,
         opacity,
+        transition: 'box-shadow 0.25s ease',
       }}
     >
       {/* Label */}
@@ -694,7 +698,7 @@ function ProgressDrop({ drop, visible }: { drop: ProgressDropState; visible: boo
         transition: 'opacity 0.4s ease',
       }}
     >
-      <span style={{ display: 'flex', animation: 'td-drop-bob 2.4s ease-in-out infinite' }}>
+      <span style={{ display: 'flex' }}>
         <ThinkDropLogo size={20} />
       </span>
       {stepText && (
@@ -816,7 +820,6 @@ function ControlLock({ label, visible, onCancel }: { label: string; visible: boo
           border: '2px solid rgba(96,165,250,0.9)',
           borderRadius: '6px',
           boxShadow: '0 0 14px rgba(96,165,250,0.55), inset 0 0 14px rgba(96,165,250,0.25)',
-          animation: 'td-lock-glow 2.2s ease-in-out infinite',
           pointerEvents: 'none',
         }}
       />
@@ -842,7 +845,7 @@ function ControlLock({ label, visible, onCancel }: { label: string; visible: boo
           pointerEvents: 'auto',
         }}
       >
-        <span style={{ display: 'flex', animation: 'td-drop-bob 2.4s ease-in-out infinite' }}>
+        <span style={{ display: 'flex' }}>
           <ThinkDropLogo size={18} />
         </span>
         <span style={{ fontSize: 12, fontWeight: 700, letterSpacing: '0.08em', color: '#93c5fd' }}>
@@ -958,8 +961,7 @@ function CancelAffordancePill({ top }: { top: number }) {
         boxShadow: '0 6px 24px rgba(0,0,0,0.35), 0 0 18px rgba(239,68,68,0.28)',
         color: '#e5e7eb',
         fontFamily: 'system-ui, -apple-system, sans-serif',
-        animation: 'td-drop-bob 1.6s ease-in-out infinite',
-      }}
+              }}
     >
       <span style={{ fontSize: 11, fontWeight: 600, color: '#fca5a5' }}>
         Cancel — tap
@@ -1049,7 +1051,7 @@ function VoiceStartingPill() {
         fontFamily: 'system-ui, -apple-system, sans-serif',
       }}
     >
-      <span style={{ display: 'flex', animation: 'td-drop-bob 2.4s ease-in-out infinite' }}>
+      <span style={{ display: 'flex' }}>
         <ThinkDropLogo size={18} />
       </span>
       <span style={{ fontSize: 13, fontWeight: 600 }}>Starting voice…</span>
@@ -1096,7 +1098,7 @@ function WebSearchStartingPill() {
         fontFamily: 'system-ui, -apple-system, sans-serif',
       }}
     >
-      <span style={{ display: 'flex', animation: 'td-drop-bob 2.4s ease-in-out infinite' }}>
+      <span style={{ display: 'flex' }}>
         <ThinkDropLogo size={18} />
       </span>
       <span style={{ fontSize: 13, fontWeight: 600 }}>Web search starting up…</span>
@@ -1141,7 +1143,7 @@ function FillerProgressPill({ progress }: { progress: { done: number; total: num
         fontFamily: 'system-ui, -apple-system, sans-serif',
       }}
     >
-      <span style={{ display: 'flex', animation: 'td-drop-bob 2.4s ease-in-out infinite' }}>
+      <span style={{ display: 'flex' }}>
         <ThinkDropLogo size={18} />
       </span>
       <span style={{ fontSize: 13, fontWeight: 600 }}>
@@ -1194,7 +1196,7 @@ function SleepOverlay() {
         fontFamily: 'system-ui, -apple-system, sans-serif',
       }}
     >
-      <span style={{ display: 'flex', animation: 'td-sleep-breathe 3.2s ease-in-out infinite', opacity: 0.75 }}>
+      <span style={{ display: 'flex', opacity: 0.6 }}>
         <ThinkDropLogo size={44} />
       </span>
       <div
@@ -1220,7 +1222,6 @@ function SleepOverlay() {
             height: 7,
             borderRadius: '50%',
             backgroundColor: '#818cf8',
-            animation: 'pulse-dot 2s ease-in-out infinite',
           }}
         />
         ThinkDrop is sleeping — say "Hey ThinkDrop"
@@ -1290,7 +1291,6 @@ function ScanningOverlay({ timer }: { timer: number }) {
             height: '8px',
             borderRadius: '50%',
             backgroundColor: '#60a5fa',
-            animation: 'pulse-dot 1s ease-in-out infinite',
           }}
         />
         Scanning... {timer.toFixed(1)}s
@@ -1300,7 +1300,6 @@ function ScanningOverlay({ timer }: { timer: number }) {
       <div
         style={{
           opacity: 0.3,
-          animation: 'logo-pulse 2s ease-in-out infinite',
           filter: 'drop-shadow(0 0 30px rgba(96, 165, 250, 0.6))',
         }}
       >
@@ -1331,16 +1330,6 @@ if (!document.getElementById('ghostlayer-styles')) {
       to   { opacity: 0; transform: scale(0.97); }
     }
 
-    @keyframes ghostlayer-pulse {
-      0%, 100% { opacity: 1;   box-shadow: 0 0 4px currentColor; }
-      50%       { opacity: 0.5; box-shadow: 0 0 12px currentColor; }
-    }
-
-    @keyframes ghostlayer-pulse-active {
-      0%, 100% { opacity: 1;   box-shadow: 0 0 8px #00ff00, 0 0 20px rgba(0,255,0,0.4); }
-      50%       { opacity: 0.8; box-shadow: 0 0 16px #00ff00, 0 0 40px rgba(0,255,0,0.6); }
-    }
-    
     @keyframes scan-wave {
       0% {
         top: -4px;
@@ -1358,51 +1347,8 @@ if (!document.getElementById('ghostlayer-styles')) {
       }
     }
     
-    @keyframes pulse-dot {
-      0%, 100% {
-        transform: scale(1);
-        opacity: 1;
-      }
-      50% {
-        transform: scale(0.6);
-        opacity: 0.6;
-      }
-    }
-    
-    @keyframes logo-pulse {
-      0%, 100% {
-        transform: scale(1);
-        opacity: 0.3;
-      }
-      50% {
-        transform: scale(1.05);
-        opacity: 0.4;
-      }
-    }
-
     @keyframes td-drop-spin {
       to { transform: rotate(360deg); }
-    }
-
-    @keyframes td-drop-bob {
-      0%, 100% { transform: translateY(0); }
-      50%       { transform: translateY(-2px); }
-    }
-
-    @keyframes td-sleep-breathe {
-      0%, 100% { transform: scale(1);    opacity: 0.55; filter: drop-shadow(0 0 6px rgba(129,140,248,0.25)); }
-      50%       { transform: scale(1.07); opacity: 0.95; filter: drop-shadow(0 0 18px rgba(129,140,248,0.55)); }
-    }
-
-    @keyframes td-lock-glow {
-      0%, 100% {
-        border-color: rgba(96,165,250,0.9);
-        box-shadow: 0 0 14px rgba(96,165,250,0.55), inset 0 0 14px rgba(96,165,250,0.25);
-      }
-      50% {
-        border-color: rgba(147,197,253,1);
-        box-shadow: 0 0 26px rgba(96,165,250,0.9), inset 0 0 26px rgba(96,165,250,0.45);
-      }
     }
   `;
   document.head.appendChild(style);

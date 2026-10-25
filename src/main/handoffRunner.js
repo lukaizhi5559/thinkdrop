@@ -696,8 +696,17 @@ async function execute({ taskId, prompt, agentId, capabilityReason, source, orig
       const outs = finalState.skillResults
         .filter(r => r && r.ok !== false && typeof r.stdout === 'string' && r.stdout.trim())
         .map(r => `[${r.description || r.skill || 'step'}]:\n${r.stdout.trim().slice(0, 500)}`);
-      if (outs.length) answer = `Done.\n\nStep outputs:\n${outs.join('\n\n')}`;
-      else if (finalState.skillResults.some(r => r && r.ok !== false)) answer = 'Done.';
+      // Honest contract — a failed step must not read "Done." Observed: the
+      // calendar task's fill step died in turn.loop but the feed showed
+      // "Done." because an earlier nav step produced output.
+      const _failed = finalState.skillResults.filter(r => r && r.ok === false);
+      const _failedStr = _failed.length
+        ? `${_failed.length} step(s) failed: ${_failed.map(r => r.description || r.skill || 'step').slice(0, 3).join('; ')}`
+        : '';
+      if (outs.length && !_failedStr) answer = `Done.\n\nStep outputs:\n${outs.join('\n\n')}`;
+      else if (outs.length && _failedStr) answer = `Partial — ${_failedStr}.\n\nStep outputs:\n${outs.join('\n\n')}`;
+      else if (finalState.skillResults.some(r => r && r.ok !== false) && !_failedStr) answer = 'Done.';
+      else if (_failedStr) answer = `Failed — ${_failedStr}.`;
     }
     const intent = finalState?.intent?.type || 'command_automate';
     // Serving engine for the engine chip on the queue card (google-serp /

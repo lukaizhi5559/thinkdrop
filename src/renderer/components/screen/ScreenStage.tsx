@@ -293,17 +293,20 @@ function animateClasses(output: ScreenOutput, phase: Phase): string {
   const speed = output.animateSpeed ? ` animate__${output.animateSpeed}` : '';
   // Fullscreen displays (three/scene/effect/deck) — the "content wrapper" IS
   // the whole screen, so any transform/scale animation (wobble, jackInTheBox,
-  // bounceIn, …) shakes the entire canvas. Clamp to opacity-only fades; card
-  // kinds keep their full mood animation.
+  // bounceIn, …) shakes the entire canvas. Same for every non-text kind: a
+  // pulsing chart/image card reads as a glitch, not a mood. animate.css is
+  // TEXT-ONLY (text/doc/emoji) — everything else gets plain opacity fades.
   const fullscreen = output.position === 'fullscreen';
+  const texty = output.kind === 'text' || output.kind === 'doc' || output.kind === 'emoji';
+  const fadeOnly = fullscreen || !texty;
   if (phase === 'in') {
-    const inCls = fullscreen ? (a.in ? 'fadeIn' : '') : a.in;
+    const inCls = fadeOnly ? (a.in ? 'fadeIn' : '') : a.in;
     return `animate__animated${inCls ? ` animate__${inCls}` : ''}${speed}`;
   }
   if (phase === 'idle') {
-    return (!fullscreen && a.idle) ? `animate__animated animate__${a.idle} animate__infinite${speed}` : '';
+    return (!fadeOnly && a.idle) ? `animate__animated animate__${a.idle} animate__infinite${speed}` : '';
   }
-  return `animate__animated ${fullscreen ? 'fadeOut' : (a.out ? `animate__${a.out}` : 'animate__fadeOut')} animate__faster`;
+  return `animate__animated ${fadeOnly ? 'fadeOut' : (a.out ? `animate__${a.out}` : 'animate__fadeOut')} animate__faster`;
 }
 
 function positionFlex(position: ScreenOutput['position']): React.CSSProperties {

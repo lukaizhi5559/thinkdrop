@@ -81,11 +81,9 @@ interface ResultsFeedProps {
   onRunSummaryForTask?: (taskId: string, summary: RunSummary) => void;
   /** Deep-link into the Queue tab — scrolls to + flashes the task card. */
   onOpenQueue?: (taskId: string) => void;
-  /** Target-icon action — pin a body as an isolated [Context:] chip; the next
-   *  submit pins a fresh iso_* session so only tagged bodies ride as context. */
-  onIsolateContext?: (text: string) => void;
-  /** Is this body's [Context:] chip currently in the input bar? (icon tint) */
-  isContextActive?: (text: string) => boolean;
+  /** Screen-icon action — paint this response body on the GhostLayer screen
+   *  surface (screen mode) via POST /screen/display. */
+  onShowOnScreen?: (text: string) => void;
   /** "All plans →" on the pinned strip — switches the overlay to the Plans tab. */
   onOpenPlansTab?: () => void;
   /** Live exchange region — rendered at the bottom of the measured zone. */
@@ -338,9 +336,18 @@ function RedoIcon() {
   );
 }
 
-// Context-isolation icon — crosshair/target. Clicking pins the body text as a
-// [Context:] chip; the next submit pins a fresh session so only that body
-// rides as context (no conversation history).
+// Screen-mode icon — a monitor. Clicking sends the body to the GhostLayer
+// screen surface (kind doc/text) via the overlay-control /screen/display port.
+function ScreenIcon() {
+  return (
+    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <rect x="2" y="3" width="20" height="14" rx="2" ry="2" /><line x1="8" y1="21" x2="16" y2="21" /><line x1="12" y1="17" x2="12" y2="21" />
+    </svg>
+  );
+}
+
+// Context-isolation icon — crosshair/target. Still used by the 'context'
+// attachment chip; the action-strip button was replaced by ScreenIcon.
 function TargetIcon() {
   return (
     <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -456,8 +463,7 @@ interface FeedEntryRowProps {
   onRunSummaryForTask?: (taskId: string, summary: RunSummary) => void;
   onToggleRun: (id: string) => void;
   onOpenQueue?: (taskId: string) => void;
-  onIsolateContext?: (text: string) => void;
-  isContextActive?: (text: string) => boolean;
+  onShowOnScreen?: (text: string) => void;
 }
 
 /** PlanCard wired for the feed — actions go through planActions; failures
@@ -546,14 +552,11 @@ function PlansStrip({ onOpenPlansTab }: { onOpenPlansTab?: () => void }) {
 const FeedEntryRow = React.memo(function FeedEntryRow({
   entry, liveTask, hasRunCard, runToggled, copied,
   onRedo, onCopy, onPlanApprove, onPlanCancel, onOpenPath, onOpenSourceUrl,
-  onApplyDraft, onContinueThread, onRunSummaryForTask, onToggleRun, onOpenQueue, onIsolateContext, isContextActive,
+  onApplyDraft, onContinueThread, onRunSummaryForTask, onToggleRun, onOpenQueue, onShowOnScreen,
 }: FeedEntryRowProps) {
   const hoverActions = (e: { id: string; text?: string; prompt?: string; taskId?: string }) => {
-    // Isolated bodies keep their actions strip visible — the cyan target reads
-    // as a persistent "this is your context" badge, not just a hover affordance.
-    const isolated = !!(e.text && isContextActive?.(e.text));
     return (
-    <div className="feed-actions" style={{ position: 'absolute', right: 4, bottom: 2, display: 'flex', gap: 4, opacity: isolated ? 1 : 0, transition: 'opacity 0.15s' }}>
+    <div className="feed-actions" style={{ position: 'absolute', right: 4, bottom: 2, display: 'flex', gap: 4, opacity: 0, transition: 'opacity 0.15s' }}>
       {e.taskId && onOpenQueue && (
         <button
           onClick={() => onOpenQueue(e.taskId!)}
@@ -585,18 +588,18 @@ const FeedEntryRow = React.memo(function FeedEntryRow({
           {copied ? <CheckIcon /> : <CopyIcon />}
         </button>
       )}
-      {!!e.text && onIsolateContext && (
+      {!!e.text && onShowOnScreen && (
         <button
-          onClick={() => onIsolateContext(e.text!)}
-          title={isolated ? 'Remove context isolation' : 'Isolate context — reply to just this'}
+          onClick={() => onShowOnScreen(e.text!)}
+          title="Show on screen — paints this on the screen surface (Esc to dismiss)"
           style={{
             padding: 4, borderRadius: 5, cursor: 'pointer', display: 'flex', alignItems: 'center',
-            border: isolated ? '1px solid rgba(34,211,238,0.35)' : '1px solid rgba(255,255,255,0.12)',
+            border: '1px solid rgba(255,255,255,0.12)',
             background: 'rgba(30,30,32,0.9)',
-            color: isolated ? '#67e8f9' : '#9ca3af',
+            color: '#9ca3af',
           }}
         >
-          <TargetIcon />
+          <ScreenIcon />
         </button>
       )}
     </div>
@@ -1131,8 +1134,7 @@ function ResultsFeedImpl({
   onContinueThread,
   onRunSummaryForTask,
   onOpenQueue,
-  onIsolateContext,
-  isContextActive,
+  onShowOnScreen,
   onOpenPlansTab,
   children,
 }: ResultsFeedProps) {
@@ -1208,8 +1210,7 @@ function ResultsFeedImpl({
       onRunSummaryForTask={onRunSummaryForTask}
       onToggleRun={toggleRun}
       onOpenQueue={onOpenQueue}
-      onIsolateContext={onIsolateContext}
-      isContextActive={isContextActive}
+      onShowOnScreen={onShowOnScreen}
     />
     );
   };

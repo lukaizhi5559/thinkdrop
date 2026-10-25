@@ -58,10 +58,10 @@ const SCENE_LIBS = ['three'];
 const MOOD_MAP = {
   neutral: { accent: '#94a3b8', emoji: null,  animate: { in: 'fadeIn',      idle: null,         out: 'fadeOut' },      speed: null },
   warm:    { accent: '#fbbf24', emoji: '🙂', animate: { in: 'fadeIn',      idle: null,         out: 'fadeOut' },      speed: 'slow' },
-  happy:   { accent: '#facc15', emoji: '😄', animate: { in: 'bounceIn',    idle: 'pulse',      out: 'fadeOut' },      speed: null },
+  happy:   { accent: '#facc15', emoji: '😄', animate: { in: 'bounceIn',    idle: null,         out: 'fadeOut' },      speed: null },
   sad:     { accent: '#93c5fd', emoji: '💙', animate: { in: 'fadeIn',      idle: null,         out: 'fadeOut' },      speed: 'slower' },
-  alert:   { accent: '#f87171', emoji: '⚠️', animate: { in: 'fadeIn',      idle: 'heartBeat',  out: 'fadeOut' },      speed: 'fast' },
-  playful: { accent: '#f472b6', emoji: '😜', animate: { in: 'jackInTheBox', idle: 'wobble',     out: 'fadeOut' },      speed: null },
+  alert:   { accent: '#f87171', emoji: '⚠️', animate: { in: 'fadeIn',      idle: null,         out: 'fadeOut' },      speed: 'fast' },
+  playful: { accent: '#f472b6', emoji: '😜', animate: { in: 'fadeIn',      idle: null,         out: 'fadeOut' },      speed: null },
   calm:    { accent: '#34d399', emoji: '😌', animate: { in: 'fadeIn',      idle: null,         out: 'fadeOut' },      speed: 'slower' },
 };
 
