@@ -1575,8 +1575,27 @@ function startOverlayControlServer() {
               }
             }
           } catch (_) {}
-          const { output } = await _voiceDispatchInstruction(instruction, toolSelectedText);
-          res.writeHead(200).end(JSON.stringify({ ok: true, output }));
+          // In-flight + recent dedupe — the realtime model re-fires identical
+          // calls (args-parse drops, truncated results, impatience) and each
+          // one used to spawn a second visible lane doing the same work
+          // (observed: two identical Athena searches 33s apart). Share the
+          // in-flight result; replay a just-completed one.
+          const _dedupeKey = `run_thinkdrop_task|${instruction.toLowerCase().replace(/\s+/g, ' ').trim()}`;
+          const _recent = _voiceToolRecent.get(_dedupeKey);
+          if (_recent && Date.now() - _recent.at < 15000) {
+            res.writeHead(200).end(JSON.stringify({ ok: true, output: _recent.output }));
+            return;
+          }
+          if (!_voiceToolInFlight.has(_dedupeKey)) {
+            _voiceToolInFlight.set(_dedupeKey, _voiceDispatchInstruction(instruction, toolSelectedText));
+          }
+          try {
+            const { output } = await _voiceToolInFlight.get(_dedupeKey);
+            _voiceToolRecent.set(_dedupeKey, { at: Date.now(), output });
+            res.writeHead(200).end(JSON.stringify({ ok: true, output }));
+          } finally {
+            _voiceToolInFlight.delete(_dedupeKey);
+          }
         } catch (err) {
           res.writeHead(500).end(JSON.stringify({ error: err.message }));
         }
@@ -3748,6 +3767,9 @@ const PLAN_CANCEL_RE = /\bcancel\b|\bnever ?mind\b|\bforget (?:it|that|this)\b|\
 // inline contract and the negation-binding rules. planning.cjs uses the same
 // PLAN_CONFIRM_RE/PLAN_RUN_RE for its deterministic in-lane run confirm.
 const { PLANNING_EXIT_RE, PLANNING_EXIT_INLINE_RE, PLANNING_EXIT_NEG_RE, PLAN_CONFIRM_RE, PLAN_RUN_RE } = require('../../shared/plan-check-phrases.cjs');
+// Turn facts — [Highlighted:]/[File:]/[Folder:] blobs ride inside the prompt;
+// control phrases must match the user's text, never quoted context.
+const { computeTurnFacts } = require('../../shared/turn-facts.cjs');
 
 /**
  * If exactly one task is awaiting plan approval and `text` is a short
@@ -3969,6 +3991,8 @@ async function _emitPlanCheck(planId, planFile, { autoStart = false, bypassed, s
 // what text counts as a control phrase — both paths funnel through it.
 
 let _lastVoiceControlHit = null; // { norm, output, at } — dedupe model+backstop double-fire
+const _voiceToolInFlight = new Map(); // dedupeKey -> Promise<{output,metadata}> — share in-flight dispatch
+const _voiceToolRecent = new Map();   // dedupeKey -> {at, output} — replay result within 15s
 
 function _cancelCurrentVoiceTask() {
   if (_lastVoiceTaskId) {
@@ -4068,7 +4092,10 @@ async function _dispatchVoiceControl(command, args = {}) {
  * to the planning LLM as a normal message.
  */
 function _matchPlanCheckAction(text) {
-  const t = String(text || '').trim().toLowerCase();
+  // Control phrases match on turn-fact userText — the raw prompt can carry
+  // [Highlighted:]/[File:] blobs whose quoted content used to fire exits and
+  // cancels ("Planning mode isn't on right now." on a vocab question).
+  const t = computeTurnFacts({ rawText: text }).userText.trim().toLowerCase();
   if (!t) return null;
   // "don't cancel it yet" contains "cancel" but means the opposite.
   const cancelIntent = PLAN_CANCEL_RE.test(t) && !/(don'?t|do not)\s+(?:cancel|abort|stop)/.test(t);
@@ -4084,6 +4111,10 @@ function _matchPlanCheckAction(text) {
   // "plan/planning mode" so it can't fire on task content. Same negation
   // guard; the thinkdrop_control tool path covers whatever phrasing this misses.
   if (PLANNING_EXIT_INLINE_RE.test(t) && !PLANNING_EXIT_NEG_RE.test(t)) {
+    // Unanchored hits only act while a lane/card/run is actually live — with
+    // nothing active, "plan mode" chatter passes through instead of
+    // intercepting the message with "Planning mode isn't on right now."
+    if (!_planningMode?.active && !_pendingPlanCheck && !(_pendingPlanReviews && _pendingPlanReviews.size)) return null;
     return { action: 'exit-planning' };
   }
   // Mid-run review gate — a held commit task waiting for approval wins over
@@ -4115,8 +4146,27 @@ function _matchPlanCheckAction(text) {
         return { prompt: label }; // pass through as the planning answer
       }
     }
-    // Non-numeric text isn't a pick — fall THROUGH to the card matchers below
-    // (a lingering choices card must not suppress run/cancel interception).
+    // Non-numeric pick — "option scroll to the bottom" echoes a label back
+    // rather than a number (observed: S2S prompt read out the option text and
+    // dead-ended in the planning lane). Strip the pick verb and match the
+    // remainder against option labels.
+    const lm = t.match(/^(?:option|pick|choose|select)\s+(.+)$/);
+    if (lm) {
+      const norm = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9 ]/g, ' ').replace(/\s+/g, ' ').trim();
+      const nw = norm(lm[1]);
+      if (nw.length >= 3) {
+        const hit = _pendingChoices.options.find(o => {
+          const nl = norm(o.label || o.value || '');
+          return nl && (nl === nw || (nl.length >= 4 && (nl.includes(nw) || nw.includes(nl))));
+        });
+        if (hit) {
+          _pendingChoices = null;
+          return { prompt: hit.label || hit.value || '' };
+        }
+      }
+    }
+    // Other non-pick text — fall THROUGH to the card matchers below (a
+    // lingering choices card must not suppress run/cancel interception).
   }
   // "Where are we at in the plan" / "show me the plan readiness" during a
   // planning session → surface the readiness card, never reaches the LLM.
@@ -4145,9 +4195,21 @@ function _matchPlanCheckAction(text) {
     // as a card. The 'ready' file gate keeps clarifying-question "yes"
     // answers on the planning lane.
     const rnorm = t.replace(/[.,!]/g, ' ').replace(/\s+/g, ' ').trim();
+    const _isRun = rnorm.length <= 45 && PLAN_RUN_RE.test(rnorm);
+    const _isConfirm = rnorm.length <= 30 && PLAN_CONFIRM_RE.test(rnorm);
     if (_planningMode?.active && _planningMode.planFile
-        && ((rnorm.length <= 45 && PLAN_RUN_RE.test(rnorm)) || (rnorm.length <= 30 && PLAN_CONFIRM_RE.test(rnorm)))
+        && (_isRun || _isConfirm)
         && !rnorm.includes('?') && !APPROVAL_VETO_RE.test(rnorm)) {
+      // Explicit run intent ("run the plan", "do it") fires the readiness
+      // check regardless of frontmatter status — the checklist is the
+      // authority on runnable, and a non-ready draft renders its issues
+      // instead of dead-ending on the planning LLM (observed: "run the plan"
+      // on a drafting plan fell through → claim prose → scrubbed → silence).
+      if (_isRun) {
+        return { action: 'run-ready', planId: _planningMode.planId, planFile: _planningMode.planFile };
+      }
+      // Bare confirms ("yes") keep the 'ready' gate — a mid-clarification
+      // "yes" is an answer to the pending question, not a run command.
       let st = null;
       try {
         const pf = require('../../shared/plan-format.cjs');
@@ -5182,6 +5244,10 @@ function _pushSelectionToVoice(extra = {}) {
     _postJson(new URL('/voice.context', svcUrl), {
       armed: _selectionArmed,
       sourceApp: _selectionApp,
+      // Disarm isn't "no selection" while captured text still waits to ride
+      // the next prompt — keep the live call's view truthful until a consume
+      // or paste-cut actually clears it.
+      ...(_capturedSelectionText ? { captured: true, excerpt: _capturedSelectionText.slice(0, 120) } : {}),
       ...extra,
     }).catch(() => {});
   } catch (_) {}
@@ -5660,9 +5726,9 @@ async function _captureArmedToChip(refocusWindow, { auto = false } = {}) {
   _capturedArmGen = gen;
   _deliverSelectionChip(text, { auto });
   if (_selectionArmed) {
+    // The disarm broadcast already pushes captured+excerpt to voice (the text
+    // survives as a chip), so no second push is needed here.
     _disarmSelection('captured-to-chip');
-    // Sent after the disarm broadcast so the final voice state is captured+excerpt.
-    _pushSelectionToVoice({ captured: true, excerpt: text.slice(0, 120) });
   }
   // User-confirmed add (⌘; / Paste-context click) — surface the overlay and
   // put the caret in the textarea so typing continues immediately. Voice
@@ -5712,13 +5778,22 @@ async function _consumeSelectionForPrompt(prompt, selectedText, { lane = 'typed'
     else if (gen !== _selectionArmGen) captured = null; // superseded mid-capture
   }
   const sentToChip = _selectionSentToChip;
-  _disarmSelection('consumed');
+  // Clear BEFORE disarm — the disarm broadcast pushes voice context, and a
+  // still-set _capturedSelectionText would report the selection as live.
   _capturedSelectionText = '';
+  _disarmSelection('consumed');
   _selectionSentToChip = false;
   _chipAutoDelivered = false;
   if (!captured || !captured.trim()) return { prompt, selectedText };
 
   const trimmed = captured.trim();
+  // Cap the context that rides the prompt — a whole-page "selection" (10KB+)
+  // inflated every downstream classify/decompose call and split into phantom
+  // sub-prompts. The tag excerpt keeps the referent; selectedText (the field
+  // answering nodes read) gets a larger cap so big-page QA still works.
+  const MAX_TAG = 1500, MAX_SEL = 4000;
+  const tagText = trimmed.length > MAX_TAG ? trimmed.slice(0, MAX_TAG) + ' …' : trimmed;
+  const selText = trimmed.length > MAX_SEL ? trimmed.slice(0, MAX_SEL) + ' …' : trimmed;
   const embedded = prompt.includes(trimmed) || (selectedText || '').includes(trimmed);
   // The chip was delivered but is absent from the prompt — user removed it.
   // Typed lane only: voice chips are our own auto-delivered artifact — the
@@ -5738,8 +5813,8 @@ async function _consumeSelectionForPrompt(prompt, selectedText, { lane = 'typed'
   }
   if (embedded) return { prompt, selectedText };
   return {
-    prompt: `[Highlighted: ${trimmed}]\n\n${prompt}`,
-    selectedText: [selectedText, trimmed].filter(Boolean).join('\n'),
+    prompt: `[Highlighted: ${tagText}]\n\n${prompt}`,
+    selectedText: [selectedText, selText].filter(Boolean).join('\n'),
   };
 }
 
@@ -6050,7 +6125,11 @@ function _onRoptDown() {
   _roptHoldTimer = setTimeout(() => {
     if (!_roptDownAt || _roptOtherKey) return;
     if (_voiceSessionActive) {
-      console.log('[Gesture] ROpt hold — voice session owns the mic, PTT skipped');
+      // PTT hold during Talk Mode — the mic is already live; the useful
+      // meaning of the hold is "stop talking, let me speak" → interrupt the
+      // in-flight response without ending the session.
+      console.log('[Gesture] ROpt hold — interrupting voice response');
+      _postJson(_pttServiceUrl('/voice.interrupt'), {}).catch(() => {});
       return;
     }
     pttStart();
@@ -6196,18 +6275,19 @@ function startMouseSelectionMonitor() {
         // Cmd+V / Cmd+X destroys the selection — disarm rather than leave a
         // stale arm.
         if (e.keycode === UiohookKey.V || e.keycode === UiohookKey.X) {
-          _disarmSelection('paste-cut');
-          // The pasted-over selection's context is dead — drop captured text
-          // and pull any chip already delivered.
-          if (_capturedSelectionText) {
+          // The pasted-over selection's context is dead — clear BEFORE disarm
+          // so the voice push reports "no selection", then pull any delivered chip.
+          const staleCapture = _capturedSelectionText;
+          _capturedSelectionText = '';
+          if (staleCapture) {
             if (_selectionSentToChip && _chipAutoDelivered) {
-              safeSend(unifiedWindow, 'selection:chip-remove', { text: _capturedSelectionText });
-              safeSend(promptCaptureWindow, 'selection:chip-remove', { text: _capturedSelectionText });
+              safeSend(unifiedWindow, 'selection:chip-remove', { text: staleCapture });
+              safeSend(promptCaptureWindow, 'selection:chip-remove', { text: staleCapture });
             }
-            _capturedSelectionText = '';
             _selectionSentToChip = false;
             _chipAutoDelivered = false;
           }
+          _disarmSelection('paste-cut');
         }
       }
 

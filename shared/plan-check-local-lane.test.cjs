@@ -27,6 +27,13 @@ _stub('./service-map.cjs', {
         mcpServer: 'filesystem', service: 'filesystem', secrets: [],
       };
     }
+    if (id === 'messages.app.agent') {
+      return {
+        agentId: 'messages.app.agent', type: 'cli', status: 'draft',
+        cliTool: 'osascript', service: 'messages', secrets: [],
+        keywords: ['messages', 'sms', 'text message'],
+      };
+    }
     if (id === 'phantom.agent') return null;
     return null;
   },
@@ -54,7 +61,9 @@ function t(name, cond) {
   {
     const r = await computePlanCheck([{
       num: 1, prompt: 'Read the files in ~/Desktop/misc',
-      agents: ['mcp.filesystem.agent'], steps: [{ skill: 'fs.read' }],
+      agents: ['mcp.filesystem.agent'],
+      // Steps invoke the agent — corroborated, so the setup issue still blocks.
+      steps: [{ skill: 'cli.agent', args: { action: 'run', agentId: 'mcp.filesystem.agent' } }],
     }]);
     const row = r.items.find(i => i.kind === 'cli-setup');
     t('draft filesystem → cli-setup row', !!row);
@@ -136,6 +145,36 @@ function t(name, cond) {
     }]);
     // 'memory' IS installed in ~/.thinkdrop/mcp-servers.json
     t('installed mcp.server step → no row', !r.items.some(i => i.kind === 'steps-mcp-missing'));
+  }
+
+  // ── Step corroboration — a declared agent no step invokes can't block ────
+  // Reproduces the production bug: "commit messages" in a task prompt pinned
+  // draft messages.app.agent while the steps were shell.run + synthesize —
+  // the setup issue must warn, not gate the run.
+  {
+    const r = await computePlanCheck([{
+      num: 3, prompt: 'Stage and commit all uncommitted work using commit messages based on the diffs',
+      agents: ['messages.app.agent'],
+      steps: [
+        { skill: 'shell.run', args: { goal: 'stage and commit with descriptive commit messages' } },
+        { skill: 'synthesize', args: { prompt: 'confirm' } },
+      ],
+    }]);
+    const row = r.items.find(i => i.kind === 'cli-setup' && i.agentId === 'messages.app.agent');
+    t('uninvoked draft agent → row present', !!row);
+    t('uninvoked draft agent → warn not issue', row && row.status === 'warn');
+    t('uninvoked draft agent → does not block run', r.allClear === true);
+    t('warn detail notes corroboration', row && /not invoked/.test(row.detail || ''));
+  }
+  {
+    const r = await computePlanCheck([{
+      num: 3, prompt: 'Send a text to mom',
+      agents: ['messages.app.agent'],
+      steps: [{ skill: 'app.agent', args: { action: 'run', appName: 'messages' } }],
+    }]);
+    const row = r.items.find(i => i.kind === 'cli-setup' && i.agentId === 'messages.app.agent');
+    t('invoked draft agent → issue preserved', row && row.status === 'issue');
+    t('invoked draft agent → blocks run', r.allClear === false);
   }
 
   console.log(`\n${pass} passed, ${fail} failed`);

@@ -243,7 +243,7 @@ sleep 2
 #     Logs to $PROJECT_ROOT/logs like other services.
 echo "📦 Starting comms-graph..."
 cd "$PROJECT_ROOT/comms-graph"
-export NODE_OPTIONS="--max-old-space-size=256"
+export NODE_OPTIONS="--max-old-space-size=1024"
 export THINKDROP_PROJECT_ROOT="$PROJECT_ROOT"
 node src/server.cjs > "$PROJECT_ROOT/logs/comms-graph.log" 2>&1 &
 comms_pid=$!

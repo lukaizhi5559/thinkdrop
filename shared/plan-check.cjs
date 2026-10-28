@@ -220,6 +220,39 @@ async function computePlanCheck(tasks, opts = {}) {
     }
   }
 
+  // ── Step corroboration ────────────────────────────────────────────────
+  // An agent readiness issue only blocks when a generated step actually
+  // invokes it. Tool pins and stale agent lists that no step references are
+  // metadata noise (observed: "commit messages" in a task prompt pinned
+  // messages.app.agent while the steps were shell.run + synthesize) — they
+  // surface as warn rows instead of holding the plan hostage for setup the
+  // run will never use. Steps not yet generated keep the issue — the pending
+  // steps row already blocks the card anyway.
+  const _stepsBlobByTask = new Map();
+  for (const t of tasks || []) {
+    if (Array.isArray(t.steps) && t.steps.length) {
+      _stepsBlobByTask.set(t.num, JSON.stringify(t.steps).toLowerCase());
+    }
+  }
+  for (const it of items) {
+    if (it.status !== 'issue' || !it.agentId || it.taskNum == null) continue;
+    const blob = _stepsBlobByTask.get(it.taskNum);
+    if (!blob) continue;
+    const id   = String(it.agentId).toLowerCase();
+    const stem = id.replace(/\.agent$/, '');
+    const _d2  = serviceMap.describeAgent(it.agentId);
+    const svc  = String(_d2?.service || '').toLowerCase();
+    const tool = String(_d2?.cliTool || it.cliTool || '').toLowerCase();
+    const invoked = blob.includes(id)
+      || (stem.length >= 4 && blob.includes(stem))
+      || (svc.length >= 4 && blob.includes(`"${svc}"`))
+      || (tool.length >= 4 && blob.includes(tool));
+    if (!invoked) {
+      it.status = 'warn';
+      it.detail = [it.detail, 'not invoked by any Task step — possible wrong agent pick'].filter(Boolean).join(' · ');
+    }
+  }
+
   // 'warn' is advisory (executor replans at runtime); only 'issue' blocks.
   const allClear = !items.some(i => i.status === 'issue' || i.status === 'pending');
   return { items, allClear };

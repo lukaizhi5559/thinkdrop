@@ -169,12 +169,83 @@ const IMAGE_REQUEST_RES = [
 
 // ── Deictic / file references in follow-ups ──────────────────────────────────
 
-/** Generic deictic/anaphoric words signalling a follow-up reference. */
-const REFERENTIAL_RE = /\b(this|that|these|those|it|them|they|above|previous|last|again)\b/i;
+/** Generic deictic/anaphoric words signalling a follow-up reference. Includes
+ *  person pronouns — "for him", "his videos" refer back to a named person in
+ *  recent history just as "it"/"that" refer back to a thing. */
+const REFERENTIAL_RE = /\b(this|that|these|those|it|them|they|him|his|her|she|he|above|previous|last|again)\b/i;
+
+/** Person pronouns only — the referent is a named person/entity in recent
+ *  history (e.g. "for him", "her channel", "their videos"). */
+const PERSON_PRONOUN_RE = /\b(him|his|her|hers|he|she|their|theirs)\b/i;
+
+/**
+ * Deterministically substitute a resolved follow-up referent into the task
+ * text. Possessive forms ("his X", "her X") become "<target>'s X"; object and
+ * subject forms ("for him", "tell her") become "<target>". Returns
+ * { text, replaced[] } — text is unchanged when no pronoun matches or the
+ * target is already present.
+ */
+function substituteReferent(text, target) {
+  const t = String(target || '').trim();
+  const src = String(text || '');
+  if (!t || !src || src.toLowerCase().includes(t.toLowerCase())) {
+    return { text: src, replaced: [] };
+  }
+  const replaced = [];
+  // One target binds one referent class. A capitalized non-article name
+  // ("Mike Winger", "Mom") reads as a person — it binds person pronouns.
+  // A thing-like target ("the report", "baby clothes") binds it/them-class.
+  // them/their are dual-class — they bind in either branch. him/her/he/she
+  // stay person-only: a thing target must not rewrite them ("email it to
+  // him" + "the report" → "email the report to him", not "...to the report").
+  const _personTarget = /^[A-Z]/.test(t) && !/^(?:the|a|an|this|that|these|those)\b/i.test(t);
+  const _hasStrictPerson = /\b(him|his|her|hers|he|she)\b/i.test(src);
+  let out = src;
+  if (_personTarget || !_hasStrictPerson) {
+    out = out.replace(/\b(his|her|their|theirs)\s+/gi, (m) => {
+      replaced.push(m.trim());
+      return `${t}'s `;
+    });
+    out = out.replace(/\b(him|her|them|he|she)\b/gi, (m) => {
+      replaced.push(m);
+      return t;
+    });
+  }
+  if (!_personTarget) {
+    out = out.replace(/\b(it|them)\b/gi, (m) => {
+      replaced.push(m);
+      return t;
+    });
+  }
+  return { text: out, replaced };
+}
 
 /** Explicit file-artifact references ("this file", "that script.js") — gates
  *  injection of the live IDE open-file context into classification. */
 const FILE_REF_RE = /\b(?:this|that|the|open|current|active)\s+(?:file|script|code|function|class|method|component|module)\b|\b(?:this|that|the)\s+\w+\.(?:ts|js|tsx|jsx|py|cjs|mjs|md|json|sh|bash)\b|\b(?:open|current|active)\s+(?:file|tab|editor|buffer)\b/i;
+
+// ── Control signals vs artifact mutations ────────────────────────────────────
+
+/** Task-control vocabulary — the ONLY utterances intent 4 (control_signal)
+ *  can serve: it aborts a RUNNING ThinkDrop task, nothing else. Deleting or
+ *  removing a created artifact ("delete it", "use nylas to delte it") carries
+ *  no control vocabulary and must never land in that lane. */
+const CONTROL_SIGNAL_RE = /\b(cancel|stop|abort|never\s*mind|nevermind|forget\s*(?:it|that|about\s+it)|kill)\b/i;
+
+/** Mutation verbs acting on an ALREADY-CREATED artifact (not creation, not
+ *  task control). "delte"/"remvoe" cover common STT/typo mangling. */
+const ARTIFACT_MUTATION_RE = /\b(delete|delte|delet|remove|remvoe|erase|trash|cancel|reschedul\w*|postpone|move|change|edit|update|rename|clear|get\s+rid\s+of)\b/i;
+
+/** Artifact nouns a mutation can target — maps to loose synonym groups used
+ *  to match the prompt of the task that created the artifact. */
+const ARTIFACT_NOUN_RE = /\b(event|events|meeting|meetings|appointment|appointments|reminder|reminders|alarm|alarms|timer|timers|alert|alerts|calendar|note|notes|file|files|folder|folders|document|documents|doc|docs|playlist|playlists|booking|bookings|reservation|reservations|task|tasks|to-?do|to-?dos|post|posts|tweet|tweets|message|messages|draft|drafts|contact|contacts|invite|invites|invitation|invitations)\b/i;
+
+/** Creation verbs — the producing task's prompt should carry one of these. */
+const ARTIFACT_CREATE_RE = /\b(create|creat|set\s+up|set|add|schedule|schedul|book|make|new|put|place|register|invite)\b/i;
+
+/** Recency/deictic markers saying "the one I just made" — with one of these,
+ *  a bare mutation ("delete it") may bind the newest created artifact. */
+const ARTIFACT_RECENCY_RE = /\b(that|this|it|the one|just|i just|recent|earlier|you just)\b/i;
 
 // ── Named apps / action verbs (comms-graph fast-path) ────────────────────────
 
@@ -637,6 +708,8 @@ module.exports = {
   EPISODIC_RE,
   IMAGE_REQUEST_RES,
   REFERENTIAL_RE,
+  PERSON_PRONOUN_RE,
+  substituteReferent,
   FILE_REF_RE,
   NAMED_APP_RE,
   ACTION_VERB_RE,
@@ -675,4 +748,9 @@ module.exports = {
   FILE_REF_TAG_LINE_RE,
   ATTACHMENT_TAG_RE,
   ROUTING_PROMISE_RE,
+  CONTROL_SIGNAL_RE,
+  ARTIFACT_MUTATION_RE,
+  ARTIFACT_NOUN_RE,
+  ARTIFACT_CREATE_RE,
+  ARTIFACT_RECENCY_RE,
 };
