@@ -351,7 +351,6 @@ const _NODE_LABELS = {
   parseIntent: 'Understanding intent…',
   checkPlanCache: 'Checking saved plans…',
   fastLanePlan: 'Checking fast path…',
-  parseSkill: 'Matching skills…',
   enrichIntent: 'Enriching context…',
   routeIntent: 'Routing…',
   resolveUserContext: 'Loading your context…',
@@ -451,7 +450,7 @@ function _makeProgressCallback(taskId, agentId) {
  * @param {string[]|null} [args.preflightAuthBypass] - Agent IDs to treat as authed for this run only
  * @param {Object|null}  [args._resumeState] - Paused finalState to resume from (ask_user answer)
  */
-async function execute({ taskId, prompt, agentId, capabilityReason, source, originalPrompt, detectedLanguage, sessionId, planFile, preflightAuthBypass, userApproved, thoughtContext, guessedIntent, planTask, planId, planTaskNum, _resumeState, _deterministicPlan, _deterministicTemplate, _deterministicLowRisk, _deterministicExternal, _deterministicServiceAgent, _priorResults, _refs, _resumeMultiIntent, _resumeIntentQueue, _resumeIntentResults, _resumeDataContext, routeDecision }) {
+async function execute({ taskId, prompt, agentId, capabilityReason, source, originalPrompt, detectedLanguage, sessionId, planFile, preflightAuthBypass, userApproved, thoughtContext, guessedIntent, planTask, planId, planTaskNum, _resumeState, _deterministicPlan, _deterministicTemplate, _deterministicLowRisk, _deterministicExternal, _deterministicServiceAgent, _priorResults, _refs, _resumeMultiIntent, _resumeIntentQueue, _resumeIntentResults, _resumeDataContext, routeDecision, _allowPlannerFallback }) {
   if (!_mcpAdapter || !_llmBackend) {
     console.error('[HandoffRunner] Not initialized — call init() first');
     _notifyComplete(taskId, agentId, 'failed', 'HandoffRunner not initialized', null, sessionId);
@@ -622,6 +621,7 @@ async function execute({ taskId, prompt, agentId, capabilityReason, source, orig
           // the already-approved Task executes exactly as written.
           ...(planTask ? { _planTask: true, _bypassGatherPlan: true } : {}),
           ...(planTaskNum ? { _planTaskNum: planTaskNum } : {}),
+          ...(_allowPlannerFallback ? { _allowPlannerFallback: true } : {}),
           ...(planId ? { _planId: planId } : {}),
           // Upstream task results — {{synthesisAnswer}}-style refs in this
           // task's steps resolve to the last prior result (the stepgen writes

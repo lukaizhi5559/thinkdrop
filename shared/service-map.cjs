@@ -283,8 +283,11 @@ function describeAgent(agentId) {
   if (!agentId) return null;
   const idx = _scan();
   const entry = idx.byName.get(String(agentId).replace(/\.agent$/, ''));
+  // startUrl/signInUrl expose the agent's registered entry points — planning
+  // lanes use them to resolve the service host for app-knowledge lookup and
+  // to author url.first.agent steps against real destinations.
   return entry
-    ? { agentId: entry.agentId, service: entry.service, type: entry.type || 'browser', cliTool: entry.cliTool || null, mcpServer: entry.mcpServer || null, status: entry.status || 'active', secrets: entry.secrets || [], capabilities: entry.capabilities || [], keywords: entry.keywords || [], verified: entry.verified ?? null, verifiedAt: entry.verifiedAt || null }
+    ? { agentId: entry.agentId, service: entry.service, type: entry.type || 'browser', cliTool: entry.cliTool || null, mcpServer: entry.mcpServer || null, status: entry.status || 'active', secrets: entry.secrets || [], capabilities: entry.capabilities || [], keywords: entry.keywords || [], verified: entry.verified ?? null, verifiedAt: entry.verifiedAt || null, startUrl: entry.urlM ? entry.urlM[1] : null, signInUrl: entry.signM ? entry.signM[1] : null }
     : null;
 }
 

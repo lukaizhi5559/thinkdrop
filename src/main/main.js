@@ -1642,7 +1642,7 @@ function startOverlayControlServer() {
       req.on('data', chunk => { body += chunk; });
       req.on('end', () => {
         try {
-          const { taskId, prompt, agentId, source, originalPrompt, detectedLanguage, guessedIntent, sessionId: handoffSessionId, userApproved, thoughtContext, planId, planTaskNum, planTask, preflightAuthBypass, deterministicPlan, priorResults, refs, capabilityReason, routeDecision } = JSON.parse(body || '{}');
+          const { taskId, prompt, agentId, source, originalPrompt, detectedLanguage, guessedIntent, sessionId: handoffSessionId, userApproved, thoughtContext, planId, planTaskNum, planTask, preflightAuthBypass, deterministicPlan, priorResults, refs, capabilityReason, routeDecision, allowPlannerFallback } = JSON.parse(body || '{}');
           console.log(`[CommsGraph] Handoff received — task=${taskId} agent=${agentId || 'auto'} source=${source} guessedIntent=${guessedIntent || 'null'} session=${handoffSessionId || 'none'}${thoughtContext?.id ? ` thought=${thoughtContext.id}` : ''}`);
 
           // Emit task:created BEFORE starting the stategraph run so the queue card
@@ -1708,6 +1708,10 @@ function startOverlayControlServer() {
                 && agentId && String(agentId).endsWith('.agent')
               ? { _deterministicExternal: true, _deterministicServiceAgent: String(agentId) }
               : {}),
+            // User declined the planning lane for a no_skill_coverage
+            // escalation — let the bounded planner run (stategraph's
+            // coverage gate skips when this is set).
+            ...(allowPlannerFallback === true ? { _allowPlannerFallback: true } : {}),
           }).catch(err => {
             console.error(`[CommsGraph] Handoff ${taskId} error:`, err.message);
           });
@@ -2128,7 +2132,7 @@ function startOverlayControlServer() {
       return;
     }
 
-    // ── POST /skill.schedule — skillCreator registers a cron entry for a scheduled skill
+    // ── POST /skill.schedule — register a cron entry for a scheduled job/reminder
     if (req.url === '/skill.schedule') {
       let body = '';
       req.on('data', chunk => { body += chunk; });
@@ -8418,31 +8422,6 @@ app.whenReady().then(async () => {
     }
   });
 
-  // ─── Queue IPC handlers ───────────────────────────────────────────────────
-
-  ipcMain.on('queue:submit', (_event, { prompt, name } = {}) => {
-    if (!prompt?.trim()) return;
-    console.log(`[Queue] submit: "${prompt.slice(0, 80)}"`);
-    queueManager.submitToCreator(prompt, { name }).catch((err) => {
-      console.error('[Queue] submitToCreator error:', err.message);
-    });
-  });
-
-  ipcMain.on('queue:rerun', (_event, { id }) => {
-    console.log(`[Queue] Rerun requested: ${id}`);
-    const item = queueManager.getQueue().find(i => i.id === id);
-    if (!item) return;
-    queueManager.removeQueueItem(id);
-    queueManager.submitToCreator(item.prompt, { name: item.projectName }).catch((err) => {
-      console.error('[Queue] rerun submitToCreator error:', err.message);
-    });
-  });
-
-  ipcMain.on('queue:cancel', (_event, { id }) => {
-    console.log(`[Queue] Cancel requested: ${id}`);
-    queueManager.cancelCreator(id);
-  });
-
   // ─── Cron IPC handlers ────────────────────────────────────────────────────
   ipcMain.on('cron:toggle', async (_event, { id }) => {
     console.log(`[Cron] Toggle: ${id}`);
@@ -8477,7 +8456,7 @@ app.whenReady().then(async () => {
 
   // cron:run-now handled below (real HTTP dispatch to command-service)
 
-  // ─── Skill schedule registration (called by skillCreator after writing skill) ──
+  // ─── Skill schedule registration (scheduled jobs / reminders) ──
   // Accepts HTTP POST from command-service: { skillName, schedule, trigger }
   // schedule is a cron expression like "0 21 * * *"
   ipcMain.on('skill:schedule-register', (_event, { skillName, schedule, trigger } = {}) => {
@@ -10250,10 +10229,8 @@ app.whenReady().then(async () => {
           } else if (wantsInstallSkill) {
             // User chose to install a missing skill — inject a targeted skill.install plan
             // WITHOUT replanning the full original task. After install, resume from the
-            // failed external.skill step so the original plan continues automatically.
-            const failedSkillName = paused.failedStep?.skill === 'external.skill'
-              ? (paused.failedStep?.args?.name || paused.pendingQuestion?.context?.args?.name || null)
-              : null;
+            // failed step so the original plan continues automatically.
+            const failedSkillName = null;
             // For needs_skill steps: derive dot-notation skill name from capability arg
             const needsSkillCapability = paused.failedStep?.skill === 'needs_skill'
               ? (paused.failedStep?.args?.name || paused.failedStep?.args?.capability || null)
@@ -11186,11 +11163,6 @@ app.whenReady().then(async () => {
           safeSend(resultsWindow, 'automation:progress', allDoneEvent);
           // Also send to unifiedWindow so cancel button resets to send icon
           safeSendUnified('automation:progress', allDoneEvent);
-          // Auto-refresh Skills + Cron tabs whenever a creator skill was just built
-          if (finalState.creatorSkillName) {
-            ipcMain.emit('skills:list');
-            ipcMain.emit('cron:list');
-          }
         }
         // Do NOT send ws-bridge:message for normal completion — AutomationProgress shows it
       }
@@ -15367,7 +15339,7 @@ app.whenReady().then(async () => {
 
   ipcMain.on('skills:save-secret', async (_event, { skillName, key, value }) => {
     try {
-      // Always store under skill:<name>:<key> so external.skill can find it
+      // Always store under skill:<name>:<key> so skill consumers can find it
       const keytarKey = `skill:${skillName}:${key}`;
       await _secretSet(keytarKey, value);
       console.log(`[Skills] Stored secret ${keytarKey}`);
@@ -15974,7 +15946,7 @@ app.whenReady().then(async () => {
         console.log(`[OAuth] Wrote skill-scoped tokens for ${skillName}: skill:${skillName}:ACCESS_TOKEN`);
       }
 
-      // Also store in the format external.skill expects for googleapis (token path or env)
+      // Also store in the format expected for googleapis (token path or env)
       if (provider === 'google') {
         const fsMod = require('fs'); const pathMod = require('path'); const osMod = require('os');
         const tokDir = pathMod.join(osMod.homedir(), '.thinkdrop', 'tokens');
@@ -16099,7 +16071,7 @@ app.whenReady().then(async () => {
 
       let contractMd = current?.data?.contractMd || '';
 
-      // Fallback 1: read skill.md from disk (skillCreator writes it alongside index.cjs)
+      // Fallback 1: read skill.md from disk (written alongside the installed skill file)
       if (!contractMd) {
         const skillMdPath = pathMod.join(osMod.homedir(), '.thinkdrop', 'skills', skillName, 'skill.md');
         try { contractMd = fsMod.readFileSync(skillMdPath, 'utf8'); } catch(_) {}
@@ -16531,9 +16503,7 @@ app.whenReady().then(async () => {
       const http = require('http');
       const cmdPort = parseInt(process.env.SERVICE_PORT || process.env.COMMAND_SERVICE_PORT || '3007', 10);
       // Use /skill.fire so the scheduler dispatches via the correct tier
-      // (bridge → WS:INSTRUCTION, notify → osascript, script → external.skill).
-      // The old /command.automate + external.skill path fails for contract-based
-      // skills whose exec_path is a .md file, not an index.cjs.
+      // (bridge → WS:INSTRUCTION, notify → osascript, script → command dispatch).
       const body = JSON.stringify({ skillName });
       const req = http.request({
         hostname: '127.0.0.1', port: cmdPort,

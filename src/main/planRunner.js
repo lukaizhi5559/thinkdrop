@@ -148,7 +148,43 @@ function _writePlanStatus(run, status) {
   run.status = status;
   try {
     const content = fs.readFileSync(run.planPath, 'utf8');
-    fs.writeFileSync(run.planPath, planFormat.updateFrontmatterStatus(content, status), 'utf8');
+    let updated = planFormat.updateFrontmatterStatus(content, status);
+    // Task-plan → skill-plan bridge: a completed plan with compiled steps IS
+    // a reusable procedure. Flatten every task's **Steps** (num order) into
+    // skill_plan_json + slots_json frontmatter so stategraph's
+    // checkPlanCache / findPlanByName can semantically match and slot-rebind
+    // it. Tasks with steps:null (runtime-planned, never compiled) contribute
+    // nothing; a plan with zero compiled steps isn't a procedure and stays
+    // invisible to the cache. Contract-invalid plans don't bridge.
+    if (status === 'done') {
+      const flat = [];
+      for (const t of [...run.tasks].sort((a, b) => a.num - b.num)) {
+        if (Array.isArray(t.steps)) {
+          for (const s of t.steps) {
+            if (s && typeof s.skill === 'string' && s.skill) flat.push(s);
+          }
+        }
+      }
+      if (flat.length) {
+        try {
+          const { validatePlanSteps } = require('../../shared/skill-contracts.cjs');
+          const v = validatePlanSteps(flat);
+          if (!v.ok) {
+            console.warn(`[PlanRunner] Skipping cache bridge — malformed steps: ${v.violations.filter(x => !x.msg.startsWith('wildcard:')).map(x => `step${x.step}:${x.msg}`).join('; ').slice(0, 300)}`);
+          } else {
+            const { mergePlanSlots } = require('../../stategraph-module/src/utils/planCacheHelpers.js');
+            updated = planFormat.setFrontmatterField(updated, 'skill_plan_json', `'${Buffer.from(JSON.stringify(flat)).toString('base64')}'`);
+            const slots = mergePlanSlots(flat);
+            if (Object.keys(slots).length) {
+              updated = planFormat.setFrontmatterField(updated, 'slots_json', `'${Buffer.from(JSON.stringify(slots)).toString('base64')}'`);
+            }
+          }
+        } catch (e) {
+          console.warn(`[PlanRunner] Plan bridge failed: ${e.message}`);
+        }
+      }
+    }
+    fs.writeFileSync(run.planPath, updated, 'utf8');
   } catch (_) {}
   _emit('plan:status', { planId: run.planId, status });
 }
@@ -558,4 +594,4 @@ function listRuns() {
   }));
 }
 
-module.exports = { init, startPlan, cancelPlan, getRun, listRuns, onTaskComplete, bindTaskId, approvePlanTask, _stepsLookDegenerate };
+module.exports = { init, startPlan, cancelPlan, getRun, listRuns, onTaskComplete, bindTaskId, approvePlanTask, _stepsLookDegenerate, _writePlanStatus };
