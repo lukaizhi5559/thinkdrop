@@ -2912,6 +2912,11 @@ const voiceJournal = (() => {
       journalStart: () => {}, journalNodeDone: () => {}, journalDone: () => {},
       journalError: () => {}, checkSignals: () => [], acknowledgeSignal: () => {},
       journalReset: () => {},
+      // Current API surface (voice-journal.cjs moved to deprecated/) — no-ops so
+      // the serial run path doesn't crash when the service isn't installed.
+      read: () => ({}), readPendingSignals: () => [],
+      graphStarted: () => {}, graphNodeDone: () => {}, graphDone: () => {},
+      graphError: () => {}, setVoiceStatus: () => {},
     };
   }
 })();
@@ -4692,7 +4697,18 @@ async function _handlePlanCheckAction({ planId, itemId, action, value, envName, 
         autoApprove: action === 'run-all',
       });
       if (r?.ok) {
-        _lastPlanCheckEmit = { planId: pc.planId, planFile: pc.planFile, items: pc.items, allClear: true, started: true, taskTitles: _lastPlanCheckEmit?.planId === pc.planId ? _lastPlanCheckEmit.taskTitles : undefined };
+        // A run can terminalize INSIDE startPlan (all tasks already done, all
+        // deps failed) — its plan:complete lands before this emit, and a bare
+        // started:true payload would wipe `finished` wholesale, leaving a
+        // permanent "running…/queued" card. Carry the terminal state here so
+        // event order can't matter.
+        const finished = r.completed
+          ? { status: r.completed.status, failedTasks: r.completed.failedTasks || [] }
+          : undefined;
+        const taskStatuses = r.completed
+          ? Object.fromEntries((r.completed.results || []).map(x => [x.taskNum, { status: x.status, result: x.result || null }]))
+          : undefined;
+        _lastPlanCheckEmit = { planId: pc.planId, planFile: pc.planFile, items: pc.items, allClear: true, started: true, finished, taskStatuses, taskTitles: _lastPlanCheckEmit?.planId === pc.planId ? _lastPlanCheckEmit.taskTitles : undefined };
         safeSendUnified('plan:check', _lastPlanCheckEmit);
         _pendingPlanCheck = null;
         _setPlanningMode({ active: false });
@@ -8009,6 +8025,10 @@ app.whenReady().then(async () => {
     // prompt (that would run the whole pipeline twice).
     let streamedAny = false;
     let doneHandled = false;
+    // Once timeout/error has enqueued a serial fallback, any later handler for
+    // the same request (e.g. 'error' fired by commsReq.destroy() in the timeout
+    // handler) must not enqueue a second run of the same prompt.
+    let commsSettled = false;
     let sseBuffer = '';
     let streamedText = '';
     // unified:set-prompt must reach the renderer BEFORE the first chunk of any
@@ -8215,6 +8235,8 @@ app.whenReady().then(async () => {
         safeSendUnified('ws-bridge:message', { type: 'done' });
         return;
       }
+      if (commsSettled) return;
+      commsSettled = true;
       if (err?.code === 'ECONNREFUSED') {
         console.log(`[CommsGraph] ECONNREFUSED on 127.0.0.1:${commsPort} — is the comms-graph service running? Falling back to serial promptQueue.`);
       } else {
@@ -8223,6 +8245,8 @@ app.whenReady().then(async () => {
       promptQueue.enqueue(prompt.trim(), { selectedText: selectedText || '', responseLanguage: responseLanguage || null, sessionId: sessionId || currentSessionId });
     });
     commsReq.on('timeout', () => {
+      if (commsSettled) return;
+      commsSettled = true; // set BEFORE destroy() — destroy fires 'error' which would re-enqueue
       commsReq.destroy();
       if (streamedAny) {
         safeSendUnified('ws-bridge:message', { type: 'done' });
@@ -9801,9 +9825,12 @@ app.whenReady().then(async () => {
     };
     ipcMain.on('parallel:login:decision', handleParallelLoginDecision);
 
+    // Declared outside try so the catch block's error reporting can read it —
+    // a let inside the try is TDZ-invisible to catch and itself throws
+    // ReferenceError, masking the real failure.
+    let initialState;
     try {
       // If there's a paused automation waiting for user input, resume it
-      let initialState;
       if (pausedAutomationState) {
         const paused = pausedAutomationState;
         const userReply = prompt.trim().toLowerCase();

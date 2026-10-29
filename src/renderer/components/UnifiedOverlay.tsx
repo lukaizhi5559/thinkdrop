@@ -2205,8 +2205,15 @@ export function UnifiedOverlay() {
       const entryId = `plancheck:${data.planId}`;
       const existing = feedStore.getState().entries.find(e => e.id === entryId) as any;
       if (existing) {
+        // Hydrate per-task rows from the completion's results — they only
+        // otherwise fill via plan:task_progress, which instantly-terminal
+        // tasks (pre-seeded done, dep-skipped) never emit, leaving "queued".
+        const taskStatuses = { ...(existing?.check?.taskStatuses || {}) };
+        for (const r of data.results || []) {
+          if (r && r.taskNum != null) taskStatuses[r.taskNum] = { status: r.status, result: r.result || null };
+        }
         feedStore.patchEntry(entryId, {
-          check: { ...existing.check, finished: { status: data.status || 'done', failedTasks: data.failedTasks || [] } },
+          check: { ...existing.check, finished: { status: data.status || 'done', failedTasks: data.failedTasks || [] }, taskStatuses },
         } as any);
       }
     }, token);

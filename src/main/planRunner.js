@@ -367,9 +367,32 @@ async function _schedule(run) {
         run.results.set(t.num, { _status: 'failed', result: 'unsatisfiable dependencies' });
       }
       _writePlanStatus(run, 'failed');
+      // Same completion event as the normal terminal path — without it the
+      // run card can't reach a finished state and hangs on "running…".
+      _emit('plan:complete', {
+        planId: run.planId,
+        status: 'failed',
+        failedTasks: stuck.map(t => t.num),
+        results: [...run.results.entries()].map(([n, r]) => ({ taskNum: n, status: r._status, result: r.result || null })),
+      });
       _runs.delete(run.planId);
     }
   }
+}
+
+// A run that terminalizes inside _schedule (all tasks pre-seeded done, every
+// dep failed, etc.) removes itself from _runs — callers can then include the
+// terminal state in their own emit instead of emitting a stale 'started'
+// after plan:complete already landed (observed: the plan:check re-emit wiped
+// `finished`, leaving a permanent "running…/queued" card).
+function _completedReport(run) {
+  if (_runs.has(run.planId)) return null;
+  const failedTasks = run.tasks.filter(t => run.results.get(t.num)?._status !== 'done').map(t => t.num);
+  return {
+    status: run.status === 'running' ? (failedTasks.length ? 'failed' : 'done') : run.status,
+    failedTasks,
+    results: [...run.results.entries()].map(([n, r]) => ({ taskNum: n, status: r._status, result: r.result || null })),
+  };
 }
 
 // ── Completion hook (wired from handoffRunner via setOnTaskComplete) ─────────
@@ -450,7 +473,7 @@ async function startPlan(planPath, opts = {}) {
       console.warn(`[PlanRunner] resume reload failed for ${planId}: ${err.message}`);
     }
     await _schedule(run);
-    return { ok: true, planId, resumed: true };
+    return { ok: true, planId, resumed: true, completed: _completedReport(run) };
   }
 
   let plan;
@@ -534,7 +557,7 @@ async function startPlan(planPath, opts = {}) {
   _runs.set(planId, run);
   _writePlanStatus(run, 'running');
   await _schedule(run);
-  return { ok: true, planId };
+  return { ok: true, planId, completed: _completedReport(run) };
 }
 
 function cancelPlan(planId) {

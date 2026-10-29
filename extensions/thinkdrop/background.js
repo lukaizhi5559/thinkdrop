@@ -207,6 +207,20 @@ chrome.runtime.onConnect.addListener((port) => {
   reconnectIfNeeded();
 });
 
+// Media probe → gateway: content scripts report play/pause/ended state; the
+// gateway forwards to the audio journal for is-playing verdicts.
+chrome.runtime.onMessage.addListener((msg, sender) => {
+  if (msg && msg.type === 'media.playing') {
+    sendEvent('media.playing', {
+      url: msg.url || null,
+      title: msg.title || null,
+      mediaTitle: msg.mediaTitle || null,
+      state: msg.state || null,
+      tabId: sender && sender.tab ? sender.tab.id : null,
+    });
+  }
+});
+
 function sendResult(id, payload) {
   if (ws && ws.readyState === WebSocket.OPEN) {
     try { ws.send(JSON.stringify({ type: 'result', id, ...payload })); } catch (_) {}
