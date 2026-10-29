@@ -317,13 +317,26 @@ const GENERIC_QUERY_TOKENS = new Set([
   'some', 'more', 'most', 'all', 'any', 'each', 'every', 'much', 'many', 'few',
   'today', 'tonight', 'tomorrow', 'yesterday',
   'file', 'files',
+  // Media/web nouns — present in play/watch/browse prompts but not evidence of
+  // a processing capability. "play the video" is not ffmpeg; "using the url"
+  // is not a curl task. Multi-word capability keywords ('convert video') still
+  // score via their other token.
+  'video', 'audio', 'movie', 'song', 'music', 'image', 'photo', 'picture',
+  'url', 'link', 'website', 'page', 'site',
 ]);
 
 function _matchScore(candidate, tokens) {
   const hay = [candidate.id, candidate.label, candidate.service, candidate.tool, candidate.capability,
     ...(candidate.keywords || [])].filter(Boolean).join(' ').toLowerCase();
+  // Word-boundary matching — substring scoring let junk tokens ('v' from a
+  // ?v= URL param, 'in', 'pt') count as evidence and floated 'video.ffmpeg'
+  // to a 0.93-conf decision-model pin on a plain "play the video" prompt.
+  const words = new Set(hay.split(/[^a-z0-9]+/).filter(Boolean));
   let score = 0;
-  for (const t of tokens) if (hay.includes(t)) score += t.length > 5 ? 2 : 1;
+  for (const t of tokens) {
+    if (t.length < 2) continue;
+    if (words.has(t)) score += t.length > 5 ? 2 : 1;
+  }
   return score;
 }
 

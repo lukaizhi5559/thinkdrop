@@ -3237,8 +3237,11 @@ function _looksLikeCredentialAsk(question) {
  * Runtime net for ask_user credential walls. Resolves the asking agent via
  * agent.query; cli-family agents get the terminal setup lane (suppress card,
  * flip the auth ledger honest, emit preflight:auth_required so the renderer
- * shows the terminal status line, build evt, open setup:<svc> PTY). Anything
- * else re-broadcasts the original card so nothing is swallowed.
+ * shows the terminal status line, build evt, open setup:<svc> PTY). Browser
+ * agents take the same lane — _openSetupSession's _BROWSER_AUTHTYPES branch
+ * runs browser.agent authenticate and resumes via _resumeAfterAuth, so the
+ * mid-run sign-in card is retired. Anything the setup machinery can't serve
+ * re-broadcasts the original card so nothing is swallowed.
  */
 async function _interceptCredentialAsk(data) {
   const agentId = String(data.agentId || '');
@@ -3250,9 +3253,9 @@ async function _interceptCredentialAsk(data) {
   if (!svc) { forwardCard(); return; }
 
   const evt = await _setupEventBase(svc);
-  // Only cli-family auth types take the terminal lane — browser agents keep
-  // their card/overlay flow.
-  if (!_CLI_FAMILY_AUTHTYPES.has(evt.authType)) { forwardCard(); return; }
+  // cli-family → terminal lane; browser_oauth/browser_reauth → headed
+  // browser.agent authenticate via _openSetupSession. Other types forward.
+  if (!_CLI_FAMILY_AUTHTYPES.has(evt.authType) && !_BROWSER_AUTHTYPES.has(evt.authType)) { forwardCard(); return; }
 
   // Ledger honesty — a live credential prompt proves the cached authed:true
   // is stale; flip it so plan-check/status stop reporting "authed".
