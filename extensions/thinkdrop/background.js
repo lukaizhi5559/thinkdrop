@@ -1113,6 +1113,20 @@ async function dispatch(sessionId, action, args, timeoutMs) {
           alive: !!t,
         });
       }
+      // ext:default — the user's real active tab. Bound sessions only track
+      // agent-owned tabs, so without this "this page" referents resolve to a
+      // stale bound tab while the user is on an unbound one (observed: the
+      // youtube_agent homepage won over the user's live video tab).
+      try {
+        const [active] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+        if (active && /^https?:/i.test(active.url || '') && !out.some(s => s.tabId === active.id)) {
+          out.push({
+            sessionId: 'ext:default', tabId: active.id,
+            url: active.url || null, title: active.title || null,
+            active: true, windowId: active.windowId, alive: true,
+          });
+        }
+      } catch (_) {}
       return { ok: true, sessions: out };
     }
     case 'tab-new': {

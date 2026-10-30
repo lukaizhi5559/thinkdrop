@@ -74,6 +74,7 @@ type AutomationPhase =
   | 'preflight'
   | 'planning'
   | 'executing'
+  | 'replanning'
   | 'done'
   | 'failed'
   | 'ask_user'
@@ -954,6 +955,7 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
   // 15-second auto-retry countdown state for agent failures with a 'try_again' option
   const [autoRetryCountdown, setAutoRetryCountdown] = useState<number | null>(null);
   const autoRetryTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const preflightDoneTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const askUserPromptRef = useRef<AskUserPrompt | null>(null);
   const handleOptionClickRef = useRef<((value: string) => void) | null>(null);
   // Resume guard: prevent planning/reset from wiping the step list during ask_user resume
@@ -1191,7 +1193,7 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
   // Notify parent when we become active/inactive
   // Only active during planning/executing/preflight/plan_review — done/failed/idle/awaiting-approval should NOT keep the glow on
   useEffect(() => {
-    onActiveChange?.(phase === 'planning' || phase === 'executing' || phase === 'preflight' || phase === 'plan_review');
+    onActiveChange?.(phase === 'planning' || phase === 'executing' || phase === 'preflight' || phase === 'plan_review' || phase === 'replanning');
   }, [phase]);
 
   // ── Run-summary snapshot for the Results feed ─────────────────────────────
@@ -1368,6 +1370,10 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
       if (autoRetryTimerRef.current) {
         clearInterval(autoRetryTimerRef.current);
         autoRetryTimerRef.current = null;
+      }
+      if (preflightDoneTimerRef.current) {
+        clearTimeout(preflightDoneTimerRef.current);
+        preflightDoneTimerRef.current = null;
       }
       isResumeInProgressRef.current = false;
       setGatherAuthAction(null);
@@ -1607,7 +1613,14 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
           // All agents ready — clear auth pending state so cancel button doesn't stick
           onAuthPending?.(false);
           // Transition to planning after a brief delay so user sees the final state
-          setTimeout(() => {
+          if (preflightDoneTimerRef.current) clearTimeout(preflightDoneTimerRef.current);
+          preflightDoneTimerRef.current = setTimeout(() => {
+            preflightDoneTimerRef.current = null;
+            // pipeline:done may have landed inside this 500ms window (e.g. the
+            // task escalated needs_plan out of preflight) — re-entering
+            // 'planning' would park the card on "Generating skill plan…"
+            // forever. Only proceed while still in a pre-run phase.
+            if (phaseRef.current !== 'preflight' && phaseRef.current !== 'planning') return;
             setPreflightAuthRequired(null);
             setPreflightAuthBrowserOpened(false);
             setPreflightAuthBackgroundFailed(false);
@@ -1669,7 +1682,7 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
           if (phaseRef.current === 'executing' || phaseRef.current === 'done') break;
           // Never stomp an active prompt/question surface.
           if (phaseRef.current === 'ask_user' || phaseRef.current === 'gathering' || phaseRef.current === 'plan_review') break;
-          if (phaseRef.current === 'idle' || phaseRef.current === 'planning' || phaseRef.current === 'preflight') {
+          if (phaseRef.current === 'idle' || phaseRef.current === 'planning' || phaseRef.current === 'preflight' || phaseRef.current === 'replanning') {
             setPhase('planning');
             setPlanMessage(label);
           }
@@ -2946,8 +2959,22 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
           // WebSearch → Answer) — without this, the "Breaking down your
           // request..." spinner stays forever because all_done never fires.
           // The phase guard below prevents overriding plan_review.
+          // 'preflight' is covered too — a needs_plan escalation exits the
+          // pipeline inside preflight, and the pending 500ms preflight→planning
+          // timer must be cancelled before it re-parks the card on planning.
+          if (preflightDoneTimerRef.current) {
+            clearTimeout(preflightDoneTimerRef.current);
+            preflightDoneTimerRef.current = null;
+          }
           const p = phaseRef.current;
-          if (p === 'planning' || p === 'executing') {
+          if (p === 'preflight') {
+            // Pipeline exited inside preflight — that's the needs_plan/plan_update
+            // escalation path (a normal flow reaches planning/executing first).
+            // The loop-back replan either resumes (new progress events) or fails
+            // via an 'error' event — until then, 'Replanning…' is the honest state.
+            setPhase('replanning');
+            setPlanMessage('Replanning…');
+          } else if (p === 'planning' || p === 'executing') {
             setPhase('done');
             if (executionStartRef.current) {
               const elapsed = Math.round((Date.now() - executionStartRef.current) / 1000);
@@ -6104,6 +6131,14 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
         <div className="flex items-center gap-2" style={{ color: '#abafb8' }}>
           <div className="w-1.5 h-1.5 rounded-full bg-blue-500 animate-pulse" />
           <span className="text-xs">{planMessage || 'Analyzing your request...'}</span>
+        </div>
+      )}
+
+      {/* ── Replanning pulse — escalation bounced back to planning ─────────── */}
+      {phase === 'replanning' && (
+        <div className="flex items-center gap-2" style={{ color: '#fbbf24' }}>
+          <div className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse" />
+          <span className="text-xs">{planMessage || 'Replanning…'}</span>
         </div>
       )}
 

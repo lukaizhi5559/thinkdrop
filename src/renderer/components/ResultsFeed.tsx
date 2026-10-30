@@ -29,7 +29,7 @@ const ipcRenderer = (window as any).electron?.ipcRenderer;
 // regardless of the order async events appended them in. Entries without one
 // (proactive, system, history) keep their own slot in the list.
 
-export type FeedRunStatus = 'queued' | 'running' | 'awaiting-approval' | 'auth-required' | 'waiting-for-input' | 'done' | 'failed' | 'cancelled';
+export type FeedRunStatus = 'queued' | 'running' | 'awaiting-approval' | 'auth-required' | 'waiting-for-input' | 'needs_plan' | 'plan_update' | 'done' | 'failed' | 'cancelled';
 
 /** An edit.agent draft pending user apply. `openIn` names the processes holding
  *  the target file — non-empty means apply requires closing that app first. */
@@ -307,6 +307,8 @@ const RUN_STATUS_META: Record<FeedRunStatus, { label: string; color: string }> =
   'awaiting-approval':  { label: 'Approval needed',  color: '#fbbf24' },
   'auth-required':      { label: 'Sign-in needed',   color: '#fbbf24' },
   'waiting-for-input':  { label: 'Needs input',      color: '#fbbf24' },
+  'needs_plan':         { label: 'Replanning',       color: '#fbbf24' },
+  'plan_update':        { label: 'Replanning',       color: '#fbbf24' },
   'done':               { label: 'Done',             color: '#4ade80' },
   'failed':             { label: 'Failed',           color: '#f87171' },
   'cancelled':          { label: 'Cancelled',        color: '#abafb8' },
@@ -495,7 +497,7 @@ function FeedPlanCard({ plan }: { plan: PlanSummary }) {
   );
 }
 
-const _PLAN_STRIP_ORDER: Record<string, number> = { running: 0, drafting: 1, ready: 2, done: 3, failed: 4, cancelled: 5 };
+const _PLAN_STRIP_ORDER: Record<string, number> = { running: 0, revising: 0, drafting: 1, ready: 2, done: 3, failed: 4, cancelled: 5 };
 const _PLAN_STRIP_LIMIT = 6;
 
 /** Pinned plans strip — the plan library's live status surface inside the
@@ -507,14 +509,14 @@ function PlansStrip({ onOpenPlansTab }: { onOpenPlansTab?: () => void }) {
   const [open, setOpen] = useState(true);
   const sorted = useMemo(() => {
     const weight = (p: PlanSummary) =>
-      (planRuns[p.planId]?.status === 'running' ? 0 : (_PLAN_STRIP_ORDER[p.status] ?? 5));
+      (['running', 'revising'].includes(planRuns[p.planId]?.status || '') ? 0 : (_PLAN_STRIP_ORDER[p.status] ?? 5));
     return [...plans].sort((a, b) =>
       weight(a) - weight(b)
       || new Date(b.created).getTime() - new Date(a.created).getTime());
   }, [plans, planRuns]);
   if (!sorted.length) return null;
   const shown = sorted.slice(0, _PLAN_STRIP_LIMIT);
-  const runningCount = sorted.filter(p => p.status === 'running' || planRuns[p.planId]?.status === 'running').length;
+  const runningCount = sorted.filter(p => ['running', 'revising'].includes(p.status) || ['running', 'revising'].includes(planRuns[p.planId]?.status || '')).length;
   return (
     <div style={{ marginBottom: 10 }}>
       <button
@@ -780,7 +782,7 @@ const FeedEntryRow = React.memo(function FeedEntryRow({
         );
       }
       const meta = RUN_STATUS_META[entry.status] || RUN_STATUS_META.done;
-      const isActive = entry.status === 'running' || entry.status === 'queued' || entry.status === 'awaiting-approval' || entry.status === 'waiting-for-input' || entry.status === 'auth-required';
+      const isActive = entry.status === 'running' || entry.status === 'queued' || entry.status === 'awaiting-approval' || entry.status === 'waiting-for-input' || entry.status === 'auth-required' || entry.status === 'needs_plan' || entry.status === 'plan_update';
       const expanded = runToggled ? !isActive : isActive;
       const steps = entry.steps || [];
       const runDrafts: FeedDraft[] = deriveRunDrafts(entry);

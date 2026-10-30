@@ -184,6 +184,8 @@ export function UnifiedOverlay() {
   // File-drag hover state is imperatively toggled on the ring element below —
   // no React state (dragover/dragleave/drop would each re-render the root).
   const dragGlowRingRef = useRef<HTMLDivElement>(null);
+  // Full-cover "Drop a file here" zone — toggled alongside the ring.
+  const dropHintRef = useRef<HTMLDivElement>(null);
   
   // --- Debug Terminal State ---
   const [isDebugMode] = useState(false);
@@ -303,6 +305,14 @@ export function UnifiedOverlay() {
   // live-run card hiding) can't shrink the window right as the answer lands.
   const taskEndedAtRef = useRef(0);
 
+  // A comms task is still in flight (handoff runs, agent-lock waits, paused
+  // states). Same active-status set as QueueTaskCard's isActive — covers the
+  // window between the ack 'done' (which clears isSubmitting) and task:complete,
+  // when the run-card removal/settle would otherwise snap the window smaller.
+  const hasActiveCommsTask = () => feedStore.getState().commsTasks.some(t =>
+    t.status === 'running' || t.status === 'queued' || t.status === 'waiting-for-agent' ||
+    t.status === 'awaiting-approval' || t.status === 'auth-required' || t.status === 'waiting-for-input');
+
   // Suppress all resize IPC while user is dragging, using the native resize handle,
   // within the brief hold window after a manual collapse via the width toggle, or
   // just after a drag ends (a queued animated setBounds mid/post-drag = visible snap).
@@ -317,7 +327,7 @@ export function UnifiedOverlay() {
     Date.now() < manualCollapseUntilRef.current ||
     Date.now() - dragEndedAtRef.current < 180 ||
     userPinnedHeightRef.current > 0 ||
-    ((feedStore.getState().isSubmitting ||
+    ((feedStore.getState().isSubmitting || hasActiveCommsTask() ||
       Date.now() - taskEndedAtRef.current < 800) &&
       targetHeight != null && targetHeight < window.innerHeight);
 
@@ -725,6 +735,7 @@ export function UnifiedOverlay() {
   const isFileDragRef = useRef(false);
   const setDragRing = (on: boolean) => {
     dragGlowRingRef.current?.classList.toggle('active', on);
+    dropHintRef.current?.classList.toggle('active', on);
   };
   const handleDragOver = (e: React.DragEvent) => {
     if (e.dataTransfer.types.includes('Files')) {
@@ -2543,17 +2554,26 @@ export function UnifiedOverlay() {
     });
   }, []);
 
-  // Task-end stamp: extends the shrink floor ~800ms past isSubmitting so the
-  // response-commit reflow (feed entry commit + live-run card hiding, which
-  // land AFTER all_done sets isSubmitting=false) can't shrink the window.
+  // Task-end stamp: extends the shrink floor ~800ms past the last active task
+  // so the response-commit reflow (feed entry commit + live-run card hiding,
+  // which land AFTER all_done sets isSubmitting=false) can't shrink the window.
+  // The running signal ORs isSubmitting with active comms tasks — a handoff's
+  // isSubmitting clears at the ack 'done', long before task:complete settles
+  // the run card. On the falling edge a deferred measureNow lets the window
+  // settle to true content height once, cleanly (measureNow re-checks
+  // suppress, so user-pinned height/drags still win).
   useEffect(() => {
-    let prev = feedStore.getState().isSubmitting;
+    const running = () => feedStore.getState().isSubmitting || hasActiveCommsTask();
+    let prev = running();
     return feedStore.subscribe(() => {
-      const cur = feedStore.getState().isSubmitting;
-      if (prev && !cur) taskEndedAtRef.current = Date.now();
+      const cur = running();
+      if (prev && !cur) {
+        taskEndedAtRef.current = Date.now();
+        setTimeout(() => measureNow(), 850);
+      }
       prev = cur;
     });
-  }, []);
+  }, [measureNow]);
 
   // --- Scroll tracking + history pagination ---
   useEffect(() => {
@@ -2687,6 +2707,17 @@ export function UnifiedOverlay() {
           position: 'relative',
         }}
       >
+        {/* File-drag drop zone — covers the panel while a file drag hovers.
+            pointer-events:none so the drop lands on the root handler. */}
+        <div ref={dropHintRef} className="drop-hint" aria-hidden="true">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+            <polyline points="17 8 12 3 7 8"/>
+            <line x1="12" y1="3" x2="12" y2="15"/>
+          </svg>
+          <span>Drop a file here</span>
+        </div>
+
         {/* Header - Two Row Layout */}
         <OverlayHeader
           headerRef={headerRef}

@@ -159,6 +159,30 @@ export function OverlayStyles() {
         animation: prompt-border-sweep 1.5s linear infinite;
         opacity: 1;
       }
+      /* File-drag drop zone — full-cover dim + dashed inset with a centered
+         icon label. Permanently mounted; .active toggles visibility only. */
+      .drop-hint {
+        position: absolute;
+        inset: 8px;
+        border-radius: 9px;
+        border: 1.5px dashed rgba(96, 165, 250, 0.55);
+        background: rgba(15, 15, 15, 0.72);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 8px;
+        color: #93c5fd;
+        font-size: 0.85rem;
+        font-weight: 500;
+        letter-spacing: 0.01em;
+        pointer-events: none;
+        z-index: 20;
+        opacity: 0;
+        transition: opacity 0.2s ease;
+      }
+      .drop-hint.active {
+        opacity: 1;
+      }
     `}</style>
   );
 }

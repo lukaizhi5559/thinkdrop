@@ -222,6 +222,24 @@ function validatePlanSteps(steps, { strict = false } = {}) {
     if (skill === 'shell.run' && args.goal && !args.cmd) {
       violations.push({ step: i, skill, field: 'goal', msg: 'wildcard: shell.run goal-mode re-plans at replay — prefer literal cmd+argv for mutations' });
     }
+    // URL args must be literal destinations — an unresolved {query}
+    // placeholder or a search-shaped URL with an empty query param navigates
+    // to a dead page at replay (observed: youtube.com/results?search_query=).
+    if (typeof args.url === 'string' && args.url) {
+      if (/\{[^}]*\}/.test(args.url)) {
+        violations.push({ step: i, skill, field: 'url', msg: `wildcard: url arg contains unresolved placeholder — ${args.url.slice(0, 80)}` });
+      } else {
+        try {
+          const _pu = new URL(args.url);
+          for (const [k, v] of _pu.searchParams.entries()) {
+            if (/^(q|k|query|search_query|searchterm|search|keyword|keywords|term|field-keywords|s|st|find_desc|_nkw)$/i.test(k) && !String(v || '').trim()) {
+              violations.push({ step: i, skill, field: 'url', msg: `url arg carries empty search param "${k}=" — resolves to a no-results page` });
+              break;
+            }
+          }
+        } catch (_) {}
+      }
+    }
     if (c.sessionBound && !args.agentId && !args.service && !args.sessionId && !args.url) {
       violations.push({ step: i, skill, field: 'agentId', msg: `session-bound step ${skill} names no agentId/service/sessionId — replay cannot reattach` });
     }

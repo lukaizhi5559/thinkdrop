@@ -450,7 +450,7 @@ function _makeProgressCallback(taskId, agentId) {
  * @param {string[]|null} [args.preflightAuthBypass] - Agent IDs to treat as authed for this run only
  * @param {Object|null}  [args._resumeState] - Paused finalState to resume from (ask_user answer)
  */
-async function execute({ taskId, prompt, agentId, capabilityReason, source, originalPrompt, detectedLanguage, sessionId, planFile, preflightAuthBypass, userApproved, thoughtContext, guessedIntent, planTask, planId, planTaskNum, _resumeState, _deterministicPlan, _deterministicTemplate, _deterministicLowRisk, _deterministicExternal, _deterministicServiceAgent, _priorResults, _refs, _resumeMultiIntent, _resumeIntentQueue, _resumeIntentResults, _resumeDataContext, routeDecision, _allowPlannerFallback }) {
+async function execute({ taskId, prompt, agentId, capabilityReason, source, originalPrompt, detectedLanguage, sessionId, planFile, preflightAuthBypass, userApproved, thoughtContext, guessedIntent, planTask, planId, planTaskNum, _resumeState, _deterministicPlan, _deterministicTemplate, _deterministicLowRisk, _deterministicExternal, _deterministicServiceAgent, _priorResults, _refs, _resumeMultiIntent, _resumeIntentQueue, _resumeIntentResults, _resumeDataContext, routeDecision, _allowPlannerFallback, _skillPlan }) {
   if (!_mcpAdapter || !_llmBackend) {
     console.error('[HandoffRunner] Not initialized — call init() first');
     _notifyComplete(taskId, agentId, 'failed', 'HandoffRunner not initialized', null, sessionId);
@@ -601,6 +601,11 @@ async function execute({ taskId, prompt, agentId, capabilityReason, source, orig
           // Deterministic fast-path metadata survives the approval round-trip —
           // executeCommand uses it for the direct step-output answer + 10s cap.
           ...(_deterministicPlan ? { _deterministicPlan, _deterministicTemplate, _deterministicLowRisk, _deterministicExternal, _deterministicServiceAgent } : {}),
+          // Compiler-hoist — comms-graph emitted a typed plan at dispatch.
+          // _skillPlan passthrough no-ops every upstream node (parseIntent,
+          // decompose, gather, planSkills' compile) — the runtime decodes and
+          // executes it with the standard contract guards.
+          ...(_skillPlan ? { _skillPlan } : {}),
           // Multi-intent queue restored across a plan-approval resume —
           // planExecutor maps these _resume* fields onto isMultiIntent/
           // intentQueue/intentResults/dataContext, and advanceQueue pops
@@ -1028,6 +1033,39 @@ async function execute({ taskId, prompt, agentId, capabilityReason, source, orig
         });
       }
       return { ok: true, status: 'cancelled' };
+
+    } else if ((finalState.error || finalState.failedNode || finalState.failedStep) && !finalState.cancelled) {
+      // Graph ended in a failure state but resolved anyway — node crash, loop
+      // abort, or an unrecovered failedStep. `state.error` is distinct from
+      // `state.planError` (handled above): an executeCommand throw lands here,
+      // not in the planError branch, and was reporting 'done' for a failed run
+      // (observed: stepContracts TDZ crash → failure-prose answer marked done).
+      const _errMsg = finalState.error
+        || (finalState.failedStep ? `Step failed: ${finalState.failedStep.skill || 'unknown'}${finalState.failedStep.error ? ` — ${finalState.failedStep.error}` : ''}` : 'Execution failed');
+      console.log(`[HandoffRunner] Task ${taskId} ended in failure state (node: ${finalState.failedNode || 'n/a'}): ${_errMsg}`);
+      progressCallback({ type: 'pipeline:done', contract: finalState._contract });
+      const _failTrace = Array.isArray(finalState.trace)
+        ? finalState.trace.map(t => ({ node: t.node, duration: t.duration }))
+        : null;
+      _notifyComplete(taskId, agentId, 'failed', answer || _errMsg, null, finalState.resolvedSessionId || sessionId, null, _failTrace, _artifactSnapshot(taskId));
+      if (_ipcBroadcast) {
+        _ipcBroadcast('task:complete', {
+          taskId,
+          prompt: originalPrompt || prompt,
+          answer: answer || '',
+          sources,
+          engine,
+          items,
+          intent,
+          error: _errMsg,
+          status: 'failed',
+          agentId,
+          source,
+          sessionId: finalState.resolvedSessionId || sessionId || null,
+          artifacts: _artifactSnapshot(taskId),
+        });
+      }
+      return { ok: false, status: 'failed', error: _errMsg };
 
     } else {
       // Normal completion

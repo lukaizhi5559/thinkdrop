@@ -1642,7 +1642,7 @@ function startOverlayControlServer() {
       req.on('data', chunk => { body += chunk; });
       req.on('end', () => {
         try {
-          const { taskId, prompt, agentId, source, originalPrompt, detectedLanguage, guessedIntent, sessionId: handoffSessionId, userApproved, thoughtContext, planId, planTaskNum, planTask, preflightAuthBypass, deterministicPlan, priorResults, refs, capabilityReason, routeDecision, allowPlannerFallback } = JSON.parse(body || '{}');
+          const { taskId, prompt, agentId, source, originalPrompt, detectedLanguage, guessedIntent, sessionId: handoffSessionId, userApproved, thoughtContext, planId, planTaskNum, planTask, preflightAuthBypass, deterministicPlan, priorResults, refs, capabilityReason, routeDecision, allowPlannerFallback, compiledPlan } = JSON.parse(body || '{}');
           console.log(`[CommsGraph] Handoff received — task=${taskId} agent=${agentId || 'auto'} source=${source} guessedIntent=${guessedIntent || 'null'} session=${handoffSessionId || 'none'}${thoughtContext?.id ? ` thought=${thoughtContext.id}` : ''}`);
 
           // Emit task:created BEFORE starting the stategraph run so the queue card
@@ -1688,6 +1688,11 @@ function startOverlayControlServer() {
             // the LLM planning pass (planning.cjs generated them at draft time).
             _deterministicPlan: Array.isArray(deterministicPlan) && deterministicPlan.length ? deterministicPlan : null,
             _deterministicTemplate: Array.isArray(deterministicPlan) && deterministicPlan.length ? 'plan_task' : null,
+            // Compiler-hoist — comms-graph compiled this task's typed steps at
+            // dispatch. _skillPlan gets the full passthrough: parseIntent →
+            // decompose → gather → planSkills all no-op; runtime starts at
+            // planSkills' decode + contract guards.
+            _skillPlan: Array.isArray(compiledPlan) && compiledPlan.length ? compiledPlan : null,
             // Upstream plan-task results — seeded into the child run so
             // cross-task {{synthesisAnswer}}/prior-output refs resolve to data.
             _priorResults: Array.isArray(priorResults) && priorResults.length ? priorResults : null,
@@ -1914,6 +1919,50 @@ function startOverlayControlServer() {
           if (exitedPlanning) _exitPlanningLane();
           console.log(`[PlanRunner] /plan.cancel — ${pid || 'none'} cancelled=${cancelled}`);
           res.writeHead(200).end(JSON.stringify({ ok: true, planId: pid, cancelled, exitedPlanning }));
+        } catch (err) {
+          res.writeHead(500).end(JSON.stringify({ error: err.message }));
+        }
+      });
+      return;
+    }
+
+    // ── POST /plan.fail — comms-graph loop-back settle path. A replan that
+    // produced nothing runnable (scrubbed turn, timeout, escalation cap) must
+    // terminalize the held run AND the queue/feed card — otherwise the task
+    // spins "Generating skill plan…" forever (observed: task_d8b8de8c).
+    if (req.url === '/plan.fail') {
+      let body = '';
+      req.on('data', chunk => { body += chunk; });
+      req.on('end', () => {
+        try {
+          const { planId, planFile, taskId, reason } = JSON.parse(body || '{}');
+          const planRunner = require('./planRunner');
+          const pid = planId
+            || (planRunner.listRuns().find(r => r.status === 'running' || r.status === 'revising') || {}).planId
+            || _pendingPlanCheck?.planId || null;
+          const failed = pid ? planRunner.failPlan(pid, reason) : false;
+          for (const [key, review] of _pendingPlanReviews) {
+            if (!pid || review.planId === pid) {
+              _pendingPlanReviews.delete(key);
+              safeSendUnified('plan:review', { planId: review.planId, taskNum: review.taskNum, resolved: true, skipped: true });
+            }
+          }
+          if (_pendingPlanCheck && (!pid || _pendingPlanCheck.planId === pid)) {
+            const pcf = _pendingPlanCheck;
+            _pendingPlanCheck = null;
+            safeSendUnified('plan:check', { planId: pcf.planId, planFile: pcf.planFile, items: pcf.items, allClear: false, failed: true });
+          }
+          // Settle the queue card — the task's own journal entry is already
+          // terminal ('needs_plan'); the card needs a visible terminal status.
+          // The embedded AutomationProgress body listens on automation:progress,
+          // so it gets its own settle event (task-scoped 'error' → phase failed).
+          const _failMsg = `Replanning failed — ${String(reason || 'no runnable plan produced').slice(0, 200)}`;
+          if (taskId) {
+            safeSendUnified('task:complete', { taskId, status: 'failed', result: _failMsg });
+            safeSendUnified('automation:progress', { type: 'error', taskId, message: _failMsg });
+          }
+          console.log(`[PlanRunner] /plan.fail — ${pid || 'none'} failed=${failed} reason=${reason || '?'}`);
+          res.writeHead(200).end(JSON.stringify({ ok: true, planId: pid, failed }));
         } catch (err) {
           res.writeHead(500).end(JSON.stringify({ error: err.message }));
         }

@@ -13,7 +13,7 @@ import { perfRender } from '../utils/perfCounters';
 const ipcRenderer = (window as any).electron?.ipcRenderer;
 
 // ── Types ──────────────────────────────────────────────────────────────────────
-export type TaskStatus = 'waiting-for-agent' | 'queued' | 'running' | 'auth-required' | 'awaiting-approval' | 'waiting-for-input' | 'done' | 'failed' | 'cancelled';
+export type TaskStatus = 'waiting-for-agent' | 'queued' | 'running' | 'auth-required' | 'awaiting-approval' | 'waiting-for-input' | 'needs_plan' | 'plan_update' | 'done' | 'failed' | 'cancelled';
 
 export interface CommsTask {
   id: string;
@@ -63,6 +63,8 @@ const TASK_STATUS_CONFIG: Record<TaskStatus, { label: string; color: string; bg:
   'auth-required':     { label: 'Sign-in needed',    color: '#fbbf24', bg: 'rgba(251,191,36,0.08)',  border: 'rgba(251,191,36,0.3)' },
   'awaiting-approval':  { label: 'Approval needed',  color: '#fbbf24', bg: 'rgba(251,191,36,0.08)',  border: 'rgba(251,191,36,0.3)' },
   'waiting-for-input':  { label: 'Needs input',      color: '#fbbf24', bg: 'rgba(251,191,36,0.08)',  border: 'rgba(251,191,36,0.3)' },
+  'needs_plan':         { label: 'Replanning',       color: '#fbbf24', bg: 'rgba(251,191,36,0.08)',  border: 'rgba(251,191,36,0.3)' },
+  'plan_update':        { label: 'Replanning',       color: '#fbbf24', bg: 'rgba(251,191,36,0.08)',  border: 'rgba(251,191,36,0.3)' },
   'done':               { label: 'Done',             color: '#4ade80', bg: 'rgba(74,222,128,0.06)',   border: 'rgba(74,222,128,0.18)' },
   'failed':             { label: 'Failed',           color: '#f87171', bg: 'rgba(248,113,113,0.06)',  border: 'rgba(248,113,113,0.18)' },
   'cancelled':          { label: 'Cancelled',       color: '#abafb8', bg: 'rgba(107,114,128,0.06)',  border: 'rgba(107,114,128,0.18)' },
@@ -92,7 +94,7 @@ const StatusIcon = ({ status, color, size = 14 }: { status: TaskStatus; color: s
       </svg>
     );
   }
-  if (status === 'awaiting-approval' || status === 'waiting-for-input') {
+  if (status === 'awaiting-approval' || status === 'waiting-for-input' || status === 'needs_plan' || status === 'plan_update') {
     return (
       <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
         <path d="M12 9v4"/><path d="M12 17h.01"/><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
@@ -262,8 +264,8 @@ export function QueueTaskCard({ task, onContinueThread, onHeightChange, flash, o
   // stays mounted (keep-alive) so plan-review/progress state survives collapse.
   const [hasExpanded, setHasExpanded] = React.useState(false);
   const cfg = TASK_STATUS_CONFIG[task.status] || TASK_STATUS_CONFIG.queued;
-  const isActive = task.status === 'running' || task.status === 'queued' || task.status === 'waiting-for-agent' || task.status === 'auth-required' || task.status === 'awaiting-approval' || task.status === 'waiting-for-input';
-  const needsAttention = task.status === 'auth-required' || task.status === 'awaiting-approval' || task.status === 'waiting-for-input';
+  const isActive = task.status === 'running' || task.status === 'queued' || task.status === 'waiting-for-agent' || task.status === 'auth-required' || task.status === 'awaiting-approval' || task.status === 'waiting-for-input' || task.status === 'needs_plan' || task.status === 'plan_update';
+  const needsAttention = task.status === 'auth-required' || task.status === 'awaiting-approval' || task.status === 'waiting-for-input' || task.status === 'needs_plan' || task.status === 'plan_update';
   const elapsed = useElapsed(task.startedAt || task.createdAt, isActive);
   const elapsedStr = _formatTime(elapsed);
   const diff = Date.now() - (task.doneAt || task.createdAt);
@@ -728,6 +730,8 @@ const STATUS_BUCKET_MAP: Record<TaskStatus, StatusBucket> = {
   'auth-required': 'in-progress',
   'awaiting-approval': 'in-progress',
   'waiting-for-input': 'in-progress',
+  'needs_plan': 'in-progress',
+  'plan_update': 'in-progress',
   'done': 'done',
   'failed': 'failed',
   'cancelled': 'cancelled',

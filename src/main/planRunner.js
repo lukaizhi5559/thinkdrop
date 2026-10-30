@@ -406,13 +406,19 @@ function onTaskComplete(taskId, status, result) {
     for (const [taskNum, tid] of run.dispatched.entries()) {
       if (tid !== taskId) continue;
       const isDone = status === 'done';
-      // plan_update — task.agent pushed a mid-run discovery back to planning.
-      // Hold the run: mark the task blocked and stop scheduling; comms revises
-      // the .md and startPlan() re-enters below, resuming remaining tasks.
-      if (status === 'plan_update') {
+      // plan_update / needs_plan — the task bounced back to planning. Hold the
+      // run: mark the task blocked and stop scheduling; comms revises the .md
+      // and startPlan() re-enters below, resuming remaining tasks.
+      // needs_plan: the runtime said the task can't run AS WRITTEN — comms
+      // revises the same plan and posts /plan.run again. Without this branch
+      // the early return below left the run 'running' forever (observed: a
+      // spurious agent_not_onboarded escalation parked plan_mvu729h0 40min).
+      if (status === 'plan_update' || status === 'needs_plan') {
         let reason = '';
         try { reason = JSON.parse(result || '{}').reason || ''; } catch (_) {}
-        _writeTaskStatus(run, taskNum, '⏸ blocked', `plan revision requested: ${reason}`.slice(0, 300));
+        const _holdWhy = status === 'needs_plan'
+          ? `escalated to planning: ${reason}` : `plan revision requested: ${reason}`;
+        _writeTaskStatus(run, taskNum, '⏸ blocked', _holdWhy.slice(0, 300));
         // Clear the completed-dispatch bookkeeping — on resume the revised
         // task must be re-dispatchable; a stale results entry would skip it.
         run.dispatched.delete(taskNum);
@@ -587,6 +593,32 @@ function cancelPlan(planId) {
 }
 
 /**
+ * Terminal-fail a held run — comms' loop-back settle path calls this when a
+ * replan produced nothing runnable (scrubbed turn, timeout, escalation cap).
+ * Without it a 'revising' run would hold the card open forever.
+ */
+function failPlan(planId, reason) {
+  const run = _runs.get(planId);
+  if (!run) return false;
+  const why = `replanning failed: ${String(reason || 'unknown').slice(0, 300)}`;
+  for (const task of run.tasks) {
+    if (!run.results.has(task.num)) {
+      _writeTaskStatus(run, task.num, planFormat.TASK_STATUS.FAILED, why);
+      run.results.set(task.num, { _status: 'failed', result: why });
+    }
+  }
+  _writePlanStatus(run, 'failed');
+  _emit('plan:complete', {
+    planId: run.planId,
+    status: 'failed',
+    failedTasks: run.tasks.filter(t => run.results.get(t.num)?._status !== 'done').map(t => t.num),
+    results: [...run.results.entries()].map(([n, r]) => ({ taskNum: n, status: r._status, result: r.result || null })),
+  });
+  _runs.delete(planId);
+  return true;
+}
+
+/**
  * Review-gate resolution — called from main.js when the user approves or
  * skips a held commit task. Approving schedules it for dispatch; skipping
  * marks it skipped (dependents then skip via _depsFailed).
@@ -617,4 +649,4 @@ function listRuns() {
   }));
 }
 
-module.exports = { init, startPlan, cancelPlan, getRun, listRuns, onTaskComplete, bindTaskId, approvePlanTask, _stepsLookDegenerate, _writePlanStatus };
+module.exports = { init, startPlan, cancelPlan, failPlan, getRun, listRuns, onTaskComplete, bindTaskId, approvePlanTask, _stepsLookDegenerate, _writePlanStatus };

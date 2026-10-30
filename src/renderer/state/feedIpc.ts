@@ -294,7 +294,7 @@ export function installFeedIpc(store: FeedStore, ui: FeedIpcUi): () => void {
   const handleTasksRestored = (data: { tasks?: any[] }) => {
     const list = Array.isArray(data?.tasks) ? data.tasks : [];
     if (list.length === 0) return;
-    const ACTIONABLE = new Set(['awaiting-approval', 'auth-required', 'waiting-for-input']);
+    const ACTIONABLE = new Set(['awaiting-approval', 'auth-required', 'waiting-for-input', 'needs_plan', 'plan_update']);
     const TERMINAL = new Set(['done', 'failed', 'cancelled']);
     s.setCommsTasks(prev => {
       const existing = new Set(prev.map(t => t.id));
