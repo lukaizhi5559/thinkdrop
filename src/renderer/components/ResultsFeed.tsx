@@ -45,7 +45,7 @@ export interface FeedDraft {
 
 export type FeedEntry =
   | { id: string; ts: number; kind: 'user'; text: string; exchangeId?: string; historic?: boolean; attachments?: { kind: 'file' | 'folder' | 'context' | 'thought' | 'highlight'; label: string; path?: string }[] }
-  | { id: string; ts: number; kind: 'assistant'; text: string; items?: WebResultItem[]; sources?: { url: string; hostname: string; title?: string }[]; engine?: string; taskId?: string; pending?: boolean; prompt?: string; isError?: boolean; errorRaw?: string; exchangeId?: string; historic?: boolean; files?: string[]; drafts?: FeedDraft[]; steps?: { title: string; status: string; skill?: string; output?: string; savedFilePath?: string; draftPath?: string; openIn?: string[]; diff?: string | null }[] }
+  | { id: string; ts: number; kind: 'assistant'; text: string; items?: WebResultItem[]; sources?: { url: string; hostname: string; title?: string }[]; engine?: string; taskId?: string; pending?: boolean; needsInfo?: string; prompt?: string; isError?: boolean; errorRaw?: string; exchangeId?: string; historic?: boolean; files?: string[]; drafts?: FeedDraft[]; steps?: { title: string; status: string; skill?: string; output?: string; savedFilePath?: string; draftPath?: string; openIn?: string[]; diff?: string | null }[] }
   | { id: string; ts: number; kind: 'run'; title: string; status: FeedRunStatus; steps?: { title: string; status: string; skill?: string; output?: string; savedFilePath?: string; draftPath?: string; openIn?: string[]; diff?: string | null }[]; savedFilePaths?: string[]; drafts?: FeedDraft[]; error?: string | null; taskId?: string; planFile?: string | null; durationMs?: number | null; prompt?: string; exchangeId?: string; historic?: boolean }
   | { id: string; ts: number; kind: 'proactive'; text: string; thoughtId?: string; pending?: boolean; exchangeId?: string; historic?: boolean }
   | { id: string; ts: number; kind: 'plan-check'; check: import('./PlanCheckCard').PlanCheckPayload; exchangeId?: string }
@@ -61,6 +61,9 @@ interface ResultsFeedProps {
   activeExchangeId: string | null;
   /** Ref applied to the measured (current-exchange) zone wrapper. */
   measureRef: RefObject<HTMLDivElement>;
+  /** Ref applied to the history (unmeasured) zone wrapper — lets the scroll
+   *  owner anchor prepends + guard eviction against the zone's real bounds. */
+  historyZoneRef?: RefObject<HTMLDivElement>;
   historyLoading: boolean;
   hasMoreHistory: boolean;
   onRedo: (prompt: string) => void;
@@ -708,6 +711,16 @@ const FeedEntryRow = React.memo(function FeedEntryRow({
                   searchResults={entry.items}
                 />
               </CollapsibleContent>
+              {/* Planning lane parked on a user answer — the reply is waiting
+                  on input, not working. Mark it so "I need four details…"
+                  reads as a question, not a task in flight. */}
+              {entry.needsInfo && (
+                <div className="flex flex-wrap gap-1.5" style={{ marginTop: 6 }}>
+                  <span style={{ padding: '2px 9px', borderRadius: 10, backgroundColor: 'rgba(34,211,238,0.08)', border: '1px solid rgba(34,211,238,0.28)', color: '#67e8f9', fontSize: '0.62rem', letterSpacing: '0.02em' }}>
+                    waiting for your reply
+                  </span>
+                </div>
+              )}
               {/* Engine transparency chip — names the provider that served
                   the reply (Google Search / Bing Copilot Search / Brave…). */}
               {entry.engine && (
@@ -1123,6 +1136,7 @@ function ResultsFeedImpl({
   entries,
   activeExchangeId,
   measureRef,
+  historyZoneRef,
   historyLoading,
   hasMoreHistory,
   onRedo,
@@ -1273,7 +1287,7 @@ function ResultsFeedImpl({
 
       {/* History zone — unmeasured: window height ignores it. */}
       {(historyEntries.length > 0 || hasMoreHistory || historyLoading) && (
-        <div>
+        <div ref={historyZoneRef}>
           {hasMoreHistory && (
             <div className="flex flex-col items-center gap-1 select-none" style={{ padding: '6px 0 4px', opacity: historyLoading ? 1 : 0.5 }}>
               <ThinkDropLogo size={18} />

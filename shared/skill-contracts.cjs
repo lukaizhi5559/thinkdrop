@@ -126,8 +126,13 @@ const CONTRACTS = {
     required: ['url'],
   },
   'video.agent': {
-    desc: 'watch/transcribe video — always wins over ytdlp for watch/transcribe verbs',
-    args: { action: 'string', videoUrl: '?string', platform: '?string', query: '?string', goal: 'string' },
+    desc: 'watch/transcribe video — always wins over ytdlp for watch/transcribe verbs. watch_video{videoUrl} transcribes/extracts (transcript → download/whisper cascade); watch_live{videoUrl|liveTab} plays the live tab while audio journal + screen OCR observe',
+    args: { action: 'string', videoUrl: '?string', pageUrl: '?string', platform: '?string', query: '?string', goal: '?string', sessionId: '?string', liveTab: '?boolean', mode: '?string', maxWatchMs: '?number', pollMs: '?number', confirmLong: '?boolean' },
+    required: ['action'],
+  },
+  'screen.capture': {
+    desc: 'OCR the user\'s live screen via screen-intelligence — visible text, app, window title, URL',
+    args: { timeoutMs: '?number' },
     required: [],
   },
   'provider.discovery': {

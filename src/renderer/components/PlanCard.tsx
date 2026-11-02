@@ -37,6 +37,8 @@ export interface PlanSummary {
   originalPrompt: string;
   isTaskPlan: boolean;
   tasks: PlanTaskSummary[];
+  /** Compiled deterministic plan baked into frontmatter — replayable via `run <name>`. */
+  hasSkillPlan?: boolean;
 }
 
 // ── Status presentation (SVG icons — no emoji, matching tab-bar style) ────────
@@ -101,6 +103,9 @@ export function PlanCard({ plan, onContinue, onRun, onCancelRun, onDelete, runSt
   const [nameDraft, setNameDraft] = React.useState('');
   const [nameErr, setNameErr] = React.useState<string | null>(null);
   const [confirmDel, setConfirmDel] = React.useState(false);
+  // Done plans re-execute REAL actions (sends, bookings, …) — confirm first,
+  // same two-tap pattern as delete. planRunner treats all-done as a fresh run.
+  const [confirmRerun, setConfirmRerun] = React.useState(false);
   const meta = PLAN_STATUS_META[plan.status] || PLAN_STATUS_META.drafting;
   const isRunning = plan.status === 'running' || runState?.status === 'running';
   const runnable = plan.isTaskPlan && plan.tasks.length > 0 && !isRunning;
@@ -111,6 +116,12 @@ export function PlanCard({ plan, onContinue, onRun, onCancelRun, onDelete, runSt
     const t = setTimeout(() => setConfirmDel(false), 4000);
     return () => clearTimeout(t);
   }, [confirmDel]);
+
+  React.useEffect(() => {
+    if (!confirmRerun) return;
+    const t = setTimeout(() => setConfirmRerun(false), 4000);
+    return () => clearTimeout(t);
+  }, [confirmRerun]);
 
   const _commitRename = async () => {
     const v = nameDraft.trim();
@@ -167,6 +178,12 @@ export function PlanCard({ plan, onContinue, onRun, onCancelRun, onDelete, runSt
             {!plan.name && <span style={{ color: '#6b7280', fontWeight: 400 }}> · Untitled</span>}
           </button>
         )}
+        {plan.name && plan.hasSkillPlan && (
+          <span style={{
+            fontSize: '0.58rem', padding: '1px 6px', borderRadius: 10, flexShrink: 0,
+            background: 'rgba(34,211,238,0.12)', color: '#22d3ee', border: '1px solid rgba(34,211,238,0.3)',
+          }} title={`Saved skill — replay with "run ${plan.name}"`}>skill</span>
+        )}
         <span style={{ fontSize: '0.6rem', color: '#6b7280', flexShrink: 0 }}>{_fmtDate(plan.created)}</span>
       </div>
 
@@ -194,6 +211,17 @@ export function PlanCard({ plan, onContinue, onRun, onCancelRun, onDelete, runSt
           Continue
         </button>
         <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 5 }}>
+          {plan.status === 'done' && plan.hasSkillPlan && !plan.name && (
+            <button
+              onClick={() => { setNameDraft(''); setNameErr(null); setRenaming(true); }}
+              title="Name this plan (dot-syntax) to save it as a replayable skill"
+              style={_iconBtn('#22d3ee')}>
+              <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26"/>
+              </svg>
+              Save as skill
+            </button>
+          )}
           <button onClick={() => ipcRenderer?.send('plan:open-editor', { planFile: plan.file })}
             title="Open plan file in editor" style={_iconBtn('#a5b4fc')}>
             <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
@@ -207,6 +235,22 @@ export function PlanCard({ plan, onContinue, onRun, onCancelRun, onDelete, runSt
               </svg>
               Stop
             </button>
+          ) : plan.status === 'done' ? (
+            confirmRerun ? (
+              <button onClick={() => { setConfirmRerun(false); onRun(plan); }} title="Confirm — re-executes every task"
+                style={{ ..._iconBtn('#fbbf24'), background: 'rgba(251,191,36,0.16)', border: '1px solid rgba(251,191,36,0.4)', fontWeight: 600 }}>
+                Re-run?
+              </button>
+            ) : (
+              <button onClick={() => setConfirmRerun(true)} disabled={!runnable}
+                title={runnable ? 'Re-run this plan — all tasks execute again' : 'No tasks to run'}
+                style={{ ..._iconBtn('#4ade80'), opacity: runnable ? 1 : 0.4, cursor: runnable ? 'pointer' : 'default' }}>
+                <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor" stroke="none">
+                  <polygon points="6 3 20 12 6 21"/>
+                </svg>
+                Run
+              </button>
+            )
           ) : (
             <button onClick={() => onRun(plan)} disabled={!runnable}
               title={runnable ? 'Run this plan' : plan.isTaskPlan ? 'No tasks to run' : 'Legacy plan format — run from queue card'}

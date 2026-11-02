@@ -110,6 +110,30 @@ const COLORS = {
   numberCircleText: '#7dd3fc',
 };
 
+// Cyan ring shown on keyboard-focused options — inline styles can't reach
+// :focus-visible, so focus/blur handlers apply it directly.
+const _FOCUS_RING = '0 0 0 1.5px rgba(56,189,248,0.55)';
+const _onOptionFocus = (e: React.FocusEvent<HTMLElement>) => { e.currentTarget.style.boxShadow = _FOCUS_RING; };
+const _onOptionBlur = (e: React.FocusEvent<HTMLElement>) => { e.currentTarget.style.boxShadow = 'none'; };
+
+// Arrow-key navigation through a card's answerable controls — options, the
+// Other button, and free-text inputs — in DOM order, wrapping at the ends.
+// ↑/↓ are dead keys inside single-line inputs, so intercepting them there is
+// safe and gives uniform "arrows move focus" behavior across the card.
+const _cardKeyNav = (e: React.KeyboardEvent<HTMLElement>) => {
+  if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return;
+  const items = Array.from(
+    (e.currentTarget as HTMLElement).querySelectorAll<HTMLElement>('[data-qc-option], [data-qc-input]')
+  ).filter(el => !el.hasAttribute('disabled'));
+  if (!items.length) return;
+  e.preventDefault();
+  const idx = items.indexOf(document.activeElement as HTMLElement);
+  const next = idx < 0
+    ? (e.key === 'ArrowDown' ? 0 : items.length - 1)
+    : e.key === 'ArrowDown' ? (idx + 1) % items.length : (idx - 1 + items.length) % items.length;
+  items[next]?.focus();
+};
+
 export function QuestionCard({ batch, onSubmit, onCancel }: QuestionCardProps) {
   const { questions, routeConfirmation } = batch;
   // Build the full question list: route confirmation first (if present), then questions
@@ -219,7 +243,7 @@ export function QuestionCard({ batch, onSubmit, onCancel }: QuestionCardProps) {
   if (!currentQ) return null;
 
   return (
-    <div style={{
+    <div onKeyDown={_cardKeyNav} style={{
       padding: '14px 16px',
       borderRadius: 10,
       backgroundColor: COLORS.cardBg,
@@ -308,7 +332,11 @@ export function QuestionCard({ batch, onSubmit, onCancel }: QuestionCardProps) {
             return (
               <button
                 key={i}
+                data-qc-option
+                tabIndex={-1}
                 onClick={() => _selectOption(currentQ.id, opt.value, opt.label || `opt-${i}`)}
+                onFocus={_onOptionFocus}
+                onBlur={_onOptionBlur}
                 style={{
                   display: 'flex',
                   alignItems: 'center',
@@ -410,7 +438,11 @@ export function QuestionCard({ batch, onSubmit, onCancel }: QuestionCardProps) {
                 </div>
               ) : (
                 <button
+                  data-qc-option
+                  tabIndex={-1}
                   onClick={() => setShowOther(true)}
+                  onFocus={_onOptionFocus}
+                  onBlur={_onOptionBlur}
                   style={{
                     display: 'flex',
                     alignItems: 'center',
@@ -485,7 +517,11 @@ export function QuestionCard({ batch, onSubmit, onCancel }: QuestionCardProps) {
       {/* Footer: Next / Cancel */}
       <div className="flex items-center justify-between" style={{ marginTop: 10 }}>
         <button
+          data-qc-option
+          tabIndex={-1}
           onClick={_handleCancel}
+          onFocus={_onOptionFocus}
+          onBlur={_onOptionBlur}
           style={{
             background: 'transparent',
             border: 'none',
@@ -498,7 +534,11 @@ export function QuestionCard({ batch, onSubmit, onCancel }: QuestionCardProps) {
           Cancel
         </button>
         <button
+          data-qc-option
+          tabIndex={-1}
           onClick={_handleNext}
+          onFocus={_onOptionFocus}
+          onBlur={_onOptionBlur}
           disabled={!hasAnswer}
           style={{
             padding: '7px 16px',
@@ -539,7 +579,7 @@ export function PartialFailureCard({ partialFailure, options, onSubmit, onCancel
   };
 
   return (
-    <div style={{
+    <div onKeyDown={_cardKeyNav} style={{
       padding: '14px 16px',
       borderRadius: 10,
       backgroundColor: 'rgba(245,158,11,0.06)',
@@ -625,8 +665,12 @@ export function PartialFailureCard({ partialFailure, options, onSubmit, onCancel
           return (
             <button
               key={i}
+              data-qc-option
+              tabIndex={-1}
               disabled={isRetrying}
               onClick={() => _handleOption(opt.value)}
+              onFocus={_onOptionFocus}
+              onBlur={_onOptionBlur}
               style={{
                 display: 'flex',
                 alignItems: 'center',
@@ -711,7 +755,11 @@ export function PartialFailureCard({ partialFailure, options, onSubmit, onCancel
             </div>
           ) : (
             <button
+              data-qc-option
+              tabIndex={-1}
               onClick={() => setShowOther(true)}
+              onFocus={_onOptionFocus}
+              onBlur={_onOptionBlur}
               style={{
                 display: 'flex',
                 alignItems: 'center',
@@ -755,7 +803,11 @@ export function PartialFailureCard({ partialFailure, options, onSubmit, onCancel
       <div className="flex items-center justify-end" style={{ marginTop: 8, gap: 8 }}>
         {typeof retryCountdown === 'number' && retryCountdown > 0 && onCancelAutoRetry && (
           <button
+            data-qc-option
+            tabIndex={-1}
             onClick={onCancelAutoRetry}
+            onFocus={_onOptionFocus}
+            onBlur={_onOptionBlur}
             style={{
               background: 'transparent',
               border: 'none',
@@ -769,7 +821,222 @@ export function PartialFailureCard({ partialFailure, options, onSubmit, onCancel
           </button>
         )}
         <button
+          data-qc-option
+          tabIndex={-1}
           onClick={onCancel}
+          onFocus={_onOptionFocus}
+          onBlur={_onOptionBlur}
+          style={{
+            background: 'transparent',
+            border: 'none',
+            color: COLORS.cancelText,
+            fontSize: '0.69rem',
+            cursor: 'pointer',
+            padding: '4px 8px',
+          }}
+        >
+          Cancel
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ── SystemFailureCard ──────────────────────────────────────────────────────
+// Renders a ThinkDrop *infrastructure* failure (dead/hung MCP service, open
+// circuit breaker, hung agent registry) — NOT a user question. No text input:
+// nothing the user types can revive a dead service. Actions only: Try again
+// (auto-fires after the breaker cooldown), Report issue (records locally for
+// an engineer), Dismiss.
+export interface InfraFailureDetail {
+  signature: string;
+  service: string | null;
+  waitMs: number | null;
+  error: string;
+}
+
+export type IssueReportState = 'sending' | 'failed' | { issueId: string } | null;
+
+interface SystemFailureCardProps {
+  question: string;
+  infra?: InfraFailureDetail | null;
+  options: QuestionOption[];
+  reported?: IssueReportState;
+  retryCountdown?: number | null;
+  onAction: (value: string) => void;
+  onCancel: () => void;
+  onCancelAutoRetry?: () => void;
+}
+
+export function SystemFailureCard({ question, infra, options, reported, retryCountdown, onAction, onCancel, onCancelAutoRetry }: SystemFailureCardProps) {
+  const [showDetails, setShowDetails] = useState(false);
+
+  const _reportLabel = reported === 'sending'
+    ? 'Logging…'
+    : (reported && typeof reported === 'object')
+      ? `✓ Logged (${reported.issueId})`
+      : reported === 'failed'
+        ? 'Report failed — try again'
+        : null;
+  const _reportBusy = reported === 'sending' || (reported !== null && typeof reported === 'object');
+
+  return (
+    <div onKeyDown={_cardKeyNav} style={{
+      padding: '14px 16px',
+      borderRadius: 10,
+      backgroundColor: 'rgba(245,158,11,0.06)',
+      border: '1px solid rgba(245,158,11,0.28)',
+    }}>
+      {/* Header */}
+      <div className="flex items-center gap-2" style={{ marginBottom: 10 }}>
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#f59e0b" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
+          <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
+          <line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/>
+        </svg>
+        <div style={{ color: '#fbbf24', fontSize: '0.76rem', fontWeight: 600 }}>
+          Something went wrong on our side
+        </div>
+      </div>
+
+      {/* Plain-English summary (from infraFailure.humanSummary) */}
+      <div style={{
+        color: COLORS.bodyText,
+        fontSize: '0.8rem',
+        lineHeight: 1.5,
+        marginBottom: 10,
+      }}>
+        {question}
+      </div>
+
+      {/* Collapsible technical detail — engineers need the signature, users don't */}
+      <div style={{ marginBottom: 12 }}>
+        <button
+          onClick={() => setShowDetails(v => !v)}
+          style={{
+            background: 'transparent',
+            border: 'none',
+            color: COLORS.mutedText,
+            fontSize: '0.68rem',
+            cursor: 'pointer',
+            padding: '2px 0',
+            textDecoration: 'underline',
+            textDecorationStyle: 'dotted',
+          }}
+        >
+          {showDetails ? '▾ Hide technical details' : '▸ Technical details'}
+        </button>
+        {showDetails && (
+          <div style={{
+            marginTop: 6,
+            padding: '8px 10px',
+            borderRadius: 6,
+            backgroundColor: 'rgba(0,0,0,0.25)',
+            fontFamily: 'monospace',
+            fontSize: '0.66rem',
+            lineHeight: 1.5,
+            color: COLORS.secondaryText,
+            wordBreak: 'break-all',
+          }}>
+            {infra?.service && <div>service: {infra.service}</div>}
+            {infra?.signature && <div>signature: {infra.signature}</div>}
+            {infra?.error && <div>error: {infra.error}</div>}
+            <div>logs: logs/command.log · logs/main.log · logs/comms-graph.log</div>
+          </div>
+        )}
+      </div>
+
+      {/* Action buttons — same stack as PartialFailureCard, no "Other"/text */}
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 8 }}>
+        {options.map((opt, i) => {
+          const isTryAgain = opt.value === 'try_again';
+          const isReport = opt.value === 'report_issue';
+          const isPrimary = opt.primary || isTryAgain;
+          const isRetrying = isTryAgain && retryCountdown === 0;
+          const label = isReport && _reportLabel ? _reportLabel
+            : (isTryAgain && typeof retryCountdown === 'number' && retryCountdown > 0)
+              ? `${opt.label} (auto-retry in ${retryCountdown}s)`
+              : opt.label;
+          const disabled = isRetrying || (isReport && _reportBusy === true);
+          return (
+            <button
+              key={i}
+              data-qc-option
+              tabIndex={-1}
+              disabled={disabled}
+              onClick={() => onAction(opt.value)}
+              onFocus={_onOptionFocus}
+              onBlur={_onOptionBlur}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 8,
+                padding: '8px 12px',
+                borderRadius: 8,
+                cursor: disabled ? 'not-allowed' : 'pointer',
+                opacity: disabled ? 0.7 : 1,
+                backgroundColor: isPrimary ? 'rgba(56,189,248,0.15)' : COLORS.optionBg,
+                border: isPrimary ? COLORS.nextBtnBorder : COLORS.optionBorder,
+                textAlign: 'left',
+                transition: 'all 0.15s',
+              }}
+              onMouseEnter={e => { if (!disabled) e.currentTarget.style.backgroundColor = isPrimary ? 'rgba(56,189,248,0.25)' : COLORS.optionBgHover; }}
+              onMouseLeave={e => { if (!disabled) e.currentTarget.style.backgroundColor = isPrimary ? 'rgba(56,189,248,0.15)' : COLORS.optionBg; }}
+            >
+              <span style={{
+                color: isPrimary ? COLORS.nextBtnText : COLORS.bodyText,
+                fontSize: '0.78rem',
+                fontWeight: 600,
+              }}>
+                {isRetrying ? 'Retrying…' : label}
+              </span>
+              {isPrimary && !isRetrying && (
+                <span style={{
+                  marginLeft: 'auto',
+                  fontSize: '0.62rem',
+                  fontWeight: 700,
+                  padding: '2px 6px',
+                  borderRadius: 4,
+                  color: COLORS.primaryBadgeText,
+                  backgroundColor: COLORS.primaryBadgeBg,
+                  border: COLORS.primaryBadgeBorder,
+                  textTransform: 'uppercase',
+                  flexShrink: 0,
+                }}>
+                  {typeof retryCountdown === 'number' && retryCountdown > 0 ? `${retryCountdown}s` : 'Recommended'}
+                </span>
+              )}
+            </button>
+          );
+        })}
+      </div>
+
+      {/* Footer: Cancel + stop auto-retry */}
+      <div className="flex items-center justify-end" style={{ marginTop: 8, gap: 8 }}>
+        {typeof retryCountdown === 'number' && retryCountdown > 0 && onCancelAutoRetry && (
+          <button
+            data-qc-option
+            tabIndex={-1}
+            onClick={onCancelAutoRetry}
+            onFocus={_onOptionFocus}
+            onBlur={_onOptionBlur}
+            style={{
+              background: 'transparent',
+              border: 'none',
+              color: '#fbbf24',
+              fontSize: '0.69rem',
+              cursor: 'pointer',
+              padding: '4px 8px',
+            }}
+          >
+            Stop auto-retry
+          </button>
+        )}
+        <button
+          data-qc-option
+          tabIndex={-1}
+          onClick={onCancel}
+          onFocus={_onOptionFocus}
+          onBlur={_onOptionBlur}
           style={{
             background: 'transparent',
             border: 'none',

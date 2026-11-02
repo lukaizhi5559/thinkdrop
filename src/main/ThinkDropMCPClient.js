@@ -33,6 +33,18 @@ class ThinkDropMCPClient {
     this._circuitThreshold = options.circuitThreshold || 3;
     this._circuitCooldownMs = options.circuitCooldownMs || 30_000;
 
+    // Read-only metadata/probe endpoints never count toward the breaker —
+    // a hung or slow read (agent.list parsing every descriptor, skill.list
+    // under load) is not a dead service, and letting it trip the breaker
+    // starves the actual work plane (observed: 3 hung command.agent.list
+    // reads opened the command circuit and every command.automate failed
+    // fast for the full 30s cooldown).
+    this._noCircuitActions = new Set([
+      'agent.list', 'skill.list', 'capability.list',
+      'ping', 'health', 'service.health',
+      'ext.status', 'ext.sessions',
+    ]);
+
     // Default service URL map — override via env vars or options.serviceUrls
     this.serviceUrls = {
       'conversation':        process.env.MCP_CONVERSATION_URL        || 'http://localhost:3004',
@@ -112,6 +124,11 @@ class ThinkDropMCPClient {
       const waitS = Math.ceil((_cb.openUntil - Date.now()) / 1000);
       const err = new Error(`[MCPClient] Circuit open for ${serviceName} — failing fast (${waitS}s cooldown)`);
       err.code = 'CIRCUIT_OPEN';
+      // Structured cooldown — the stategraph's infra-failure detector reads
+      // this for the auto-retry countdown so a "try again" waits out the
+      // breaker instead of guaranteed-failing immediately.
+      err.retryAfterMs = waitS * 1000;
+      err.service = serviceName;
       throw err;
     }
 
@@ -148,7 +165,7 @@ class ThinkDropMCPClient {
       // a slow local model timeout is not a dead service, and its fail-open
       // design already has its own fallback; counting it was tripping the
       // shared breaker and starving real phi4 callers like embedding).
-      if (!options.noCircuit && error.message !== 'aborted' &&
+      if (!options.noCircuit && !this._noCircuitActions.has(action) && error.message !== 'aborted' &&
           /timeout|ECONNREFUSED|ENOTFOUND|EHOSTUNREACH|ENETUNREACH|ECONNRESET|socket hang up/i.test(error.message)) {
         const rec = this._circuit.get(serviceName) || { failures: 0, openUntil: 0 };
         rec.failures += 1;

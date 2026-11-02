@@ -149,6 +149,22 @@ export default function SkillStore({ onBuildSkill, initialSearch = '' }: SkillSt
     ipcRenderer?.send('skill:build-start', skill);
   }, [onBuildSkill]);
 
+  // Route the catalog entry's SKILL.md through planning mode instead of the
+  // direct install pipeline — planning drafts a plan; a successful run saves
+  // as a named, replayable skill.
+  const handlePlanBuild = useCallback((skill: SkillEntry) => {
+    if (!skill.rawUrl || !ipcRenderer) return;
+    setInstallMsg(null);
+    ipcRenderer.invoke('skill:plan-build', { url: skill.rawUrl, nameOverride: skill.name })
+      .then((res: any) => {
+        if (!res?.ok) {
+          setInstallMsg({ ok: false, text: res?.error || 'Plan build failed to start' });
+          setTimeout(() => setInstallMsg(null), 5000);
+        }
+      })
+      .catch(() => {});
+  }, []);
+
   const [pendingPreview, setPendingPreview] = useState<any | null>(null);
   const [inspectError, setInspectError] = useState<string | null>(null);
 
@@ -298,6 +314,29 @@ export default function SkillStore({ onBuildSkill, initialSearch = '' }: SkillSt
                   opacity: installing ? 0.5 : 1,
                 }}>
                 From File
+              </button>
+              <button onClick={() => {
+                const u = installUrl.trim();
+                if (!u || !ipcRenderer) return;
+                setInstallMsg(null);
+                ipcRenderer.invoke('skill:plan-build', { url: u })
+                  .then((res: any) => {
+                    if (!res?.ok) {
+                      setInstallMsg({ ok: false, text: res?.error || 'Plan build failed to start' });
+                      setTimeout(() => setInstallMsg(null), 5000);
+                    }
+                  })
+                  .catch(() => {});
+              }} disabled={installing || !installUrl.trim()}
+                title="Draft this SKILL.md in planning mode — run it, then save as a replayable skill"
+                style={{
+                  padding: '4px 10px', borderRadius: 5, fontSize: '0.67rem', fontWeight: 600,
+                  cursor: installing || !installUrl.trim() ? 'not-allowed' : 'pointer',
+                  border: '1px solid rgba(34,211,238,0.3)',
+                  background: 'rgba(34,211,238,0.08)', color: '#67e8f9', whiteSpace: 'nowrap',
+                  opacity: installing || !installUrl.trim() ? 0.5 : 1,
+                }}>
+                Plan →
               </button>
             </div>
             {installMsg && (
@@ -519,6 +558,27 @@ export default function SkillStore({ onBuildSkill, initialSearch = '' }: SkillSt
                   </>
                 )}
               </button>
+
+              {/* Plan → button — drafts the skill doc in planning mode */}
+              {skill.rawUrl && (
+                <button onClick={() => handlePlanBuild(skill)}
+                  title={`Turn "${skill.displayName}" into a deterministic plan (planning mode)`}
+                  style={{
+                    flexShrink: 0, padding: '4px 7px', borderRadius: 6, fontSize: '0.67rem',
+                    fontWeight: 600, cursor: 'pointer',
+                    border: '1px solid rgba(34,211,238,0.3)',
+                    background: 'rgba(34,211,238,0.08)',
+                    color: '#67e8f9', whiteSpace: 'nowrap',
+                    display: 'flex', alignItems: 'center', gap: 3,
+                    opacity: building ? 0.35 : 1,
+                  }}
+                  disabled={!!building}>
+                  <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                    <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26"/>
+                  </svg>
+                  Plan
+                </button>
+              )}
             </div>
           );
         })}

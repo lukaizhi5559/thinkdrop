@@ -1491,10 +1491,16 @@ function startOverlayControlServer() {
                 // A spoken "yes send it" resolves a pending plan approval instead of
                 // spawning a duplicate task (previously caused double dispatches).
                 if (!_tryResolvePendingApproval(text)) {
-                  const routed = _routeViaCommsGraph
+                  // Parked serial state owns spoken answers too — skip comms so
+                  // the serial resume classifier reads them as answers.
+                  const routed = !pausedAutomationState && _routeViaCommsGraph
                     ? _routeViaCommsGraph(routedText, { selectedText: voiceSelectedText, responseLanguage, sessionId: currentSessionId, source: 'voice' })
                     : false;
                   if (!routed) {
+                    // Serial fallback owns the same preempt rule as typed prompts.
+                    if (!pausedAutomationState && (_automationCancelable() || promptQueue.getVisible().length)) {
+                      _cancelAutomationRun().catch(() => {});
+                    }
                     promptQueue.enqueue(routedText, { selectedText: voiceSelectedText, responseLanguage, sessionId: currentSessionId });
                   }
                 }
@@ -1730,6 +1736,104 @@ function startOverlayControlServer() {
       return;
     }
 
+    // ── POST /plan.replanning — comms-graph loop-back escalation is about to
+    // re-enter the planning lane (needs_plan / task.agent plan_update). The
+    // replan runs minutes inside planningNode; pin planning mode NOW so the
+    // cyan chip, .planning glow, Plans-tab dot, and the plan:check readiness
+    // card all show the lane jump instead of a bare amber "Replanning" badge.
+    // Settle stays on the existing endpoints — /plan.run unpins on run start,
+    // /plan.fail releases the lane.
+    if (req.url === '/plan.replanning') {
+      let body = '';
+      req.on('data', chunk => { body += chunk; });
+      req.on('end', () => {
+        try {
+          const evt = JSON.parse(body || '{}');
+          console.log(`[PlanRunner] /plan.replanning — ${evt.planId || '(new plan)'} task=${evt.taskId || '?'} status=${evt.status || '?'} reason=${evt.reason || '?'}`);
+          const identity = _planIdentity(evt.planId || null);
+          // Don't steal a lane the user is holding for a DIFFERENT plan —
+          // including a bare needs_plan (planId null), which must not hijack
+          // a named drafting session. The escalated revision still refreshes
+          // the Plans list either way.
+          const _holdsOther = _planningMode?.active && _planningMode.planId
+            && _planningMode.planId !== evt.planId;
+          if (_holdsOther) {
+            console.log(`[PlanRunner] /plan.replanning — planning already pinned to ${_planningMode.planId}, not stealing lane for ${evt.planId}`);
+          } else {
+            _setPlanningMode({
+              active: true,
+              planId: evt.planId || null,
+              planName: identity?.planName || null,
+              planFile: identity?.planFile || null,
+              escalated: true,
+            });
+            safeSendUnified('planning:moved', {
+              planId: evt.planId || null,
+              reason: evt.reason || evt.status || 'escalated',
+              planStatus: 'revising',
+            });
+          }
+          // Let the amber task card name WHY it bounced back to planning —
+          // task-scoped, so it fires even when we didn't take the lane pin.
+          if (evt.taskId) {
+            safeSendUnified('automation:progress', {
+              type: 'plan_replanning',
+              taskId: evt.taskId,
+              planId: evt.planId || null,
+              reason: evt.reason || null,
+            });
+          }
+          safeSendUnified('plan:updated', { planId: evt.planId || null });
+          // Readiness card on entry — /plan.updated re-emits it per generated
+          // step now that _planningMode.active unblocks that branch. A run
+          // actively executing the plan owns the surface; a 'revising' hold
+          // is exactly what this card is for, so it does not suppress.
+          if (identity?.planFile && fs.existsSync(identity.planFile)) {
+            try {
+              const planRunner = require('./planRunner');
+              const _owningRun = planRunner.getRun(evt.planId);
+              if (!_owningRun || _owningRun.status !== 'running') {
+                _emitPlanCheck(evt.planId || null, identity.planFile, { surface: false })
+                  .catch(err => console.warn('[PlanRunner] /plan.replanning check failed:', err.message));
+              }
+            } catch (_) {}
+          }
+          res.writeHead(200).end(JSON.stringify({ ok: true }));
+        } catch (err) {
+          res.writeHead(500).end(JSON.stringify({ error: err.message }));
+        }
+      });
+      return;
+    }
+
+    // ── POST /plan.replanning.end — loop-back planning exited WITHOUT a
+    // runnable plan and WITHOUT failing (no_skill_coverage → planner-fallback
+    // re-dispatch). /plan.run and /plan.fail can't carry this outcome —
+    // without it the /plan.replanning pin would leak.
+    if (req.url === '/plan.replanning.end') {
+      let body = '';
+      req.on('data', chunk => { body += chunk; });
+      req.on('end', () => {
+        try {
+          const evt = JSON.parse(body || '{}');
+          console.log(`[PlanRunner] /plan.replanning.end — ${evt.planId || '(new plan)'} outcome=${evt.outcome || '?'}`);
+          // Release the lane only when it belongs to this escalation — a
+          // named pin releases only for ITS plan; an unnamed pin releases
+          // only when it was escalation-pinned (a user's fresh planning
+          // toggle with no planId must not be dropped by a stray event).
+          const _pinMatches = _planningMode?.active
+            && (_planningMode.planId ? _planningMode.planId === evt.planId : _planningMode.escalated);
+          if (_pinMatches) {
+            _exitPlanningLane();
+          }
+          res.writeHead(200).end(JSON.stringify({ ok: true }));
+        } catch (err) {
+          res.writeHead(500).end(JSON.stringify({ error: err.message }));
+        }
+      });
+      return;
+    }
+
     // ── POST /plan.run — comms-graph loop-back escalation (needs_plan /
     // task.agent plan_update) finished drafting/revising and wants the plan
     // executed. Same path as a conversational "run it" — the plan-check card
@@ -1742,6 +1846,13 @@ function startOverlayControlServer() {
         try {
           const evt = JSON.parse(body || '{}');
           console.log(`[PlanRunner] /plan.run — ${evt.planId || 'unknown'}${evt.escalated ? ' (escalated)' : ''}`);
+          // A bare needs_plan pin has no planId yet — adopt the identity of
+          // the plan the loop-back just drafted so the chip names it before
+          // the autoStart path unpins on run start.
+          if (_planningMode?.active && _planningMode.escalated && !_planningMode.planId && evt.planId) {
+            const identity = _planIdentity(evt.planId);
+            _setPlanningMode({ ..._planningMode, planId: evt.planId, planName: identity?.planName || _planningMode.planName, planFile: identity?.planFile || _planningMode.planFile });
+          }
           const planFile = evt.planFile
             || (evt.planId ? path.join(os.homedir(), '.thinkdrop', 'plans', `${evt.planId}.md`) : null);
           if (planFile && fs.existsSync(planFile)) {
@@ -1767,6 +1878,14 @@ function startOverlayControlServer() {
         try {
           const evt = JSON.parse(body || '{}');
           safeSendUnified('plan:updated', { planId: evt.planId || null });
+          // Bare needs_plan pin (planId null) — adopt the freshly-drafted
+          // plan's identity the first time its file updates so the chip
+          // names it. Gated on `escalated` so a user pin with no planId
+          // doesn't bind a random background write.
+          if (_planningMode?.active && _planningMode.escalated && !_planningMode.planId && evt.planId) {
+            const identity = _planIdentity(evt.planId);
+            _setPlanningMode({ ..._planningMode, planId: evt.planId, planName: identity?.planName || _planningMode.planName, planFile: identity?.planFile || _planningMode.planFile });
+          }
           // If a plan-check card is waiting on background step generation,
           // re-run the checklist now that the file changed — otherwise the
           // card sits pending forever and the run never kicks off.
@@ -1783,7 +1902,10 @@ function startOverlayControlServer() {
             if (evt.planId === planId) {
               try {
                 const planRunner = require('./planRunner');
-                if (planRunner.getRun(planId)) return res.writeHead(200).end(JSON.stringify({ ok: true }));
+                // Only an actively-running plan owns the surface — a 'revising'
+                // hold is mid-replan and the card SHOULD keep tracking it.
+                const _run = planRunner.getRun(planId);
+                if (_run && _run.status === 'running') return res.writeHead(200).end(JSON.stringify({ ok: true }));
               } catch (_) {}
               const file = _planningMode.planFile
                 || path.join(os.homedir(), '.thinkdrop', 'plans', `${planId}.md`);
@@ -1960,6 +2082,17 @@ function startOverlayControlServer() {
           if (taskId) {
             safeSendUnified('task:complete', { taskId, status: 'failed', result: _failMsg });
             safeSendUnified('automation:progress', { type: 'error', taskId, message: _failMsg });
+          }
+          // Release an escalation-pinned lane — the replan produced nothing,
+          // so the planning chip/glow must drop and the comms session unbind
+          // or the next prompt lands in a dead lane. A user's OWN pin on a
+          // different plan is untouched. Placed after the fail emits so the
+          // pc already settled 'failed' — _exitPlanningLane would re-emit it
+          // 'cancelled' otherwise.
+          const _failPinMatches = _planningMode?.active
+            && (_planningMode.planId ? _planningMode.planId === pid : _planningMode.escalated);
+          if (_failPinMatches) {
+            _exitPlanningLane();
           }
           console.log(`[PlanRunner] /plan.fail — ${pid || 'none'} failed=${failed} reason=${reason || '?'}`);
           res.writeHead(200).end(JSON.stringify({ ok: true, planId: pid, failed }));
@@ -3052,19 +3185,29 @@ function closeActiveBrowserSessions(reason = 'cancel') {
  * Full cancel of a running automation — the old automation:cancel IPC body,
  * extracted so the LOpt-hold→ROpt-tap gesture hits the same path as the button.
  */
-function _cancelAutomationRun() {
+function _cancelAutomationRun({ exceptTaskId = null } = {}) {
   console.log('🛑 [Automation] Cancel requested by user');
   const _serialAbortedNow = !!activeAbortController; // untagged question batches belong to this run
   if (activeAbortController) {
     activeAbortController.abort();
     activeAbortController = null;
   }
+  // A live comms chat turn is in-flight work too — kill it so its stream can't
+  // paint over whatever comes next (a finished/closed req makes this a no-op).
+  if (_inflightCommsReq) {
+    try { _inflightCommsReq._tdSuperseded = true; _inflightCommsReq.destroy(); } catch (_) {}
+    _inflightCommsReq = null;
+    // The destroyed response's 'end' never fires — close the renderer stream
+    // or isStreaming/isThinking stay true until the next prompt.
+    safeSendUnified('ws-bridge:message', { type: 'done' });
+  }
   // Comms→stategraph handoff runs hold their own AbortControllers — the serial
   // abort above never reaches them, so a cancel (button or ⌥L+⌥R) during the
   // handed-off phase did nothing while the run kept going.
   // Capture before cancelling — cancel() flips run.cancelled so
   // _cancellableTaskIds() is empty by the time the question drain runs below.
-  const _killedTaskIds = _cancellableTaskIds();
+  // exceptTaskId: a preempting prompt's NEW task — it must survive the sweep.
+  const _killedTaskIds = _cancellableTaskIds().filter(tid => tid !== exceptTaskId);
   try {
     const handoff = require('./handoffRunner');
     // Live runs + tasks parked at plan-approval or waiting-for-input — cancel()
@@ -3104,6 +3247,39 @@ function _cancelAutomationRun() {
       safeSendUnified('gather:pending', { active: false, question: null });
     }
   }
+  // Parked serial state is dead too — an explicit cancel abandons the paused
+  // question; the next prompt must be fresh, never a stale resume.
+  pausedAutomationState = null;
+  // Serial queue: pending items die with the run — cancel means stop
+  // everything, not "kill current and let the queued prompt start".
+  try {
+    for (const it of promptQueue.getVisible()) {
+      if (it.status === 'pending') { try { promptQueue.cancel(it.id); } catch (_) {} }
+    }
+  } catch (_) {}
+  // Comms journal: cancel every non-terminal task — including lock-parked
+  // 'queued' entries nothing local knows about. The batched /comms.cancel
+  // marks all cancelled before removing any (removals can resume a parked
+  // sibling). Awaited by the submit-preempt path so the new task can't race
+  // behind a dying lock-holder; fire-and-forget elsewhere.
+  const _commsSweep = (async () => {
+    try {
+      const tasks = await _commsTasksList();
+      const ids = (tasks || [])
+        .filter(t => t && t.id && t.id !== exceptTaskId && !_COMMS_TERMINAL.has(t.status))
+        .map(t => t.id);
+      if (!ids.length) return;
+      for (const tid of ids) {
+        try { require('./handoffRunner').cancel(tid); } catch (_) {}
+        _pendingPreflightPromptsByTask.delete(tid);
+      }
+      try { await _commsHttp('/comms.cancel', { taskIds: ids }); }
+      catch (err) { console.warn('[Automation] /comms.cancel sweep failed:', err?.message); }
+      for (const tid of ids) {
+        safeSendUnified('task:complete', { taskId: tid, status: 'cancelled', error: 'cancelled by user' });
+      }
+    } catch (_) {}
+  })();
   closeActiveBrowserSessions('cancel');
   // Tell the command-service to abort all in-flight command.automate runs
   // AND forcibly kill the playwright-cli daemon + Chrome processes. This is
@@ -3142,6 +3318,7 @@ function _cancelAutomationRun() {
   if (unifiedWindow && !unifiedWindow.isDestroyed()) {
     safeSend(unifiedWindow, 'automation:progress', { type: 'all_done', cancelled: true, completedCount: 0, totalCount: 0 });
   }
+  return _commsSweep;
 }
 let _pendingPreflightPromptsByTask = new Map(); // Per-task pending preflight prompts for handoff tasks: taskId → { prompt, agentId, source, originalPrompt, sessionId }
 let _pendingNewlyBuiltAgents = new Set(); // Tracks newly built agents pending auth — retained on cancel for retry
@@ -3907,8 +4084,61 @@ let appControlMode = { active: false, app: null, enteredAt: null };
 let _planningMode = { active: false, planId: null, planName: null, planFile: null };
 
 function _setPlanningMode(mode) {
-  _planningMode = { active: !!mode?.active, planId: mode?.planId || null, planName: mode?.planName || null, planFile: mode?.planFile || null };
+  _planningMode = { active: !!mode?.active, planId: mode?.planId || null, planName: mode?.planName || null, planFile: mode?.planFile || null, escalated: !!mode?.escalated };
   safeSendUnified('planning:state', _planningMode);
+}
+
+/**
+ * Fetch a text document (SKILL.md) from a URL — follows redirects, enforces a
+ * 5MB cap and text-ish content types. Shared by the skill installers and the
+ * plan-build import path.
+ */
+function _fetchTextWithRedirects(fetchUrl, redirectsLeft = 5) {
+  const https = require('https');
+  const http = require('http');
+  const MAX_SIZE = 5 * 1024 * 1024;
+  const TIMEOUT_MS = 15000;
+  return new Promise((resolve, reject) => {
+    const lib = fetchUrl.startsWith('https') ? https : http;
+    const req = lib.get(fetchUrl, {
+      headers: { 'User-Agent': 'ThinkDrop-SkillImporter/1.0', 'Accept': 'text/markdown,text/plain,*/*' },
+      timeout: TIMEOUT_MS,
+    }, (res) => {
+      if ((res.statusCode === 301 || res.statusCode === 302 || res.statusCode === 307 || res.statusCode === 308) && res.headers.location && redirectsLeft > 0) {
+        res.resume();
+        const redirectUrl = res.headers.location.startsWith('http') ? res.headers.location : new URL(res.headers.location, fetchUrl).href;
+        resolve(_fetchTextWithRedirects(redirectUrl, redirectsLeft - 1));
+        return;
+      }
+      if (res.statusCode !== 200) {
+        res.resume();
+        reject(new Error(`HTTP ${res.statusCode} fetching ${fetchUrl}`));
+        return;
+      }
+      const contentType = (res.headers['content-type'] || '').toLowerCase();
+      if (contentType && !contentType.includes('text') && !contentType.includes('markdown') && !contentType.includes('plain') && !contentType.includes('octet-stream') && !contentType.includes('*/*')) {
+        res.resume();
+        reject(new Error(`Unsupported content-type: ${contentType}. Expected text/markdown.`));
+        return;
+      }
+      let body = '';
+      let tooLarge = false;
+      res.on('data', (chunk) => {
+        body += chunk.toString();
+        if (body.length > MAX_SIZE) {
+          tooLarge = true;
+          res.destroy();
+        }
+      });
+      res.on('end', () => {
+        if (tooLarge) reject(new Error('Response exceeded 5MB limit'));
+        else resolve(body);
+      });
+      res.on('error', reject);
+    });
+    req.on('error', reject);
+    req.on('timeout', () => { req.destroy(); reject(new Error('Request timed out')); });
+  });
 }
 
 /**
@@ -3979,6 +4209,24 @@ function _markPlanAuthLedger(agentId) {
  * With autoStart, an all-clear plan dispatches through planRunner directly.
  * @returns {Promise<boolean>} allClear
  */
+/** Resolve a planId to its on-disk identity — ~/.thinkdrop/plans/<id>.md plus
+ *  the `# Plan: <name>` title when the file exists. Returns null fields for
+ *  plans not yet written (bare needs_plan escalations draft the file after
+ *  the lane is already pinned). */
+function _planIdentity(planId) {
+  if (!planId) return { planId: null, planName: null, planFile: null };
+  const planFile = path.join(os.homedir(), '.thinkdrop', 'plans', `${planId}.md`);
+  let planName = null;
+  try {
+    if (fs.existsSync(planFile)) {
+      const content = fs.readFileSync(planFile, 'utf8');
+      const titleM = content.match(/^# Plan:\s*(.+)$/m) || content.match(/^#\s+(.+)$/m);
+      planName = titleM ? titleM[1].trim() : null;
+    }
+  } catch (_) {}
+  return { planId, planName, planFile: fs.existsSync(planFile) ? planFile : null };
+}
+
 // Extract the directories a plan touches — used to scope MCP servers whose
 // seed args carry a {dirs} placeholder (e.g. the filesystem server's allowed
 // dirs). File-looking paths collapse to their parent dir.
@@ -5246,6 +5494,13 @@ let _roptOtherKey = false;           // non-modifier key seen while ROpt held �
 let _roptConsumed = false;           // this ROpt press already acted (confirm/cancel/chord)
 let _roptLastTapAt = 0;
 let _pttActive = false;              // ROpt-hold PTT in flight
+let _roptCancelTimer = null;         // ROpt-hold → "Cancelling in 3…2…1" countdown interval
+let _roptCancelLeft = 0;             // countdown seconds remaining while armed
+let _inflightCommsReq = null;        // live /comms.process request — a newer prompt destroys it
+// Paused serial-lane state — set when the thin recovery handler parks on
+// ASK_USER, cleared on resume or abort. Declared at module scope so
+// _automationCancelable/_cancelAutomationRun can see it (was IPC-closure local).
+let pausedAutomationState = null;
 let _cancelAffordance = false;       // LOpt-hold affordance armed on the GhostLayer
 let _rshiftDownAt = 0;               // ⇧R held — arms the expand/history chord
 let _rshiftChordTapAt = 0;           // last ⌥R press inside the ⇧R chord
@@ -6013,10 +6268,46 @@ function _cancellableTaskIds() {
   return [...ids];
 }
 
-function _cancelableExists() {
+// Comms-graph journal statuses meaning a task is finished — mirrors
+// taskJournal.cjs TERMINAL_STATUSES so the sweep only touches live work.
+const _COMMS_TERMINAL = new Set(['done', 'failed', 'cancelled', 'needs_plan', 'plan_update']);
+
+/** GET /tasks from comms-graph — resolves [] on any failure (service down). */
+function _commsTasksList() {
+  return new Promise((resolve) => {
+    const req = http.request(
+      { hostname: '127.0.0.1', port: COMMS_GRAPH_PORT, path: '/tasks', method: 'GET' },
+      (res) => {
+        let data = '';
+        res.on('data', c => { data += c; });
+        res.on('end', () => { try { resolve(JSON.parse(data)?.tasks || []); } catch (_) { resolve([]); } });
+      }
+    );
+    req.on('error', () => resolve([]));
+    req.setTimeout(3000, () => { req.destroy(); resolve([]); });
+    req.end();
+  });
+}
+
+/**
+ * Automation work the cancel paths tear down: running steps (serial abort,
+ * control lock, handoff live/parked, planRunner), parked serial waits,
+ * pending gather/credential prompts, and an in-flight comms chat turn.
+ * Voice sessions, planning-lane chat, and armed selections are NOT automation
+ * work — they keep their own Option-key semantics.
+ */
+function _automationCancelable() {
   let livePlan = false;
-  try { livePlan = (require('./planRunner').listRuns?.() || []).some(r => r.status === 'running'); } catch (_) {}
-  return !!(controlLock || _taskInFlight || _cancellableTaskIds().length || livePlan
+  try { livePlan = (require('./planRunner').listRuns?.() || []).some(r => r.status === 'running' || r.status === 'revising'); } catch (_) {}
+  let serialRunning = false;
+  try { serialRunning = !!promptQueue.getRunningId?.(); } catch (_) {}
+  return !!(controlLock || _taskInFlight || activeAbortController || _cancellableTaskIds().length || livePlan
+    || pausedAutomationState || pendingGatherResolve || pendingGatherBatches.size || _contextAskPending > 0
+    || _inflightCommsReq || serialRunning);
+}
+
+function _cancelableExists() {
+  return !!(_automationCancelable()
     || _voiceSessionActive || _planningMode?.active || _selectionArmed);
 }
 
@@ -6026,10 +6317,8 @@ function _cancelableExists() {
  * lane → armed selection.
  */
 function _gestureCancel() {
-  let livePlanId = null;
-  try { livePlanId = (require('./planRunner').listRuns?.() || []).find(r => r.status === 'running')?.planId || null; } catch (_) {}
-  if (controlLock || _taskInFlight || _cancellableTaskIds().length || livePlanId) {
-    _cancelAutomationRun(); // covers handoff + planRunner runs too
+  if (_automationCancelable()) {
+    _cancelAutomationRun(); // covers handoff + planRunner + serial + comms tasks
     if (controlLock) _cancelLockedTask();
     return;
   }
@@ -6054,6 +6343,44 @@ function _dismissCancelAffordance() {
   if (!_cancelAffordance) return;
   _cancelAffordance = false;
   _sendGhost({ type: 'cancel-affordance', armed: false });
+}
+
+/**
+ * ROpt-hold during automation — a GhostLayer pill counts "Cancelling in
+ * 3…2…1" while the key stays down; reaching zero fires _gestureCancel (the
+ * same path as ⌥L+⌥R). Releasing early or pressing another key disarms.
+ * Replaces PTT for this hold: mid-task the hold means "kill the run", not
+ * dictation (a dictated prompt still preempts on submit via the lanes below).
+ */
+function _stopRoptCancelCountdown(fired = false) {
+  if (_roptCancelTimer) { clearInterval(_roptCancelTimer); _roptCancelTimer = null; }
+  if (_roptCancelLeft) {
+    _roptCancelLeft = 0;
+    _sendGhost({ type: 'cancel-countdown', armed: false, fired });
+  }
+}
+
+function _startRoptCancelCountdown() {
+  clearInterval(_roptCancelTimer); // uiohook key-repeat can re-fire _onRoptDown mid-hold
+  _roptCancelLeft = 3;
+  if (!dropSessionActive) showGhostLayer();
+  _sendGhost({ type: 'cancel-countdown', armed: true, seconds: _roptCancelLeft });
+  _roptCancelTimer = setInterval(() => {
+    if (!_roptDownAt) { _stopRoptCancelCountdown(); return; }
+    _roptCancelLeft -= 1;
+    if (_roptCancelLeft <= 0) {
+      _stopRoptCancelCountdown(true);
+      _roptConsumed = true;
+      // Re-check — if the run finished mid-countdown the gesture is a no-op,
+      // never a fallthrough onto voice/planning/selection cancel targets.
+      if (_automationCancelable()) {
+        console.log('[Gesture] ROpt hold 3s — cancelling automation');
+        _gestureCancel();
+      }
+      return;
+    }
+    _sendGhost({ type: 'cancel-countdown', armed: true, seconds: _roptCancelLeft });
+  }, 1000);
 }
 
 /**
@@ -6095,7 +6422,7 @@ function _approveOrFocusPending() {
   }
   let pendingQuestion = null;
   try { pendingQuestion = (require('./handoffRunner').getPendingQuestionTaskIds?.() || [])[0] || null; } catch (_) {}
-  if (_pendingChoices || pendingQuestion || _contextAskPending > 0 || pendingGatherResolve || pendingGatherBatches.size) {
+  if (_pendingChoices || pendingQuestion || pausedAutomationState || _contextAskPending > 0 || pendingGatherResolve || pendingGatherBatches.size) {
     console.log('[Gesture] ⌥R tap — focusing pending question input');
     if (unifiedWindow && !unifiedWindow.isDestroyed() && !unifiedWindow.isVisible()) showUnifiedOverlay();
     safeSendUnified('ropt:focus-answer');
@@ -6138,7 +6465,7 @@ function _toggleHistoryView(force) {
 function _onRshiftDown() {
   _rshiftDownAt = Date.now();
   // ⇧R pressed while ⌥R held → it's a ⇧⌥ chord, not a bare-Option gesture.
-  if (_roptDownAt) { _roptOtherKey = true; clearTimeout(_roptHoldTimer); }
+  if (_roptDownAt) { _roptOtherKey = true; clearTimeout(_roptHoldTimer); _stopRoptCancelCountdown(); }
 }
 
 function _onRshiftUp() {
@@ -6196,6 +6523,11 @@ function _onRoptDown() {
   clearTimeout(_roptHoldTimer);
   _roptHoldTimer = setTimeout(() => {
     if (!_roptDownAt || _roptOtherKey) return;
+    if (_automationCancelable()) {
+      // Automation is running — the hold means cancel (3s countdown), not PTT.
+      _startRoptCancelCountdown();
+      return;
+    }
     if (_voiceSessionActive) {
       // PTT hold during Talk Mode — the mic is already live; the useful
       // meaning of the hold is "stop talking, let me speak" → interrupt the
@@ -6212,6 +6544,7 @@ function _onRoptUp() {
   const heldMs = _roptDownAt ? Date.now() - _roptDownAt : Infinity;
   _roptDownAt = 0;
   clearTimeout(_roptHoldTimer);
+  _stopRoptCancelCountdown(); // release before 3s disarms; after fire it's a no-op
   if (_pttActive) { pttStop(); return; }
   if (_roptConsumed || _roptOtherKey || heldMs >= ROPT_HOLD_MS) { _roptLastTapAt = 0; return; }
   // A real tap — double-tap toggles the overlay; a resolved single tap is
@@ -6256,7 +6589,7 @@ function _onLoptDown() {
   // During ROpt-hold PTT, the other Option key aborts the recording.
   if (_pttActive) { pttAbort(); return; }
   // Squeezing both options isn't a PTT — kill any pending ROpt-hold intent.
-  if (_roptDownAt) { _roptOtherKey = true; clearTimeout(_roptHoldTimer); }
+  if (_roptDownAt) { _roptOtherKey = true; clearTimeout(_roptHoldTimer); _stopRoptCancelCountdown(); }
   if (_cancelableExists()) {
     clearTimeout(_loptArmTimer);
     _loptArmTimer = setTimeout(() => {
@@ -6301,7 +6634,7 @@ function startMouseSelectionMonitor() {
       else if (e.keycode === UiohookKey.Alt) _onLoptDown();
       else if (e.keycode === UiohookKey.ShiftRight) _onRshiftDown();
       else if (e.keycode === UiohookKey.Escape && _historyViewOpen) _toggleHistoryView(false);
-      else if (_roptDownAt) { _roptOtherKey = true; clearTimeout(_roptHoldTimer); _dismissCancelAffordance(); }
+      else if (_roptDownAt) { _roptOtherKey = true; clearTimeout(_roptHoldTimer); _dismissCancelAffordance(); _stopRoptCancelCountdown(); }
       else if (_loptDownAt) { clearTimeout(_loptArmTimer); _dismissCancelAffordance(); }
 
       if ((e.metaKey || e.ctrlKey) && outside) {
@@ -8069,6 +8402,18 @@ app.whenReady().then(async () => {
       }
     } catch (_) {}
 
+    // ── In-flight chat turn superseded ─────────────────────────────────────
+    // A new prompt abandons the previous /comms.process turn — a mid-stream
+    // chat answer dies immediately. Journaled task work is preempted later,
+    // once the response proves THIS prompt dispatched a task (handleCommsData).
+    // _tdSuperseded stops the dead request's error/timeout handlers from
+    // re-enqueueing the abandoned prompt serially (it would resurrect as a
+    // duplicate run) or closing the new turn's stream with a late 'done'.
+    if (_inflightCommsReq) {
+      try { _inflightCommsReq._tdSuperseded = true; _inflightCommsReq.destroy(); } catch (_) {}
+      _inflightCommsReq = null;
+    }
+
     const commsPort = parseInt(process.env.COMMS_GRAPH_PORT || '3015', 10);
     console.log(`🧠 [CommsGraph] Routing prompt through comms-graph (source=${source}):`, prompt.substring(0, 80));
     const commsBody = JSON.stringify({ text: prompt, source, language: responseLanguage || null, sessionId: sessionId || null, thoughtContext: thoughtContext || null, selectedText: selectedText || null, planning: _planningMode && _planningMode.active ? _planningMode : undefined, stream: true });
@@ -8101,6 +8446,7 @@ app.whenReady().then(async () => {
       const isSSE = (commsRes.headers['content-type'] || '').includes('text/event-stream');
       let commsRaw = '';
       commsRes.on('data', c => {
+        if (commsReq._tdSuperseded) return; // dead request — its buffered events must not preempt/stream
         if (!isSSE) { commsRaw += c; return; }
         sseBuffer += c.toString();
         const lines = sseBuffer.split('\n');
@@ -8131,6 +8477,7 @@ app.whenReady().then(async () => {
         }
       });
       commsRes.on('end', () => {
+        if (commsReq._tdSuperseded) return;
         if (isSSE) {
           // Stream ended without a done event — treat painted text as final.
           if (!doneHandled) {
@@ -8155,6 +8502,17 @@ app.whenReady().then(async () => {
             const { text: responseText, intent, intentName, metadata } = commsData.data;
             const guessedIntent = metadata?.guessedIntent || null;
             const taskId = metadata?.taskId || null;
+
+            // ── Preempt: this prompt dispatched real work ──────────────────
+            // New task = cancel every other in-flight/queued task (running +
+            // lock-parked), the serial lane, and parked waits — the new task is
+            // the only work. Chat/status turns (no taskId) preempt nothing, so
+            // "how's it going" mid-task doesn't nuke the run. If the new task
+            // parked behind a dying lock-holder, its cancel frees the lock and
+            // comms-graph auto-promotes it.
+            if ((intent === 0 && taskId) || metadata?.runPlan) {
+              _cancelAutomationRun({ exceptTaskId: taskId }).catch(() => {});
+            }
 
             console.log(`[CommsGraph] Response — intent=${intent} (${intentName}) guessedIntent=${guessedIntent} latency=${metadata?.latencyMs}ms`);
 
@@ -8181,10 +8539,10 @@ app.whenReady().then(async () => {
             }
             if (streamedAny) {
               // Tokens already painted via SSE — close the stream only.
-              safeSendUnified('ws-bridge:message', { type: 'done', taskId });
+              safeSendUnified('ws-bridge:message', { type: 'done', taskId, needsInfo: metadata?.needsInfo || null });
             } else {
               safeSendUnified('ws-bridge:message', { type: 'chunk', text: responseText, taskId, isPlaceholder });
-              safeSendUnified('ws-bridge:message', { type: 'done', taskId });
+              safeSendUnified('ws-bridge:message', { type: 'done', taskId, needsInfo: metadata?.needsInfo || null });
             }
             // Voice TTS uses the painted stream text when the response echoed
             // the stream verbatim; else the authoritative responseText.
@@ -8218,8 +8576,10 @@ app.whenReady().then(async () => {
                 authRequired: metadata.authRequired || [],
               });
               // Proactive checklist — a plan that just flipped 'ready' gets
-              // its card before the user ever presses Run.
-              if (metadata.planStatus === 'ready' && metadata.planFile && _pendingPlanCheck?.planId !== metadata.planId) {
+              // its card before the user ever presses Run. Re-emit even when a
+              // pending check already covers this plan — the drafting-phase
+              // emit carried planStatus:'drafting' and would otherwise stay stale.
+              if (metadata.planStatus === 'ready' && metadata.planFile) {
                 _emitPlanCheck(metadata.planId, metadata.planFile, { autoStart: false })
                   .catch(err => console.warn('[PlanCheck] proactive emit failed:', err.message));
               }
@@ -8281,7 +8641,10 @@ app.whenReady().then(async () => {
         promptQueue.enqueue(prompt.trim(), { selectedText: selectedText || '', responseLanguage: responseLanguage || null, sessionId: sessionId || currentSessionId });
       }
     });
+    _inflightCommsReq = commsReq;
+    commsReq.on('close', () => { if (_inflightCommsReq === commsReq) _inflightCommsReq = null; });
     commsReq.on('error', (err) => {
+      if (commsReq._tdSuperseded) return;
       if (streamedAny) {
         // Mid-stream socket death — close the renderer stream; do not re-run.
         safeSendUnified('ws-bridge:message', { type: 'done' });
@@ -8297,6 +8660,7 @@ app.whenReady().then(async () => {
       promptQueue.enqueue(prompt.trim(), { selectedText: selectedText || '', responseLanguage: responseLanguage || null, sessionId: sessionId || currentSessionId });
     });
     commsReq.on('timeout', () => {
+      if (commsReq._tdSuperseded) return;
       if (commsSettled) return;
       commsSettled = true; // set BEFORE destroy() — destroy fires 'error' which would re-enqueue
       commsReq.destroy();
@@ -8399,10 +8763,25 @@ app.whenReady().then(async () => {
       console.log(`[PromptQueue] Pinned session from recall: ${pinnedSessionId}`);
     }
 
-    if (!pendingPlanContext && !isAskUserAnswer) {
+    // Serial parked state keeps answers in the serial lane too — the resume
+    // classifier inside runPromptThroughStateGraph decides answer-vs-fresh;
+    // comms routing would treat a typed "yes / option 2" as a new turn.
+    if (!pendingPlanContext && !isAskUserAnswer && !pausedAutomationState) {
       if (routeThroughCommsGraph(trimmedPrompt, { selectedText, responseLanguage, sessionId: effectiveSessionId, thoughtContext })) {
         return; // comms-graph dispatched — don't also enqueue
       }
+    }
+
+    // ── Fresh prompt supersedes in-flight work (serial lane) ────────────────
+    // Reaching the serial queue means comms routing declined. Every serial
+    // enqueue IS work — kill running + queued items first, then this prompt
+    // owns the queue (the aborted item's markDone → _tryAdvance starts it).
+    // Parked-serial waits keep their resume-vs-fresh classifier authority, and
+    // ask_user answers / plan corrections are answers, not new work.
+    if (!isAskUserAnswer && !pendingPlanContext && !pausedAutomationState
+        && (_automationCancelable() || promptQueue.getVisible().length > 0)) {
+      console.log(`[PromptQueue] Fresh prompt while work in flight — cancelling before serial dispatch`);
+      await _cancelAutomationRun();
     }
 
     const enqueueOpts = { selectedText, responseLanguage, sessionId: effectiveSessionId, isAskUserAnswer };
@@ -8547,7 +8926,6 @@ app.whenReady().then(async () => {
   });
 
   // Paused automation state — set when thin recovery handler returns ASK_USER, cleared on resume or abort
-  let pausedAutomationState = null;
   let pausedSkillBuildState = null; // set when installSkill pauses for ASK_USER (secrets)
   // activeAbortController is declared at module scope (above startOverlayControlServer)
   // so GET /activity can read it to detect an in-progress stategraph run.
@@ -8808,12 +9186,31 @@ app.whenReady().then(async () => {
     }
   });
 
-  // plan:open-editor — open plan.md in default system editor
-  ipcMain.on('plan:open-editor', (_event, { planFile } = {}) => {
+  // plan:open-editor — open plan.md in the GhostLayer DocScreen editor
+  // (kind:'doc' artifact card: preview/source edit, saves back via
+  // ghostlayer:doc-save → the plan file). Falls back to the system editor.
+  ipcMain.on('plan:open-editor', async (_event, { planFile } = {}) => {
     const file = planFile || pendingPlanContext?.planFile;
     if (!file) return;
+    try {
+      if (fs.existsSync(file)) {
+        const content = fs.readFileSync(file, 'utf8');
+        const titleM = content.match(/^# Plan:\s*(.+)$/m) || content.match(/^#\s+(.+)$/m);
+        const r = await _displayOnScreen({
+          kind: 'doc',
+          title: (titleM ? titleM[1].trim() : null) || 'Plan',
+          scrim: 'dim',
+          dismiss: 'manual',
+          blocking: true,
+          doc: { markdown: content, format: 'MD', editable: true, sourcePath: file },
+        });
+        if (r.ok) return;
+        console.warn(`[Plan] DocScreen display failed (${r.error}) — falling back to system editor`);
+      }
+    } catch (err) {
+      console.warn('[Plan] DocScreen open failed:', err.message);
+    }
     const { shell } = require('electron');
-    console.log(`[Plan] Opening plan in editor: ${file}`);
     shell.openPath(file)
       .then((err) => { if (err) console.warn('[Plan] shell.openPath error:', err); })
       .catch((e) => console.warn('[Plan] shell.openPath threw:', e.message));
@@ -8928,6 +9325,9 @@ app.whenReady().then(async () => {
             originalPrompt: fm.original_prompt || '',
             isTaskPlan: isTasks,
             tasks,
+            // Compiled deterministic plan baked into frontmatter by planRunner's
+            // plan→skill bridge — required for `run <dot.name>` recall.
+            hasSkillPlan: !!fm.skill_plan_json,
           });
         } catch (_) {}
       }
@@ -8955,11 +9355,11 @@ app.whenReady().then(async () => {
   });
 
   // plan:run — dispatch a task-plan through planRunner
-  ipcMain.handle('plan:run', async (_e, { planFile, bypassAgents = [], sessionId = null } = {}) => {
+  ipcMain.handle('plan:run', async (_e, { planFile, bypassAgents = [], sessionId = null, fresh = false } = {}) => {
     console.log(`[PlanRunner] plan:run invoked — ${planFile}`);
     try {
       const planRunner = require('./planRunner');
-      const r = await planRunner.startPlan(planFile, { bypassAgents, sessionId });
+      const r = await planRunner.startPlan(planFile, { bypassAgents, sessionId, fresh });
       console.log(`[PlanRunner] plan:run result — ${JSON.stringify(r)}`);
       if (r.ok) _setPlanningMode({ active: false });
       return r;
@@ -9038,11 +9438,20 @@ app.whenReady().then(async () => {
   // plan:rename — set dot-syntax name on a plan file (Untitled → named)
   ipcMain.handle('plan:rename', async (_e, { planFile, planName } = {}) => {
     const pf = _planFormatMain();
+    const fs = require('fs');
+    // Empty name → clear the saved name ("unsave" as a skill; keeps the plan).
+    if (planName === '' || planName === null) {
+      try {
+        const content = fs.readFileSync(planFile, 'utf8');
+        fs.writeFileSync(planFile, content.replace(/^name:[^\n]*\n?/m, ''), 'utf8');
+        safeSendUnified('plan:updated', { planId: require('path').basename(planFile, '.md') });
+        return { ok: true, planName: null };
+      } catch (err) { return { ok: false, error: err.message }; }
+    }
     if (!pf.isValidDotName(planName)) {
       return { ok: false, error: 'Invalid name — use dot-syntax: e.g. history.project.plan' };
     }
     try {
-      const fs = require('fs');
       const content = fs.readFileSync(planFile, 'utf8');
       fs.writeFileSync(planFile, pf.setFrontmatterField(content, 'name', planName), 'utf8');
       if (_planningMode.planId === require('path').basename(planFile, '.md')) {
@@ -9386,8 +9795,17 @@ app.whenReady().then(async () => {
     // for classification + translation + personality. Handoffs are dispatched
     // concurrently by comms-graph (bypassing the serial promptQueue).
     // Falls back to serial promptQueue if comms-graph is unavailable.
-    if (routeThroughCommsGraph(prompt, { selectedText, responseLanguage, sessionId: sessionId || currentSessionId })) {
+    // Parked serial state stays serial — its resume classifier owns
+    // answer-vs-fresh, and comms would read a typed answer as a new turn.
+    if (!pausedAutomationState
+        && routeThroughCommsGraph(prompt, { selectedText, responseLanguage, sessionId: sessionId || currentSessionId })) {
       return;
+    }
+
+    // Fresh prompt supersedes in-flight work — same rule as prompt-queue:submit
+    // (comms-disabled fallback still preempts before enqueue).
+    if (!pausedAutomationState && (_automationCancelable() || promptQueue.getVisible().length > 0)) {
+      await _cancelAutomationRun();
     }
 
     // ── Default: serial prompt queue (existing behavior) ───────────────────
@@ -11194,7 +11612,13 @@ app.whenReady().then(async () => {
               // recipe" / "Other" instead of the generic failure banner.
               partialProgress: q.partialProgress || null,
               _isAgentAskUser: q._isAgentAskUser === true,
-              freeText: true,
+              // kind:'infra_failure' + infra detail drive the SystemFailureCard —
+              // same shape as the handoff path's emitAskUser forwarding.
+              kind: q.kind || null,
+              infra: q.infra || null,
+              skill: q.skill || null,
+              uiStepIndex: q.uiStepIndex ?? null,
+              freeText: q.freeText === false ? false : true,
             });
           }
         }
@@ -11665,6 +12089,37 @@ app.whenReady().then(async () => {
     });
   });
 
+  // ─── Issue recording: infrastructure failures captured for engineers ───────
+  // The SystemFailureCard's "Report issue" writes here; the Issues drawer
+  // (slideout menu → Issues) lists them. GitHub filing is deferred — records
+  // carry everything a fileOnGitHub step needs.
+  ipcMain.handle('issues:record', async (_event, payload = {}) => {
+    try {
+      return require('./issueReporter').recordIssue(payload);
+    } catch (err) {
+      console.error('[Issues] record failed:', err.message);
+      return { ok: false, error: err.message };
+    }
+  });
+
+  ipcMain.handle('issues:list', async () => {
+    try {
+      return { ok: true, issues: require('./issueReporter').listIssues() };
+    } catch (err) {
+      console.error('[Issues] list failed:', err.message);
+      return { ok: false, error: err.message, issues: [] };
+    }
+  });
+
+  ipcMain.handle('issues:dismiss', async (_event, { id } = {}) => {
+    try {
+      return require('./issueReporter').dismissIssue(id);
+    } catch (err) {
+      console.error('[Issues] dismiss failed:', err.message);
+      return { ok: false, error: err.message };
+    }
+  });
+
   // ─── Prompt History: save/load from flat file ─────────────────────────────
   const promptHistoryPath = path.join(os.homedir(), '.thinkdrop', 'prompt_history.json');
   
@@ -11839,12 +12294,6 @@ app.whenReady().then(async () => {
   // instruction exec_type format, saves to ~/.thinkdrop/skills/, and registers
   // in user-memory. Only instruction (knowledge/prompt-only) skills are accepted.
   ipcMain.on('skill:install-from-url', async (event, { url, nameOverride, descriptionOverride }) => {
-    const https = require('https');
-    const http = require('http');
-    const fs = require('fs');
-    const path = require('path');
-    const os = require('os');
-
     console.log(`[SkillInstall] Installing from URL: ${url}`);
 
     if (!url || typeof url !== 'string' || !/^https?:\/\//i.test(url)) {
@@ -11853,56 +12302,7 @@ app.whenReady().then(async () => {
     }
 
     try {
-      // Fetch content with redirect following and size limit
-      const MAX_SIZE = 5 * 1024 * 1024; // 5MB
-      const MAX_REDIRECTS = 5;
-      const TIMEOUT_MS = 15000;
-
-      const fetchWithRedirects = (fetchUrl, redirectsLeft) => new Promise((resolve, reject) => {
-        const lib = fetchUrl.startsWith('https') ? https : http;
-        const req = lib.get(fetchUrl, {
-          headers: { 'User-Agent': 'ThinkDrop-SkillImporter/1.0', 'Accept': 'text/markdown,text/plain,*/*' },
-          timeout: TIMEOUT_MS,
-        }, (res) => {
-          // Follow redirects
-          if ((res.statusCode === 301 || res.statusCode === 302 || res.statusCode === 307 || res.statusCode === 308) && res.headers.location && redirectsLeft > 0) {
-            res.resume();
-            const redirectUrl = res.headers.location.startsWith('http') ? res.headers.location : new URL(res.headers.location, fetchUrl).href;
-            resolve(fetchWithRedirects(redirectUrl, redirectsLeft - 1));
-            return;
-          }
-          if (res.statusCode !== 200) {
-            res.resume();
-            reject(new Error(`HTTP ${res.statusCode} fetching ${fetchUrl}`));
-            return;
-          }
-          // Validate content-type is text/markdown/plain
-          const contentType = (res.headers['content-type'] || '').toLowerCase();
-          if (contentType && !contentType.includes('text') && !contentType.includes('markdown') && !contentType.includes('plain') && !contentType.includes('octet-stream') && !contentType.includes('*/*')) {
-            res.resume();
-            reject(new Error(`Unsupported content-type: ${contentType}. Expected text/markdown.`));
-            return;
-          }
-          let body = '';
-          let tooLarge = false;
-          res.on('data', (chunk) => {
-            body += chunk.toString();
-            if (body.length > MAX_SIZE) {
-              tooLarge = true;
-              res.destroy();
-            }
-          });
-          res.on('end', () => {
-            if (tooLarge) reject(new Error('Response exceeded 5MB limit'));
-            else resolve(body);
-          });
-          res.on('error', reject);
-        });
-        req.on('error', reject);
-        req.on('timeout', () => { req.destroy(); reject(new Error('Request timed out')); });
-      });
-
-      const content = await fetchWithRedirects(url, MAX_REDIRECTS);
+      const content = await _fetchTextWithRedirects(url);
       const result = await _normalizeAndInstallInstructionSkill(content, url, nameOverride, descriptionOverride);
       safeSend(promptCaptureWindow, 'skill:install-done', result);
     } catch (err) {
@@ -11941,6 +12341,385 @@ app.whenReady().then(async () => {
     } catch (err) {
       console.error(`[SkillInstall] File import failed:`, err.message);
       safeSend(promptCaptureWindow, 'skill:install-done', { ok: false, error: err.message });
+    }
+  });
+
+  // ─── Skill Store: peek at a local file — is it a SKILL.md-style doc? ──────
+  // Overlay drag-drop routes .md drops through this to decide between the
+  // Add Skill modal (skill doc) and the normal [File:] context chip.
+  ipcMain.handle('skill:peek-file', async (_e, { path: filePath } = {}) => {
+    try {
+      const fs = require('fs');
+      const path = require('path');
+      if (!filePath || !fs.existsSync(filePath) || !fs.statSync(filePath).isFile()) {
+        return { ok: true, isSkillDoc: false };
+      }
+      const head = fs.readFileSync(filePath, 'utf8').slice(0, 4096);
+      const base = path.basename(filePath).toLowerCase();
+      const looksNamed = /^skill\.(md|markdown|txt)$/.test(base);
+      const fmMatch = head.match(/^---\s*\n([\s\S]*?)\n---/);
+      const hasSkillFm = !!fmMatch && /^(name|description)\s*:/m.test(fmMatch[1]);
+      return { ok: true, isSkillDoc: looksNamed || hasSkillFm };
+    } catch (err) {
+      return { ok: false, isSkillDoc: false, error: err.message };
+    }
+  });
+
+  // ─── Skill Store: turn a SKILL.md into a deterministic plan ────────────────
+  // Build-as-plan path: the doc seeds the planning lane, which drafts ## Task
+  // sections + deterministic steps; the user runs the plan through stategraph,
+  // and a successful run gets saved as a named, replayable skill. Direct
+  // install (skill:install-from-*) remains the alternative.
+  ipcMain.handle('skill:plan-build', async (_e, { url, filePath, nameOverride, descriptionOverride } = {}) => {
+    const fs = require('fs');
+    const path = require('path');
+    const os = require('os');
+    const { dialog } = require('electron');
+    try {
+      let content = null;
+      let source = '';
+      if (url && /^https?:\/\//i.test(url)) {
+        content = await _fetchTextWithRedirects(url);
+        source = url;
+      } else {
+        let selectedPath = filePath;
+        if (!selectedPath) {
+          const { canceled, filePaths } = await dialog.showOpenDialog(resultsWindow || undefined, {
+            title: 'Select Skill File',
+            properties: ['openFile'],
+            filters: [{ name: 'Markdown / Text', extensions: ['md', 'txt', 'markdown'] }],
+            buttonLabel: 'Plan Skill',
+          });
+          if (canceled || !filePaths.length) return { ok: false, error: 'No file selected' };
+          selectedPath = filePaths[0];
+        }
+        content = fs.readFileSync(selectedPath, 'utf8');
+        source = selectedPath;
+      }
+      if (!content || !content.trim()) return { ok: false, error: 'Skill doc is empty' };
+
+      // Stage a copy outside ~/.thinkdrop/skills (that dir is scanned by
+      // skill:list — a staged doc must not list as an installed skill). The
+      // staged file rides into the plan's frontmatter refs for provenance.
+      const importsDir = path.join(os.homedir(), '.thinkdrop', 'imports');
+      fs.mkdirSync(importsDir, { recursive: true });
+      let base = '';
+      try { base = url ? path.basename(new URL(url).pathname, path.extname(new URL(url).pathname)) : path.basename(source, path.extname(source)); } catch (_) { base = 'skill'; }
+      base = (nameOverride || base || 'skill')
+        .toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'skill';
+      const stagedPath = path.join(importsDir, `${Date.now()}-${base}.md`);
+      fs.writeFileSync(stagedPath, content, 'utf8');
+
+      // Pin the planning lane, then submit the seed prompt through the normal
+      // comms path so the turn picks up planning: { active: true }.
+      _setPlanningMode({ active: true });
+
+      const clipped = content.length > 16000
+        ? content.slice(0, 16000) + '\n\n[… truncated — the full doc is attached as a file]'
+        : content;
+      const seedPrompt =
+        `I want to adopt this external skill document into ThinkDrop as a deterministic plan. ` +
+        `Read the skill doc below and draft a plan for it — tasks plus deterministic steps the stategraph can execute. ` +
+        `Once it runs successfully I'll save it as a reusable skill.\n` +
+        `Source: ${source}\n` +
+        `[File: ${stagedPath}]\n\n` +
+        `--- SKILL.md ---\n${clipped}\n--- end skill doc ---` +
+        (nameOverride ? `\nPreferred skill name: ${nameOverride}` : '') +
+        (descriptionOverride ? `\nWhat I want from it: ${descriptionOverride}` : '');
+
+      if (!routeThroughCommsGraph(seedPrompt, { sessionId: currentSessionId, source: 'text' })) {
+        promptQueue.enqueue(seedPrompt, { selectedText: '', sessionId: currentSessionId });
+      }
+      if (unifiedWindow && !unifiedWindow.isDestroyed()) { unifiedWindow.showInactive(); unifiedWindow.moveTop(); }
+      return { ok: true, staged: stagedPath };
+    } catch (err) {
+      console.error('[SkillPlanBuild] failed:', err.message);
+      return { ok: false, error: err.message };
+    }
+  });
+
+  // ─── Discover: aggregated skills/MCP search ──────────────────────────────
+  // Source adapters — each isolated; a failing source contributes [] and
+  // never blocks the rest:
+  //   agentskillshub — public static index (48K GitHub skills+MCPs, the same
+  //     search-index.json.gz their official MCP/CLI ships) → cached under
+  //     ~/.thinkdrop/cache, searched locally. Zero backend load per query.
+  //   library        — bundled skill-library.json (openclaw/skills catalog,
+  //     works offline, rows already carry rawUrl).
+  //   agenticskills  — best-effort SSR scrape of agenticskills.io/skills.
+  const _discoverCacheDir = () => {
+    const dir = require('path').join(os.homedir(), '.thinkdrop', 'cache');
+    try { fs.mkdirSync(dir, { recursive: true }); } catch (_) {}
+    return dir;
+  };
+  let _ashIndex = null;        // { generated_at, skills: [] } in-memory
+  let _ashIndexAt = 0;         // when the in-memory copy was populated
+  let _agxCards = null;        // agenticskills scrape cache { at, rows }
+  const ASH_META = 'https://agentskillshub.top/search-index-meta.json';
+  const ASH_INDEX = 'https://agentskillshub.top/search-index.json.gz';
+  const ASH_TTL_MS = 24 * 60 * 60 * 1000;
+  const AGX_TTL_MS = 6 * 60 * 60 * 1000;
+
+  const _fetchBuffer = (url, timeoutMs = 30000) => new Promise((resolve, reject) => {
+    const MAX_BUF = 40 * 1024 * 1024;
+    const doGet = (u, redirects = 0) => {
+      require('https').get(u, { headers: { 'user-agent': 'thinkdrop-discover' } }, (res) => {
+        if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location && redirects < 5) {
+          res.resume();
+          return doGet(new URL(res.headers.location, u).toString(), redirects + 1);
+        }
+        if (res.statusCode !== 200) { res.resume(); return reject(new Error(`HTTP ${res.statusCode} for ${u}`)); }
+        const chunks = [];
+        let size = 0;
+        res.on('data', c => {
+          size += c.length;
+          if (size > MAX_BUF) { res.destroy(); reject(new Error('response too large')); return; }
+          chunks.push(c);
+        });
+        res.on('end', () => resolve(Buffer.concat(chunks)));
+        res.on('error', reject);
+      }).on('error', reject).setTimeout(timeoutMs, function () { this.destroy(new Error('timeout')); });
+    };
+    doGet(url);
+  });
+
+  const _fetchJson = (url, timeoutMs = 15000) =>
+    _fetchBuffer(url, timeoutMs).then(b => { try { return JSON.parse(b.toString('utf8')); } catch { return null; } });
+
+  const _loadAshIndex = async () => {
+    // In-memory first (per session), disk cache second, network only when the
+    // remote generation is newer or the cache aged out.
+    if (_ashIndex && Date.now() - _ashIndexAt < ASH_TTL_MS) return _ashIndex;
+    const cacheDir = _discoverCacheDir();
+    const cacheFile = require('path').join(cacheDir, 'ash-index.json');
+    let meta = null;
+    try { meta = await _fetchJson(ASH_META, 8000); } catch (_) {}
+    let cached = null;
+    try {
+      const st = fs.statSync(cacheFile);
+      if (Date.now() - st.mtimeMs < ASH_TTL_MS) {
+        cached = JSON.parse(fs.readFileSync(cacheFile, 'utf8'));
+      }
+    } catch (_) {}
+    if (cached && (!meta?.generated_at || cached.generated_at === meta.generated_at)) {
+      _ashIndex = cached; _ashIndexAt = Date.now();
+      return _ashIndex;
+    }
+    try {
+      const buf = await _fetchBuffer(ASH_INDEX, 45000);
+      const parsed = JSON.parse(require('zlib').gunzipSync(buf).toString('utf8'));
+      if (!Array.isArray(parsed?.skills)) throw new Error('bad index shape');
+      fs.writeFileSync(cacheFile, JSON.stringify(parsed));
+      _ashIndex = parsed; _ashIndexAt = Date.now();
+      return _ashIndex;
+    } catch (err) {
+      console.warn('[Discover] ASH index fetch failed:', err.message);
+      if (cached) { _ashIndex = cached; _ashIndexAt = Date.now(); return _ashIndex; }
+      return null;
+    }
+  };
+
+  // Compact ASH row → normalized discover row. c:'mcp-server' → mcp, every
+  // other kind renders as a skill doc candidate.
+  const _ashRow = (r) => {
+    const repoFull = r.f;
+    const owner = (r.a || String(repoFull || '').split('/')[0] || 'github');
+    return {
+      id: `ash:${repoFull}`,
+      name: r.n || repoFull,
+      description: String(r.d || '').slice(0, 160),
+      kind: r.c === 'mcp-server' ? 'mcp' : 'skill',
+      source: 'agentskillshub',
+      repoFull,
+      pageUrl: `https://github.com/${repoFull}`,
+      avatarUrl: `https://github.com/${owner}.png?size=64`,
+      stars: r.s || 0,
+      grade: r.g || null,
+      _score: (r.q || 0) / 20 + Math.log10((r.s || 0) + 1),
+    };
+  };
+
+  const _tokenMatch = (tokens, haystack) =>
+    tokens.every(t => haystack.includes(t));
+
+  const _searchAsh = (tokens, limit) => {
+    if (!_ashIndex?.skills) return [];
+    const hits = [];
+    for (const r of _ashIndex.skills) {
+      if (!r || !r.f) continue;
+      const hay = `${r.n || ''} ${r.d || ''} ${r.a || ''} ${(r.t || []).join(' ')}`.toLowerCase();
+      if (tokens.length && !_tokenMatch(tokens, hay)) continue;
+      hits.push(_ashRow(r));
+      if (hits.length >= 800) break; // safety cap — rank after collect
+    }
+    hits.sort((a, b) => b._score - a._score);
+    return hits.slice(0, limit);
+  };
+
+  const _searchLibrary = (tokens, limit) => {
+    try {
+      const lib = require('../renderer/data/skill-library.json');
+      const hits = [];
+      for (const s of lib.skills || []) {
+        const hay = `${s.name} ${s.displayName} ${s.description} ${s.category}`.toLowerCase();
+        if (tokens.length && !_tokenMatch(tokens, hay)) continue;
+        hits.push({
+          id: `lib:${s.name}`,
+          name: s.displayName || s.name,
+          description: String(s.description || '').slice(0, 160),
+          kind: 'skill',
+          source: 'library',
+          pageUrl: s.ocUrl,
+          rawUrl: s.rawUrl,
+          avatarUrl: 'https://github.com/openclaw.png?size=64',
+          _score: (s.category ? 1 : 0) + Math.min(hits.length ? 0 : 2, 2),
+        });
+        if (hits.length >= 400) break;
+      }
+      // Library has no stars/quality — stable order, query-ranked by name hit.
+      hits.sort((a, b) =>
+        (b.name.toLowerCase().includes(tokens[0] || '') ? 1 : 0) -
+        (a.name.toLowerCase().includes(tokens[0] || '') ? 1 : 0));
+      return hits.slice(0, limit);
+    } catch (err) {
+      console.warn('[Discover] library load failed:', err.message);
+      return [];
+    }
+  };
+
+  const _loadAgenticCards = async () => {
+    if (_agxCards && Date.now() - _agxCards.at < AGX_TTL_MS) return _agxCards.rows;
+    const rows = [];
+    try {
+      const raw = await _fetchTextWithRedirects('https://agenticskills.io/skills');
+      // Two render variants ship: SSR card anchors (href="/skills/x") and an
+      // escaped RSC list (<a href=\"https://agenticskills.io/skills/x\">Name</a>
+      // — Desc). Unescape \" and \/ so both parse the same way.
+      const html = raw.replace(/\\\//g, '/').replace(/\\"/g, '"');
+      const _dec = (s) => String(s || '')
+        .replace(/&#x27;|&#39;|&apos;/gi, "'")
+        .replace(/&quot;/gi, '"')
+        .replace(/&amp;/gi, '&')
+        .replace(/&lt;/gi, '<').replace(/&gt;/gi, '>')
+        .replace(/&#x2F;/gi, '/')
+        .replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+      const seen = new Set();
+      const push = (slug, name, description) => {
+        if (seen.has(slug) || rows.length >= 600) return;
+        seen.add(slug);
+        rows.push({
+          id: `agx:${slug}`, slug,
+          name: _dec(name || slug.replace(/-/g, ' ').replace(/\b\w/g, c => c.toUpperCase())).slice(0, 80),
+          description: _dec(description).slice(0, 160),
+          kind: 'skill',
+          source: 'agenticskills',
+          pageUrl: `https://agenticskills.io/skills/${slug}`,
+          avatarUrl: 'https://www.google.com/s2/favicons?domain=agenticskills.io&sz=64',
+          _score: 0.5,
+        });
+      };
+      // Variant 1 — RSC list item: <a href="…/skills/slug">Name</a> — Description
+      const reList = /href="(?:https:\/\/agenticskills\.io)?\/skills\/([a-z0-9-]+)"[^>]*>([^<]{1,80})<\/a>\s*(?:—|–|-)\s*([^<]{0,200})/g;
+      let m;
+      while ((m = reList.exec(html))) push(m[1], m[2], m[3]);
+      // Variant 2 — SSR card anchor + following "Featured? NAME by AUTHOR DESC"
+      const reCard = /href="\/skills\/([a-z0-9-]+)"([\s\S]{0,1400}?)(?=href="\/skills\/|$)/g;
+      while ((m = reCard.exec(html))) {
+        const text = _dec(m[2]);
+        const cm = text.match(/^(?:Featured\s+)?(.+?)\s+by\s+([^ ]+(?: [^ ]+){0,3})\s+(.*?)(?:\s+(?:Claude|Cursor|Codex|Gemini|MCP|Agent)\b.*)?$/i);
+        push(m[1], cm ? cm[1] : null, cm ? cm[3] : '');
+      }
+    } catch (err) {
+      console.warn('[Discover] agenticskills scrape failed:', err.message);
+    }
+    _agxCards = { at: Date.now(), rows };
+    return rows;
+  };
+
+  const _searchAgenticSkills = async (tokens, limit) => {
+    const rows = await _loadAgenticCards();
+    if (!tokens.length) return rows.slice(0, limit);
+    return rows.filter(r => _tokenMatch(tokens, `${r.slug} ${r.name} ${r.description}`.toLowerCase())).slice(0, limit);
+  };
+
+  ipcMain.handle('skill:discover-search', async (_e, { query = '' } = {}) => {
+    const tokens = String(query).toLowerCase().split(/\s+/).filter(Boolean).slice(0, 6);
+    const limit = tokens.length ? 40 : 24;
+    const sources = { ash: false, library: false, agenticskills: false };
+    const [agx] = await Promise.all([
+      _searchAgenticSkills(tokens, 12).catch(() => []),
+      _loadAshIndex().catch(() => null),
+    ]);
+    const ash = _searchAsh(tokens, limit);
+    const lib = _searchLibrary(tokens, 12);
+    sources.ash = !!_ashIndex; sources.library = true; sources.agenticskills = agx.length > 0;
+    // Merge: ASH first (live + largest), then library, then agenticskills —
+    // dedupe by repo/name so library entries don't double-list ASH rows.
+    const seen = new Set(ash.map(r => (r.repoFull || r.name).toLowerCase()));
+    const rows = [...ash];
+    for (const r of [...lib, ...agx]) {
+      const key = (r.repoFull || r.name).toLowerCase();
+      if (seen.has(key)) continue;
+      seen.add(key);
+      rows.push(r);
+      if (rows.length >= limit + 20) break;
+    }
+    return { ok: true, rows, sources, generatedAt: _ashIndex?.generated_at || null };
+  });
+
+  // Resolve a discover row to a fetchable SKILL.md/document URL:
+  //   library rows carry rawUrl; ASH rows resolve via the GitHub trees API
+  //   (cached); agenticskills rows scrape their detail page for the raw link.
+  const _resolveDocCacheFile = () => require('path').join(_discoverCacheDir(), 'doc-resolve.json');
+  const _docResolveCache = (() => {
+    try { return JSON.parse(fs.readFileSync(require('path').join(os.homedir(), '.thinkdrop', 'cache', 'doc-resolve.json'), 'utf8')); }
+    catch (_) { return {}; }
+  })();
+  const _saveDocResolveCache = () => {
+    try { fs.writeFileSync(_resolveDocCacheFile(), JSON.stringify(_docResolveCache)); } catch (_) {}
+  };
+  const _resolveSkillDocUrl = async (row) => {
+    if (!row) return null;
+    if (row.rawUrl) return row.rawUrl;
+    const key = row.repoFull || row.pageUrl;
+    if (_docResolveCache[key]) return _docResolveCache[key];
+    let url = null;
+    if (row.source === 'agentskillshub' && row.repoFull) {
+      // One unauthenticated GitHub call (60/hr) → find SKILL.md / README.md.
+      try {
+        const tree = await _fetchJson(`https://api.github.com/repos/${row.repoFull}/git/trees/HEAD?recursive=1`, 15000);
+        const paths = (tree?.tree || []).map(t => t.path).filter(p => typeof p === 'string');
+        const skillMd =
+          paths.find(p => /^SKILL\.md$/i.test(p)) ||
+          paths.find(p => /\/SKILL\.md$/i.test(p)) ||
+          paths.find(p => /skill\.md$/i.test(p));
+        const readme = paths.find(p => /^README(\.md)?$/i.test(p));
+        const pick = skillMd || readme;
+        if (pick) url = `https://raw.githubusercontent.com/${row.repoFull}/HEAD/${pick}`;
+      } catch (err) {
+        console.warn('[Discover] tree resolve failed:', err.message);
+      }
+      if (!url) url = `https://raw.githubusercontent.com/${row.repoFull}/HEAD/README.md`;
+    } else if (row.source === 'agenticskills' && row.pageUrl) {
+      try {
+        const html = await _fetchTextWithRedirects(row.pageUrl);
+        const m = html.match(/https:\/\/raw\.githubusercontent\.com\/[^"'\\\s<>]+?SKILL\.md/i);
+        if (m) url = m[0];
+      } catch (_) {}
+      if (!url) url = row.pageUrl; // fall back to the page — planning can read it
+    } else if (row.pageUrl) {
+      url = row.pageUrl;
+    }
+    if (url) { _docResolveCache[key] = url; _saveDocResolveCache(); }
+    return url;
+  };
+
+  ipcMain.handle('skill:resolve-doc', async (_e, { row } = {}) => {
+    try {
+      const url = await _resolveSkillDocUrl(row);
+      return url ? { ok: true, url } : { ok: false, error: 'Could not resolve a document URL' };
+    } catch (err) {
+      return { ok: false, error: err.message };
     }
   });
 

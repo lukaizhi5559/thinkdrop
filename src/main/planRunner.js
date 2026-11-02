@@ -461,6 +461,8 @@ function bindTaskId(planId, taskNum, taskId) {
  *   review gate before dispatch, not just Approval:required ones
  * @param {boolean} [opts.autoApprove] - run straight through: pre-approve all
  *   tasks so no review gate ever holds ("Run All Tasks")
+ * @param {boolean} [opts.fresh] - reset every task to pending first (confirmed
+ *   re-run of a completed plan); auto-applied when all tasks are done anyway
  * @returns {{ok:boolean, planId:string, blockers?:Array, error?:string}}
  */
 async function startPlan(planPath, opts = {}) {
@@ -487,6 +489,32 @@ async function startPlan(planPath, opts = {}) {
     console.warn(`[PlanRunner] startPlan ${planId} — load failed: ${err.message}`);
     return { ok: false, planId, error: `Cannot read plan: ${err.message}` };
   }
+
+  // Fresh re-run — explicit (UI's confirmed "Re-run?") or implied: a done plan
+  // cannot "resume" (every task would pre-seed as done and _schedule would
+  // terminalize instantly — the run card flashed but nothing executed).
+  // Reset every task to pending and the plan status to ready so the normal
+  // path dispatches the whole plan again. Partial/failed plans keep resume
+  // semantics (only non-done tasks dispatch).
+  const _allDone = plan.tasks.length > 0 && plan.tasks.every(t => t.status === planFormat.TASK_STATUS.DONE);
+  if (opts.fresh === true || _allDone) {
+    try {
+      let content = plan.content;
+      for (const t of plan.tasks) {
+        content = planFormat.updateTaskStatus(content, t.num, planFormat.TASK_STATUS.PENDING, null);
+        content = planFormat.updateTaskStepsStatus(content, t.num, null);
+        t.status = planFormat.TASK_STATUS.PENDING;
+        t.result = null;
+      }
+      content = planFormat.updateFrontmatterStatus(content, 'ready');
+      fs.writeFileSync(planPath, content, 'utf8');
+      plan.content = content;
+      console.log(`[PlanRunner] Fresh re-run — reset ${plan.tasks.length} task(s): ${planId}`);
+    } catch (err) {
+      console.warn(`[PlanRunner] Fresh-run reset failed for ${planId}: ${err.message}`);
+    }
+  }
+
   if (!planFormat.isTaskPlan(plan.content) || !plan.tasks.length) {
     console.warn(`[PlanRunner] startPlan ${planId} — not a task plan or zero tasks`);
     return { ok: false, planId, error: 'Plan has no ## Task sections — use planExecutor for legacy plans' };

@@ -401,6 +401,18 @@ function _makeProgressCallback(taskId, agentId) {
         totalSteps: event.totalSteps || 0,
         currentStep: event.description || event.title || event.skill || event.type,
       });
+    } else if (event.type === 'step_recovering') {
+      // A failed step is being patched/substituted/replanned — the card must
+      // read "still working", not a terminal failure.
+      _notifyProgress(taskId, agentId, {
+        step: event.stepIndex || 0,
+        totalSteps: event.totalSteps || 0,
+        currentStep: event.needsUser
+          ? 'Needs your input — question below'
+          : event.via
+            ? `Hit a snag — trying another way (${event.via})`
+            : 'Hit a snag — trying another way',
+      });
     } else if (event.type === 'plan:generated' || event.type === 'plan:found_existing') {
       _notifyProgress(taskId, agentId, {
         step: 0,

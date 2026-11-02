@@ -50,9 +50,10 @@ const LOCAL = new Set(['shell', 'none', 'general_knowledge', 'synthesize']);
 const LOCAL_LANE_EQUIVALENTS = { filesystem: 'shell' };
 
 function _taskStepsState(task) {
-  // 'failed' → issue; pending/generating/no steps → pending; else pass.
+  // 'failed' (with or without a '— reason' suffix) → issue; pending/
+  // generating/no steps → pending; else pass.
   const status = String(task.stepsStatus || '').toLowerCase();
-  if (status === 'failed') return 'failed';
+  if (status.startsWith('failed')) return 'failed';
   if (status === 'pending' || status === 'generating') return 'pending';
   return (Array.isArray(task.steps) && task.steps.length > 0) ? 'pass' : 'pending';
 }
@@ -76,11 +77,16 @@ async function computePlanCheck(tasks, opts = {}) {
 
     // Steps row — pending while step-gen is still running, issue when it failed.
     const stepsState = _taskStepsState(task);
+    // 'failed — <reason>' statuses carry the cause; surface it so the user
+    // sees "path does not exist: X", not just that generation failed.
+    const _failWhy = stepsState === 'failed'
+      ? String(task.stepsStatus || '').replace(/^failed/i, '').replace(/^\s*[—–-]\s*/, '')
+      : '';
     items.push({
       id: `t${n}-steps`,
       taskNum: n,
       label: stepsState === 'failed'
-        ? `Task ${n} — step generation failed (will replan at run)`
+        ? `Task ${n} — step generation failed${_failWhy ? ` — ${_failWhy.slice(0, 90)}` : ' (will replan at run)'}`
         : (stepsState === 'pass' ? `Task ${n} — steps ready` : `Task ${n} — generating steps…`),
       detail: title,
       status: stepsState === 'pass' ? 'pass' : (stepsState === 'failed' ? 'warn' : 'pending'),

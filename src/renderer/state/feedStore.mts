@@ -374,6 +374,7 @@ export function mapHistoryMessage(m: any): FeedEntry | null {
     const sources = Array.isArray(m?.metadata?.sources) && m.metadata.sources.length ? m.metadata.sources : undefined;
     const engine = typeof m?.metadata?.engine === 'string' && m.metadata.engine ? m.metadata.engine : undefined;
     return { id, ts, kind: 'assistant', text, taskId: m?.metadata?.taskId || undefined,
+      ...(m?.metadata?.needsInfo ? { needsInfo: m.metadata.needsInfo } : {}),
       ...(files ? { files } : {}), ...(drafts ? { drafts } : {}), ...(steps ? { steps } : {}),
       ...(items ? { items } : {}), ...(sources ? { sources } : {}), ...(engine ? { engine } : {}) } as FeedEntry;
   }

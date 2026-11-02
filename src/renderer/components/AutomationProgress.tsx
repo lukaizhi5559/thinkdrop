@@ -9,7 +9,7 @@
  */
 
 import { useEffect, useState, useRef, useCallback } from 'react';
-import { QuestionCard, QuestionBatch, PartialFailureCard, PartialFailureSummary } from './QuestionCard';
+import { QuestionCard, QuestionBatch, PartialFailureCard, PartialFailureSummary, SystemFailureCard, InfraFailureDetail, IssueReportState } from './QuestionCard';
 import { Favicon } from './DefaultFaviconIcon';
 import { ipcOn, ipcOff } from '../utils/ipcBus';
 import { perfRender } from '../utils/perfCounters';
@@ -18,7 +18,7 @@ const ipcRenderer = (window as any).electron?.ipcRenderer;
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
-type StepStatus = 'pending' | 'running' | 'done' | 'failed' | 'skipped' | 'replanning' | 'deferred' | 'needs_input';
+type StepStatus = 'pending' | 'running' | 'done' | 'failed' | 'skipped' | 'replanning' | 'deferred' | 'needs_input' | 'recovering';
 
 interface Step {
   index: number;
@@ -41,6 +41,10 @@ interface Step {
   openIn?: string[]; // processes holding the target file open (e.g. "TextEdit")
   diff?: string; // unified diff of the draft vs the original
   narration?: string[]; // plain-English lines the agent wrote while working (probes, decisions)
+  recovered?: boolean; // step failed earlier, then a recovery path completed it
+  recoveryNote?: string; // plain-English note describing the active recovery approach
+  needsUser?: boolean; // recovery paused on a user question
+  skipReason?: string; // raw backend skip reason (shown inside the expand)
 }
 
 export interface DraftRef {
@@ -186,6 +190,11 @@ interface AskUserPrompt {
   // True for all agent-aware failures (browser.agent, cli.agent, playwright.agent).
   // When true, render PartialFailureCard even if partialProgress is null.
   _isAgentAskUser?: boolean;
+  // 'infra_failure' — ThinkDrop-internal service failure (dead/hung MCP
+  // service, open circuit breaker). Renders SystemFailureCard: no text input.
+  kind?: string | null;
+  infra?: InfraFailureDetail | null;
+  skill?: string | null;
 }
 
 interface ParallelLoginService {
@@ -392,6 +401,14 @@ export function StepIcon({ status, unconfirmed }: { status: StepStatus; unconfir
     return (
       <div className="flex-shrink-0 w-4 h-4 rounded-full border-2 animate-spin"
         style={{ borderColor: '#f59e0b', borderTopColor: 'transparent' }} />
+    );
+  }
+  if (status === 'recovering') {
+    // Orange spinner — step failed but a fix/substitute is actively running;
+    // deliberately "in-progress" colored, never terminal red.
+    return (
+      <div className="flex-shrink-0 w-4 h-4 rounded-full border-2 animate-spin"
+        style={{ borderColor: '#fb923c', borderTopColor: 'transparent' }} />
     );
   }
   // pending
@@ -954,6 +971,7 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
   const [retryMessage, setRetryMessage] = useState<string>('');
   // 15-second auto-retry countdown state for agent failures with a 'try_again' option
   const [autoRetryCountdown, setAutoRetryCountdown] = useState<number | null>(null);
+  const [infraReportState, setInfraReportState] = useState<IssueReportState>(null);
   const autoRetryTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const preflightDoneTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const askUserPromptRef = useRef<AskUserPrompt | null>(null);
@@ -1960,7 +1978,10 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
             s.index === stepIdx
               ? { ...s, 
                   // CRITICAL FIX: Don't overwrite if already in terminal state
-                  status: (s.status === 'done' || s.status === 'failed' || s.status === 'skipped')
+                  // ('recovering' also kept — a substituted cli.agent re-run
+                  // emits step_start on the same index and must stay amber,
+                  // not flip back to blue 'running')
+                  status: (s.status === 'done' || s.status === 'failed' || s.status === 'skipped' || s.status === 'recovering')
                     ? s.status  // Keep existing terminal status
                     : 'running',
                   description: data.description || s.description, 
@@ -2010,6 +2031,35 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
           break;
         }
 
+        case 'step_recovering':
+        case 'plan:step_recovering': {
+          // A failed step is being patched/substituted/replanned — flip it to
+          // an amber "working" state (never leave it pinned red while the
+          // backend is actively fixing it). needsUser → needs_input; replan
+          // actions reuse the existing 'replanning' amber.
+          const _recIdx = (data.stepIndex ?? 0) + stepOffsetRef.current;
+          const _recStatus: StepStatus = data.needsUser
+            ? 'needs_input'
+            : String(data.action || '').startsWith('replan')
+              ? 'replanning'
+              : 'recovering';
+          setSteps(prev => prev.map(s =>
+            s.index === _recIdx
+              ? {
+                  ...s,
+                  status: _recStatus,
+                  recoveryNote: data.note || '',
+                  needsUser: !!data.needsUser,
+                  replanMessage: _recStatus === 'replanning' ? (data.note || 'Replanning step...') : s.replanMessage,
+                  // Remember the original failure so it stays readable in the expand
+                  error: s.error || data.error,
+                }
+              : s
+          ));
+          setHeartbeatTick(t => t + 1);
+          break;
+        }
+
         case 'thinking': {
           // Non-step thinking (from gatherPlanContext) — update the status message
           // without resetting state. Only applies during planning/preflight phases
@@ -2047,9 +2097,12 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
               s.index === stepIdx
                 ? { ...s, 
                     // CRITICAL FIX: Don't overwrite if already in terminal state
+                    // ('recovering' intentionally NOT kept — it resolves to
+                    // done and earns the "↻ recovered" chip)
                     status: (s.status === 'done' || s.status === 'failed' || s.status === 'skipped')
                       ? s.status  // Keep existing terminal status
                       : 'done' as const,
+                    recovered: s.status === 'recovering' ? true : s.recovered,
                     unconfirmed: (s.status === 'done' || s.status === 'failed' || s.status === 'skipped')
                       ? s.unconfirmed
                       : isUnconfirmedStep(data.description || s.description, data.stdout),
@@ -2115,11 +2168,16 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
 
         case 'step_skipped':
           agentStepStartTimes.current.delete(data.stepIndex + stepOffsetRef.current);
-          setSteps(prev => prev.map(s =>
-            s.index === data.stepIndex + stepOffsetRef.current
-              ? { ...s, status: 'skipped', stdout: data.reason ? `[Skipped: ${data.reason}]` : '[Skipped]' }
-              : s
-          ));
+          setSteps(prev => prev.map(s => {
+            if (s.index !== data.stepIndex + stepOffsetRef.current) return s;
+            // De-jargonize for the collapsed row — the raw reason stays in
+            // skipReason for the expandable detail.
+            const _raw = String(data.reason || '');
+            const _friendly = /superseded|replanned/i.test(_raw)
+              ? 'Replaced by a new approach'
+              : _raw;
+            return { ...s, status: 'skipped', stdout: _friendly ? `[Skipped: ${_friendly}]` : '[Skipped]', skipReason: _raw || s.skipReason };
+          }));
           break;
 
         case 'step_failed': {
@@ -2138,6 +2196,7 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
                     narration: Array.isArray(data.narration) ? data.narration : s.narration,
                     userAllowlistHint: data.userAllowlistHint || false,
                     commandName: data.commandName || null,
+                    recovered: false, recoveryNote: undefined, needsUser: false,
                     runGroup: data.runGroup || s.runGroup }
                 : s
             );
@@ -2614,7 +2673,7 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
           // When no stepIndex is provided (global pause), pause running steps as needs_input — never 'failed'.
           const askIdx = data.stepIndex != null ? data.stepIndex + stepOffsetRef.current : null;
           setAskUserCorrectionMode(false);
-          setAskUserPrompt({ question: data.question, options: data.options || [], agentId: data.agentId || null, freeText: data.freeText || (data.options || []).length === 0, stepIndex: askIdx, currentUrl: data.currentUrl || null, keepSession: data.keepSession === true, originalTask: data.originalTask || null, partialProgress: data.partialProgress || null, _isAgentAskUser: data._isAgentAskUser === true });
+          setAskUserPrompt({ question: data.question, options: data.options || [], agentId: data.agentId || null, freeText: data.freeText || (data.options || []).length === 0, stepIndex: askIdx, currentUrl: data.currentUrl || null, keepSession: data.keepSession === true, originalTask: data.originalTask || null, partialProgress: data.partialProgress || null, _isAgentAskUser: data._isAgentAskUser === true, kind: data.kind || null, infra: data.infra || null, skill: data.skill || null });
           setSteps(prev => prev.map(s => {
             if (askIdx != null) {
               return s.index === askIdx && s.status !== 'done' && s.status !== 'failed' && s.status !== 'skipped'
@@ -2952,6 +3011,20 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
           break;
         }
 
+        case 'plan_replanning': {
+          // Loop-back escalation — comms-graph just re-entered the planning
+          // lane for this task (needs_plan / plan_update). Name the reason so
+          // the amber pulse says WHY, not just that it's replanning. Emitted
+          // from main's /plan.replanning endpoint alongside the planning-mode
+          // pin — the card itself may already be 'replanning' via pipeline:done.
+          const _rp = phaseRef.current;
+          if (_rp !== 'done' && _rp !== 'failed') {
+            setPhase('replanning');
+            setPlanMessage(data.reason ? `Replanning — ${data.reason}` : 'Replanning…');
+          }
+          break;
+        }
+
         case 'pipeline:done': {
           // The pipeline has exited (stateGraph.execute returned). Clear the
           // planning/executing spinner. This is critical for tasks that skip
@@ -3066,6 +3139,9 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
                 next.set(idx, {
                   ...(s ?? { index: idx, skill: r.skill, description: r.description || `Step ${i + 1}`, status: 'pending' as StepStatus }),
                   status: r.skipped ? 'skipped' : r.ok ? 'done' : 'failed',
+                  // A step that was mid-recovery when the run ended still earned
+                  // the "↻ recovered" chip — its fix path completed it.
+                  recovered: s?.recovered || (r.ok && s?.status === 'recovering') || undefined,
                   unconfirmed: r.ok && !r.skipped
                     ? isUnconfirmedStep(r.description || s?.description, r.stdout || s?.stdout)
                     : false,
@@ -3085,9 +3161,13 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
                 // Mark deferred steps with their own status
                 if (deferredIndices.includes(idx) && (s.status === 'pending' || s.status === 'running')) {
                   next.set(idx, { ...s, status: 'deferred' as StepStatus });
-                } else if (s.status === 'failed' && posInFinal < 0) {
-                  // Stale failed step from an abandoned replan cycle — don't leave it red.
+                } else if ((s.status === 'failed' || s.status === 'recovering' || s.status === 'replanning') && posInFinal < 0) {
+                  // Stale failed/recovering step from an abandoned replan cycle — don't leave it red/amber.
                   next.set(idx, { ...s, status: 'skipped' as StepStatus });
+                } else if ((s.status === 'recovering' || s.status === 'replanning') && posInFinal >= 0) {
+                  // In-window step still mid-recovery at terminal — no result
+                  // covered it, so the honest state is failed, not a frozen spinner.
+                  next.set(idx, { ...s, status: 'failed' as StepStatus });
                 }
               });
               return Array.from(next.values()).sort((a, b) => a.index - b.index);
@@ -3179,7 +3259,7 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
               return prev.map(s => s.index === _psIdx
                 ? { ...s, 
                     // CRITICAL FIX: Don't overwrite if already in terminal state
-                    status: (s.status === 'done' || s.status === 'failed' || s.status === 'skipped')
+                    status: (s.status === 'done' || s.status === 'failed' || s.status === 'skipped' || s.status === 'recovering')
                       ? s.status  // Keep existing terminal status
                       : 'running',
                     skill: data.skill || s.skill, 
@@ -3196,7 +3276,7 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
             return base.map(s => s.index === _psIdx
               ? { ...s, 
                   // CRITICAL FIX: Don't overwrite if already in terminal state
-                  status: (s.status === 'done' || s.status === 'failed' || s.status === 'skipped')
+                  status: (s.status === 'done' || s.status === 'failed' || s.status === 'skipped' || s.status === 'recovering')
                     ? s.status  // Keep existing terminal status
                     : 'running',
                   skill: data.skill || s.skill, 
@@ -3365,6 +3445,30 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
   const handleOptionClick = (option: string | { label?: string; value?: string }) => {
     const _label = typeof option === 'string' ? option : (option?.label || String(option));
     const _value = typeof option === 'string' ? option : (option?.value || _label);
+    // "Report issue" (infra-failure card) — record the incident locally for an
+    // engineer; keep the card open AND the auto-retry countdown running so the
+    // task still recovers on its own. Handled before the timer cancel.
+    if (_value === 'report_issue') {
+      const currentPrompt0 = askUserPromptRef.current;
+      setInfraReportState('sending');
+      const infra = currentPrompt0?.infra || null;
+      ipcRenderer?.invoke?.('issues:record', {
+        title: `${infra?.service || 'internal'} ${infra?.signature || 'failure'} — ${(currentPrompt0?.originalTask || '').slice(0, 80) || 'automation run'}`,
+        summary: currentPrompt0?.question || '',
+        detail: {
+          taskId: taskId || null,
+          prompt: currentPrompt0?.originalTask || null,
+          stepIndex: currentPrompt0?.stepIndex ?? null,
+          skill: currentPrompt0?.skill || null,
+          agentId: currentPrompt0?.agentId || null,
+          kind: currentPrompt0?.kind || 'infra_failure',
+          infra,
+        },
+      }).then((res: any) => {
+        setInfraReportState(res?.ok && res?.issueId ? { issueId: res.issueId } : 'failed');
+      }).catch(() => setInfraReportState('failed'));
+      return;
+    }
     // Cancel any active auto-retry countdown before handling the user's choice.
     if (autoRetryTimerRef.current) {
       clearInterval(autoRetryTimerRef.current);
@@ -3451,7 +3555,8 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
   const autoRetryKeyRef = useRef<string | null>(null);
   useEffect(() => {
     askUserPromptRef.current = askUserPrompt;
-    if (!askUserPrompt || !askUserPrompt._isAgentAskUser) {
+    const _isInfraFailure = askUserPrompt?.kind === 'infra_failure';
+    if (!askUserPrompt || (!askUserPrompt._isAgentAskUser && !_isInfraFailure)) {
       if (autoRetryTimerRef.current) { clearInterval(autoRetryTimerRef.current); autoRetryTimerRef.current = null; }
       setAutoRetryCountdown(null);
       // NOTE: do NOT reset autoRetryAttemptsRef/autoRetryKeyRef here — the prompt
@@ -3474,13 +3579,20 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
     if (autoRetryKeyRef.current !== _qKey) {
       autoRetryKeyRef.current = _qKey;
       autoRetryAttemptsRef.current = 0;
+      setInfraReportState(null);
     }
     if (autoRetryAttemptsRef.current >= 2) {
       setAutoRetryCountdown(null);
       return;
     }
     autoRetryAttemptsRef.current += 1;
-    setAutoRetryCountdown(15);
+    // Infra failures seed the countdown from the breaker cooldown (waitMs,
+    // parsed from "(Ns cooldown)") — retrying before it closes is guaranteed
+    // to fail fast again. Fallback 30s; clamp 5–60s.
+    const _seed = _isInfraFailure
+      ? Math.min(60, Math.max(5, Math.ceil((askUserPrompt.infra?.waitMs ?? 0) / 1000) || 30))
+      : 15;
+    setAutoRetryCountdown(_seed);
     autoRetryTimerRef.current = setInterval(() => {
       setAutoRetryCountdown(prev => {
         if (prev === null || prev <= 1) {
@@ -3565,6 +3677,9 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
     s.status === 'done' || s.status === 'skipped' ||
     (s.status !== 'failed' && s.status !== 'deferred' && agentCompletes.get(s.index)?.ok === true)
   ).length;
+  const recoveredCount = steps.filter(s => s.recovered).length;
+  const skippedCount = steps.filter(s => s.status === 'skipped').length;
+  const anyRecovering = steps.some(s => s.status === 'recovering' || s.status === 'replanning');
   const shownTotal = totalCount || steps.length;
 
   if (suppressIfScheduled) return null;
@@ -3710,7 +3825,7 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
       )}
       {/* ── Phase header ─────────────────────────────────────────────────── */}
       {!questionBatch && (
-      <div className="flex items-center gap-2">
+      <div className="flex items-center gap-2" style={{ flexWrap: 'wrap', rowGap: 6 }}>
         {phase === 'gathering' && (
           <>
             <div className="w-3.5 h-3.5 rounded-full border-2 animate-spin flex-shrink-0"
@@ -3751,23 +3866,42 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
                   </svg>
                 </div>
               )}
-              <span className="text-sm font-medium" style={{ color: allDone ? '#34d399' : '#e5e7eb' }}>
+              <span className="text-sm font-medium whitespace-nowrap flex-shrink-0" style={{ color: allDone ? '#34d399' : '#e5e7eb' }}>
                 {doneCount} / {shownTotal} tasks done
               </span>
+              {/* Honest accounting — recoveries and skips are visible, not hidden behind the count */}
+              {anyRecovering && (
+                <span className="text-xs px-1.5 py-0.5 rounded-full font-medium whitespace-nowrap flex-shrink-0"
+                  style={{ backgroundColor: 'rgba(251,146,60,0.12)', color: '#fb923c', border: '1px solid rgba(251,146,60,0.3)' }}>
+                  working — fixing a snag
+                </span>
+              )}
+              {recoveredCount > 0 && (
+                <span className="text-xs px-1.5 py-0.5 rounded-full font-medium whitespace-nowrap flex-shrink-0"
+                  style={{ backgroundColor: 'rgba(251,146,60,0.08)', color: '#fdba74', border: '1px solid rgba(251,146,60,0.2)' }}>
+                  {recoveredCount} recovered
+                </span>
+              )}
+              {skippedCount > 0 && (
+                <span className="text-xs px-1.5 py-0.5 rounded-full font-medium whitespace-nowrap flex-shrink-0"
+                  style={{ backgroundColor: 'rgba(107,114,128,0.12)', color: '#9ca3af', border: '1px solid rgba(107,114,128,0.2)' }}>
+                  {skippedCount} skipped
+                </span>
+              )}
               {!allDone && etaLabel && (
-                <span className="text-xs px-1.5 py-0.5 rounded-full font-medium"
+                <span className="text-xs px-1.5 py-0.5 rounded-full font-medium whitespace-nowrap flex-shrink-0"
                   style={{ backgroundColor: 'rgba(107,114,128,0.12)', color: '#9ca3af', border: '1px solid rgba(107,114,128,0.2)' }}>
                   {etaLabel}
                 </span>
               )}
               {allDone && elapsedLabel && (
-                <span className="text-xs px-1.5 py-0.5 rounded-full font-medium"
+                <span className="text-xs px-1.5 py-0.5 rounded-full font-medium whitespace-nowrap flex-shrink-0"
                   style={{ backgroundColor: 'rgba(34,197,94,0.08)', color: '#86efac', border: '1px solid rgba(34,197,94,0.15)' }}>
                   {elapsedLabel}
                 </span>
               )}
               {intentType && (
-                <span className="text-xs px-1.5 py-0.5 rounded-full font-medium ml-1"
+                <span className="text-xs px-1.5 py-0.5 rounded-full font-medium ml-1 whitespace-nowrap flex-shrink-0"
                   style={{
                     backgroundColor: intentType === 'command_automate'
                       ? 'rgba(59,130,246,0.15)'
@@ -3995,9 +4129,10 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
       )}
 
       {/* ── Action required banner (ask_user) ───────────────────────────── */}
-      {/* Hidden for agent failures (_isAgentAskUser) — the PartialFailureCard
-          below has its own header. Showing both is redundant and confusing. */}
-      {phase === 'ask_user' && !askUserPrompt?._isAgentAskUser && (
+      {/* Hidden for agent failures (_isAgentAskUser) and infra failures
+          (kind:'infra_failure') — the PartialFailureCard / SystemFailureCard
+          below have their own headers. Showing both is redundant. */}
+      {phase === 'ask_user' && !askUserPrompt?._isAgentAskUser && askUserPrompt?.kind !== 'infra_failure' && (
         <div style={{ padding: '10px 14px', borderRadius: 10, backgroundColor: '#1a120a', border: '1px solid #d97706', position: 'sticky', top: 0, zIndex: 10 }}>
           <div className="flex items-center gap-2.5">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#f59e0b" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
@@ -4729,6 +4864,8 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
                           : step.status === 'failed' ? '#fca5a5'
                           : step.status === 'skipped' ? '#fbbf24'
                           : step.status === 'needs_input' ? '#fbbf24'
+                          : step.status === 'recovering' ? '#fdba74'
+                          : step.status === 'replanning' ? '#fbbf24'
                           : step.status === 'deferred' ? '#abafb8'
                           : '#e5e7eb',
                         textDecoration: step.status === 'deferred' ? 'line-through' : undefined,
@@ -4744,6 +4881,18 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
                           <SkillIcon skill={step.skill} />
                           <SkillBadge skill={step.skill} />
                         </>
+                      )}
+                      {/* Recovered chip — step failed once but a recovery path finished it */}
+                      {step.status === 'done' && step.recovered && (
+                        <span title="This step hit an issue and was completed via a different approach"
+                          style={{ fontSize: '10.5px', color: '#fdba74', border: '1px solid rgba(251,146,60,0.35)', backgroundColor: 'rgba(251,146,60,0.08)', borderRadius: 999, padding: '0 6px', lineHeight: '16px', whiteSpace: 'nowrap' }}>
+                          ↻ recovered
+                        </span>
+                      )}
+                      {step.status === 'recovering' && (
+                        <span style={{ fontSize: '10.5px', color: '#fb923c', border: '1px solid rgba(251,146,60,0.35)', backgroundColor: 'rgba(251,146,60,0.08)', borderRadius: 999, padding: '0 6px', lineHeight: '16px', whiteSpace: 'nowrap' }}>
+                          fixing a snag
+                        </span>
                       )}
                       {/* ── Inline agent header — shown right after badge, live and done ── */}
                       {(() => {
@@ -4813,7 +4962,7 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
                           What the agent did
                         </div>
                         {step.narration.map((line, i) => (
-                          <div key={i} style={{ fontSize: '11px', color: '#9ca3af', lineHeight: '1.5', display: 'flex', gap: 5 }}>
+                          <div key={i} style={{ fontSize: '12px', color: '#9ca3af', lineHeight: '1.5', display: 'flex', gap: 5 }}>
                             <span style={{ color: '#4b5563' }}>·</span>
                             <span>{line}</span>
                           </div>
@@ -4881,6 +5030,17 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
                     {step.status === 'deferred' && (
                       <div className="text-xs mt-0.5" style={{ color: '#92400e', opacity: 0.8 }}>
                         Runs when reminder fires
+                      </div>
+                    )}
+                    {/* ── recovering — "still working" line while a fix runs ── */}
+                    {step.status === 'recovering' && (
+                      <div style={{ marginTop: 4, fontSize: '12px', color: '#fdba74', display: 'flex', alignItems: 'flex-start', gap: 5, lineHeight: '1.45' }}>
+                        <span style={{ flexShrink: 0 }}>⚙</span>
+                        <span>
+                          Hit a snag — trying another way
+                          {step.recoveryNote ? <span style={{ color: '#b0b6bf' }}>: {step.recoveryNote}</span> : null}
+                          {step.error && <span style={{ color: '#6b7280' }}> (details in dropdown)</span>}
+                        </span>
                       </div>
                     )}
                     {step.status === 'failed' && step.error && !isExpanded && (
@@ -4975,12 +5135,13 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
                     ) : (
                       <>
                         {step.stdout && step.stdout.trim().length > 0 && (
-                          <pre className="text-xs rounded-lg px-3 py-2 overflow-x-auto whitespace-pre-wrap break-all"
+                          <pre className="rounded-lg px-3 py-2 overflow-x-auto whitespace-pre-wrap break-all"
                             style={{
                               backgroundColor: 'rgba(0,0,0,0.4)',
                               border: '1px solid rgba(255,255,255,0.08)',
                               color: '#d1fae5',
                               fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
+                              fontSize: '13px',
                               maxHeight: '160px',
                               overflowY: 'auto',
                             }}>
@@ -4988,17 +5149,28 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
                           </pre>
                         )}
                         {step.error && (
-                          <pre className="text-xs rounded-lg px-3 py-2 mt-1 overflow-x-auto whitespace-pre-wrap break-all"
+                          <pre className="rounded-lg px-3 py-2 mt-1 overflow-x-auto whitespace-pre-wrap break-all"
                             style={{
                               backgroundColor: 'rgba(239,68,68,0.08)',
                               border: '1px solid rgba(239,68,68,0.2)',
                               color: '#fca5a5',
                               fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
+                              fontSize: '13px',
                               maxHeight: '120px',
                               overflowY: 'auto',
                             }}>
                             {step.error.trim()}
                           </pre>
+                        )}
+                        {step.status === 'skipped' && step.skipReason && (
+                          <div style={{ fontSize: '11.5px', color: '#9ca3af', marginTop: 4 }}>
+                            Reason: {step.skipReason}
+                          </div>
+                        )}
+                        {step.recovered && step.recoveryNote && (
+                          <div style={{ fontSize: '11.5px', color: '#9ca3af', marginTop: 4 }}>
+                            Recovered via: {step.recoveryNote}
+                          </div>
                         )}
                       </>
                     )}
@@ -5088,7 +5260,7 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
                 {(() => {
                   const liveTurn = agentLiveTurns.current.get(step.index);
                   const complete = agentCompletes.get(step.index);
-                  const isRunning = step.status === 'running' && !complete && loginGuidance?.stepIndex !== step.index;
+                  const isRunning = (step.status === 'running' || step.status === 'recovering') && !complete && loginGuidance?.stepIndex !== step.index;
                   const isDone = !!complete;
                   const _hasTabFlow = (tabFlow.get(step.index) || []).length > 0;
                   const _hasStepLog = (agentStepLog.get(step.index) || []).length > 0;
@@ -5248,9 +5420,11 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
                         void monitorTick; // re-render trigger for live countdown
                         const logEntries = agentStepLog.get(step.index) || [];
                         if (logEntries.length === 0) return null;
-                        // Show only the latest entry prominently; history collapsed behind a toggle
-                        const latest = logEntries[logEntries.length - 1];
-                        const history = logEntries.slice(0, -1);
+                        // Show the latest two entries live — recovery loops
+                        // read as work-in-progress, not a frozen spinner;
+                        // older history stays behind the toggle.
+                        const visible = logEntries.slice(-2);
+                        const history = logEntries.slice(0, -2);
                         const isExpanded = subStepHistoryExpanded.has(step.index);
                         const toggleExpand = () => {
                           setSubStepHistoryExpanded(prev => {
@@ -5279,7 +5453,7 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
                                 : `${entry.message} — checking…`)
                             : entry.message;
                           return (
-                            <div key={entry.id} style={{ display: 'flex', alignItems: 'flex-start', gap: 5, fontSize: '11px', lineHeight: '1.4' }}>
+                            <div key={entry.id} style={{ display: 'flex', alignItems: 'flex-start', gap: 5, fontSize: '12px', lineHeight: '1.4' }}>
                               {isThought ? (
                                 <ThoughtIcon size={11} color={iconColor} />
                               ) : isComplete ? (
@@ -5292,7 +5466,7 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
                                 <ActionIcon action={entry.action} size={11} color={iconColor} />
                               )}
                               {entry.turn > 0 && (
-                                <span style={{ color: '#abafb8', fontSize: '10px', flexShrink: 0, minWidth: 18 }}>
+                                <span style={{ color: '#abafb8', fontSize: '11px', flexShrink: 0, minWidth: 18 }}>
                                   {entry.turn}.
                                 </span>
                               )}
@@ -5321,15 +5495,15 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
                             {history.length > 0 && (
                               <div
                                 onClick={toggleExpand}
-                                style={{ fontSize: '10px', color: '#abafb8', cursor: 'pointer', userSelect: 'none', padding: '1px 0' }}
+                                style={{ fontSize: '11px', color: '#abafb8', cursor: 'pointer', userSelect: 'none', padding: '1px 0' }}
                               >
                                 {isExpanded ? '▾ hide' : `▸ ${history.length} previous step${history.length > 1 ? 's' : ''}`}
                               </div>
                             )}
                             {/* History entries (muted, only when expanded) */}
                             {isExpanded && history.map((entry) => renderEntry(entry, true))}
-                            {/* Latest entry — prominent */}
-                            {renderEntry(latest, false)}
+                            {/* Latest two entries — prominent (recovery loops read as live work) */}
+                            {visible.map((entry) => renderEntry(entry, false))}
                           </div>
                         );
                       })()}
@@ -6219,7 +6393,23 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
       {/* ── ASK_USER: clickable option buttons ───────────────────────────── */}
       {askUserPrompt && (
         <div className="mt-2 space-y-2">
-        {askUserPrompt.partialProgress || askUserPrompt._isAgentAskUser ? (
+        {askUserPrompt.kind === 'infra_failure' ? (
+          /* ── Infrastructure failure — SystemFailureCard (no text input) ── */
+          <SystemFailureCard
+            question={askUserPrompt.question}
+            infra={askUserPrompt.infra}
+            options={(askUserPrompt.options as any[])
+              .map(o => typeof o === 'string' ? { label: o, value: o } : { label: o?.label || String(o), value: o?.value || o?.label || String(o), primary: o?.primary })}
+            reported={infraReportState}
+            retryCountdown={autoRetryCountdown}
+            onAction={(value) => handleOptionClick(value)}
+            onCancel={handleAskUserCancel}
+            onCancelAutoRetry={() => {
+              if (autoRetryTimerRef.current) { clearInterval(autoRetryTimerRef.current); autoRetryTimerRef.current = null; }
+              setAutoRetryCountdown(null);
+            }}
+          />
+        ) : askUserPrompt.partialProgress || askUserPrompt._isAgentAskUser ? (
           /* ── Partial-failure QuestionCard (replaces generic banner for all agent failures) ── */
           <PartialFailureCard
             partialFailure={askUserPrompt.partialProgress || { summary: askUserPrompt.question, completed: [], remaining: [] }}

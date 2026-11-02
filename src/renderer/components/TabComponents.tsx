@@ -3,7 +3,7 @@ import SkillStore from './SkillStore';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
-export type TabId = 'results' | 'queue' | 'cron' | 'agents' | 'skills' | 'store' | 'connections' | 'rules' | 'brain' | 'plans';
+export type TabId = 'results' | 'queue' | 'cron' | 'agents' | 'skills' | 'store' | 'connections' | 'rules' | 'brain' | 'plans' | 'issues';
 
 export interface ConnectionItem {
   provider: string;       // 'github' | 'google' | 'microsoft' etc.
@@ -297,9 +297,21 @@ export function BrainIcon({ active }: { active: boolean }) {
   );
 }
 
+export function IssuesIcon({ active }: { active: boolean }) {
+  const c = active ? '#f87171' : '#abafb8';
+  return (
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="none"
+      stroke={c} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      {/* Flag — a recorded issue */}
+      <path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z"/>
+      <line x1="4" y1="22" x2="4" y2="15"/>
+    </svg>
+  );
+}
+
 // ── Tab bar ───────────────────────────────────────────────────────────────────
 
-export function TabBar({ active, onSelect, queueCount, unreadTabs }: {
+export function TabBar({ active, onSelect, unreadTabs }: {
   active: TabId;
   onSelect: (tab: TabId) => void;
   queueCount: number;
@@ -308,11 +320,9 @@ export function TabBar({ active, onSelect, queueCount, unreadTabs }: {
 }) {
   const tabs: { id: TabId; label: string; icon: React.ReactNode; badge?: number; activeColor: string }[] = [
     { id: 'results',     label: 'Results',  icon: <ResultsIcon     active={active === 'results'}     />, activeColor: '#60a5fa' },
-    { id: 'plans',       label: 'Plans',    icon: <PlansIcon       active={active === 'plans'}       />, activeColor: '#22d3ee' },
     { id: 'agents',      label: 'Agents',   icon: <AgentsIcon      active={active === 'agents'}      />, activeColor: '#f59e0b' },
-    { id: 'queue',       label: 'Queue',    icon: <QueueIcon       active={active === 'queue'}       />, badge: queueCount, activeColor: '#a78bfa' },
     { id: 'brain',       label: 'Brain',    icon: <BrainIcon       active={active === 'brain'}       />, activeColor: '#e879f9' },
-    // Cron moved to the SlideoutDrawer — low-frequency surface; bar stays 5.
+    // Queue + Plans moved to the SlideoutDrawer — workflow surfaces; bar stays 3.
   ];
 
   return (
@@ -1429,9 +1439,12 @@ function SkillItemCard({ item, onSaveSecret, onOpenCode, onOAuthConnect, onScope
 interface CreateSkillModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onCreate: (payload: { mode: 'url'; url: string; nameOverride?: string; descriptionOverride?: string } | { mode: 'file'; filePath: string; nameOverride?: string; descriptionOverride?: string }) => void;
+  onCreate: (payload: { mode: 'url'; url: string; nameOverride?: string; descriptionOverride?: string; viaPlan?: boolean } | { mode: 'file'; filePath: string; nameOverride?: string; descriptionOverride?: string; viaPlan?: boolean }) => void;
   /** Callback ref for the modal's inner card — used by useDynamicHeight to auto-grow the window. */
   cardRef?: (el: HTMLDivElement | null) => void;
+  /** A SKILL.md dropped onto the overlay — prefills the file field when the modal opens. */
+  initialFilePath?: string | null;
+  onInitialConsumed?: () => void;
 }
 
 const SKILL_MODAL_INPUT_STYLE: React.CSSProperties = {
@@ -1453,13 +1466,23 @@ const SKILL_MODAL_LABEL_STYLE: React.CSSProperties = {
   marginBottom: 5,
 };
 
-function CreateSkillModal({ isOpen, onClose, onCreate, cardRef }: CreateSkillModalProps) {
+function CreateSkillModal({ isOpen, onClose, onCreate, cardRef, initialFilePath, onInitialConsumed }: CreateSkillModalProps) {
   const [mode, setMode] = useState<'url' | 'file'>('url');
   const [url, setUrl] = useState('');
   const [filePath, setFilePath] = useState('');
   const [nameOverride, setNameOverride] = useState('');
   const [descriptionOverride, setDescriptionOverride] = useState('');
   const [dragOver, setDragOver] = useState(false);
+  const [viaPlan, setViaPlan] = useState(false);
+
+  // A dropped SKILL.md prefills the file field — user still picks Install vs Plan.
+  useEffect(() => {
+    if (isOpen && initialFilePath) {
+      setMode('file');
+      setFilePath(initialFilePath);
+      onInitialConsumed?.();
+    }
+  }, [isOpen, initialFilePath, onInitialConsumed]);
 
   if (!isOpen) return null;
 
@@ -1469,6 +1492,7 @@ function CreateSkillModal({ isOpen, onClose, onCreate, cardRef }: CreateSkillMod
     setNameOverride('');
     setDescriptionOverride('');
     setMode('url');
+    setViaPlan(false);
   };
 
   const handleClose = () => {
@@ -1480,15 +1504,15 @@ function CreateSkillModal({ isOpen, onClose, onCreate, cardRef }: CreateSkillMod
     const name = nameOverride.trim() || undefined;
     const desc = descriptionOverride.trim() || undefined;
     if (mode === 'url' && url.trim()) {
-      onCreate({ mode: 'url', url: url.trim(), nameOverride: name, descriptionOverride: desc });
+      onCreate({ mode: 'url', url: url.trim(), nameOverride: name, descriptionOverride: desc, viaPlan });
       handleClose();
     } else if (mode === 'file') {
-      onCreate({ mode: 'file', filePath: filePath.trim(), nameOverride: name, descriptionOverride: desc });
+      onCreate({ mode: 'file', filePath: filePath.trim(), nameOverride: name, descriptionOverride: desc, viaPlan });
       handleClose();
     }
   };
 
-  const canCreate = mode === 'url' ? url.trim().length > 0 : true; // file can be empty (opens dialog) or set
+  const canCreate = mode === 'url' ? url.trim().length > 0 : (viaPlan ? filePath.trim().length > 0 : true); // direct file can be empty (opens dialog); plan-build needs a real path
 
   const handleDrop = (e: React.DragEvent) => {
     e.preventDefault();
@@ -1514,7 +1538,7 @@ function CreateSkillModal({ isOpen, onClose, onCreate, cardRef }: CreateSkillMod
           </div>
           <div>
             <h3 style={{ margin: 0, color: '#fff', fontSize: '0.95rem', fontWeight: 600 }}>Add Skill</h3>
-            <p style={{ margin: 0, color: '#abafb8', fontSize: '0.72rem' }}>Import an instruction skill from URL or file</p>
+            <p style={{ margin: 0, color: '#abafb8', fontSize: '0.72rem' }}>Import a SKILL.md — install it, or turn it into a plan</p>
           </div>
         </div>
 
@@ -1559,7 +1583,7 @@ function CreateSkillModal({ isOpen, onClose, onCreate, cardRef }: CreateSkillMod
             <div style={{ display: 'flex', gap: 8, marginBottom: 10 }}>
               <input type="text" value={filePath} readOnly placeholder="Drop a file or click Browse"
                 style={{ ...SKILL_MODAL_INPUT_STYLE, flex: 1, cursor: 'default' }} />
-              <button onClick={() => { setFilePath(''); onCreate({ mode: 'file', filePath: '', nameOverride: nameOverride.trim() || undefined, descriptionOverride: descriptionOverride.trim() || undefined }); handleClose(); }}
+              <button onClick={() => { setFilePath(''); onCreate({ mode: 'file', filePath: '', nameOverride: nameOverride.trim() || undefined, descriptionOverride: descriptionOverride.trim() || undefined, viaPlan }); handleClose(); }}
                 style={{ padding: '9px 14px', borderRadius: 6, border: '1px solid rgba(99,102,241,0.4)', backgroundColor: 'rgba(99,102,241,0.14)', color: '#818cf8', cursor: 'pointer', fontSize: '0.8rem', fontWeight: 500 }}>
                 Browse
               </button>
@@ -1582,6 +1606,33 @@ function CreateSkillModal({ isOpen, onClose, onCreate, cardRef }: CreateSkillMod
           </div>
         )}
 
+        {/* Install vs plan-build picker */}
+        <div style={{ marginBottom: 16 }}>
+          <label style={SKILL_MODAL_LABEL_STYLE}>How should ThinkDrop use it?</label>
+          <div style={{ display: 'flex', gap: 6 }}>
+            <button onClick={() => setViaPlan(false)}
+              style={{
+                flex: 1, padding: '8px 10px', borderRadius: 7, fontSize: '0.74rem', cursor: 'pointer', textAlign: 'left',
+                border: `1px solid ${!viaPlan ? 'rgba(99,102,241,0.5)' : 'rgba(255,255,255,0.1)'}`,
+                backgroundColor: !viaPlan ? 'rgba(99,102,241,0.14)' : 'rgba(255,255,255,0.03)',
+                color: !viaPlan ? '#a5b4fc' : '#9ca3af',
+              }}>
+              <div style={{ fontWeight: 600, marginBottom: 2 }}>Install skill</div>
+              <div style={{ fontSize: '0.65rem', opacity: 0.8 }}>Save as an instruction skill — runs as guidance</div>
+            </button>
+            <button onClick={() => setViaPlan(true)}
+              style={{
+                flex: 1, padding: '8px 10px', borderRadius: 7, fontSize: '0.74rem', cursor: 'pointer', textAlign: 'left',
+                border: `1px solid ${viaPlan ? 'rgba(34,211,238,0.5)' : 'rgba(255,255,255,0.1)'}`,
+                backgroundColor: viaPlan ? 'rgba(34,211,238,0.1)' : 'rgba(255,255,255,0.03)',
+                color: viaPlan ? '#67e8f9' : '#9ca3af',
+              }}>
+              <div style={{ fontWeight: 600, marginBottom: 2 }}>Build as plan</div>
+              <div style={{ fontSize: '0.65rem', opacity: 0.8 }}>Draft it in planning mode, run it, save as a skill</div>
+            </button>
+          </div>
+        </div>
+
         {/* Optional overrides */}
         <div style={{ marginBottom: 14 }}>
           <label style={SKILL_MODAL_LABEL_STYLE}>Name override <span style={{ color: '#abafb8', fontWeight: 400 }}>(optional)</span></label>
@@ -1600,8 +1651,8 @@ function CreateSkillModal({ isOpen, onClose, onCreate, cardRef }: CreateSkillMod
             Cancel
           </button>
           <button onClick={handleCreate} disabled={!canCreate}
-            style={{ padding: '8px 18px', borderRadius: 6, border: 'none', backgroundColor: canCreate ? '#6366f1' : 'rgba(99,102,241,0.35)', color: '#fff', cursor: canCreate ? 'pointer' : 'not-allowed', fontSize: '0.83rem', fontWeight: 600 }}>
-            Add Skill
+            style={{ padding: '8px 18px', borderRadius: 6, border: 'none', backgroundColor: canCreate ? (viaPlan ? '#0891b2' : '#6366f1') : 'rgba(99,102,241,0.35)', color: '#fff', cursor: canCreate ? 'pointer' : 'not-allowed', fontSize: '0.83rem', fontWeight: 600 }}>
+            {viaPlan ? 'Plan it' : 'Add Skill'}
           </button>
         </div>
       </div>
@@ -1609,7 +1660,293 @@ function CreateSkillModal({ isOpen, onClose, onCreate, cardRef }: CreateSkillMod
   );
 }
 
-export function _SkillsTab({ items, onSaveSecret, onOpenCode, onOAuthConnect, onScopesChange, onRepairOAuth, onDelete, onInstallFromUrl, onInstallFromFile, onRefreshSkills, onContentResize, modalCardRef }: {
+// ── Plan skills — completed plans promoted to reusable skills ────────────────
+
+interface PlanSkillTask {
+  num: number;
+  title: string;
+  status: string;
+  mode: string;
+  agents: string[];
+  result?: string;
+}
+
+interface PlanSkillRow {
+  planId: string;
+  file: string;
+  title: string;
+  name: string | null;
+  status: string;
+  created: string;
+  originalPrompt: string;
+  hasSkillPlan?: boolean;
+  tasks: PlanSkillTask[];
+}
+
+const _planSkillBtn = (color = '#abafb8'): React.CSSProperties => ({
+  display: 'inline-flex', alignItems: 'center', gap: 3,
+  padding: '3px 7px', borderRadius: 5, cursor: 'pointer',
+  background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.09)',
+  color, fontSize: '0.62rem', fontWeight: 500, transition: 'background 0.15s',
+});
+
+function _fmtShort(iso: string): string {
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return '';
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  return d >= today
+    ? d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
+    : d.toLocaleDateString([], { month: 'short', day: 'numeric' });
+}
+
+const _taskSi = { width: 10, height: 10, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 2.2, strokeLinecap: 'round' as const, strokeLinejoin: 'round' as const };
+function _taskStatusIcon(status: string) {
+  const s = (status || '').toLowerCase();
+  if (s.includes('done') || s.includes('complete'))
+    return <svg {..._taskSi} stroke="#4ade80"><polyline points="20 6 9 17 4 12"/></svg>;
+  if (s.includes('fail') || s.includes('error'))
+    return <svg {..._taskSi} stroke="#f87171"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>;
+  if (s.includes('run') || s.includes('progress'))
+    return <svg {..._taskSi} stroke="#60a5fa" fill="currentColor"><polygon points="6 3 20 12 6 21"/></svg>;
+  if (s.includes('skip') || s.includes('cancel') || s.includes('block'))
+    return <svg {..._taskSi} stroke="#9ca3af"><rect x="6" y="6" width="12" height="12" rx="1"/></svg>;
+  return <svg {..._taskSi} stroke="#9ca3af"><circle cx="12" cy="12" r="9"/></svg>;
+}
+
+/**
+ * PlanSkillsSection — done plans that carry a compiled `skill_plan_json`
+ * (written by planRunner's plan→skill bridge). A dot-syntax `name` makes the
+ * plan a saved skill recallable via `run <name>`; "Save as skill" is the
+ * rename flow. Row click expands to show the plan's tasks — same affordance
+ * as PlanCard's expand chevron. Run re-executes the whole plan, so it sits
+ * behind a two-tap "Re-run?" confirm (approval-gated tasks still pause).
+ */
+// Listener token — untokened listeners can't be removed across contextBridge.
+const PLAN_SKILLS_TOKEN = 'plan-skills-section';
+
+export function PlanSkillsSection({ onContentResize, onCount }: {
+  onContentResize?: () => void;
+  onCount?: (n: number) => void;
+}) {
+  const [rows, setRows] = useState<PlanSkillRow[]>([]);
+  const [namingId, setNamingId] = useState<string | null>(null);
+  const [nameDraft, setNameDraft] = useState('');
+  const [nameErr, setNameErr] = useState<string | null>(null);
+  const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [confirmRunId, setConfirmRunId] = useState<string | null>(null);
+  const [runErr, setRunErr] = useState<{ planId: string; text: string } | null>(null);
+
+  const refresh = useCallback(async () => {
+    const ipc = (window as any).electron?.ipcRenderer;
+    const res = await ipc?.invoke('plan:list').catch(() => null);
+    const skills = (res?.plans || []).filter(
+      (p: PlanSkillRow) => p.status === 'done' && p.hasSkillPlan
+    );
+    setRows(skills);
+  }, []);
+
+  useEffect(() => { refresh(); }, [refresh]);
+
+  useEffect(() => { onCount?.(rows.length); }, [rows, onCount]);
+
+  useEffect(() => {
+    const ipc = (window as any).electron?.ipcRenderer;
+    if (!ipc) return;
+    const onEvt = () => refresh();
+    ipc.on('plan:updated', onEvt, PLAN_SKILLS_TOKEN);
+    ipc.on('plan:complete', onEvt, PLAN_SKILLS_TOKEN);
+    ipc.on('plan:status', onEvt, PLAN_SKILLS_TOKEN);
+    return () => {
+      ipc.removeListenerByToken?.('plan:updated', PLAN_SKILLS_TOKEN);
+      ipc.removeListenerByToken?.('plan:complete', PLAN_SKILLS_TOKEN);
+      ipc.removeListenerByToken?.('plan:status', PLAN_SKILLS_TOKEN);
+    };
+  }, [refresh]);
+
+  const onContentResizeRef = useRef(onContentResize);
+  onContentResizeRef.current = onContentResize;
+  useEffect(() => {
+    const t = setTimeout(() => onContentResizeRef.current?.(), 60);
+    return () => clearTimeout(t);
+  }, [rows, namingId, expandedId]);
+
+  const commitName = async (row: PlanSkillRow) => {
+    const ipc = (window as any).electron?.ipcRenderer;
+    const v = nameDraft.trim();
+    if (!v || !ipc) { setNamingId(null); setNameErr(null); return; }
+    const res = await ipc.invoke('plan:rename', { planFile: row.file, planName: v }).catch(() => null);
+    if (res?.ok) {
+      setNamingId(null); setNameErr(null);
+      refresh();
+    } else {
+      setNameErr(res?.error || 'Rename failed');
+    }
+  };
+
+  const unsave = async (row: PlanSkillRow) => {
+    const ipc = (window as any).electron?.ipcRenderer;
+    await ipc?.invoke('plan:rename', { planFile: row.file, planName: '' }).catch(() => null);
+    refresh();
+  };
+
+  const runSkill = async (row: PlanSkillRow) => {
+    const ipc = (window as any).electron?.ipcRenderer;
+    // plan:run dispatches the whole task plan through planRunner — same action
+    // as the Plans tab's Run button. All-done plans auto-run fresh (tasks are
+    // reset to pending); `run <dot.name>` remains the stategraph recall path.
+    const res = await ipc?.invoke('plan:run', { planFile: row.file }).catch((e: any) => ({ error: e?.message || String(e) }));
+    if (res && res.ok === false) {
+      setRunErr({ planId: row.planId, text: res.blockers?.length ? `Auth needed: ${res.blockers.map((b: any) => b.agentId).join(', ')}` : (res.error || 'Run failed') });
+      setTimeout(() => setRunErr(cur => cur?.planId === row.planId ? null : cur), 6000);
+    }
+  };
+
+  if (rows.length === 0) return null;
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 4, marginBottom: 8 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 2 }}>
+        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="#22d3ee" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+          <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26"/>
+        </svg>
+        <span style={{ color: '#22d3ee', fontSize: '0.7rem', fontWeight: 600 }}>Plan skills</span>
+        <span style={{ color: '#4b5563', fontSize: '0.62rem' }}>completed plans you can replay</span>
+      </div>
+      {rows.map(row => {
+        const expanded = expandedId === row.planId;
+        return (
+        <div key={row.planId}
+          onClick={() => setExpandedId(expanded ? null : row.planId)}
+          title={expanded ? 'Collapse' : 'Expand tasks'}
+          style={{
+            padding: '7px 9px', borderRadius: 8, cursor: 'pointer',
+            background: 'rgba(34,211,238,0.04)', border: '1px solid rgba(34,211,238,0.14)',
+            display: 'flex', flexDirection: 'column', gap: 5,
+          }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 7, minWidth: 0 }}>
+            {namingId === row.planId ? (
+              <div style={{ flex: 1, minWidth: 0 }} onClick={e => e.stopPropagation()}>
+                <input
+                  autoFocus
+                  value={nameDraft}
+                  onChange={e => setNameDraft(e.target.value)}
+                  onBlur={() => commitName(row)}
+                  onKeyDown={e => {
+                    if (e.key === 'Enter') commitName(row);
+                    if (e.key === 'Escape') { setNamingId(null); setNameErr(null); }
+                  }}
+                  placeholder="my.saved.skill"
+                  style={{
+                    width: '100%', boxSizing: 'border-box', background: 'rgba(255,255,255,0.06)',
+                    border: `1px solid ${nameErr ? 'rgba(248,113,113,0.5)' : 'rgba(34,211,238,0.4)'}`,
+                    borderRadius: 5, color: '#e5e7eb', fontSize: '0.72rem',
+                    padding: '3px 6px', outline: 'none',
+                  }}
+                />
+                {nameErr && <div style={{ color: '#f87171', fontSize: '0.6rem', marginTop: 2 }}>{nameErr}</div>}
+              </div>
+            ) : (
+              <>
+                <span style={{
+                  flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                  color: row.name ? '#22d3ee' : '#e5e7eb', fontSize: '0.74rem', fontWeight: 600,
+                  fontFamily: row.name ? 'ui-monospace,monospace' : undefined,
+                }}>
+                  {row.name || row.title || 'Untitled'}
+                </span>
+                {row.name && (
+                  <span style={{
+                    fontSize: '0.58rem', padding: '1px 6px', borderRadius: 10, flexShrink: 0,
+                    background: 'rgba(34,211,238,0.12)', color: '#22d3ee', border: '1px solid rgba(34,211,238,0.3)',
+                  }}>skill</span>
+                )}
+                <span style={{ fontSize: '0.6rem', color: '#6b7280', flexShrink: 0 }}>{_fmtShort(row.created)}</span>
+                <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="#6b7280" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"
+                  style={{ flexShrink: 0, transform: expanded ? 'rotate(180deg)' : 'none', transition: 'transform 0.15s' }}>
+                  <polyline points="6 9 12 15 18 9"/>
+                </svg>
+              </>
+            )}
+          </div>
+          {row.originalPrompt && namingId !== row.planId && (
+            <div style={{ fontSize: '0.62rem', color: '#6b7280', fontStyle: 'italic', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              “{row.originalPrompt.slice(0, 100)}{row.originalPrompt.length > 100 ? '…' : ''}”
+            </div>
+          )}
+          {namingId !== row.planId && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 5 }} onClick={e => e.stopPropagation()}>
+              {confirmRunId === row.planId ? (
+                <button onClick={() => { setConfirmRunId(null); runSkill(row); }}
+                  title="Confirm — re-executes every task"
+                  style={{ ..._planSkillBtn('#fbbf24'), background: 'rgba(251,191,36,0.16)', border: '1px solid rgba(251,191,36,0.4)', fontWeight: 600 }}>
+                  Re-run?
+                </button>
+              ) : (
+                <button onClick={() => setConfirmRunId(row.planId)} title="Run this plan — all tasks execute again" style={_planSkillBtn('#4ade80')}>
+                  <svg width="9" height="9" viewBox="0 0 24 24" fill="currentColor" stroke="none"><polygon points="6 3 20 12 6 21"/></svg>
+                  Run
+                </button>
+              )}
+              {!row.name && (
+                <button
+                  onClick={() => { setNamingId(row.planId); setNameDraft(''); setNameErr(null); }}
+                  title="Give this plan a dot-syntax name to save it as a replayable skill"
+                  style={_planSkillBtn('#22d3ee')}
+                >
+                  Save as skill
+                </button>
+              )}
+              <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 5 }}>
+                {row.name && (
+                  <button onClick={() => unsave(row)} title="Remove the saved name — keeps the plan" style={_planSkillBtn('#9ca3af')}>
+                    Unsave
+                  </button>
+                )}
+                <button onClick={() => (window as any).electron?.ipcRenderer?.send('plan:open-editor', { planFile: row.file })}
+                  title="Open plan in the screen editor" style={_planSkillBtn('#a5b4fc')}>
+                  <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"/>
+                  </svg>
+                </button>
+              </div>
+            </div>
+          )}
+          {runErr?.planId === row.planId && (
+            <div style={{ color: '#fca5a5', fontSize: '0.62rem' }}>{runErr.text}</div>
+          )}
+          {expanded && (
+            <div style={{ borderTop: '1px solid rgba(34,211,238,0.10)', paddingTop: 5, display: 'flex', flexDirection: 'column' }}
+              onClick={e => e.stopPropagation()}>
+              {(row.tasks || []).length === 0 && (
+                <div style={{ fontSize: '0.62rem', color: '#6b7280' }}>No tasks parsed.</div>
+              )}
+              {(row.tasks || []).map(t => (
+                <div key={t.num} style={{
+                  display: 'flex', alignItems: 'flex-start', gap: 7, padding: '4px 0',
+                  borderBottom: '1px solid rgba(255,255,255,0.04)',
+                }}>
+                  <span style={{ flexShrink: 0, display: 'flex', marginTop: 1 }}>{_taskStatusIcon(t.status)}</span>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontSize: '0.66rem', color: '#e5e7eb', fontWeight: 500 }}>{t.title}</div>
+                    <div style={{ fontSize: '0.58rem', color: '#6b7280', marginTop: 1 }}>
+                      {(t.agents || []).join(' · ') || 'auto'} · {t.mode}
+                    </div>
+                    {t.result && (
+                      <div style={{ fontSize: '0.58rem', color: '#9ca3af', marginTop: 2 }}>{String(t.result).slice(0, 140)}</div>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+        );
+      })}
+    </div>
+  );
+}
+
+export function _SkillsTab({ items, onSaveSecret, onOpenCode, onOAuthConnect, onScopesChange, onRepairOAuth, onDelete, onInstallFromUrl, onInstallFromFile, onRefreshSkills, onContentResize, modalCardRef, pendingSkillFile, onSkillFileHandled }: {
   items: SkillItem[];
   onSaveSecret: (skillName: string, key: string, value: string) => void;
   onOpenCode: (filePath: string) => void;
@@ -1622,10 +1959,21 @@ export function _SkillsTab({ items, onSaveSecret, onOpenCode, onOAuthConnect, on
   onRefreshSkills?: () => void;
   onContentResize?: () => void;
   modalCardRef?: (el: HTMLDivElement | null) => void;
+  /** A SKILL.md dropped onto the overlay — opens the Add Skill modal prefilled. */
+  pendingSkillFile?: string | null;
+  onSkillFileHandled?: () => void;
 }) {
   const [installing, setInstalling] = useState(false);
   const [installMsg, setInstallMsg] = useState<{ ok: boolean; text: string } | null>(null);
   const [isCreateSkillModalOpen, setIsCreateSkillModalOpen] = useState(false);
+  // Plan skills count — the "no skills" empty state only makes sense when
+  // neither list has anything (a replayable plan IS a skill).
+  const [planSkillCount, setPlanSkillCount] = useState(0);
+
+  // A .md dropped on the overlay that smells like a skill doc opens the modal.
+  useEffect(() => {
+    if (pendingSkillFile) setIsCreateSkillModalOpen(true);
+  }, [pendingSkillFile]);
 
   // Stable ref to parent's re-measure callback. Nudges useDynamicHeight whenever
   // this tab's visible content changes (modal open/close, install banners, list updates).
@@ -1656,6 +2004,23 @@ export function _SkillsTab({ items, onSaveSecret, onOpenCode, onOAuthConnect, on
 
   const handleCreateSkill = useCallback((payload: Parameters<CreateSkillModalProps['onCreate']>[0]) => {
     setInstallMsg(null);
+    if (payload.viaPlan) {
+      // Build-as-plan: main pins planning mode and seeds the draft from the doc.
+      // Empty filePath → main opens a file dialog first.
+      const ipc = (window as any).electron?.ipcRenderer;
+      ipc?.invoke('skill:plan-build', {
+        url: payload.mode === 'url' ? payload.url : undefined,
+        filePath: payload.mode === 'file' ? payload.filePath : undefined,
+        nameOverride: payload.nameOverride,
+        descriptionOverride: payload.descriptionOverride,
+      }).then((res: any) => {
+        if (res && !res.ok) {
+          setInstallMsg({ ok: false, text: res.error || 'Plan build failed to start' });
+          setTimeout(() => setInstallMsg(null), 5000);
+        }
+      }).catch(() => {});
+      return;
+    }
     if (payload.mode === 'url') {
       setInstalling(true);
       onInstallFromUrl?.(payload.url, payload.nameOverride, payload.descriptionOverride);
@@ -1706,7 +2071,10 @@ export function _SkillsTab({ items, onSaveSecret, onOpenCode, onOAuthConnect, on
         </div>
       )}
 
-      {items.length === 0 ? (
+      {/* Plan skills — completed plans replayable as skills, right under + New */}
+      <PlanSkillsSection onContentResize={onContentResize} onCount={setPlanSkillCount} />
+
+      {items.length === 0 && planSkillCount === 0 ? (
         <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '40px 16px', gap: 12, opacity: 0.5 }}>
           <div style={{ width: 48, height: 48, borderRadius: 12, background: 'rgba(99,102,241,0.1)', display: 'flex', alignItems: 'center', justifyContent: 'center', border: '1px solid rgba(99,102,241,0.2)' }}>
             <SkillsIcon active={false} />
@@ -1727,6 +2095,8 @@ export function _SkillsTab({ items, onSaveSecret, onOpenCode, onOAuthConnect, on
         onClose={() => setIsCreateSkillModalOpen(false)}
         onCreate={handleCreateSkill}
         cardRef={modalCardRef}
+        initialFilePath={pendingSkillFile}
+        onInitialConsumed={onSkillFileHandled}
       />
     </div>
   );

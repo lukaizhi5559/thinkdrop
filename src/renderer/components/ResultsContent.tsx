@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import type { RefObject } from 'react';
 import { Favicon } from './DefaultFaviconIcon';
 import { ThinkDropLogo } from './SlideoutDrawer';
@@ -162,6 +162,27 @@ function ResultsContentImpl({
   useEffect(() => {
     if (isAutomationMode) setRunCollapsed(false);
   }, [isAutomationMode]);
+
+  // In-flight automation stream — intermediate reasoning, not the final
+  // answer. Collapsed behind "Thoughts" while the run streams so the
+  // AutomationProgress card keeps focus; auto-expands as "Summary" when the
+  // stream settles unless the user manually toggled during that stream.
+  const [thoughtsOpen, setThoughtsOpen] = useState(false);
+  const thoughtsTouchedRef = useRef(false);
+  const prevStreamingRef = useRef(false);
+  useEffect(() => {
+    if (isStreaming && !prevStreamingRef.current) {
+      thoughtsTouchedRef.current = false;
+      setThoughtsOpen(false);
+    } else if (!isStreaming && prevStreamingRef.current && !thoughtsTouchedRef.current) {
+      setThoughtsOpen(true);
+    }
+    prevStreamingRef.current = isStreaming;
+  }, [isStreaming]);
+  const toggleThoughts = () => {
+    thoughtsTouchedRef.current = true;
+    setThoughtsOpen(v => !v);
+  };
 
   // --- Install Card ---
   const renderInstallCard = () => {
@@ -443,7 +464,10 @@ function ResultsContentImpl({
           </div>
         )}
 
-        {/* Automation mode summary with progress indicator */}
+        {/* Automation mode: intermediate stream lives behind a "Thoughts"
+            disclosure while the run is active so the AutomationProgress card
+            keeps focus; settles into an expanded "Summary" — the final
+            response stays distinct from the in-flight narration. */}
         {isAutomationMode && (streamingResponse || isStreaming) && (
           <div style={{ marginTop: '20px' }}>
             {/* Clean divider */}
@@ -453,12 +477,44 @@ function ResultsContentImpl({
               margin: '16px 0'
             }} />
 
-            {/* Progress indicator or summary content */}
-            <div className="relative" style={{ overflowX: 'hidden', wordBreak: 'break-word', overflowWrap: 'break-word' }}>
-              {/* Header with progress */}
-              <div className="flex items-center gap-2 mb-3" style={{ color: 'rgba(147,197,253,0.9)', fontSize: '0.875rem', fontWeight: 500 }}>
-                {isStreaming ? (
-                  <>
+            <button
+              onClick={toggleThoughts}
+              className="flex items-center gap-2 w-full text-left"
+              style={{ background: 'none', border: 'none', padding: '2px 0', cursor: 'pointer' }}
+            >
+              <span style={{ color: '#6b7280', fontSize: '0.7rem', width: 10, flexShrink: 0 }}>{thoughtsOpen ? '▾' : '▸'}</span>
+              {isStreaming && (
+                <span style={{ display: 'inline-block', width: 8, height: 8, borderRadius: '50%', backgroundColor: '#3b82f6', animation: 'pulse 1.2s ease-in-out infinite', flexShrink: 0 }} />
+              )}
+              <span style={{ color: '#93c5fd', fontSize: '0.78rem', fontWeight: 600, flexShrink: 0 }}>
+                {isStreaming ? 'Thoughts' : 'Summary'}
+              </span>
+              {!isStreaming && synthTokenCount > 0 && (
+                <span style={{
+                  fontSize: '0.75rem',
+                  color: 'rgba(147,197,253,0.6)',
+                  background: 'rgba(59,130,246,0.1)',
+                  padding: '2px 8px',
+                  borderRadius: '12px',
+                  fontFamily: 'monospace',
+                  flexShrink: 0
+                }}>
+                  {synthTokenCount > 999 ? `${(synthTokenCount / 1000).toFixed(1)}k` : synthTokenCount} tokens
+                </span>
+              )}
+              {/* Muted live preview while collapsed — stream stays discoverable
+                  without pulling focus from the progress card */}
+              {isStreaming && !thoughtsOpen && streamingResponse && (
+                <span style={{ color: '#6b7280', fontSize: '0.7rem', fontStyle: 'italic', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0 }}>
+                  {streamingResponse.slice(-120).replace(/\s+/g, ' ').trim()}
+                </span>
+              )}
+            </button>
+
+            {thoughtsOpen && (
+              <div className="relative" style={{ overflowX: 'hidden', wordBreak: 'break-word', overflowWrap: 'break-word', marginTop: 8 }}>
+                {isStreaming && (
+                  <div className="flex items-center gap-2 mb-3" style={{ color: 'rgba(147,197,253,0.9)', fontSize: '0.875rem', fontWeight: 500 }}>
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="animate-pulse">
                       <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
                       <polyline points="14 2 14 8 20 8"/>
@@ -477,53 +533,32 @@ function ResultsContentImpl({
                         {synthTokenCount > 999 ? `${(synthTokenCount / 1000).toFixed(1)}k` : synthTokenCount} tokens
                       </span>
                     )}
-                  </>
-                ) : (
-                  <>
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                      <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
-                      <polyline points="14 2 14 8 20 8"/>
-                    </svg>
-                    <span>Summary</span>
-                    {synthTokenCount > 0 && (
-                      <span style={{
-                        fontSize: '0.75rem',
-                        color: 'rgba(147,197,253,0.6)',
-                        marginLeft: '8px',
-                        background: 'rgba(59,130,246,0.1)',
-                        padding: '2px 8px',
-                        borderRadius: '12px',
-                        fontFamily: 'monospace'
-                      }}>
-                        {synthTokenCount > 999 ? `${(synthTokenCount / 1000).toFixed(1)}k` : synthTokenCount} tokens
-                      </span>
+                  </div>
+                )}
+
+                {/* Summary content with smooth streaming */}
+                {streamingResponse && (
+                  <div
+                    className="relative text-sm leading-relaxed"
+                    style={{
+                      animation: isStreaming ? 'fadeIn 0.3s ease-out' : 'none',
+                      lineHeight: '1.6'
+                    }}
+                  >
+                    {resultItems.length > 0 && <WebResultsGrid items={resultItems} />}
+                    <StreamingRichContent
+                      content={streamingResponse}
+                      streaming={isStreaming}
+                      className="text-sm"
+                      searchResults={resultItems}
+                    />
+                    {isStreaming && (
+                      <span className="inline-block w-1.5 h-4 bg-blue-500 animate-pulse ml-1" />
                     )}
-                  </>
+                  </div>
                 )}
               </div>
-
-              {/* Summary content with smooth streaming */}
-              {streamingResponse && (
-                <div
-                  className="relative text-sm leading-relaxed"
-                  style={{
-                    animation: isStreaming ? 'fadeIn 0.3s ease-out' : 'none',
-                    lineHeight: '1.6'
-                  }}
-                >
-                  {resultItems.length > 0 && <WebResultsGrid items={resultItems} />}
-                  <StreamingRichContent
-                    content={streamingResponse}
-                    streaming={isStreaming}
-                    className="text-sm"
-                    searchResults={resultItems}
-                  />
-                  {isStreaming && (
-                    <span className="inline-block w-1.5 h-4 bg-blue-500 animate-pulse ml-1" />
-                  )}
-                </div>
-              )}
-            </div>
+            )}
           </div>
         )}
 

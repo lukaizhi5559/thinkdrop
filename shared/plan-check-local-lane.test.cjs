@@ -110,6 +110,16 @@ function t(name, cond) {
     t('pending blocks allClear', r.allClear === false);
   }
 
+  // ── Reason-carrying failed status ─────────────────────────────────────────
+  {
+    const r = await computePlanCheck([
+      { num: 1, prompt: 'a', agents: ['shell'], steps: [], stepsStatus: 'failed — path does not exist: /x/skill-runtime' },
+    ]);
+    const row = r.items.find(i => i.id === 't1-steps');
+    t('failed — reason → warn row (not pending)', row && row.status === 'warn' && row.kind === 'steps-failed');
+    t('label carries the reason', row && /skill-runtime/.test(row.label));
+  }
+
   // ── Approval-required task → info row, not a blocker ───────────────────────
   {
     const r = await computePlanCheck([{

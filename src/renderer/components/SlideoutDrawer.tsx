@@ -1,5 +1,5 @@
 import React from 'react';
-import { type TabId, SkillsIcon, RulesIcon, SettingsIcon, CronIcon } from './TabComponents';
+import { type TabId, RulesIcon, SettingsIcon, CronIcon, IssuesIcon, QueueIcon, PlansIcon } from './TabComponents';
 
 export function ThinkDropLogo({ size = 20 }: { size?: number }) {
   return (
@@ -15,20 +15,24 @@ interface SlideoutDrawerProps {
   onClose: () => void;
   onNavigate: (tab: TabId | 'settings' | 'rules') => void;
   activeTab: TabId | 'settings' | 'rules';
+  queueCount?: number;
 }
 
 type MenuItem =
-  | { type: 'item'; id: TabId | 'settings' | 'rules'; label: string; icon: (active: boolean) => React.ReactNode }
+  | { type: 'item'; id: TabId | 'settings' | 'rules'; label: string; icon: (active: boolean) => React.ReactNode; badge?: number }
   | { type: 'divider' };
 
-export function SlideoutDrawer({ isOpen, onClose, onNavigate, activeTab }: SlideoutDrawerProps) {
+export function SlideoutDrawer({ isOpen, onClose, onNavigate, activeTab, queueCount = 0 }: SlideoutDrawerProps) {
   const menuItems: MenuItem[] = [
-    // { type: 'item', id: 'connections', label: 'Connections', icon: (active) => <ConnectionsIcon active={active} /> },
-    { type: 'item', id: 'rules', label: 'Rules', icon: (active) => <RulesIcon active={active} /> },
-    { type: 'item', id: 'skills', label: 'Skills', icon: (active) => <SkillsIcon active={active} /> },
     { type: 'item', id: 'cron', label: 'Cron', icon: (active) => <CronIcon active={active} /> },
-    // Store removed — skills now managed in the Skills tab
+    { type: 'item', id: 'rules', label: 'Rules', icon: (active) => <RulesIcon active={active} /> },
+    { type: 'divider' },
+    { type: 'item', id: 'queue', label: 'Queue', icon: (active) => <QueueIcon active={active} />, badge: queueCount },
+    { type: 'item', id: 'plans', label: 'Plans', icon: (active) => <PlansIcon active={active} /> },
+    { type: 'divider' },
+    { type: 'item', id: 'issues', label: 'Issues', icon: (active) => <IssuesIcon active={active} /> },
     { type: 'item', id: 'settings', label: 'Settings', icon: (active) => <SettingsIcon active={active} /> },
+    // Skills lives inside the Capabilities surface (Agents tab → Skills segment).
   ];
 
   return (
@@ -114,6 +118,17 @@ export function SlideoutDrawer({ isOpen, onClose, onNavigate, activeTab }: Slide
               >
                 <span className="flex items-center justify-center w-5 h-5">{item.icon(isActive)}</span>
                 <span className="text-sm font-medium">{item.label}</span>
+                {item.badge != null && item.badge > 0 && (
+                  <span
+                    className="ml-auto text-[10px] font-bold rounded-full px-1.5 py-0.5 min-w-[18px] text-center"
+                    style={{
+                      backgroundColor: isActive ? 'rgba(167, 139, 250, 0.3)' : 'rgba(167, 139, 250, 0.2)',
+                      color: '#c4b5fd',
+                    }}
+                  >
+                    {item.badge}
+                  </span>
+                )}
                 {isActive && (
                   <svg
                     className="ml-auto"

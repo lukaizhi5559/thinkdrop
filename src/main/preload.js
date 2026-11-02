@@ -631,6 +631,10 @@ contextBridge.exposeInMainWorld('electron', {
         'cli-agents:install',
         'skill:inspect-url',
         'skill:install-url',
+        'skill:plan-build',
+        'skill:peek-file',
+        'skill:discover-search',
+        'skill:resolve-doc',
         'settings:get',
         'shell:open-path',
         'shell:execute',
@@ -648,6 +652,9 @@ contextBridge.exposeInMainWorld('electron', {
         'terminal:action',
         'history:histogram',
         'history:messages',
+        'issues:record',
+        'issues:list',
+        'issues:dismiss',
       ];
       if (validChannels.includes(channel)) {
         return ipcRenderer.invoke(channel, data);

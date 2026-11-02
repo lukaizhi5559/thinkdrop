@@ -41,7 +41,7 @@ export function installFeedIpc(store: FeedStore, ui: FeedIpcUi): () => void {
   const s = store;
 
   // --- Results / Streaming -------------------------------------------------
-  const handleWsMessage = (message: { type: string; text?: string; lane?: string; payload?: any; taskId?: string; isPlaceholder?: boolean; role?: string }) => {
+  const handleWsMessage = (message: { type: string; text?: string; lane?: string; payload?: any; taskId?: string; isPlaceholder?: boolean; role?: string; needsInfo?: string | null }) => {
     if (!message) return;
     // S2S assistant utterance — arrives as complete text from the realtime
     // transcript relay. Commit directly as an assistant entry: the chunk/done
@@ -193,6 +193,7 @@ export function installFeedIpc(store: FeedStore, ui: FeedIpcUi): () => void {
             engine: st.searchEngine || undefined,
             taskId: message.taskId || undefined,
             pending: wasPlaceholder || undefined,
+            needsInfo: message.needsInfo || undefined,
             prompt: s.internal.lastPrompt || undefined,
             exchangeId: s.exchangeForTask(message.taskId, s.internal.lastPrompt),
           });
@@ -218,12 +219,12 @@ export function installFeedIpc(store: FeedStore, ui: FeedIpcUi): () => void {
   const handleConversationList = (data: { messages?: any[] }) => {
     s.setHistoryLoading(false);
     const msgs = Array.isArray(data?.messages) ? data.messages : [];
+    // Consume the scroll anchor on EVERY response — an empty page used to leave
+    // pendingPrependRef non-null forever, latching the auto-scroll gate off.
+    ui.markPrependCommitted();
     if (msgs.length > 0) {
       const mapped = mapHistoryMessages(msgs, { tasks: s.getState().commsTasks });
       const cursor = oldestMessageCursor(msgs);
-      // Only the real prepend may consume the scroll anchor — stray feed
-      // updates during this round-trip must not eat it first.
-      ui.markPrependCommitted();
       s.prependHistory(mapped, { cursor, hasMore: msgs.length >= 20 });
     } else {
       s.set({ hasMoreHistory: false });

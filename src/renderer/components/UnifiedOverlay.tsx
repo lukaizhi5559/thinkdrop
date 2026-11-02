@@ -10,18 +10,18 @@ const DEBUG_LOG = false;
 const dbg = (...args: any[]) => { if (DEBUG_LOG) console.log(...args); };
 import {
   CronTab,
-  SkillsTab,
   ConnectionsTab,
-  AgentsTab,
   BrainTab,
   type TabId,
   type ThoughtItem,
 } from './TabComponents';
+import { CapabilitiesTab } from './CapabilitiesTab';
 import { QueueTaskList } from './QueueTaskCard';
 import { PlansTab } from './PlansTab';
 import { SlideoutDrawer } from './SlideoutDrawer';
 import { SettingsTab } from './SettingsTab';
 import { RulesManagementPanel } from './RulesManagementPanel';
+import { IssuesTab } from './IssuesTab';
 import { PromptInputBar, type PromptInputBarHandle } from './PromptInputBar';
 import { OverlayStyles } from './OverlayStyles';
 import { LearnModeOverlay, type LearnModeState } from './LearnModeOverlay';
@@ -166,7 +166,7 @@ export function UnifiedOverlay() {
   const commitInFlightStream = feedStore.commitInFlightStream;
 
   const [thinkingElapsed, setThinkingElapsed] = useState(0);
-  const pendingPrependRef = useRef<{ prevScrollHeight: number; committed: boolean; jumpToTop?: boolean } | null>(null);
+  const pendingPrependRef = useRef<{ prevScrollHeight: number; zoneHeight: number; committed: boolean; jumpToTop?: boolean } | null>(null);
   // Track elapsed time while thinking — for progressive status messages
   useEffect(() => {
     if (!isThinking) { setThinkingElapsed(0); return; }
@@ -213,6 +213,10 @@ export function UnifiedOverlay() {
   const [queueItems, setQueueItems] = useState<QueueItem[]>([]);
   const [cronItems, setCronItems] = useState<CronItem[]>([]);
   const [skillItems, setSkillItems] = useState<SkillItem[]>([]);
+  // A dropped SKILL.md awaiting the Add Skill modal (Skills segment consumes it).
+  // The ts makes each drop a fresh object so repeat drops re-trigger the modal.
+  const [pendingSkillFile, setPendingSkillFile] = useState<{ path: string; ts: number } | null>(null);
+  const handleSkillFileHandled = useCallback(() => setPendingSkillFile(null), []);
   const [connectionItems, setConnectionItems] = useState<ConnectionItem[]>([]);
   const [agentItems, setAgentItems] = useState<AgentItem[]>([]);
   const [promptQueueItems, setPromptQueueItems] = useState<PromptQueueItem[]>([]);
@@ -254,6 +258,11 @@ export function UnifiedOverlay() {
   const resultsMeasureRef = useRef<HTMLDivElement>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const scrollBottomRef = useRef<HTMLDivElement>(null);
+  // History zone bounds — prepends grow it, TTL eviction shrinks it. Anchoring
+  // against its offsetHeight (not scrollHeight) keeps live appends below out
+  // of the viewport math.
+  const historyZoneRef = useRef<HTMLDivElement>(null);
+  const zoneObsRef = useRef<{ el: Element | null; h: number; ro: ResizeObserver | null }>({ el: null, h: 0, ro: null });
   // Fixed sections measured by useDynamicHeight (intrinsic content height, not the clipped root).
   const headerRef = useRef<HTMLDivElement>(null);
   const inputBarRef = useRef<HTMLDivElement>(null);
@@ -261,13 +270,14 @@ export function UnifiedOverlay() {
   // --- Tab Content Refs for Dynamic Height ---
   const queueTabRef = useRef<HTMLDivElement>(null);
   const plansTabRef = useRef<HTMLDivElement>(null);
+  // Merged Agents|Skills|Discover surface — one mount, both TabIds point at it.
+  const capabilitiesTabRef = useRef<HTMLDivElement>(null);
   const cronTabRef = useRef<HTMLDivElement>(null);
-  const agentsTabRef = useRef<HTMLDivElement>(null);
-  const skillsTabRef = useRef<HTMLDivElement>(null);
   const connectionsTabRef = useRef<HTMLDivElement>(null);
   // const storeTabRef = useRef<HTMLDivElement>(null); // Store tab removed
   const settingsTabRef = useRef<HTMLDivElement>(null);
   const rulesTabRef = useRef<HTMLDivElement>(null);
+  const issuesTabRef = useRef<HTMLDivElement>(null);
   const brainTabRef = useRef<HTMLDivElement>(null);
 
   // Glow-off timer moved to feedIpc module scope (scheduleGlowOff/cancelGlowOff).
@@ -313,6 +323,15 @@ export function UnifiedOverlay() {
     t.status === 'running' || t.status === 'queued' || t.status === 'waiting-for-agent' ||
     t.status === 'awaiting-approval' || t.status === 'auth-required' || t.status === 'waiting-for-input');
 
+  // Input-bar running signal — reactive version of hasActiveCommsTask plus the
+  // serial queue and this turn's own submit flags. A comms ack 'done' clears
+  // isSubmitting long before task:complete lands; without the task-state OR
+  // the cancel button flips back to Send while the run is still going.
+  const anyCommsActive = commsTasks.some(t =>
+    t.status === 'running' || t.status === 'queued' || t.status === 'waiting-for-agent' ||
+    t.status === 'awaiting-approval' || t.status === 'auth-required' || t.status === 'waiting-for-input');
+  const inputBarRunning = isSubmitting || isStreaming || isThinking || anyCommsActive || promptQueueItems.length > 0;
+
   // Suppress all resize IPC while user is dragging, using the native resize handle,
   // within the brief hold window after a manual collapse via the width toggle, or
   // just after a drag ends (a queued animated setBounds mid/post-drag = visible snap).
@@ -343,12 +362,13 @@ export function UnifiedOverlay() {
     queue: queueTabRef,
     plans: plansTabRef,
     cron: cronTabRef,
-    agents: agentsTabRef,
-    skills: skillsTabRef,
+    agents: capabilitiesTabRef,
+    skills: capabilitiesTabRef,
     connections: connectionsTabRef,
     // store: storeTabRef, // Store tab removed
     settings: settingsTabRef,
     rules: rulesTabRef,
+    issues: issuesTabRef,
     brain: brainTabRef,
   }), []);
 
@@ -443,7 +463,7 @@ export function UnifiedOverlay() {
     if (!feedStore.getState().hasMoreHistory || feedStore.getState().historyLoading) return;
     const container = scrollContainerRef.current;
     pendingPrependRef.current = container
-      ? { prevScrollHeight: container.scrollHeight, committed: false }
+      ? { prevScrollHeight: container.scrollHeight, zoneHeight: historyZoneRef.current?.offsetHeight || 0, committed: false }
       : null;
     requestHistoryPage(feedStore.internal.historyCursor);
   }, [requestHistoryPage]);
@@ -452,6 +472,8 @@ export function UnifiedOverlay() {
   // `committed` is flipped inside the conversation:list handler itself — stray
   // feedEntries updates (task:progress patches etc.) during the IPC round-trip
   // must not consume the anchor early and leave the real prepend unanchored.
+  // Anchor on the history zone's growth, not scrollHeight — a live entry
+  // appended mid-flight would otherwise push the viewport down too.
   useEffect(() => {
     const pending = pendingPrependRef.current;
     const container = scrollContainerRef.current;
@@ -459,30 +481,73 @@ export function UnifiedOverlay() {
     pendingPrependRef.current = null;
     // Timeline jump — land on the just-prepended block instead of staying put.
     if (pending.jumpToTop) { container.scrollTop = 0; return; }
-    container.scrollTop += container.scrollHeight - pending.prevScrollHeight;
+    const zone = historyZoneRef.current;
+    container.scrollTop += zone
+      ? zone.offsetHeight - pending.zoneHeight
+      : container.scrollHeight - pending.prevScrollHeight;
   }, [feedEntries]);
 
   // --- Bounded history: TTL eviction of prepended pages ────────────────────
   // Loaded history is temporary — after the TTL the prepended block drops,
   // the cursor rewinds to the floor page, and scroll-up refetches it. The
   // scroll-guard postpones eviction while the viewport overlaps the zone
-  // (user is reading it). Removal shrinks scrollHeight above the viewport,
-  // so scrollTop compensates by the removed height — same anchor, inverted.
+  // (user is reading it) — previously it only checked "near the top", so a
+  // user deep inside a tall history zone lost the guard: eviction removed the
+  // content ABOVE them and scrollTop clamped to 0 — the feed jumped to the
+  // start of the day. Overlap = viewport top inside the zone OR viewport
+  // bottom inside it. Removal shrinks the zone above the viewport, so
+  // scrollTop compensates by the removed height — same anchor, inverted.
   useEffect(() => {
     const TTL = 10 * 60 * 1000;
     const CHECK = 60 * 1000;
     const t = setInterval(() => {
       const c = scrollContainerRef.current;
       if (!c) return;
-      if (c.scrollTop < c.clientHeight * 2) return; // viewport near top = reading history
+      const zone = historyZoneRef.current;
+      if (zone) {
+        const zoneTop = zone.getBoundingClientRect().top - c.getBoundingClientRect().top + c.scrollTop;
+        const zoneBottom = zoneTop + zone.offsetHeight;
+        if (c.scrollTop < zoneBottom && c.scrollTop + c.clientHeight > zoneTop) return; // viewport overlaps the zone — user is reading history
+      } else if (c.scrollTop < c.clientHeight * 2) return; // no zone ref — fall back to the near-top guard
+      const prevZoneH = zone ? zone.offsetHeight : 0;
       const prevH = c.scrollHeight;
       const removed = feedStore.evictExpiredHistory(Date.now(), TTL);
       if (removed) {
-        requestAnimationFrame(() => { c.scrollTop -= (prevH - c.scrollHeight); });
+        requestAnimationFrame(() => {
+          const z = historyZoneRef.current;
+          c.scrollTop -= z ? (prevZoneH - z.offsetHeight) : (prevH - c.scrollHeight);
+          // Sync the zone observer's baseline — the eviction compensation above
+          // already accounts for the shrink, so the RO must not apply it twice.
+          if (z && zoneObsRef.current.el === z) zoneObsRef.current.h = z.offsetHeight;
+        });
       }
     }, CHECK);
     return () => clearInterval(t);
   }, []);
+
+  // --- History-zone growth pinning ─────────────────────────────────────────
+  // A task:progress patch can expand a card INSIDE the loaded-history zone —
+  // growth above the viewport pushes live content down out of view (looks
+  // like a spontaneous scroll). Compensate scrollTop by the delta, but only
+  // when the viewport sits fully below the zone — growth beside the reader
+  // should stay visible where it happens.
+  useEffect(() => {
+    const zone = historyZoneRef.current;
+    const c = scrollContainerRef.current;
+    if (!zone || !c || zoneObsRef.current.el === zone) return;
+    zoneObsRef.current.ro?.disconnect();
+    const ro = new ResizeObserver(() => {
+      const next = zone.offsetHeight;
+      const delta = next - zoneObsRef.current.h;
+      zoneObsRef.current.h = next;
+      if (!delta) return;
+      const zoneTop = zone.getBoundingClientRect().top - c.getBoundingClientRect().top + c.scrollTop;
+      if (c.scrollTop > zoneTop + next) c.scrollTop += delta;
+    });
+    zoneObsRef.current = { el: zone, h: zone.offsetHeight, ro };
+    ro.observe(zone);
+  }, [feedEntries]);
+  useEffect(() => () => zoneObsRef.current.ro?.disconnect(), []);
 
   // --- Tab Switching ---
   const handleTabSelect = useCallback((tab: TabId | 'settings' | 'rules') => {
@@ -538,47 +603,37 @@ export function UnifiedOverlay() {
   const handleSubmitFromInputBar = useCallback(async (finalPromptText: string, finalHighlights: string[], wasGatherPending: boolean) => {
     dbg('🚀 [UNIFIED] handleSubmit called');
 
-    // Concurrent submit: a task is already in flight. Don't touch its stream
-    // accumulator or display flags — the new message queues alongside it.
-    const concurrent = isSubmitting && !wasGatherPending;
+    // A new prompt preempts in-flight work (main cancels it on receipt), so the
+    // full reset always applies — commitInFlightStream still preserves the old
+    // run's partial text as a committed entry.
+    commitInFlightStream();
 
-    if (!concurrent) {
-      // Preserve any still-streaming AI text before the reset below wipes it —
-      // a resubmit mid-stream shouldn't silently drop the partial message.
-      commitInFlightStream();
-
-      // Reset parent state via startTransition — non-blocking, lets the browser paint
-      // the child's cleared text before the parent re-renders.
-      startTransition(() => {
-        highlightsStore.clear();
-        setStreamingResponse('');
-        setResultItems([]);
-        setSearchSources([]);
-        setIsStreaming(false);
-        setIsThinking(true);
-        setIsSubmitting(true); // Show cancel/stop button during preflight and automation
-        setIsAutomationMode(false);
-        setInstallPrompt(null);
-        setActionChips([]);
-        setInstallOutput([]);
-        setGatherPending(false);
-        setGatherQuestion(null);
-        setLiveRunHidden(false);
-        setStreamingStartedRef(false);
-      });
-      feedStore.internal.streamAcc = '';
-      feedStore.internal.hasDropped = false;
-    } else {
-      // Light reset only: clear chips for the next message + show pending dots
-      // for this exchange. The running task's flags stay untouched.
+    // Reset parent state via startTransition — non-blocking, lets the browser paint
+    // the child's cleared text before the parent re-renders.
+    startTransition(() => {
       highlightsStore.clear();
+      setStreamingResponse('');
+      setResultItems([]);
+      setSearchSources([]);
+      setIsStreaming(false);
       setIsThinking(true);
-    }
+      setIsSubmitting(true); // Show cancel/stop button during preflight and automation
+      setIsAutomationMode(false);
+      setInstallPrompt(null);
+      setActionChips([]);
+      setInstallOutput([]);
+      setGatherPending(false);
+      setGatherQuestion(null);
+      setLiveRunHidden(false);
+      setStreamingStartedRef(false);
+    });
+    feedStore.internal.streamAcc = '';
+    feedStore.internal.hasDropped = false;
 
     if (!finalPromptText.trim() && finalHighlights.length === 0) {
       dbg('⚠️ [UNIFIED] No text or highlights, skipping submit');
       setIsThinking(false);
-      if (!concurrent) setIsSubmitting(false);
+      setIsSubmitting(false);
       return;
     }
 
@@ -723,7 +778,7 @@ export function UnifiedOverlay() {
     dbg('✅ [UNIFIED] Prompt enqueued');
 
     // Note: isSubmitting stays true until task completes (handled in all_done)
-  }, [isSubmitting, threadContext, selectionArmed, appendUserEntry, appendFeedEntry, commitInFlightStream]);
+  }, [threadContext, selectionArmed, appendUserEntry, appendFeedEntry, commitInFlightStream]);
 
   // (highlight chip removal is handled inside PromptInputBar via highlightsStore)
 
@@ -772,8 +827,18 @@ export function UnifiedOverlay() {
     console.log('[File Drop] Dropped files:', files.map(f => ({ name: f.name, type: f.type, path: (f as any).path })));
     if (files.length > 0) {
       // Process files directly (like StandalonePromptCapture)
-      files.forEach((file) => {
+      files.forEach(async (file) => {
         const filePath = (file as any).path;
+        // A dropped markdown that looks like a SKILL.md goes to the Add Skill
+        // modal (Install vs Build-as-plan) instead of becoming a context chip.
+        if (/\.(md|markdown|txt)$/i.test(file.name) && filePath && ipcRenderer) {
+          const res = await ipcRenderer.invoke('skill:peek-file', { path: filePath }).catch(() => null);
+          if (res?.isSkillDoc) {
+            setPendingSkillFile({ path: filePath, ts: Date.now() });
+            setActiveTab('skills');
+            return;
+          }
+        }
         const isDir = file.type === '' && !file.name.includes('.'); // Heuristic for directories
         const itemText = isDir
           ? `[Folder: ${filePath}]`
@@ -2132,16 +2197,18 @@ export function UnifiedOverlay() {
     ipcRenderer.on('ropt:tap', () => scrollToBottom(), token);
     // ⇧R-hold + ⌥R tap — same as the header expand/collapse button.
     ipcRenderer.on('ropt:expand', () => toggleWidthRef.current(), token);
-    // ⌥R tap with a question card on top — focus its input.
+    // ⌥R tap with a question card on top — focus its input (free text wins;
+    // an options-only card focuses the first option so ↑/↓ can navigate).
     ipcRenderer.on('ropt:focus-answer', () => {
-      const el = document.querySelector<HTMLElement>('[data-qc-input], .question-card input, .question-card textarea');
+      const el = document.querySelector<HTMLElement>('[data-qc-input], .question-card input, .question-card textarea')
+        || document.querySelector<HTMLElement>('[data-qc-option]');
       el?.focus();
     }, token);
     // Timeline click — page history to that day and scroll to the fetched block.
     ipcRenderer.on('history:jump', ({ endDate }: { endDate: string }) => {
       const container = scrollContainerRef.current;
       pendingPrependRef.current = container
-        ? { prevScrollHeight: container.scrollHeight, committed: false, jumpToTop: true }
+        ? { prevScrollHeight: container.scrollHeight, zoneHeight: historyZoneRef.current?.offsetHeight || 0, committed: false, jumpToTop: true }
         : null;
       requestHistoryPage(endDate);
     }, token);
@@ -2741,6 +2808,7 @@ export function UnifiedOverlay() {
           onClose={() => setIsSlideoutOpen(false)}
           onNavigate={handleSlideoutNavigate}
           activeTab={activeTab}
+          queueCount={queueCount}
         />
 
         {/* Main Content Area - constrained for scroll */}
@@ -2757,6 +2825,7 @@ export function UnifiedOverlay() {
               entries={feedEntries}
               activeExchangeId={activeExchangeId}
               measureRef={resultsMeasureRef}
+              historyZoneRef={historyZoneRef}
               historyLoading={historyLoading}
               hasMoreHistory={hasMoreHistory}
               onRedo={handleFeedRedo}
@@ -2896,39 +2965,31 @@ export function UnifiedOverlay() {
               />}
             </div>
 
-          {/* Agents Tab */}
-          <div 
-            ref={agentsTabRef}
+          {/* Capabilities Tab — merged Agents | Skills | Discover surface */}
+          <div
+            ref={capabilitiesTabRef}
             className="overflow-y-auto overflow-x-hidden"
-            style={{ display: deferredTab === 'agents' ? 'block' : 'none', height: 'auto', maxHeight: '100%' }}
+            style={{ display: (deferredTab === 'agents' || deferredTab === 'skills') ? 'block' : 'none', height: 'auto', maxHeight: '100%' }}
           >
-              {visitedTabs.has('agents') && <AgentsTab
-                items={agentItems}
-                onRefresh={handleAgentsRefresh}
-                onContentResize={measureNow}
-                modalCardRef={setModalCardEl}
-              />}
-            </div>
-
-          {/* Skills Tab */}
-          <div 
-            ref={skillsTabRef}
-            className="overflow-y-auto overflow-x-hidden p-4"
-            style={{ display: deferredTab === 'skills' ? 'block' : 'none', height: 'auto', maxHeight: '100%' }}
-          >
-              {visitedTabs.has('skills') && <SkillsTab
-                items={skillItems}
+              {(visitedTabs.has('agents') || visitedTabs.has('skills')) && <CapabilitiesTab
+                navSubtab={deferredTab === 'skills' ? 'skills' : deferredTab === 'agents' ? 'agents' : null}
+                agentItems={agentItems}
+                onAgentsRefresh={handleAgentsRefresh}
+                skillItems={skillItems}
                 onSaveSecret={handleSkillsSaveSecret}
                 onOpenCode={handleSkillsOpenCode}
                 onOAuthConnect={handleSkillsOAuthConnect}
                 onScopesChange={handleSkillsScopesChange}
                 onRepairOAuth={handleSkillsRepairOAuth}
-                onDelete={handleSkillsDelete}
+                onSkillDelete={handleSkillsDelete}
                 onInstallFromUrl={handleSkillsInstallFromUrl}
                 onInstallFromFile={handleSkillsInstallFromFile}
                 onRefreshSkills={handleSkillsRefresh}
                 onContentResize={measureNow}
                 modalCardRef={setModalCardEl}
+                pendingSkillFile={pendingSkillFile}
+                onSkillFileHandled={handleSkillFileHandled}
+                onGoResults={() => setActiveTab('results')}
               />}
             </div>
 
@@ -2971,6 +3032,15 @@ export function UnifiedOverlay() {
             style={{ display: deferredTab === 'rules' ? 'block' : 'none', height: 'auto', maxHeight: '100%' }}
           >
               {visitedTabs.has('rules') && <RulesManagementPanel />}
+            </div>
+
+          {/* Issues Tab — recorded infrastructure failures (SystemFailureCard → Report issue) */}
+          <div
+            ref={issuesTabRef}
+            className="overflow-y-auto overflow-x-hidden p-4"
+            style={{ display: deferredTab === 'issues' ? 'block' : 'none', height: 'auto', maxHeight: '100%' }}
+          >
+              {visitedTabs.has('issues') && <IssuesTab />}
             </div>
 
           {/* Brain Tab — Thought/Trigger engine visibility */}
@@ -3025,7 +3095,7 @@ export function UnifiedOverlay() {
           gatherPending={gatherPending}
           gatherQuestion={gatherQuestion}
           isDebugMode={isDebugMode}
-          isSubmitting={isSubmitting}
+          isSubmitting={inputBarRunning}
           onPaste={handlePaste}
           onAttachClick={handleAttachClick}
           onCancel={() => ipcRenderer?.send('automation:cancel')}

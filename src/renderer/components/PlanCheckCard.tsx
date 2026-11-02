@@ -177,10 +177,13 @@ export function PlanCheckCard({ check, compact = true }: PlanCheckCardProps) {
   // Compact: pass rows are folded into the task summary; issues/warns/pending
   // still render in detail so their action buttons stay reachable.
   const detailItems = compact ? check.items.filter(i => i.status !== 'pass') : check.items;
-  // Drafting phase — an empty task list makes allClear vacuously true; the
-  // run controls stay off until there's something to run.
-  const isDrafting = (check.taskCount === 0) || check.planStatus === 'drafting';
-  const runnable = check.allClear && !isDrafting;
+  // The checklist is the authority on runnable — same rule _matchPlanCheckAction
+  // applies to typed "run it"/"yes". Frontmatter stays 'drafting' until the
+  // user confirms, so gating on it deadlocks the very buttons that confirm.
+  // (Steps still generating stay blocked through allClear — pending rows.)
+  const hasTasks = (check.taskCount ?? 0) > 0 || check.items.some(i => i.taskNum != null);
+  const isDrafting = !hasTasks;
+  const runnable = check.allClear && hasTasks;
   const blockers = check.items.filter(i => i.status === 'issue' || i.status === 'pending');
   const blockerTitle = isDrafting
     ? 'Still drafting — tasks appear as they are planned'

@@ -607,7 +607,7 @@ function PromptInputBarImpl(
           </button> */}
         </div>
 
-        {/* Gesture legend — centered "Key Cmds ⓘ", hover/click shows all
+        {/* Gesture legend — centered "Key Cmds ⌥", hover/click shows all
             Right-Option commands */}
         <div className="flex-1 flex items-center justify-center">
           <div
@@ -618,16 +618,12 @@ function PromptInputBarImpl(
             <button
               type="button"
               onClick={() => setLegendOpen(v => !v)}
-              className="flex items-center gap-1 px-2 py-1 rounded-md text-gray-500 hover:text-gray-300 hover:bg-white/5 transition-colors"
+              className="flex items-center gap-1.5 px-2 py-1 rounded-md text-gray-500 hover:text-gray-300 hover:bg-white/5 transition-colors"
               style={{ fontSize: 11, fontWeight: 500 }}
-              title="Right-Option shortcuts"
+              title="Option-key shortcuts"
             >
-              Key Cmds
-              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <circle cx="12" cy="12" r="10" />
-                <line x1="12" y1="16" x2="12" y2="12" />
-                <line x1="12" y1="8" x2="12.01" y2="8" />
-              </svg>
+              Option Key Cmds
+              <RoptKeyIcon size={22} />
             </button>
             {legendOpen && (
               <div
@@ -646,6 +642,7 @@ function PromptInputBarImpl(
                 {[
                   { keys: <><RoptKeyIcon size={22} /><span>double-tap</span></>, desc: 'show / hide' },
                   { keys: <><RoptKeyIcon size={22} /><span>hold</span></>, desc: 'talk (PTT)' },
+                  { keys: <><RoptKeyIcon size={22} /><span>hold 3s</span></>, desc: 'cancel automation' },
                   { keys: <><RoptKeyIcon size={22} /><span>tap</span></>, desc: 'confirm · approve · run plan · mute' },
                   { keys: <><RoptKeyIcon size={22} /><span>tap (scrolled up)</span></>, desc: 'jump to latest' },
                   { keys: <><RoptKeyIcon size={22} mod="shift" /><span>hold +</span><RoptKeyIcon size={22} /><span>tap</span></>, desc: 'expand / collapse' },
