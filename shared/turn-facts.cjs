@@ -37,6 +37,36 @@ const CANCEL_NEG_RE = /(don'?t|do not)\s+(?:cancel|abort|stop)/i;
 
 const _ATTACH_RE = /\[(File|Folder|Context|Thought|Highlighted):\s*([^\]]*)\]/gi;
 
+/**
+ * The "ask" — in a paste+question turn ("<600-char quoted block> … what
+ * does X mean?") the request lives in the trailing segment, not the pasted
+ * material above it. Matchers may still generate CANDIDATES on full
+ * userText, but judgments about intent (confirmJudgment state, control
+ * verdicts) must scope to the ask or quoted vocabulary reads as intent
+ * (observed: a pasted routing audit containing "AGENTS.md rule" + "what
+ * does envelope mean" → rule-author verdict YES → guardian dead end).
+ *
+ * Short / single-segment text returns whole — zero behavior change for the
+ * common case. Multi-segment text returns the trailing line/sentence
+ * cluster, expanded backwards while it's a bare fragment ("ok?", "right?").
+ */
+function deriveRequestText(userText) {
+  const t = String(userText || '').trim();
+  if (t.length <= 200) return t;
+  const segs = t
+    .split(/\n+|(?<=[.!?])\s+(?=[-–—•>*"'(\[{~]*\s*[A-Z0-9])/)
+    .map(s => s.trim().replace(/^[-–—•>*\s"'(\[{~]+/, ''))
+    .filter(Boolean);
+  if (segs.length <= 1) return t;
+  let out = segs[segs.length - 1];
+  for (let i = segs.length - 2; i >= 0 && out.length < 15; i--) {
+    out = `${segs[i]} ${out}`;
+  }
+  return out;
+}
+
+const _QUESTION_RE = /^(?:what|who|whom|whose|which|when|where|why|how|does|do|did|is|are|was|were|can|could|should|would|will|may|explain|define|describe)\b/i;
+
 /** Plan referent — same shapes server.cjs used, but on userText only. */
 function _planRef(userText) {
   const s = String(userText || '');
@@ -80,8 +110,9 @@ function computeTurnFacts({ rawText, selectedText = '', explicitTool = null } = 
 
   const t = userText.toLowerCase();
   const wordCount = t ? t.split(/\s+/).length : 0;
-  const isQuestion = /\?\s*$/.test(userText)
-    || /^(?:what|who|whom|whose|which|when|where|why|how|does|do|did|is|are|was|were|can|could|should|would|will|may|explain|define|describe)\b/i.test(userText);
+  const isQuestion = /\?\s*$/.test(userText) || _QUESTION_RE.test(userText);
+  const requestText = deriveRequestText(userText);
+  const requestIsQuestion = /\?\s*$/.test(requestText) || _QUESTION_RE.test(requestText);
 
   const exitish = (PLANNING_EXIT_RE.test(t) || PLANNING_EXIT_INLINE_RE.test(t)) && !PLANNING_EXIT_NEG_RE.test(t);
   const cancelish = CANCEL_RE.test(t) && !CANCEL_NEG_RE.test(t);
@@ -96,6 +127,8 @@ function computeTurnFacts({ rawText, selectedText = '', explicitTool = null } = 
     attachments,
     hasSelectionContext,
     isQuestion,
+    requestText,
+    requestIsQuestion,
     wordCount,
     exitish,
     exitishInline: PLANNING_EXIT_INLINE_RE.test(t) && !PLANNING_EXIT_RE.test(t) && !PLANNING_EXIT_NEG_RE.test(t),
@@ -108,4 +141,4 @@ function computeTurnFacts({ rawText, selectedText = '', explicitTool = null } = 
   });
 }
 
-module.exports = { computeTurnFacts };
+module.exports = { computeTurnFacts, deriveRequestText };

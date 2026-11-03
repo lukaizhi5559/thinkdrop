@@ -39,6 +39,28 @@ function _isGenericAgent(agentId) {
   catch (_) { return false; }
 }
 
+// Bound extension tabs — fetched so dispatch-time normalization can bind
+// unbound session steps to the user's real tab instead of a phantom lane.
+const _COMMAND_PORT = parseInt(process.env.COMMAND_SERVICE_PORT || '3007', 10);
+function _fetchExtSessions(timeoutMs = 600) {
+  return new Promise((resolve) => {
+    try {
+      const req = require('http').get({ hostname: '127.0.0.1', port: _COMMAND_PORT, path: '/ext.sessions', timeout: timeoutMs }, (res) => {
+        let data = '';
+        res.on('data', (c) => { data += c; });
+        res.on('end', () => {
+          try {
+            const j = JSON.parse(data);
+            resolve(Array.isArray(j.sessions) ? j.sessions.filter(s => s && s.url && /^https?:/i.test(s.url)) : []);
+          } catch (_) { resolve([]); }
+        });
+      });
+      req.on('timeout', () => { req.destroy(); resolve([]); });
+      req.on('error', () => resolve([]));
+    } catch (_) { resolve([]); }
+  });
+}
+
 // Degenerate background-generated step shape — the failure mode that sent the
 // wrong-recipient email: a single page flow split into per-field dom.act
 // micro-steps with no verification before synthesize. Each micro-step loses
@@ -243,7 +265,8 @@ async function _dispatchTask(run, task) {
   if (steps) {
     try {
       const { normalizeTaskStepsAsync } = require('../../shared/plan-steps.cjs');
-      const norm = await normalizeTaskStepsAsync(task);
+      const extSessions = await _fetchExtSessions();
+      const norm = await normalizeTaskStepsAsync(task, { extSessions });
       steps = norm.steps;
       const serviceAgent = norm.agents.find(a => !_isGenericAgent(a));
       if (serviceAgent) lockAgent = serviceAgent;

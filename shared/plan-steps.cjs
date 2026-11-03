@@ -46,26 +46,38 @@ function _docExtractPath(step) {
   return m ? m[0] : null;
 }
 
-async function normalizeTaskStepsAsync(task) {
+// Session-bound steps that read the page — an unbound one must not mint a
+// phantom session to scan content (observed: a "read the job application
+// form" turn.loop.agent with no sessionId failed 'no live tab' while the
+// page sat open). Reads degrade to the OS-path page scan instead.
+const _READ_CAPABLE_BOUND = new Set(['turn.loop.agent', 'browser.act', 'browser.agent', 'tab.map.agent']);
+const _READ_GOAL_RE = /\b(read|extract|scan|observe|summar|get\s*page\s*text|pull|copy|list|transcribe|inspect|questions?)\b/i;
+const _MUTATE_GOAL_RE = /\b(click|fill|type|enter|select|press|submit|navigate|scroll|open|post|send|book|buy|pay|sign[ -]?in|log[ -]?in|add|drag|hover|tap|check(?:\s+the)?\s+box)\b/i;
+function _isReadGoal(step) {
+  const blob = `${step && step.args && step.args.goal ? step.args.goal : ''} ${step && step.description ? step.description : ''}`;
+  return _READ_GOAL_RE.test(blob) && !_MUTATE_GOAL_RE.test(blob);
+}
+
+async function normalizeTaskStepsAsync(task, opts = {}) {
   // Resolve every step URL (with live discovery) up-front, then apply the same
   // pass-1/pass-2 logic as the sync version.
   const raw = Array.isArray(task.steps) ? task.steps : [];
   const urls = raw.map(s => s && s.args && typeof s.args.url === 'string' ? s.args.url : null);
   const svcs = await Promise.all(urls.map(u => u ? serviceMap.serviceForUrlAsync(u) : null));
   const resFor = (i) => svcs[i] || null;
-  return _applyNormalization(task, resFor);
+  return _applyNormalization(task, resFor, opts);
 }
 
-function normalizeTaskSteps(task) {
+function normalizeTaskSteps(task, opts = {}) {
   const raw = Array.isArray(task.steps) ? task.steps : [];
   const resFor = (i) => {
     const url = raw[i] && raw[i].args && typeof raw[i].args.url === 'string' ? raw[i].args.url : null;
     return url ? serviceMap.serviceForUrl(url) : null;
   };
-  return _applyNormalization(task, resFor);
+  return _applyNormalization(task, resFor, opts);
 }
 
-function _applyNormalization(task, resFor) {
+function _applyNormalization(task, resFor, opts = {}) {
   const declared = (task.agents || []).map(a => canonicalAgent(a) || a).filter(Boolean);
   const taskAgent = declared[0] || null;
   const services = new Set();
@@ -105,6 +117,24 @@ function _applyNormalization(task, resFor) {
     // touches a service, else the task's declared agent.
     if (skillIndex.isSessionBound(out.skill) && laneAgent) {
       out.args.agentId = laneAgent;
+      return out;
+    }
+    // Unbound session-bound repair — no lane to ride:
+    //   • read/scan goals → app.agent scan_page (OS path, no session mint)
+    //   • interactive goals + live ext tabs → sessionId 'ext:default' (the
+    //     extension resolves the user's real tab; the phantom 'default_agent'
+    //     lane never gets minted)
+    if (skillIndex.isSessionBound(out.skill) && !out.args.agentId && !out.args.sessionId) {
+      if (_READ_CAPABLE_BOUND.has(out.skill) && _isReadGoal(out)) {
+        out = {
+          ...out,
+          skill: 'app.agent',
+          args: { action: 'scan_page', preferOs: true },
+          description: out.description || 'Read the visible page',
+        };
+      } else if (Array.isArray(opts.extSessions) && opts.extSessions.length) {
+        out.args.sessionId = 'ext:default';
+      }
     }
     return out;
   });

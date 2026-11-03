@@ -1826,6 +1826,24 @@ function startOverlayControlServer() {
           if (_pinMatches) {
             _exitPlanningLane();
           }
+          // Settle the ESCALATED task — its journal entry is pseudo-terminal
+          // ('needs_plan'), so without a second task:complete the queue card
+          // spins "Replanning" forever. taskStatus is comms-authoritative;
+          // 'cancelled' carries none (main's cancel path already emitted it).
+          if (evt.taskId && evt.taskStatus) {
+            safeSendUnified('task:complete', {
+              taskId: evt.taskId,
+              status: evt.taskStatus,
+              result: evt.result || 'Replanning finished — handled directly',
+            });
+          }
+          if (evt.taskId) {
+            safeSendUnified('automation:progress', {
+              type: 'plan_replanning_end',
+              taskId: evt.taskId,
+              outcome: evt.outcome || 'done',
+            });
+          }
           res.writeHead(200).end(JSON.stringify({ ok: true }));
         } catch (err) {
           res.writeHead(500).end(JSON.stringify({ error: err.message }));
@@ -1860,6 +1878,20 @@ function startOverlayControlServer() {
               .catch(err => console.warn('[PlanRunner] /plan.run check failed:', err.message));
           } else {
             console.warn(`[PlanRunner] /plan.run — no plan file for ${evt.planId || 'unknown'}`);
+          }
+          // Settle the ESCALATED task's card + amber phase — the plan it
+          // produced now runs under its own id; this task's lifecycle ended.
+          if (evt.taskId) {
+            safeSendUnified('task:complete', {
+              taskId: evt.taskId,
+              status: 'done',
+              result: `Replanned — running as plan ${evt.planId || ''}`.trim(),
+            });
+            safeSendUnified('automation:progress', {
+              type: 'plan_replanning_end',
+              taskId: evt.taskId,
+              outcome: 'run',
+            });
           }
           res.writeHead(200).end(JSON.stringify({ ok: true }));
         } catch (err) {
@@ -3262,21 +3294,22 @@ function _cancelAutomationRun({ exceptTaskId = null } = {}) {
   // marks all cancelled before removing any (removals can resume a parked
   // sibling). Awaited by the submit-preempt path so the new task can't race
   // behind a dying lock-holder; fire-and-forget elsewhere.
+  // Two layers: known ids cancel directly (same awaited POST the working
+  // task:cancel uses — no discovery needed), then all:true nukes anything the
+  // journal holds that local state lost (post-restart orphans). The old
+  // GET /tasks sweep silently no-opped on timeout — a parked 'waiting-for-input'
+  // card survived 14 presses of the composer stop button.
   const _commsSweep = (async () => {
     try {
-      const tasks = await _commsTasksList();
-      const ids = (tasks || [])
-        .filter(t => t && t.id && t.id !== exceptTaskId && !_COMMS_TERMINAL.has(t.status))
-        .map(t => t.id);
-      if (!ids.length) return;
-      for (const tid of ids) {
-        try { require('./handoffRunner').cancel(tid); } catch (_) {}
-        _pendingPreflightPromptsByTask.delete(tid);
-      }
-      try { await _commsHttp('/comms.cancel', { taskIds: ids }); }
-      catch (err) { console.warn('[Automation] /comms.cancel sweep failed:', err?.message); }
-      for (const tid of ids) {
+      for (const tid of _killedTaskIds) {
+        try { await _commsHttp('/comms.cancel', { taskId: tid }); }
+        catch (err) { console.warn(`[Automation] /comms.cancel failed for ${tid}:`, err?.message); }
         safeSendUnified('task:complete', { taskId: tid, status: 'cancelled', error: 'cancelled by user' });
+      }
+      try {
+        await _commsHttp('/comms.cancel', { all: true, exceptTaskId });
+      } catch (err) {
+        console.warn('[Automation] /comms.cancel all sweep failed:', err?.message);
       }
     } catch (_) {}
   })();

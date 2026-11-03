@@ -538,6 +538,7 @@ async function execute({ taskId, prompt, agentId, capabilityReason, source, orig
     _notifyProgress(taskId, agentId, { step: 0, totalSteps: 0, currentStep: 'Initializing' });
 
     // A fresh execute() for a taskId supersedes any stale paused question.
+    try { clearTimeout(_pendingQuestions.get(taskId)?.timeoutTimer); } catch (_) {}
     _pendingQuestions.delete(taskId);
 
     // Build initial state for the stategraph.
@@ -1000,7 +1001,23 @@ async function execute({ taskId, prompt, agentId, capabilityReason, source, orig
       // The question event was already forwarded via progressCallback
       console.log(`[HandoffRunner] Task ${taskId} waiting for user input`);
       // Store the paused state so answerQuestion() can resume mid-plan.
-      _pendingQuestions.set(taskId, { finalState, prompt, agentId, source, originalPrompt, sessionId });
+      // User-blocked tasks die after 10min unanswered — left alone they sat
+      // forever (observed: a 447min "Needs input" card). Mirrors the
+      // comms-graph journal waitingSince sweep so the wait dies whichever
+      // side of the process boundary notices first.
+      const timeoutTimer = setTimeout(() => {
+        if (!_pendingQuestions.has(taskId)) return;
+        console.warn(`[HandoffRunner] waiting-for-input timed out for ${taskId} — auto-cancelling`);
+        _pendingQuestions.delete(taskId);
+        try { _closeBrowserSessionsFor(taskId); } catch (_) {}
+        _postToComms('/comms.cancel', { taskId })
+          .then(ok => { if (!ok) console.warn(`[HandoffRunner] /comms.cancel timed-out task ${taskId} failed`); });
+        if (_ipcBroadcast) {
+          _ipcBroadcast('task:complete', { taskId, status: 'cancelled', error: 'timed out waiting for user input' });
+        }
+      }, 10 * 60 * 1000);
+      timeoutTimer.unref?.();
+      _pendingQuestions.set(taskId, { finalState, prompt, agentId, source, originalPrompt, sessionId, timeoutTimer });
       // Emit pipeline:done so AutomationProgress clears any planning spinner
       progressCallback({ type: 'pipeline:done', contract: finalState._contract });
       _notifyComplete(taskId, agentId, 'waiting-for-input', '', null, finalState.resolvedSessionId || sessionId, null, null, _artifactSnapshot(taskId));
@@ -1237,6 +1254,7 @@ async function answerQuestion(taskId, answer) {
     console.warn(`[HandoffRunner] answerQuestion: no pending question for task ${taskId}`);
     return { ok: false, error: 'No pending question' };
   }
+  try { clearTimeout(ctx.timeoutTimer); } catch (_) {}
   _pendingQuestions.delete(taskId);
 
   const paused = ctx.finalState;
@@ -1308,8 +1326,19 @@ async function answerQuestion(taskId, answer) {
       return { skill: _resumeSkill, args: _origStep.args, description: _description };
     }
     if (_AGENT_SKILLS.has(_resumeSkill)) {
-      // Agent skill — synthesize the standard run shape
-      return { skill: _resumeSkill, args: { action: 'run', agentId: _agentId, task: taskText }, description: _description };
+      // Agent skill — synthesize the standard run shape. A self-brand id
+      // ('cli.agent' branding on the generic run loop's own results) is NOT a
+      // registry row — omit it so the resume re-runs the generic loop with
+      // the task instead of an agentic lookup that can never resolve
+      // (observed: "No agent found: cli.agent" ask_user loop for 36min).
+      const _selfBrand = _agentId === _resumeSkill;
+      return {
+        skill: _resumeSkill,
+        args: _selfBrand
+          ? { action: 'run', task: taskText }
+          : { action: 'run', agentId: _agentId, task: taskText },
+        description: _description,
+      };
     }
     // Non-agent skill (shell.run, fs.read, synthesize, etc.) — reuse original args.
     // For shell.run, the original cmd/argv/goal is the correct re-execution shape.
@@ -1531,6 +1560,7 @@ async function answerQuestion(taskId, answer) {
 
 // ── Cancel a running task ──────────────────────────────────────────────────────
 function cancel(taskId) {
+  try { clearTimeout(_pendingQuestions.get(taskId)?.timeoutTimer); } catch (_) {}
   _pendingQuestions.delete(taskId);
   // Also drop a pending plan-approval context — a task paused at the approval
   // gate has no active run to abort, but cancelling it must prevent a later

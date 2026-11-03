@@ -3025,6 +3025,27 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
           break;
         }
 
+        case 'plan_replanning_end': {
+          // The comms loop-back resolved — plan ran / fallback re-dispatch /
+          // failed / cancelled. pipeline:done only exits 'planning'|'executing'
+          // (deliberately — a mid-run pipeline end must not fake completion),
+          // so without this event the amber phase set above spins forever
+          // after the replan finished (observed: a 10+min stuck card).
+          const _re = phaseRef.current;
+          if (_re !== 'replanning') break;
+          if (data.outcome === 'cancelled') {
+            resetToIdle();
+          } else {
+            setPhase(data.outcome === 'failed' ? 'failed' : 'done');
+            if (executionStartRef.current) {
+              const elapsed = Math.round((Date.now() - executionStartRef.current) / 1000);
+              setElapsedLabel(`${elapsed}s`);
+              setEtaLabel(null);
+            }
+          }
+          break;
+        }
+
         case 'pipeline:done': {
           // The pipeline has exited (stateGraph.execute returned). Clear the
           // planning/executing spinner. This is critical for tasks that skip
@@ -3573,9 +3594,11 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
       return;
     }
     // Reset the attempt counter only when a genuinely different question appears
-    // (new task/step/question). The same question reappearing after a failed
-    // auto-retry keeps counting toward the cap.
-    const _qKey = `${taskId || ''}|${askUserPrompt.stepIndex}|${askUserPrompt.question}`;
+    // (new task/step/skill). The question TEXT is LLM-regenerated per verdict —
+    // keying on it let the same failing step retry forever (each re-worded
+    // question looked "new" → counter reset → infinite try_again → a 36min+
+    // loop observed on a missing-agent card).
+    const _qKey = `${taskId || ''}|${askUserPrompt.stepIndex}|${askUserPrompt.skill || ''}`;
     if (autoRetryKeyRef.current !== _qKey) {
       autoRetryKeyRef.current = _qKey;
       autoRetryAttemptsRef.current = 0;
