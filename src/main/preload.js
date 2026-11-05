@@ -655,6 +655,13 @@ contextBridge.exposeInMainWorld('electron', {
         'issues:record',
         'issues:list',
         'issues:dismiss',
+        'services:list',
+        'services:setMode',
+        'services:restart',
+        'services:logs',
+        'services:ollamaModels',
+        'services:unloadModel',
+        'services:reportIssue',
       ];
       if (validChannels.includes(channel)) {
         return ipcRenderer.invoke(channel, data);

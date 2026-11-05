@@ -24,6 +24,9 @@
 
 const http = require('http');
 const { StateGraphBuilder, RealMCPAdapter, ThinkDropLLMBackend } = require('@thinkdrop/stategraph');
+// Pending-question lifecycle — cancel() drains the task's gather waits so a
+// dead task can never leave a live card/interceptor behind (input lockout).
+const gp = require('./gatherPending.cjs');
 
 const COMMS_GRAPH_PORT = parseInt(process.env.COMMS_GRAPH_PORT || '3015', 10);
 
@@ -1560,6 +1563,10 @@ async function answerQuestion(taskId, answer) {
 
 // ── Cancel a running task ──────────────────────────────────────────────────────
 function cancel(taskId) {
+  // Drain this task's gather waits FIRST — before any early return: a task
+  // parked waiting-for-input has no active run, but its pending batch card
+  // still intercepts typed input if left alive (the cancel-lockout bug).
+  try { gp.drainForTasks(taskId); } catch (_) {}
   try { clearTimeout(_pendingQuestions.get(taskId)?.timeoutTimer); } catch (_) {}
   _pendingQuestions.delete(taskId);
   // Also drop a pending plan-approval context — a task paused at the approval

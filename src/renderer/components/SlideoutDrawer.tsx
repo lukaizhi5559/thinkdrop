@@ -1,5 +1,5 @@
 import React from 'react';
-import { type TabId, RulesIcon, SettingsIcon, CronIcon, IssuesIcon, QueueIcon, PlansIcon } from './TabComponents';
+import { type TabId, RulesIcon, SettingsIcon, CronIcon, IssuesIcon, QueueIcon, PlansIcon, ServicesIcon } from './TabComponents';
 
 export function ThinkDropLogo({ size = 20 }: { size?: number }) {
   return (
@@ -30,6 +30,7 @@ export function SlideoutDrawer({ isOpen, onClose, onNavigate, activeTab, queueCo
     { type: 'item', id: 'queue', label: 'Queue', icon: (active) => <QueueIcon active={active} />, badge: queueCount },
     { type: 'item', id: 'plans', label: 'Plans', icon: (active) => <PlansIcon active={active} /> },
     { type: 'divider' },
+    { type: 'item', id: 'services' as TabId, label: 'Services', icon: (active) => <ServicesIcon active={active} /> },
     { type: 'item', id: 'issues', label: 'Issues', icon: (active) => <IssuesIcon active={active} /> },
     { type: 'item', id: 'settings', label: 'Settings', icon: (active) => <SettingsIcon active={active} /> },
     // Skills lives inside the Capabilities surface (Agents tab → Skills segment).

@@ -3,7 +3,7 @@ import SkillStore from './SkillStore';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
-export type TabId = 'results' | 'queue' | 'cron' | 'agents' | 'skills' | 'store' | 'connections' | 'rules' | 'brain' | 'plans' | 'issues';
+export type TabId = 'results' | 'queue' | 'cron' | 'agents' | 'skills' | 'store' | 'connections' | 'rules' | 'brain' | 'plans' | 'issues' | 'services';
 
 export interface ConnectionItem {
   provider: string;       // 'github' | 'google' | 'microsoft' etc.
@@ -293,6 +293,20 @@ export function BrainIcon({ active }: { active: boolean }) {
       <path d="M12 2a7 7 0 0 1 7 7c0 2.4-1.2 4.2-2.6 5.7-.9 1-1.4 1.6-1.4 2.3a1 1 0 0 1-1 1h-4a1 1 0 0 1-1-1c0-.7-.5-1.3-1.4-2.3C6.2 13.2 5 11.4 5 9a7 7 0 0 1 7-7z"/>
       <line x1="9.5" y1="21" x2="14.5" y2="21"/>
       <line x1="10.5" y1="18" x2="13.5" y2="18"/>
+    </svg>
+  );
+}
+
+export function ServicesIcon({ active }: { active: boolean }) {
+  const c = active ? '#7dd3fc' : '#abafb8';
+  return (
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="none"
+      stroke={c} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      {/* Server stack — local services */}
+      <rect x="2" y="3" width="20" height="7" rx="2"/>
+      <rect x="2" y="14" width="20" height="7" rx="2"/>
+      <line x1="6" y1="6.5" x2="6.01" y2="6.5"/>
+      <line x1="6" y1="17.5" x2="6.01" y2="17.5"/>
     </svg>
   );
 }

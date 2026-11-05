@@ -509,7 +509,9 @@ const _PLAN_STRIP_LIMIT = 6;
 function PlansStrip({ onOpenPlansTab }: { onOpenPlansTab?: () => void }) {
   const plans = useFeedStore(s => s.plans);
   const planRuns = useFeedStore(s => s.planRuns);
-  const [open, setOpen] = useState(true);
+  // Collapsed by default — expanded the strip pushes rows of plan cards into
+  // the top of the scrollback, which read as stray "planning rows" mid-feed.
+  const [open, setOpen] = useState(false);
   const sorted = useMemo(() => {
     const weight = (p: PlanSummary) =>
       (['running', 'revising'].includes(planRuns[p.planId]?.status || '') ? 0 : (_PLAN_STRIP_ORDER[p.status] ?? 5));

@@ -599,10 +599,29 @@ export function createFeedStore(now: () => number = () => Date.now()): FeedStore
       Extract<FeedEntry, { kind: 'user' }> | null;
     const turnAdvanced = lastUserIdx >= 0 && entries.slice(lastUserIdx + 1)
       .some(e => e.kind === 'assistant' || e.kind === 'system');
-    const xid = (!turnAdvanced && lastUser && lastUser.exchangeId &&
-      normText(lastUser.text) === normText(clean))
-      ? lastUser.exchangeId
+    const matchesLast = !turnAdvanced && !!lastUser && normText(lastUser.text) === normText(clean);
+    const xid = (matchesLast && lastUser!.exchangeId)
+      ? lastUser!.exchangeId
       : `x_${now()}_${internal.feedSeq++}`;
+    if (matchesLast && !lastUser!.exchangeId) {
+      // History row (db_*): a restart-resume re-ran this prompt — the bubble
+      // already exists in the loaded page but carries no exchangeId. Stamp
+      // the fresh xid onto it instead of appending a second bubble; the
+      // resumed run card and answer correlate onto it via exchangeId.
+      const uid = lastUser!.id;
+      // Unregister from the TTL-tracked pages — the row now anchors a live
+      // exchange, so eviction must not drop it out from under a running task.
+      internal.historyPages.forEach(p => {
+        const i = p.ids.indexOf(uid);
+        if (i >= 0) p.ids.splice(i, 1);
+      });
+      setEntries(prev => prev.map(e => e.id === uid
+        ? ({ ...e, exchangeId: xid, ...(attachments?.length && !(e as any).attachments?.length ? { attachments } : {}) } as FeedEntry)
+        : e));
+      internal.lastExchangeId = xid;
+      internal.lastPrompt = clean;
+      return xid;
+    }
     setEntries(prev => prev.some(e => e.kind === 'user' && e.exchangeId === xid)
       ? prev
       : [...prev, { id: nextId(), ts: now(), kind: 'user', text: clean, exchangeId: xid, ...(attachments?.length ? { attachments } : {}) } as FeedEntry]);

@@ -22,6 +22,8 @@ import { SlideoutDrawer } from './SlideoutDrawer';
 import { SettingsTab } from './SettingsTab';
 import { RulesManagementPanel } from './RulesManagementPanel';
 import { IssuesTab } from './IssuesTab';
+import { ServicesTab } from './ServicesTab';
+import { ServiceOffBanner } from './ServiceOffBanner';
 import { PromptInputBar, type PromptInputBarHandle } from './PromptInputBar';
 import { OverlayStyles } from './OverlayStyles';
 import { LearnModeOverlay, type LearnModeState } from './LearnModeOverlay';
@@ -166,7 +168,7 @@ export function UnifiedOverlay() {
   const commitInFlightStream = feedStore.commitInFlightStream;
 
   const [thinkingElapsed, setThinkingElapsed] = useState(0);
-  const pendingPrependRef = useRef<{ prevScrollHeight: number; zoneHeight: number; committed: boolean; jumpToTop?: boolean } | null>(null);
+  const pendingPrependRef = useRef<{ prevScrollHeight: number; prevScrollTop: number; zoneHeight: number; committed: boolean; jumpToTop?: boolean } | null>(null);
   // Track elapsed time while thinking — for progressive status messages
   useEffect(() => {
     if (!isThinking) { setThinkingElapsed(0); return; }
@@ -263,6 +265,11 @@ export function UnifiedOverlay() {
   // of the viewport math.
   const historyZoneRef = useRef<HTMLDivElement>(null);
   const zoneObsRef = useRef<{ el: Element | null; h: number; ro: ResizeObserver | null }>({ el: null, h: 0, ro: null });
+  // Last scrollTop reported by the scroll listener — inside a ResizeObserver
+  // callback (post-layout, before the pending scroll event dispatches) this is
+  // still the PRE-change value, letting the zone-growth pin write an absolute
+  // target instead of double-applying deltas the browser already anchored.
+  const lastScrollTopRef = useRef(0);
   // Fixed sections measured by useDynamicHeight (intrinsic content height, not the clipped root).
   const headerRef = useRef<HTMLDivElement>(null);
   const inputBarRef = useRef<HTMLDivElement>(null);
@@ -278,6 +285,7 @@ export function UnifiedOverlay() {
   const settingsTabRef = useRef<HTMLDivElement>(null);
   const rulesTabRef = useRef<HTMLDivElement>(null);
   const issuesTabRef = useRef<HTMLDivElement>(null);
+  const servicesTabRef = useRef<HTMLDivElement>(null);
   const brainTabRef = useRef<HTMLDivElement>(null);
 
   // Glow-off timer moved to feedIpc module scope (scheduleGlowOff/cancelGlowOff).
@@ -369,6 +377,7 @@ export function UnifiedOverlay() {
     settings: settingsTabRef,
     rules: rulesTabRef,
     issues: issuesTabRef,
+    services: servicesTabRef,
     brain: brainTabRef,
   }), []);
 
@@ -463,7 +472,7 @@ export function UnifiedOverlay() {
     if (!feedStore.getState().hasMoreHistory || feedStore.getState().historyLoading) return;
     const container = scrollContainerRef.current;
     pendingPrependRef.current = container
-      ? { prevScrollHeight: container.scrollHeight, zoneHeight: historyZoneRef.current?.offsetHeight || 0, committed: false }
+      ? { prevScrollHeight: container.scrollHeight, prevScrollTop: container.scrollTop, zoneHeight: historyZoneRef.current?.offsetHeight || 0, committed: false }
       : null;
     requestHistoryPage(feedStore.internal.historyCursor);
   }, [requestHistoryPage]);
@@ -474,17 +483,30 @@ export function UnifiedOverlay() {
   // must not consume the anchor early and leave the real prepend unanchored.
   // Anchor on the history zone's growth, not scrollHeight — a live entry
   // appended mid-flight would otherwise push the viewport down too.
+  // Assignment is ABSOLUTE (prevScrollTop + delta), not relative: by the time
+  // this runs the browser may already have compensated (scroll anchoring /
+  // max-scrollTop clamp), and a `+=` would double-apply and fling the view.
   useEffect(() => {
     const pending = pendingPrependRef.current;
     const container = scrollContainerRef.current;
     if (!pending || !container || !pending.committed) return;
     pendingPrependRef.current = null;
-    // Timeline jump — land on the just-prepended block instead of staying put.
-    if (pending.jumpToTop) { container.scrollTop = 0; return; }
     const zone = historyZoneRef.current;
-    container.scrollTop += zone
+    // Timeline jump — land on the just-prepended block (below the "scroll for
+    // earlier" loader when present), not the plans strip at scrollTop 0.
+    if (pending.jumpToTop) {
+      if (zone) {
+        const zoneTop = zone.getBoundingClientRect().top - container.getBoundingClientRect().top + container.scrollTop;
+        const loader = (feedStore.getState().hasMoreHistory ? zone.firstElementChild : null) as HTMLElement | null;
+        container.scrollTop = zoneTop + (loader?.offsetHeight || 0);
+      } else {
+        container.scrollTop = 0;
+      }
+      return;
+    }
+    container.scrollTop = pending.prevScrollTop + (zone
       ? zone.offsetHeight - pending.zoneHeight
-      : container.scrollHeight - pending.prevScrollHeight;
+      : container.scrollHeight - pending.prevScrollHeight);
   }, [feedEntries]);
 
   // --- Bounded history: TTL eviction of prepended pages ────────────────────
@@ -511,11 +533,17 @@ export function UnifiedOverlay() {
       } else if (c.scrollTop < c.clientHeight * 2) return; // no zone ref — fall back to the near-top guard
       const prevZoneH = zone ? zone.offsetHeight : 0;
       const prevH = c.scrollHeight;
+      const prevScrollTop = c.scrollTop;
       const removed = feedStore.evictExpiredHistory(Date.now(), TTL);
       if (removed) {
         requestAnimationFrame(() => {
           const z = historyZoneRef.current;
-          c.scrollTop -= z ? (prevZoneH - z.offsetHeight) : (prevH - c.scrollHeight);
+          // ABSOLUTE target, not `-=`: between the store update and this rAF
+          // the browser has already compensated — max-scrollTop clamp (at the
+          // bottom) and/or scroll anchoring — a relative write double-applies
+          // and underflows to 0 (the "feed jumps to top" bug).
+          const removedH = z ? (prevZoneH - z.offsetHeight) : (prevH - c.scrollHeight);
+          c.scrollTop = Math.max(0, prevScrollTop - removedH);
           // Sync the zone observer's baseline — the eviction compensation above
           // already accounts for the shrink, so the RO must not apply it twice.
           if (z && zoneObsRef.current.el === z) zoneObsRef.current.h = z.offsetHeight;
@@ -542,7 +570,9 @@ export function UnifiedOverlay() {
       zoneObsRef.current.h = next;
       if (!delta) return;
       const zoneTop = zone.getBoundingClientRect().top - c.getBoundingClientRect().top + c.scrollTop;
-      if (c.scrollTop > zoneTop + next) c.scrollTop += delta;
+      // Absolute target via lastScrollTopRef — native scroll anchoring may have
+      // already applied this delta during layout; `+=` would double it.
+      if (c.scrollTop > zoneTop + next) c.scrollTop = lastScrollTopRef.current + delta;
     });
     zoneObsRef.current = { el: zone, h: zone.offsetHeight, ro };
     ro.observe(zone);
@@ -2208,11 +2238,27 @@ export function UnifiedOverlay() {
     ipcRenderer.on('history:jump', ({ endDate }: { endDate: string }) => {
       const container = scrollContainerRef.current;
       pendingPrependRef.current = container
-        ? { prevScrollHeight: container.scrollHeight, zoneHeight: historyZoneRef.current?.offsetHeight || 0, committed: false, jumpToTop: true }
+        ? { prevScrollHeight: container.scrollHeight, prevScrollTop: container.scrollTop, zoneHeight: historyZoneRef.current?.offsetHeight || 0, committed: false, jumpToTop: true }
         : null;
       requestHistoryPage(endDate);
     }, token);
     ipcRenderer.on('automation:progress', handleAutomationProgress, token);
+    // GhostLayer pending-question pill clicked → surface the waiting card:
+    // task-scoped questions deep-link into the Queue card (filters relax,
+    // card flashes + scrolls); task-less legacy waits land on Results.
+    ipcRenderer.on('gather:focus', (data: { batchId?: string | null; taskId?: string | null } = {}) => {
+      const taskId = data?.taskId || null;
+      if (taskId) {
+        setActiveTab('queue');
+        setUnreadTabs(prev => { const n = new Set(prev); n.delete('queue'); return n; });
+        const status = feedStore.getState().commsTasks.find(t => t.id === taskId)?.status;
+        setQueueFocus({ taskId, status, nonce: Date.now() });
+      } else {
+        setActiveTab('results');
+        setUnreadTabs(prev => { const n = new Set(prev); n.delete('results'); return n; });
+        setTimeout(() => scrollToBottom(), 60);
+      }
+    }, token);
     // Plan-check card — repeated emits for a planId patch the same feed entry.
     ipcRenderer.on('plan:check', (data: { planId: string | null; items: any[]; allClear: boolean; authOpened?: string; cancelled?: boolean; error?: string; surface?: boolean }) => {
       const entryId = `plancheck:${data?.planId || 'unknown'}`;
@@ -2648,6 +2694,7 @@ export function UnifiedOverlay() {
     if (!el) return;
 
     const updateScroll = () => {
+      lastScrollTopRef.current = el.scrollTop;
       const threshold = 24;
       const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight <= threshold;
       setIsScrolledUp(!atBottom);
@@ -3032,6 +3079,18 @@ export function UnifiedOverlay() {
             style={{ display: deferredTab === 'rules' ? 'block' : 'none', height: 'auto', maxHeight: '100%' }}
           >
               {visitedTabs.has('rules') && <RulesManagementPanel />}
+            </div>
+
+          {/* Services-off banner — visible notice when services are disabled/down */}
+          <ServiceOffBanner onOpen={() => setActiveTab('services')} />
+
+          {/* Services Tab — mcp-services health/control/logs panel */}
+          <div
+            ref={servicesTabRef}
+            className="overflow-y-auto overflow-x-hidden p-4"
+            style={{ display: deferredTab === 'services' ? 'block' : 'none', height: 'auto', maxHeight: '100%' }}
+          >
+              {visitedTabs.has('services') && <ServicesTab />}
             </div>
 
           {/* Issues Tab — recorded infrastructure failures (SystemFailureCard → Report issue) */}

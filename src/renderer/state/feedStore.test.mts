@@ -184,6 +184,49 @@ test('proactive interleave does not break echo dedupe', () => {
   assert.equal(s.getState().entries.filter(e => e.kind === 'user').length, 1);
 });
 
+// ── appendUserEntry vs history rows (restart-resume dedupe) ────────────────
+// A resumed unfinished prompt must not append a second bubble beside the
+// historic row — the db_* row gets stamped with the fresh exchangeId and the
+// resumed run correlates onto it.
+
+test('unreplied identical history bubble is stamped, not duplicated', () => {
+  const s = mkStore();
+  s.prependHistory(mapHistoryMessages([
+    { id: 7, sender: 'user', text: 'unfinished prompt', timestamp: '2026-01-01T00:00:07Z' },
+  ]), { cursor: '2026-01-01T00:00:07Z', hasMore: false });
+  const xid = s.appendUserEntry('unfinished prompt')!;
+  const entries = s.getState().entries;
+  assert.equal(entries.filter(e => e.kind === 'user').length, 1);
+  assert.equal(entries[0].id, 'db_7');
+  assert.equal((entries[0] as any).exchangeId, xid);
+  assert.equal(s.internal.lastExchangeId, xid);
+  assert.equal(s.internal.lastPrompt, 'unfinished prompt');
+});
+
+test('re-asked history text after a reply still mints a new bubble', () => {
+  const s = mkStore();
+  s.prependHistory(mapHistoryMessages([
+    { id: 1, sender: 'user', text: 'done before', timestamp: '2026-01-01T00:00:01Z' },
+    { id: 2, sender: 'assistant', text: 'answer', timestamp: '2026-01-01T00:00:02Z' },
+  ]), { cursor: 'x', hasMore: false });
+  const xid = s.appendUserEntry('done before')!;
+  const users = s.getState().entries.filter(e => e.kind === 'user');
+  assert.equal(users.length, 2);
+  assert.equal((users[1] as any).exchangeId, xid);
+});
+
+test('history-row dedupe correlates the resumed run into the same exchange', () => {
+  const s = mkStore();
+  s.prependHistory(mapHistoryMessages([
+    { id: 9, sender: 'user', text: 'resume me', timestamp: '2026-01-01T00:00:09Z' },
+  ]), { cursor: 'x', hasMore: false });
+  const xid = s.appendUserEntry('resume me')!;
+  s.internal.taskExchange.set('t99', xid);
+  s.ensureRunEntry('t99', 'resume me');
+  const run = s.getState().entries.find(e => e.kind === 'run');
+  assert.equal((run as any).exchangeId, xid);
+});
+
 // ── ensureRunEntry / exchangeForTask ────────────────────────────────────────
 
 test('ensureRunEntry is idempotent and joins the prompt exchange', () => {

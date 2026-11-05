@@ -134,6 +134,14 @@ function GhostLayer() {
   // next prompt (main captures the text at submit time).
   const [selectionCtx, setSelectionCtx] = useState(false);
 
+  // Pending gather questions — a question that scrolls out of the feed looks
+  // like a stuck task; this pill is the beacon outside the fold. Click →
+  // gather:focus (main surfaces the waiting card).
+  const [pendingQuestions, setPendingQuestions] = useState<{
+    total: number;
+    pending: Array<{ batchId: string | null; taskId: string | null; count: number; question: string }>;
+  } | null>(null);
+
   // Track previous state for conditional logging
   const prevState = useRef({ highlights: 0, isVisible: false, isScanning: false });
 
@@ -340,6 +348,20 @@ function GhostLayer() {
     };
   }, []);
 
+  // Pending gather questions — beacon outside the feed fold.
+  useEffect(() => {
+    if (!ipcRenderer) return;
+    const handlePending = (data: any) => {
+      setPendingQuestions(data?.active && Array.isArray(data?.pending) && data.pending.length
+        ? { total: data.total || data.pending.length, pending: data.pending }
+        : null);
+    };
+    ipcRenderer.on('gather:question-pending', handlePending, GHOST_TOKEN);
+    return () => {
+      ipcRenderer.removeListenerByToken('gather:question-pending', GHOST_TOKEN);
+    };
+  }, []);
+
   // Voice session state — 'starting' shows a pill until the worker is live.
   useEffect(() => {
     if (!ipcRenderer) return;
@@ -413,7 +435,7 @@ function GhostLayer() {
   // Tell main when the window goes fully idle — highlights gone, not scanning,
   // no drop/boundary, and no screen-output displays. Main then hides the
   // window + clears its display tracking (restores click-through).
-  const ghostOccupied = screenOccupied || isVisible || isScanning || !!drop || !!boundary || !!controlLock || !!fillerProgress || voiceSleeping || voiceStarting || webSearchStarting || selectionCtx || cancelArmed || cancelCountdown != null || voiceMuted || historyOpen;
+  const ghostOccupied = screenOccupied || isVisible || isScanning || !!drop || !!boundary || !!controlLock || !!fillerProgress || voiceSleeping || voiceStarting || webSearchStarting || selectionCtx || cancelArmed || cancelCountdown != null || voiceMuted || historyOpen || !!pendingQuestions;
   const prevOccupied = useRef(ghostOccupied);
   useEffect(() => {
     if (prevOccupied.current && !ghostOccupied) {
@@ -474,9 +496,22 @@ function GhostLayer() {
     />
   ) : null;
 
+  // Pending-question beacon — renders in every path (independent of
+  // highlights): a question must never hide behind the feed's fold.
+  const pendingQ = pendingQuestions?.pending?.[0] || null;
+  const questionNode = pendingQuestions && pendingQ ? (
+    <PendingQuestionPill
+      total={pendingQuestions.total}
+      question={pendingQ.question || ''}
+      onFocus={() => {
+        ipcRenderer?.send('gather:focus', { batchId: pendingQ.batchId, taskId: pendingQ.taskId });
+      }}
+    />
+  ) : null;
+
   // Show scanning overlay with dark background
   if (isScanning) {
-    return <>{stageNode}{fillerNode}{startNode}{webSearchNode}{sleepNode}{selNode}{lockNode}{cancelNode}{countdownNode}{muteNode}{historyNode}<ScanningOverlay timer={scanTimer} /></>;
+    return <>{stageNode}{fillerNode}{startNode}{webSearchNode}{sleepNode}{selNode}{lockNode}{cancelNode}{countdownNode}{muteNode}{historyNode}{questionNode}<ScanningOverlay timer={scanTimer} /></>;
   }
 
   // The progress drop renders independently of bounding-box highlights — it is
@@ -488,7 +523,7 @@ function GhostLayer() {
   const boundaryNode = boundary ? <PersistentBoundary element={boundary} visible={dropVisible} /> : null;
 
   if (!isVisible || highlights.length === 0) {
-    return <>{stageNode}{boundaryNode}{dropNode}{fillerNode}{startNode}{webSearchNode}{sleepNode}{selNode}{lockNode}{cancelNode}{countdownNode}{muteNode}{historyNode}</>;
+    return <>{stageNode}{boundaryNode}{dropNode}{fillerNode}{startNode}{webSearchNode}{sleepNode}{selNode}{lockNode}{cancelNode}{countdownNode}{muteNode}{historyNode}{questionNode}</>;
   }
 
   return (
@@ -535,6 +570,7 @@ function GhostLayer() {
       {countdownNode}
       {muteNode}
       {historyNode}
+      {questionNode}
       {highlights.map((element, index) => (
         <BoundingBox
           key={element.id ?? index}
@@ -908,6 +944,71 @@ function ControlLock({ label, visible, onCancel }: { label: string; visible: boo
  * MutedPill — shown while the voice session mic is muted via the ROpt-tap
  * toggle (server 'mute-state'). Click-through; tap ⌥R again to unmute.
  */
+/**
+ * PendingQuestionPill — beacon for unanswered gather questions. A question
+ * that scrolls out of the feed looks identical to a stuck task (observed:
+ * clarify waits sat 10min invisible while the run lane queued behind them).
+ * Always-on-top, outside the feed's fold, clickable: gathers focus via
+ * 'gather:focus' → main surfaces the waiting card. Hover lifts click-through
+ * for the pill region only (ghostlayer:hover-interactive).
+ */
+function PendingQuestionPill({ total, question, onFocus }: {
+  total: number;
+  question: string;
+  onFocus: () => void;
+}) {
+  return (
+    <div
+      onClick={onFocus}
+      onMouseEnter={() => { try { ipcRenderer?.send('ghostlayer:hover-interactive', { hovering: true }); } catch (_) {} }}
+      onMouseLeave={() => { try { ipcRenderer?.send('ghostlayer:hover-interactive', { hovering: false }); } catch (_) {} }}
+      style={{
+        position: 'fixed',
+        bottom: 68,
+        left: '50%',
+        transform: 'translateX(-50%)',
+        zIndex: 100003,
+        pointerEvents: 'auto',
+        cursor: 'pointer',
+        display: 'flex',
+        alignItems: 'center',
+        gap: 8,
+        padding: '8px 16px',
+        borderRadius: 9999,
+        maxWidth: '46vw',
+        background: 'rgba(15,18,28,0.92)',
+        backdropFilter: 'blur(10px)',
+        WebkitBackdropFilter: 'blur(10px)',
+        border: '1px solid rgba(96,165,250,0.55)',
+        boxShadow: '0 6px 28px rgba(0,0,0,0.4), 0 0 18px rgba(96,165,250,0.28)',
+        color: '#e5e7eb',
+        fontFamily: 'system-ui, -apple-system, sans-serif',
+      }}
+      title="Click to answer"
+    >
+      <span
+        style={{
+          width: 18, height: 18, borderRadius: '50%', flexShrink: 0,
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          background: 'rgba(96,165,250,0.22)', border: '1px solid rgba(96,165,250,0.6)',
+          fontSize: 12, fontWeight: 800, color: '#93c5fd',
+        }}
+      >?</span>
+      <span style={{ fontSize: 12, fontWeight: 700, color: '#93c5fd', whiteSpace: 'nowrap' }}>
+        Waiting for your answer{total > 1 ? ` (${total})` : ''}
+      </span>
+      {question ? (
+        <span style={{
+          fontSize: 12, fontWeight: 500, opacity: 0.8, whiteSpace: 'nowrap',
+          overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: 300,
+        }}>
+          — {question}
+        </span>
+      ) : null}
+    </div>
+  );
+}
+
 function MutedPill() {
   return (
     <div

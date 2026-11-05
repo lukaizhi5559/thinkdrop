@@ -67,6 +67,10 @@ protocol.registerSchemesAsPrivileged([
 
 const { startCryptoBridge, stopCryptoBridge } = require('./cryptoBridge');
 const { normalizeScreenOutput } = require('../../shared/screen-output.cjs');
+// Pending gather-question lifecycle — single authority for every "waiting for
+// the user's answer" wait (batch cards + serial legacy). All settles/drains
+// route through it so every cancel entrypoint reaches terminal state.
+const gp = require('./gatherPending.cjs');
 
 // Safe IPC send — guards against "Render frame was disposed" crash that occurs when
 // a window reloads between the isDestroyed() check and the actual send call.
@@ -1488,9 +1492,16 @@ function startOverlayControlServer() {
                   routedText = consumed.prompt;
                   voiceSelectedText = consumed.selectedText;
                 }
+                // Spoken answers to a pending gather question resolve the wait
+                // — otherwise "the second one" becomes a new task while the
+                // waiting card times out (same intercept as typed prompts).
+                if (gp.getLegacy()) {
+                  console.log(`[GatherContext] voice transcript intercepted as gather:answer — "${text.slice(0, 60)}"`);
+                  gp.resolveLegacy(text);
+                } else if (!gp.tryResolveFreeText(text)
                 // A spoken "yes send it" resolves a pending plan approval instead of
                 // spawning a duplicate task (previously caused double dispatches).
-                if (!_tryResolvePendingApproval(text)) {
+                && !_tryResolvePendingApproval(text)) {
                   // Parked serial state owns spoken answers too — skip comms so
                   // the serial resume classifier reads them as answers.
                   const routed = !pausedAutomationState && _routeViaCommsGraph
@@ -3260,25 +3271,9 @@ function _cancelAutomationRun({ exceptTaskId = null } = {}) {
   // Drain pending question cards parked on the cancelled work — otherwise the
   // card stays live and a late answer resolves a dead task's wait (observed:
   // grill answers processed + memory written after the run was cancelled).
-  {
-    const deadTaskIds = new Set(_killedTaskIds);
-    const serialAborted = _serialAbortedNow;
-    for (const [k, e] of pendingGatherBatches) {
-      const btid = e.data?.taskId || null;
-      // Untagged batches belong to the serial run — drain only when it aborted.
-      if (btid ? !deadTaskIds.has(btid) : !serialAborted) continue;
-      clearTimeout(e.timer);
-      pendingGatherBatches.delete(k);
-      safeSendUnified('gather:question_batch', { active: false, batchId: k, questions: null, taskId: btid });
-      try { e.resolve({}); } catch (_) {}
-    }
-    if (pendingGatherResolve) {
-      try { pendingGatherResolve(''); } catch (_) {}
-      pendingGatherResolve = null;
-      pendingGatherQuestion = null;
-      safeSendUnified('gather:pending', { active: false, question: null });
-    }
-  }
+  // Untagged batches/legacy waits belong to the serial run — drain only when
+  // it aborted; tagged batches drain with their owning task.
+  gp.drainForTasks(new Set(_killedTaskIds), { untagged: _serialAbortedNow, legacy: true });
   // Parked serial state is dead too — an explicit cancel abandons the paused
   // question; the next prompt must be fresh, never a stale resume.
   pausedAutomationState = null;
@@ -3827,19 +3822,29 @@ let _currentAutomationPrompt = null; // Phase 10: tracks the active prompt for t
 let currentLastOpenedFilePath = null; // Persists last opened file path so "close it" knows the target
 let sessionFileCreations = []; // Track all file creation operations in current session for "newly created" references
 
-// Module-level gather:answer resolver — set per-question, cleared on answer.
-// Registered ONCE (not per stategraph:process run) to avoid listener accumulation.
-let pendingGatherResolve = null;
-let pendingGatherQuestion = null; // Stored so we can re-send gather:pending on window re-activation
+// ── Pending gather-question lifecycle — gatherPending.cjs (single authority) ─
+// Every "waiting for the user's answer" wait (batch cards + serial legacy)
+// lives in gp: resolveBatch is the ONE settle path (card-clear + userwait-off
+// + beacon + audit + resolve), drainForTasks is the ONE cancel drain — called
+// from every cancel entrypoint so a dead task can never leave a live wait
+// behind (previously task:cancel left the batch pending and every subsequent
+// typed submit was eaten as an "answer" to the dead wait — input lockout).
+gp.init({
+  sendUnified: (ch, payload) => safeSendUnified(ch, payload),
+  postUserWait: (taskId, waiting) => _postUserWait(taskId, waiting),
+  postThought: (text) => _postThoughtInput(text),
+  sendGhost: (ch, payload) => _sendGhostChannel(ch, payload),
+});
 
-// ── Grill-Me Phase C: batched question resolvers (per-batch map) ─────────────
-// Parallel to pendingGatherResolve but for the new batched question flow.
-// Set when gatherPlanContext emits a batch of questions, resolved when the
-// renderer sends gather:answer_batch with a map of { questionId: answer }.
-// Keyed by batchId — a module-level singleton let a second concurrent handoff
-// task overwrite the first task's resolve, orphaning its promise forever while
-// its stall watchdog was suspended (tasks parked 'running' for hours).
-const pendingGatherBatches = new Map(); // batchId → { resolve, data, timer }
+// Flip the task's journal card into/out of 'waiting-for-input' while a
+// question pends — a Running timer on an idle wait reads as a hang.
+function _postUserWait(taskId, waiting) {
+  if (!taskId) return;
+  const svcUrl = process.env.COMMS_GRAPH_URL || 'http://127.0.0.1:3015';
+  try {
+    _postJson(new URL('/comms.task.userwait', svcUrl), { taskId, waiting: !!waiting }).catch(() => {});
+  } catch (_) {}
+}
 
 // gatherAnswerCallback: waits for user to type/speak an answer in StandalonePromptCapture.
 // NOTE: the actual ipcMain.on('gather:answer') listener is registered ONCE at module level
@@ -3929,18 +3934,14 @@ function gatherAnswerCallback(questionOrBatch) {
       const key = batchId || `batch_${Date.now()}`;
       // A re-asked batchId (or a collision) must not orphan the earlier wait —
       // resolve it empty so its task resumes instead of hanging.
-      const stale = pendingGatherBatches.get(key);
-      if (stale) {
-        clearTimeout(stale.timer);
-        try { stale.resolve({}); } catch (_) {}
-        pendingGatherBatches.delete(key);
-      }
+      const stale = gp.batches.get(key);
+      if (stale) gp.resolveBatch(key, {});
       const entry = {
         resolve,
         data: { batchId: key, questions, routeConfirmation: routeConfirmation || null, taskId: batchTaskId },
         timer: null,
       };
-      pendingGatherBatches.set(key, entry);
+      gp.batches.set(key, entry);
       console.log(`[GatherContext] Waiting for batch answers (batchId=${key}, task=${batchTaskId || 'global'}, ${questions?.length || 0} questions)…`);
       safeSendUnified('gather:question_batch', {
         active: true,
@@ -3956,16 +3957,27 @@ function gatherAnswerCallback(questionOrBatch) {
         questions?.[0]?.question || questions?.[0]?.text || 'I have a few questions before I start',
         'results'
       );
+      _postUserWait(batchTaskId, true);
+      gp.broadcastPending();
+      // Voice session live → speak the question so a heads-free user hears it.
+      if (_voiceSessionActive) {
+        const _qText = (questions || []).map(q => q?.question || q?.text || '').filter(Boolean);
+        _voiceSay(_qText.length > 1
+          ? `I have ${_qText.length} questions before I start. First: ${_qText[0]}`
+          : (_qText[0] || 'I have a question before I start — check the app.'));
+      }
       // 10-minute timeout — scoped to THIS batch so a timeout can't clear
       // another task's pending card. Route-confirmation-only batches (no
       // actual questions, just a "start task?" card) auto-proceed after 45s —
       // a task that only needs a route confirm shouldn't stall the queue.
       const _routeConfirmOnly = !!routeConfirmation && !(questions && questions.length);
       entry.timer = setTimeout(() => {
-        if (pendingGatherBatches.get(key) === entry) {
-          pendingGatherBatches.delete(key);
+        if (gp.batches.get(key) === entry) {
+          gp.batches.delete(key);
           console.warn(`[GatherContext] Timed out waiting for batch answers (batchId=${key}) — skipping`);
           safeSendUnified('gather:question_batch', { active: false, batchId: key, questions: null, taskId: batchTaskId });
+          _postUserWait(batchTaskId, false);
+          gp.broadcastPending();
           _postThoughtInput('User did not answer the clarifying questions — they went unanswered until timeout.');
           resolve({});
         }
@@ -3975,18 +3987,22 @@ function gatherAnswerCallback(questionOrBatch) {
   // ── Legacy single-string mode ──────────────────────────────────────────
   const question = questionOrBatch;
   return new Promise((resolve) => {
-    pendingGatherResolve = resolve;
-    pendingGatherQuestion = question || null;
+    // taskId: serial-run waits are untagged (null); handoff asks arrive
+    // through _taskGatherCallback which normalizes strings into tagged
+    // batches, so this path never runs for handoff tasks.
+    gp.setLegacy({ resolve, question: question || null, taskId: null });
     console.log('[GatherContext] Waiting for user answer…');
     // Tell unified overlay to intercept next submit as gather:answer
     safeSendUnified('gather:pending', { active: true, question: question || null });
+    gp.broadcastPending();
+    if (_voiceSessionActive && question) _voiceSay(question);
     // 10-minute timeout
     setTimeout(() => {
-      if (pendingGatherResolve === resolve) {
+      if (gp.getLegacy()?.resolve === resolve) {
         console.warn('[GatherContext] Timed out waiting for answer — skipping question');
-        pendingGatherResolve = null;
-        pendingGatherQuestion = null;
+        gp.setLegacy(null);
         safeSendUnified('gather:pending', { active: false });
+        gp.broadcastPending();
         resolve(null);
       }
     }, 10 * 60 * 1000);
@@ -6232,18 +6248,7 @@ function showUnifiedOverlay() {
   startClipboardMonitoring(true);
   // Re-send gather:pending if a gather answer is still in flight — the previous
   // hide/show cycle would have reset the renderer's gatherPending state.
-  if (pendingGatherResolve) {
-    safeSendUnified('gather:pending', { active: true, question: pendingGatherQuestion });
-  }
-  for (const [, entry] of pendingGatherBatches) {
-    safeSendUnified('gather:question_batch', {
-      active: true,
-      batchId: entry.data.batchId,
-      questions: entry.data.questions,
-      routeConfirmation: entry.data.routeConfirmation || null,
-      taskId: entry.data.taskId || null,
-    });
-  }
+  gp.resurface();
 }
 
 function toggleUnifiedOverlay() {
@@ -6335,7 +6340,7 @@ function _automationCancelable() {
   let serialRunning = false;
   try { serialRunning = !!promptQueue.getRunningId?.(); } catch (_) {}
   return !!(controlLock || _taskInFlight || activeAbortController || _cancellableTaskIds().length || livePlan
-    || pausedAutomationState || pendingGatherResolve || pendingGatherBatches.size || _contextAskPending > 0
+    || pausedAutomationState || gp.getLegacy() || gp.batches.size || _contextAskPending > 0
     || _inflightCommsReq || serialRunning);
 }
 
@@ -6455,7 +6460,7 @@ function _approveOrFocusPending() {
   }
   let pendingQuestion = null;
   try { pendingQuestion = (require('./handoffRunner').getPendingQuestionTaskIds?.() || [])[0] || null; } catch (_) {}
-  if (_pendingChoices || pendingQuestion || pausedAutomationState || _contextAskPending > 0 || pendingGatherResolve || pendingGatherBatches.size) {
+  if (_pendingChoices || pendingQuestion || pausedAutomationState || _contextAskPending > 0 || gp.getLegacy() || gp.batches.size) {
     console.log('[Gesture] ⌥R tap — focusing pending question input');
     if (unifiedWindow && !unifiedWindow.isDestroyed() && !unifiedWindow.isVisible()) showUnifiedOverlay();
     safeSendUnified('ropt:focus-answer');
@@ -8719,17 +8724,18 @@ app.whenReady().then(async () => {
     // If gatherAnswerCallback is waiting for a response, route this text directly
     // as the gather answer instead of enqueuing it as a new prompt. This prevents
     // the gather:pending IPC race where the user types before the renderer receives
-    // the gather:pending:true signal (pendingGatherResolve is set synchronously on
+    // the gather:pending:true signal (the legacy wait is set synchronously on
     // the main-process side so this check is always reliable).
-    if (pendingGatherResolve) {
+    if (gp.getLegacy()) {
       console.log(`[GatherContext] prompt-queue:submit intercepted as gather:answer — "${trimmedPrompt.slice(0, 60)}"`);
-      const resolve = pendingGatherResolve;
-      pendingGatherResolve = null;
-      pendingGatherQuestion = null;
-      safeSendUnified('gather:pending', { active: false, question: null });
-      resolve(trimmedPrompt);
+      gp.resolveLegacy(trimmedPrompt);
       return;
     }
+
+    // ── Intercept: typed answer to a pending gather BATCH ───────────────────
+    // Batch waits (clarify/grill) only resolved via the card's answer_batch
+    // IPC — a typed "the second one" fell through and spawned a new task.
+    if (gp.tryResolveFreeText(trimmedPrompt)) return;
 
     // ── Intercept: ask_user answer for a paused HANDOFF task ──────────────────
     // Queue-card ask_user cards (PartialFailureCard) submit answers here with the
@@ -8868,6 +8874,9 @@ app.whenReady().then(async () => {
     } catch (err) {
       console.error('[CommsGraph] Task cancel error:', err.message);
     }
+    // Drain the task's pending gather waits — otherwise the stale batch card
+    // keeps eating typed submits as "answers" to a dead wait (input lockout).
+    gp.drainForTasks(taskId);
     // Update journal status to cancelled (best-effort — comms-graph may be down)
     try { await _commsHttp('/comms.cancel', { taskId }); } catch (err) { console.warn(`[CommsGraph] /comms.cancel failed: ${err.message}`); }
     // Notify frontend so the card updates to cancelled state
@@ -8881,6 +8890,9 @@ app.whenReady().then(async () => {
       const handoffRunner = require('./handoffRunner');
       handoffRunner.cancel(taskId);
       _pendingPreflightPromptsByTask.delete(taskId);
+      // Same drain as task:cancel — a deleted task must not leave a live
+      // gather wait intercepting later input.
+      gp.drainForTasks(taskId);
     } catch (err) {
       console.error('[CommsGraph] Task delete cancel error:', err.message);
     }
@@ -9761,15 +9773,7 @@ app.whenReady().then(async () => {
   // ─── gather:answer — registered ONCE (not per stategraph:process run) ────
   ipcMain.on('gather:answer', (_event, { answer }) => {
     console.log(`[GatherContext] IPC received: gather:answer — "${(answer || '').slice(0, 60)}"`);
-    if (pendingGatherResolve) {
-      const resolve = pendingGatherResolve;
-      const answeredQuestion = pendingGatherQuestion;
-      pendingGatherResolve = null;
-      pendingGatherQuestion = null;
-      safeSendUnified('gather:pending', { active: false, question: null });
-      _postThoughtInput(`User answered a clarifying question — "${(answeredQuestion || '').slice(0, 120)}" → "${String(answer || '').slice(0, 160)}"`);
-      resolve(answer || '');
-    } else {
+    if (!gp.resolveLegacy(answer || '', { thought: true })) {
       console.warn('[GatherContext] Received gather:answer but no pending resolve — ignoring');
     }
   });
@@ -9781,36 +9785,28 @@ app.whenReady().then(async () => {
   // own.
   ipcMain.on('gather:answer_batch', (_event, { batchId, answers, taskId }) => {
     console.log(`[GatherContext] IPC received: gather:answer_batch — batchId=${batchId}, task=${taskId || '-'}, keys=${Object.keys(answers || {}).join(',')}`);
-    let key = batchId && pendingGatherBatches.has(batchId) ? batchId : null;
-    if (!key && taskId) {
-      for (const [k, e] of pendingGatherBatches) { if (e.data?.taskId === taskId) { key = k; break; } }
-    }
-    // Last resort: exactly one pending batch — an old renderer that didn't
-    // echo the batchId still resolves correctly.
-    if (!key && pendingGatherBatches.size === 1) key = [...pendingGatherBatches.keys()][0];
-    const entry = key ? pendingGatherBatches.get(key) : null;
-    if (entry) {
-      pendingGatherBatches.delete(key);
-      clearTimeout(entry.timer);
-      const resolve = entry.resolve;
-      const questions = entry.data?.questions || [];
-      const batchTaskId = entry.data?.taskId || null;
-      safeSendUnified('gather:question_batch', { active: false, batchId: key, questions: null, taskId: batchTaskId });
-      // Engagement → thought engine. Empty answers = the user dismissed the card.
-      const answered = Object.entries(answers || {}).filter(([, v]) => String(v ?? '').trim());
-      if (answered.length) {
-        const qa = answered.map(([qid, v]) => {
-          const q = questions.find((x) => x && x.id === qid);
-          return `"${(q?.question || q?.text || qid).slice(0, 80)}" → "${String(v).slice(0, 100)}"`;
-        }).join('; ');
-        _postThoughtInput(`User answered clarifying questions about their request — ${qa}`);
-      } else {
-        _postThoughtInput('User dismissed the clarifying questions without answering.');
-      }
-      resolve(answers || {});
+    const key = gp.findBatchKey({ batchId, taskId });
+    if (key) {
+      gp.resolveBatch(key, answers);
     } else {
       console.warn('[GatherContext] Received gather:answer_batch but no pending batch resolve — ignoring');
     }
+  });
+
+  // ─── gather:focus — GhostLayer pending-question pill clicked ───────────────
+  // The pill is the beacon outside the feed; clicking it surfaces the waiting
+  // card: show the window, switch to the owning tab, and broadcast the focus
+  // so ResultsFeed scrolls to the task card's question.
+  ipcMain.on('gather:focus', (_event, { batchId, taskId } = {}) => {
+    try {
+      if (unifiedWindow && !unifiedWindow.isDestroyed()) {
+        unifiedWindow.show();
+        unifiedWindow.moveTop();
+      }
+      safeSendUnified('ui:switch-tab', { tab: taskId ? 'queue' : 'results' });
+      // Defer a tick so the tab swap commits before the scroll target renders.
+      setTimeout(() => safeSendUnified('gather:focus', { batchId: batchId || null, taskId: taskId || null }), 120);
+    } catch (_) {}
   });
 
   // ─── StateGraph: Route prompt through the serial prompt queue ────────────
@@ -12151,6 +12147,46 @@ app.whenReady().then(async () => {
       console.error('[Issues] dismiss failed:', err.message);
       return { ok: false, error: err.message };
     }
+  });
+
+  // ─── Services panel: health/control/logs/issue for mcp-services ──────────
+  // Backed by shared/service-registry.cjs + serviceManager.js; coldable
+  // services route through the service-gate admin API on :3030.
+  const _svc = () => require('./serviceManager');
+
+  ipcMain.handle('services:list', async () => {
+    try { return await _svc().list(); }
+    catch (err) { console.error('[Services] list failed:', err.message); return { ok: false, error: err.message, services: [] }; }
+  });
+
+  ipcMain.handle('services:setMode', async (_event, { id, mode } = {}) => {
+    try { return await _svc().setMode(id, mode); }
+    catch (err) { console.error('[Services] setMode failed:', err.message); return { ok: false, error: err.message }; }
+  });
+
+  ipcMain.handle('services:restart', async (_event, { id } = {}) => {
+    try { return await _svc().restart(id); }
+    catch (err) { console.error('[Services] restart failed:', err.message); return { ok: false, error: err.message }; }
+  });
+
+  ipcMain.handle('services:logs', async (_event, { id, lines } = {}) => {
+    try { return await _svc().logs(id, lines); }
+    catch (err) { console.error('[Services] logs failed:', err.message); return { ok: false, error: err.message, text: '' }; }
+  });
+
+  ipcMain.handle('services:ollamaModels', async () => {
+    try { return await _svc().ollamaModels(); }
+    catch (err) { console.error('[Services] ollamaModels failed:', err.message); return { ok: false, error: err.message, models: [] }; }
+  });
+
+  ipcMain.handle('services:unloadModel', async (_event, { name } = {}) => {
+    try { return await _svc().unloadModel(name); }
+    catch (err) { console.error('[Services] unloadModel failed:', err.message); return { ok: false, error: err.message }; }
+  });
+
+  ipcMain.handle('services:reportIssue', async (_event, { id, note } = {}) => {
+    try { return await _svc().reportIssue(id, note); }
+    catch (err) { console.error('[Services] reportIssue failed:', err.message); return { ok: false, error: err.message }; }
   });
 
   // ─── Prompt History: save/load from flat file ─────────────────────────────

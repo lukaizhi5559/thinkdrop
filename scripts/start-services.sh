@@ -15,6 +15,12 @@ mkdir -p logs
 PIDS_FILE="$PROJECT_ROOT/.service-pids"
 > "$PIDS_FILE"
 
+# --gate: request-driven services stay COLD behind scripts/service-gate.mjs —
+# the gate owns their public ports, spawns on first hit, idles them out.
+# Warm services (user-memory, phi4, command, comms-graph) start normally.
+GATE_MODE=0
+for arg in "$@"; do [ "$arg" = "--gate" ] && GATE_MODE=1; done
+
 # Start a Node.js service (yarn dev)
 start_node_service() {
     local service_name=$1
@@ -188,17 +194,21 @@ start_node_direct_service "user-memory" "$PROJECT_ROOT/mcp-services/thinkdrop-us
     "DB_PATH=$PROJECT_ROOT/mcp-services/thinkdrop-user-memory-service/data/user_memory.duckdb"
 sleep 2
 
-# 2. Web Search Service — port 3002
+# 2. Web Search Service — port 3002 (always warm — on the chat hot path,
+#    cold-start latency is user-visible on every search turn)
 start_node_service "web-search" "$PROJECT_ROOT/mcp-services/thinkdrop-web-search" 256
 sleep 2
 
+# 3-4. Coldable behind the gate in --gate mode (spawned on first request)
+if [ "$GATE_MODE" = "0" ]; then
 # 3. Conversation Service — port 3004
 start_node_service "conversation" "$PROJECT_ROOT/mcp-services/conversation-service" 512
 sleep 2
 
-# 4. Coreference Service (Python) — port 3006
+# 4. Coreference Service (Python) — port 3005
 start_python_service "coreference" "$PROJECT_ROOT/mcp-services/coreference-service"
 sleep 2
+fi
 
 # 5. Phi4 Service — port 3009 (heavy, load last among core services)
 #    Ensure Ollama is up first — phi4's decision.answer route is the local
@@ -227,17 +237,20 @@ fi
 echo ""
 sleep 2
 
+# 7-9. Coldable behind the gate in --gate mode
+if [ "$GATE_MODE" = "0" ]; then
 # 7. Screen Intelligence Service — port 3008 (has own yarn.lock; must use npm)
 start_npm_service "screen-intelligence" "$PROJECT_ROOT/mcp-services/screen-intelligence-service" 256
 sleep 2
 
-# 8. Voice Service — port 3006 (STT/TTS via ElevenLabs, wake word, journal)
+# 8. Voice Service — port 3006 (STT/Wake word, journal)
 start_node_service "voice-service" "$PROJECT_ROOT/mcp-services/voice-service" 512
 sleep 2
 
 # 9. Personality Service — port 3012 (emotion engine, heartbeat, synthesis agent)
 start_npm_start_service "personality-service" "$PROJECT_ROOT/mcp-services/personality-service" 256
 sleep 2
+fi
 
 # 10. comms-graph — port 3015 (small state graph for fast voice/text dialogue)
 #     Logs to $PROJECT_ROOT/logs like other services.
@@ -256,6 +269,21 @@ else
 fi
 echo ""
 cd "$PROJECT_ROOT"
+
+# 11. Service gate (only in --gate mode) — owns coldable public ports.
+if [ "$GATE_MODE" = "1" ]; then
+    echo "🚪 Starting service-gate (coldable services spawn on demand)..."
+    node "$SCRIPT_DIR/service-gate.mjs" >> "$PROJECT_ROOT/logs/service-gate.log" 2>&1 &
+    gate_pid=$!
+    echo "service-gate:$gate_pid" >> "$PIDS_FILE"
+    sleep 1
+    if kill -0 $gate_pid 2>/dev/null; then
+        echo "   ✅ PID $gate_pid — cold ports: 3004 3005 3006 3008 3012"
+    else
+        echo "   ❌ Failed to start — check logs/service-gate.log"
+    fi
+    echo ""
+fi
 
 # ── Summary ─────────────────────────────────────────────────────────────────
 
