@@ -350,7 +350,7 @@ export function installFeedIpc(store: FeedStore, ui: FeedIpcUi): () => void {
   };
 
   const handleTaskProgress = (data: any) => {
-    if (!data?.taskId) return;
+    if (!data?.taskId || s.internal.terminalTasks.has(data.taskId)) return;
     s.setCommsTasks(prev => prev.map(t => {
       if (t.id !== data.taskId) return t;
       return {
@@ -408,6 +408,14 @@ export function installFeedIpc(store: FeedStore, ui: FeedIpcUi): () => void {
     }
 
     if (isRestored) return;
+
+    // Record terminal here — before the card block — so late task:progress /
+    // task:complete events for a settled task can't flip it back to 'running'
+    // or resurrect a run card the 'done' path just removed. The card block
+    // below patches existing cards by taskId regardless.
+    if (status === 'done' || status === 'failed' || status === 'cancelled') {
+      s.internal.terminalTasks.add(data.taskId);
+    }
 
     // ── Feed: settle run card + placeholder answer ──────────────────────
     // Task-scoped question batches (gather:question_batch) create a run card
@@ -491,7 +499,7 @@ export function installFeedIpc(store: FeedStore, ui: FeedIpcUi): () => void {
           }
           const exchangeId = s.exchangeForTask(data.taskId, data.prompt);
           let next;
-          if (idx < 0 && isCommandAutomate) {
+          if (idx < 0 && isCommandAutomate && !s.internal.terminalTasks.has(data.taskId)) {
             next = [...prev, { id: `fe_${Date.now()}_${s.internal.feedSeq++}`, ts: Date.now(), kind: 'run', taskId: data.taskId, title: data.prompt ? toDisplayPrompt(data.prompt) || 'Automation run' : 'Automation run', prompt: data.prompt || undefined, exchangeId, ...runPatch } as any];
             s.set({ entries: next });
           } else if (idx >= 0) {
@@ -503,6 +511,11 @@ export function installFeedIpc(store: FeedStore, ui: FeedIpcUi): () => void {
         }
       }
       if (status === 'done' && data.answer) {
+        // What streamed IS the answer — a synthesize step's chunks were
+        // diverted into this task's accumulator as the user watched them
+        // generate. Snapshot it before the deletes so a diverging settled
+        // answer (review correction, combined summary) can't replace it.
+        const _streamed = (s.internal.taskStreamAcc.get(data.taskId) || '').trim();
         // The answer was already streamed live — either into streamText (live
         // region) or directly into the pending entry for synth-diverted tasks
         // — committing it as an entry without clearing the live region
@@ -516,7 +529,7 @@ export function installFeedIpc(store: FeedStore, ui: FeedIpcUi): () => void {
         s.internal.synthTasks.delete(data.taskId);
         s.clearStream();
         s.set({ streamText: '', isStreaming: false, activityLine: null });
-        settlePendingAssistant(data.answer, Array.isArray(data.items) ? data.items : undefined);
+        settlePendingAssistant(_streamed || (data.answer || data.result || ''), Array.isArray(data.items) ? data.items : undefined);
       } else if (status === 'failed' || status === 'cancelled') {
         s.internal.taskStreamAcc.delete(data.taskId);
         s.internal.taskStreamEntry.delete(data.taskId);
@@ -530,10 +543,11 @@ export function installFeedIpc(store: FeedStore, ui: FeedIpcUi): () => void {
       if (status === 'done' || status === 'failed' || status === 'cancelled') playDropSound();
     } else if (status === 'done' && data.answer) {
       // ── Non-command_automate: settle the placeholder into the real answer ──
+      const _streamed = (s.internal.taskStreamAcc.get(data.taskId) || '').trim();
       s.internal.taskStreamAcc.delete(data.taskId);
       s.internal.taskStreamEntry.delete(data.taskId);
       s.internal.synthTasks.delete(data.taskId);
-      settlePendingAssistant(data.answer, Array.isArray(data.items) ? data.items : undefined);
+      settlePendingAssistant(_streamed || (data.answer || data.result || ''), Array.isArray(data.items) ? data.items : undefined);
       s.internal.streamAcc = '';
       s.internal.placeholderStream = false;
       s.internal.streamCompleted = true;

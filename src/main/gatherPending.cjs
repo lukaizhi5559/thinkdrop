@@ -130,6 +130,17 @@ function drainForTasks(taskIds, { untagged = false, legacy: drainLegacy = false 
   return n;
 }
 
+// Settle EVERY pending wait — a fresh user prompt supersedes all outstanding
+// question cards (tagged batches, untagged batches, and the legacy wait).
+// Same single settle path as drainForTasks: each wait resolves {} so the
+// card clears (gather:question_batch active:false), userwait flips off, and
+// the awaiting task proceeds as "dismissed" instead of hanging on a card the
+// user already moved past.
+function drainAll() {
+  const ids = [...batches.values()].map(e => e.data?.taskId).filter(Boolean);
+  return drainForTasks(ids, { untagged: true, legacy: true });
+}
+
 // Free-text answers (typed prompt or voice transcript) resolve a pending
 // batch instead of spawning a new task — single-question batches only; free
 // text can't attribute answers to multiple slots.
@@ -183,6 +194,7 @@ module.exports = {
   resolveBatch,
   resolveLegacy,
   drainForTasks,
+  drainAll,
   tryResolveFreeText,
   findBatchKey,
   resurface,

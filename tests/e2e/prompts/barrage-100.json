@@ -1,0 +1,149 @@
+[
+ { "_section": "REVISION CHAINS — follow-up edit directives must not land in memory_store" },
+
+ { "id": "rev1-seed",    "prompt": "give me a response to this interview question: Describe one application you built with AI and the tools you used. I used Devin, Warp and frameworks, etc.", "sessionId": "e2e_bar_rev1", "expect": { "status": "done", "maxMs": 120000 } },
+ { "id": "rev1-edit",    "prompt": "don't add claude or cursor I used Devin, Warp, DuckDB, Electron, etc.", "sessionId": "e2e_bar_rev1", "expect": { "status": "done", "commsIntentNot": "memory_store", "mustNotContain": ["I'll remember", "remember that"], "mustContain": ["re:devin|duckdb|electron"], "maxMs": 120000 } },
+ { "id": "rev1-edit2",   "prompt": "also mention I used React for the interface", "sessionId": "e2e_bar_rev1", "expect": { "status": "done", "commsIntentNot": "memory_store", "mustNotContain": ["I'll remember"], "maxMs": 120000 } },
+ { "id": "rev1-short",   "prompt": "make it shorter", "sessionId": "e2e_bar_rev1", "expect": { "status": "done", "commsIntentNot": "memory_store", "mustNotContain": ["I'll remember"], "maxMs": 120000 } },
+ { "id": "rev1-tone",    "prompt": "now make it sound more casual", "sessionId": "e2e_bar_rev1", "expect": { "status": "done", "commsIntentNot": "memory_store", "mustNotContain": ["I'll remember"], "maxMs": 120000 } },
+
+ { "id": "rev2-seed",    "prompt": "draft a short email to my coworker Jake asking if he can review my PR today", "sessionId": "e2e_bar_rev2", "expect": { "status": "done", "mustContain": ["re:jake|pr|pull request|review"], "maxMs": 120000 } },
+ { "id": "rev2-edit",    "prompt": "remove the part about today, just say this week instead", "sessionId": "e2e_bar_rev2", "expect": { "status": "done", "commsIntentNot": "memory_store", "mustNotContain": ["I'll remember"], "maxMs": 120000 } },
+ { "id": "rev2-edit2",   "prompt": "actually change it to thanking him for the last review instead", "sessionId": "e2e_bar_rev2", "expect": { "status": "done", "commsIntentNot": "memory_store", "mustNotContain": ["I'll remember"], "maxMs": 120000 } },
+
+ { "id": "rev3-seed",    "prompt": "write a haiku about continuous integration", "sessionId": "e2e_bar_rev3", "expect": { "status": "done", "maxMs": 90000 } },
+ { "id": "rev3-edit",    "prompt": "change it to be about databases instead", "sessionId": "e2e_bar_rev3", "expect": { "status": "done", "commsIntentNot": "memory_store", "mustNotContain": ["I'll remember"], "maxMs": 90000 } },
+ { "id": "rev3-edit2",   "prompt": "make the second line mention slow queries", "sessionId": "e2e_bar_rev3", "expect": { "status": "done", "commsIntentNot": "memory_store", "mustNotContain": ["I'll remember"], "maxMs": 90000 } },
+
+ { "id": "rev4-seed",    "prompt": "summarize the benefits of code reviews in exactly three sentences", "sessionId": "e2e_bar_rev4", "expect": { "status": "done", "maxMs": 90000 } },
+ { "id": "rev4-edit",    "prompt": "cut that down to one sentence", "sessionId": "e2e_bar_rev4", "expect": { "status": "done", "commsIntentNot": "memory_store", "mustNotContain": ["I'll remember"], "maxMs": 90000 } },
+ { "id": "rev4-edit2",   "prompt": "now add a mention of pair programming", "sessionId": "e2e_bar_rev4", "expect": { "status": "done", "commsIntentNot": "memory_store", "mustNotContain": ["I'll remember"], "maxMs": 90000 } },
+ { "id": "rev4-recall",  "prompt": "what did I just have you write", "sessionId": "e2e_bar_rev4", "expect": { "status": "done", "maxMs": 60000 } },
+
+ { "id": "rev5-seed",    "prompt": "draft a short tweet announcing our v2.0 launch", "sessionId": "e2e_bar_rev5", "expect": { "status": "done", "maxMs": 90000 } },
+ { "id": "rev5-edit",    "prompt": "take out the hashtags", "sessionId": "e2e_bar_rev5", "expect": { "status": "done", "commsIntentNot": "memory_store", "mustNotContain": ["I'll remember", "#"], "maxMs": 90000 } },
+ { "id": "rev5-edit2",   "prompt": "add the ship date October 12", "sessionId": "e2e_bar_rev5", "expect": { "status": "done", "commsIntentNot": "memory_store", "mustNotContain": ["I'll remember"], "mustContain": ["re:october|oct"], "maxMs": 90000 } },
+ { "id": "rev5-edit3",   "prompt": "make it sound less corporate", "sessionId": "e2e_bar_rev5", "expect": { "status": "done", "commsIntentNot": "memory_store", "mustNotContain": ["I'll remember"], "maxMs": 90000 } },
+
+ { "_section": "CONTEXT CHAINS — shared material must follow across turns" },
+
+ { "id": "hl-explain",   "prompt": "[Highlighted: From: Hale, Scott <SHale@kforce.com>\nSubject: Director of Architecture — AI-assisted development initiative\nScott Hale from Kforce reached out about a Director of Architecture role. The team is building an AI-assisted development program and they specifically asked for 1-2 bullet points on AWS agentic experience — things like Lambda orchestration, Bedrock agents, and Step Functions workflows. Rate 150-160/hr contract-to-hire.] explain this opportunity", "sessionId": "e2e_bar_hl", "expect": { "status": "done", "mustContain": ["re:architect|director"], "maxMs": 120000 } },
+ { "id": "hl-draft",     "prompt": "draft a short reply expressing interest", "sessionId": "e2e_bar_hl", "expect": { "status": "done", "mustNotContain": ["don't have the", "no email provided", "missing"], "maxMs": 120000 } },
+ { "id": "hl-bullets",   "prompt": "add the two bullet points on AWS agentic experience it asks for", "sessionId": "e2e_bar_hl", "expect": { "status": "done", "mustContain": ["re:aws|lambda|bedrock|agent"], "mustNotContain": ["don't have the"], "maxMs": 120000 } },
+ { "id": "hl-avail",     "prompt": "also mention I'm free Thursday afternoon for a call", "sessionId": "e2e_bar_hl", "expect": { "status": "done", "commsIntentNot": "memory_store", "mustNotContain": ["I'll remember"], "maxMs": 120000 } },
+ { "id": "hl-recall",    "prompt": "what was the recruiter's name", "sessionId": "e2e_bar_hl", "expect": { "status": "done", "mustContain": ["re:scott|hale"], "maxMs": 60000 } },
+
+ { "id": "file-sum",     "prompt": "[File: /Users/lukaizhi/Desktop/家庭/wode-dongxi/resume/resume-agentic.docx] summarize this resume in three bullets", "sessionId": "e2e_bar_file", "expect": { "status": "done", "mustNotContain": ["can't read", "couldn't read", "no resume"], "maxMs": 180000 } },
+ { "id": "file-strong",  "prompt": "what's the strongest part of it", "sessionId": "e2e_bar_file", "expect": { "status": "done", "maxMs": 120000 } },
+ { "id": "file-head",    "prompt": "draft a one-line LinkedIn headline based on it", "sessionId": "e2e_bar_file", "expect": { "status": "done", "maxMs": 120000 } },
+ { "id": "file-weak",    "prompt": "what's one thing missing from it for a senior engineering role", "sessionId": "e2e_bar_file", "expect": { "status": "done", "maxMs": 120000 } },
+
+ { "id": "paste-sum",    "prompt": "Here are the release notes for v2.4.0: The sync engine was rewritten to use incremental deltas instead of full snapshots, cutting sync time by roughly 60% on large workspaces. A new conflict-resolution dialog shows side-by-side diffs when edits collide. Offline mode now queues mutations and replays them on reconnect. We fixed the memory leak in the file watcher that grew to 2GB over long sessions. Search indexing moved to a background worker so typing stays responsive during re-index. The settings panel was reorganized into categories. Two breaking changes: the config file format moved from JSON to YAML, and the old /v1/sync API endpoint was removed. Migration tooling is included for both.\nsummarize the key points", "sessionId": "e2e_bar_paste", "expect": { "status": "done", "mustContain": ["re:sync|release|migrat"], "maxMs": 120000 } },
+ { "id": "paste-bullets","prompt": "turn that into 3 bullet points", "sessionId": "e2e_bar_paste", "expect": { "status": "done", "commsIntentNot": "memory_store", "mustNotContain": ["I'll remember"], "maxMs": 120000 } },
+ { "id": "paste-slack",  "prompt": "write a slack update for my team from it", "sessionId": "e2e_bar_paste", "expect": { "status": "done", "mustNotContain": ["don't have"], "maxMs": 120000 } },
+ { "id": "paste-breaking","prompt": "what were the breaking changes again", "sessionId": "e2e_bar_paste", "expect": { "status": "done", "mustContain": ["re:yaml|json|api|endpoint|config"], "maxMs": 90000 } },
+
+ { "id": "rag-what",     "prompt": "explain what RAG is in one sentence", "sessionId": "e2e_bar_rag", "expect": { "status": "done", "mustContain": ["re:retriev|generat"], "maxMs": 90000 } },
+ { "id": "rag-example",  "prompt": "give me a concrete example", "sessionId": "e2e_bar_rag", "expect": { "status": "done", "maxMs": 90000 } },
+ { "id": "rag-eli5",     "prompt": "now explain it to a five year old", "sessionId": "e2e_bar_rag", "expect": { "status": "done", "maxMs": 90000 } },
+ { "id": "rag-break",    "prompt": "what happens if the retriever returns the wrong documents", "sessionId": "e2e_bar_rag", "expect": { "status": "done", "maxMs": 90000 } },
+
+ { "id": "pron-who",     "prompt": "who wrote the book dune", "sessionId": "e2e_bar_pron", "expect": { "status": "done", "mustContain": ["re:herbert"], "maxMs": 90000 } },
+ { "id": "pron-year",    "prompt": "what year was it published", "sessionId": "e2e_bar_pron", "expect": { "status": "done", "mustContain": ["re:1965"], "maxMs": 90000 } },
+ { "id": "pron-other",   "prompt": "name two other books by him", "sessionId": "e2e_bar_pron", "expect": { "status": "done", "maxMs": 90000 } },
+ { "id": "pron-genre",   "prompt": "what genre is he known for", "sessionId": "e2e_bar_pron", "expect": { "status": "done", "mustContain": ["re:science fiction|sci-fi|sci fi"], "maxMs": 90000 } },
+
+ { "_section": "INTENT MATRIX — each lane must land correctly" },
+
+ { "id": "gq-capital",   "prompt": "what is the capital of Portugal", "expect": { "status": "done", "mustContain": ["re:lisbon"], "maxMs": 60000 } },
+ { "id": "gq-math",      "prompt": "what is 17 times 23", "expect": { "status": "done", "mustContain": ["re:391"], "maxMs": 60000 } },
+ { "id": "gq-def",       "prompt": "what does API stand for", "expect": { "status": "done", "mustContain": ["re:application programming interface"], "maxMs": 60000 } },
+ { "id": "gq-tcp",       "prompt": "explain the difference between TCP and UDP in one sentence", "expect": { "status": "done", "maxMs": 60000 } },
+ { "id": "gq-book",      "prompt": "who wrote the novel 1984", "expect": { "status": "done", "mustContain": ["re:orwell"], "maxMs": 60000 } },
+ { "id": "gq-mutex",     "prompt": "explain what a mutex is and give one real-world analogy", "expect": { "status": "done", "maxMs": 60000 } },
+ { "id": "gq-elem",      "prompt": "what is the chemical symbol for gold", "expect": { "status": "done", "mustContain": ["re:au"], "maxMs": 60000 } },
+ { "id": "gq-dist",      "prompt": "roughly how many miles are in a marathon", "expect": { "status": "done", "mustContain": ["re:26"], "maxMs": 60000 } },
+ { "id": "gq-git",       "prompt": "what does git rebase do in one sentence", "expect": { "status": "done", "maxMs": 60000 } },
+ { "id": "gq-http",      "prompt": "what does a 503 status code mean", "expect": { "status": "done", "mustContain": ["re:unavailable|service"], "maxMs": 60000 } },
+
+ { "id": "mem-store1",   "prompt": "remember that my daily standup meeting is at 9:15am", "expect": { "commsIntent": "memory_store", "status": "done", "maxMs": 30000 } },
+ { "id": "mem-get1",     "prompt": "when is my standup meeting", "expect": { "status": "done", "mustContain": ["re:9:15|9.15"], "maxMs": 60000 } },
+ { "id": "mem-store2",   "prompt": "remember that my wifi network is called HomeNet5", "expect": { "commsIntent": "memory_store", "status": "done", "maxMs": 30000 } },
+ { "id": "mem-get2",     "prompt": "what is my wifi network called", "expect": { "status": "done", "mustContain": ["re:homenet5"], "maxMs": 60000 } },
+ { "id": "mem-store3",   "prompt": "remember my library card number is 4492-1138", "expect": { "commsIntent": "memory_store", "status": "done", "maxMs": 30000 } },
+ { "id": "mem-get3",     "prompt": "what is my library card number", "expect": { "status": "done", "mustContain": ["re:4492"], "maxMs": 60000 } },
+ { "id": "mem-store4",   "prompt": "remember that our team retro is every other Friday", "expect": { "commsIntent": "memory_store", "status": "done", "maxMs": 30000 } },
+ { "id": "mem-get4",     "prompt": "when is our team retro", "expect": { "status": "done", "mustContain": ["re:friday"], "maxMs": 60000 } },
+
+ { "id": "recall-what",  "prompt": "what did I just ask you", "sessionId": "e2e_bar_recall", "expect": { "status": "done", "maxMs": 60000 } },
+ { "id": "recall-sum",   "prompt": "summarize our conversation so far", "sessionId": "e2e_bar_recall", "expect": { "status": "done", "maxMs": 60000 } },
+
+ { "id": "sys-disk",     "prompt": "how much disk space do I have left", "expect": { "status": "done", "maxMs": 120000 } },
+ { "id": "sys-host",     "prompt": "what is my computer's hostname", "expect": { "status": "done", "maxMs": 120000 } },
+ { "id": "sys-files",    "prompt": "list the files in my home directory", "expect": { "status": "done", "maxMs": 120000 } },
+
+ { "id": "draft-ooo",    "prompt": "write a professional out-of-office reply for next Friday", "expect": { "status": "done", "mustContain": ["re:out of office|away|return|friday"], "maxMs": 90000 } },
+ { "id": "draft-li",     "prompt": "draft a short linkedin post about shipping software faster", "expect": { "status": "done", "maxMs": 90000 } },
+
+ { "id": "fs-pkg",       "prompt": "[File: /Users/lukaizhi/Desktop/projects/thinkdrop/package.json] what is this project's name and version", "expect": { "status": "done", "mustContain": ["re:thinkdrop|version"], "maxMs": 120000 } },
+ { "id": "fs-agents",    "prompt": "what are the first two section headers in /Users/lukaizhi/Desktop/projects/thinkdrop/comms-graph/AGENTS.md", "expect": { "status": "done", "maxMs": 120000 } },
+ { "id": "fs-chain1",    "prompt": "[File: /Users/lukaizhi/Desktop/projects/thinkdrop/package.json] list three dependencies this project has", "sessionId": "e2e_bar_fs", "expect": { "status": "done", "maxMs": 120000 } },
+ { "id": "fs-chain2",    "prompt": "which one of those is the heaviest framework", "sessionId": "e2e_bar_fs", "expect": { "status": "done", "maxMs": 120000 } },
+ { "id": "fs-chain3",    "prompt": "what node version does it require if it says so", "sessionId": "e2e_bar_fs", "expect": { "status": "done", "maxMs": 120000 } },
+
+ { "id": "draft-thanks", "prompt": "draft a two-sentence thank-you note for a job interview", "expect": { "status": "done", "maxMs": 90000 } },
+ { "id": "draft-msg",    "prompt": "write a friendly slack message asking the team to update their dependencies", "expect": { "status": "done", "maxMs": 90000 } },
+
+ { "id": "iso-new",      "prompt": "new thread", "expect": { "status": ["done","submitted"], "maxMs": 60000 } },
+ { "id": "iso-leak",     "prompt": "what did I just ask you", "expect": { "status": "done", "mustNotContain": ["Hale", "resume", "dune"], "maxMs": 60000 } },
+
+ { "_section": "EDGE — pacing, pastes, blobs, garbage input" },
+
+ { "id": "rf-1",         "prompt": "what is 5 factorial", "fireAndForget": true, "sessionId": "e2e_bar_rapid", "expect": {} },
+ { "id": "rf-2",         "prompt": "what is 6 factorial", "fireAndForget": true, "sessionId": "e2e_bar_rapid", "expect": {} },
+ { "id": "rf-3",         "prompt": "what is 7 factorial", "fireAndForget": true, "sessionId": "e2e_bar_rapid", "expect": {} },
+ { "id": "rf-4",         "prompt": "what is 8 factorial", "sessionId": "e2e_bar_rapid", "expect": { "status": "done", "mustContain": ["re:40,?320"], "maxMs": 90000 } },
+
+ { "id": "blob-ctx",     "prompt": "[Context: our deploy window is Friday at 2am and requires two approvals] when is the deploy window", "sessionId": "e2e_bar_blob", "expect": { "status": "done", "mustContain": ["re:friday|2am|2 am"], "maxMs": 60000 } },
+ { "id": "blob-thought", "prompt": "[Thought: maybe we should cache the embedding lookups to speed up retrieval] what was my thought about caching", "sessionId": "e2e_bar_blob", "expect": { "status": "done", "mustContain": ["re:cach|embed"], "maxMs": 60000 } },
+
+ { "id": "punct-1",      "prompt": "???", "expect": { "status": ["done","submitted","dropped"], "maxMs": 60000 } },
+ { "id": "punct-2",      "prompt": "……", "expect": { "status": ["done","submitted","dropped"], "maxMs": 60000 } },
+ { "id": "emoji",        "prompt": "explain what 🚀 means when people put it in commit messages", "expect": { "status": "done", "maxMs": 60000 } },
+ { "id": "dup-1",        "prompt": "tell me a short joke about semicolons", "sessionId": "e2e_bar_dup", "expect": { "status": "done", "maxMs": 60000 } },
+ { "id": "dup-2",        "prompt": "tell me a short joke about semicolons", "sessionId": "e2e_bar_dup", "expect": { "status": "done", "maxMs": 60000 } },
+ { "id": "short-ok",     "prompt": "ok", "expect": { "status": ["done","submitted","answered-batch"], "maxMs": 60000 } },
+ { "id": "long-q",       "prompt": "explain like I'm five: what is the difference between a process, a thread, and a coroutine, and when would I pick each one for a real project", "expect": { "status": "done", "maxMs": 90000 } },
+ { "id": "mixed-case",   "prompt": "TeLl Me A rIdDlE aBoUt TiMe", "expect": { "status": "done", "maxMs": 60000 } },
+ { "id": "ref-file-email","prompt": "[File: /Users/lukaizhi/Desktop/家庭/wode-dongxi/resume/resume-agentic.docx] base on the resume, draft a response to the job opportunity from the highlighted email earlier", "sessionId": "e2e_bar_hl", "expect": { "status": "done", "mustNotContain": ["don't have the email", "no email", "not provided"], "maxMs": 180000 } },
+
+ { "id": "blob-multi",   "prompt": "[Context: the staging DB is postgres on port 5433] [Context: prod uses port 5432] which port does staging use", "sessionId": "e2e_bar_blob2", "expect": { "status": "done", "mustContain": ["re:5433"], "maxMs": 60000 } },
+ { "id": "blob-multi2",  "prompt": "and which for prod", "sessionId": "e2e_bar_blob2", "expect": { "status": "done", "mustContain": ["re:5432"], "maxMs": 60000 } },
+ { "id": "neg-1",        "prompt": "I did not say that", "sessionId": "e2e_bar_neg", "expect": { "status": ["done","submitted"], "maxMs": 60000 } },
+ { "id": "emptyish",     "prompt": "   hi   ", "expect": { "status": ["done","submitted"], "maxMs": 60000 } },
+
+ { "_section": "CARD CONTINGENCY — question waits surface; typed answers, drains, cancels" },
+
+ { "_note": "1. Typed-answer path — a pending single-question batch consumes typed text as the ANSWER" },
+ { "id": "card-ans1",    "prompt": "Friday at 2am", "stageBatch": { "question": "When is the deploy window?" }, "expect": { "status": "answered-batch", "noPendingAfter": true, "maxMs": 30000 } },
+
+ { "_note": "2. Multi-wait drain — free text can't answer two cards; fresh submit drains all + routes" },
+ { "id": "card-drain2",  "prompt": "what is the capital of Japan", "stageBatches": [ { "question": "which file should I edit?" }, { "question": "which account should I use?" } ], "expect": { "status": "done", "noPendingAfter": true, "mustContain": ["re:tokyo"], "maxMs": 90000 } },
+
+ { "_note": "3. Real pendingQuestion — failing task parks waiting-for-input; fresh prompt cancels it" },
+ { "id": "card-hold3",   "prompt": "read the file /tmp/definitely-not-a-real-file-e2e-xyz.txt and summarize it", "holdQuestion": true, "sessionId": "e2e_bar_card3", "expect": { "status": ["waiting-for-input","running","done","failed"], "maxMs": 120000 } },
+ { "id": "card-drain3",  "prompt": "what is 8 plus 4", "expect": { "status": "done", "noPendingAfter": true, "mustContain": ["re:12"], "maxMs": 90000 } },
+ { "id": "card-check",   "prompt": "what tasks are pending right now", "expect": { "status": "done", "maxMs": 60000 } },
+
+ { "_section": "EXHAUSTION — supersede, cancel, mixed lanes, clean end-state" },
+
+ { "id": "xh-task1",     "prompt": "count the markdown files in /Users/lukaizhi/Desktop/projects/thinkdrop", "fireAndForget": true, "sessionId": "e2e_bar_xh", "expect": {} },
+ { "id": "xh-task2",     "prompt": "what is the current task queue status", "sessionId": "e2e_bar_xh", "expect": { "status": "done", "maxMs": 90000 } },
+ { "id": "xh-cancel",    "prompt": "cancel that", "sessionId": "e2e_bar_xh", "expect": { "status": ["done","submitted","cancelled"], "maxMs": 60000 } },
+ { "id": "xh-mix1",      "prompt": "what is a binary tree", "sessionId": "e2e_bar_xh2", "expect": { "status": "done", "maxMs": 60000 } },
+ { "id": "xh-mix2",      "prompt": "remember that the release freeze starts March 14", "sessionId": "e2e_bar_xh2", "expect": { "commsIntent": "memory_store", "status": "done", "maxMs": 30000 } },
+ { "id": "xh-mix3",      "prompt": "when does the release freeze start", "sessionId": "e2e_bar_xh2", "expect": { "status": "done", "mustContain": ["re:march 14|march"], "maxMs": 60000 } },
+ { "id": "xh-mix4",      "prompt": "now explain binary trees in two sentences", "sessionId": "e2e_bar_xh2", "expect": { "status": "done", "maxMs": 60000 } },
+ { "id": "xh-end-sum",   "prompt": "what did we cover in this conversation", "sessionId": "e2e_bar_xh2", "expect": { "status": "done", "maxMs": 90000 } },
+ { "id": "xh-end-state", "prompt": "what tasks are running right now", "expect": { "status": "done", "maxMs": 60000 } }
+]

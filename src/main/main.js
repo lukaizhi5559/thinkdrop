@@ -138,6 +138,11 @@ let controlLock = null; // { taskId, label }
 // endpoint and the focus auto-resign below — while a task runs, the overlay
 // must never hold the macOS key window or synthetic keystrokes land on it.
 let _taskInFlight = false;
+// Task ids killed by _cancelAutomationRun. A cancelled command-service run can
+// outlive its abort (uninterruptible retry loops) and keep emitting progress —
+// a zombie step_start would re-arm the lock/drop, and a zombie terminal event
+// could tear down the NEXT task's overlay. driveProgressDrop ignores them.
+const _cancelledTaskIds = new Set();
 const CONTROL_LOCK_ACTIONS = new Set([
   'read_url', 'scan_page', 'navigate_url', 'nav_task', 'print_page',
   'execute_shortcut', 'type_text',
@@ -631,6 +636,10 @@ async function _drawSessionBoundary(label) {
 
 async function driveProgressDrop(evt) {
   if (!evt || typeof evt !== 'object') return;
+  // Ignore events from cancelled tasks — a zombie run's step_start would
+  // re-arm the lock/drop after the user already killed it, and a late terminal
+  // event could tear down a live successor task's overlay.
+  if (evt.taskId && _cancelledTaskIds.has(evt.taskId)) return;
   const t = evt.type;
   if (t === 'plan:step_start' || t === 'step_start') {
     // Task begins (or advances): the overlay must not hold key focus while
@@ -950,6 +959,9 @@ let _fillerPillShown = false;
 // Populated once routeThroughCommsGraph is defined inside the IPC registrar —
 // the /voice.event endpoint needs it for auto-submitting final transcripts.
 let _routeViaCommsGraph = null;
+// Populated inside the IPC registrar — the /prompt.submit overlay-control
+// route calls the same handler as the prompt-queue:submit IPC.
+let _handlePromptSubmitFn = null;
 
 /** POST JSON to a localhost service; resolves on any HTTP status. */
 function _postJson(url, payload, timeoutMs = 15000) {
@@ -2313,6 +2325,32 @@ function startOverlayControlServer() {
       return;
     }
 
+    // ── POST /prompt.submit — the user-prompt bridge, callable over HTTP ────
+    // Runs the SAME handler as the prompt-queue:submit IPC (gather/ask_user/
+    // plan-approval intercepts, question-card drain, comms routing, serial
+    // fallback) so the e2e harness submits exactly like a user typing.
+    // Returns the outcome tag ('answered-*' | 'comms' | 'serial' | 'dropped').
+    if (req.url === '/prompt.submit' && req.method === 'POST') {
+      let body = '';
+      req.on('data', chunk => { body += chunk; });
+      req.on('end', async () => {
+        try {
+          const payload = JSON.parse(body || '{}');
+          if (!payload.prompt || typeof _handlePromptSubmitFn !== 'function') {
+            res.writeHead(_handlePromptSubmitFn ? 400 : 503);
+            res.end(JSON.stringify({ ok: false, error: _handlePromptSubmitFn ? 'prompt is required' : 'submit handler not initialized' }));
+            return;
+          }
+          const outcome = await _handlePromptSubmitFn(payload);
+          res.writeHead(202);
+          res.end(JSON.stringify({ ok: true, outcome }));
+        } catch (err) {
+          res.writeHead(400).end(JSON.stringify({ ok: false, error: err.message }));
+        }
+      });
+      return;
+    }
+
     // ── POST /comms.process — route text/voice through comms-graph pipeline ──
     // Called by main.js itself (not external) when COMMS_GRAPH_ENABLED=true
     // to classify text prompts before deciding whether to enqueue or handoff
@@ -3229,7 +3267,7 @@ function closeActiveBrowserSessions(reason = 'cancel') {
  * extracted so the LOpt-hold→ROpt-tap gesture hits the same path as the button.
  */
 function _cancelAutomationRun({ exceptTaskId = null } = {}) {
-  console.log('🛑 [Automation] Cancel requested by user');
+  console.log(`🛑 [Automation] ${exceptTaskId ? `Preempt for incoming task ${exceptTaskId}` : 'Cancel requested by user'}`);
   const _serialAbortedNow = !!activeAbortController; // untagged question batches belong to this run
   if (activeAbortController) {
     activeAbortController.abort();
@@ -3251,6 +3289,7 @@ function _cancelAutomationRun({ exceptTaskId = null } = {}) {
   // _cancellableTaskIds() is empty by the time the question drain runs below.
   // exceptTaskId: a preempting prompt's NEW task — it must survive the sweep.
   const _killedTaskIds = _cancellableTaskIds().filter(tid => tid !== exceptTaskId);
+  for (const tid of _killedTaskIds) _cancelledTaskIds.add(tid);
   try {
     const handoff = require('./handoffRunner');
     // Live runs + tasks parked at plan-approval or waiting-for-input — cancel()
@@ -3314,7 +3353,7 @@ function _cancelAutomationRun({ exceptTaskId = null } = {}) {
   // the reliable fallback: even if graceful signal propagation races (the
   // playwright agent is mid-action), the processes are killed so the browser
   // actually stops and no orphan Chrome holds the profile lock.
-  const cancelBody = JSON.stringify({});
+  const cancelBody = JSON.stringify({ exceptTaskId });
   const cancelReq = http.request({
     hostname: '127.0.0.1', port: 3007, path: '/automation.cancel', method: 'POST',
     headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(cancelBody) },
@@ -3335,6 +3374,12 @@ function _cancelAutomationRun({ exceptTaskId = null } = {}) {
   // Safety: a cancel may interrupt a capture-heavy app.agent step mid-session,
   // so tear down the drop session and bring the panel back explicitly (the
   // cancel all_done below uses safeSend, which bypasses the drop driver).
+  // Release the control lock too — progress_clear only hides the renderer pill;
+  // the main-side controlLock still gates setIgnoreMouseEvents and keeps the
+  // global Escape shortcut registered, leaving an invisible click/keyboard
+  // capture until some future terminal event happens to release it.
+  _taskInFlight = false;
+  _releaseControlLock('cancelled');
   _restorePanelFromDrop();
   if (resultsWindow && !resultsWindow.isDestroyed()) {
     safeSend(resultsWindow, 'automation:progress', { type: 'all_done', cancelled: true, completedCount: 0, totalCount: 0 });
@@ -8716,9 +8761,13 @@ app.whenReady().then(async () => {
   // Expose to the /voice.event endpoint so voice finals route identically.
   _routeViaCommsGraph = routeThroughCommsGraph;
 
-  ipcMain.on('prompt-queue:submit', async (_event, { prompt, selectedText = '', responseLanguage = null, isAskUserAnswer = false, taskId = null, sessionId: pinnedSessionId = null, thoughtContext = null } = {}) => {
+  // ── Shared prompt-submit handler — the single user-prompt choke point ──────
+  // Called by the 'prompt-queue:submit' IPC AND the /prompt.submit HTTP route
+  // (e2e harness — same code path, same intercepts). Returns an outcome tag so
+  // callers/tests can tell an intercepted answer from a routed new prompt.
+  const _handlePromptSubmit = async ({ prompt, selectedText = '', responseLanguage = null, isAskUserAnswer = false, taskId = null, sessionId: pinnedSessionId = null, thoughtContext = null } = {}) => {
     let trimmedPrompt = prompt?.trim();
-    if (!trimmedPrompt) return;
+    if (!trimmedPrompt) return 'empty';
 
     // ── Intercept: gather answer in flight ────────────────────────────────────
     // If gatherAnswerCallback is waiting for a response, route this text directly
@@ -8729,13 +8778,13 @@ app.whenReady().then(async () => {
     if (gp.getLegacy()) {
       console.log(`[GatherContext] prompt-queue:submit intercepted as gather:answer — "${trimmedPrompt.slice(0, 60)}"`);
       gp.resolveLegacy(trimmedPrompt);
-      return;
+      return 'answered-legacy';
     }
 
     // ── Intercept: typed answer to a pending gather BATCH ───────────────────
     // Batch waits (clarify/grill) only resolved via the card's answer_batch
     // IPC — a typed "the second one" fell through and spawned a new task.
-    if (gp.tryResolveFreeText(trimmedPrompt)) return;
+    if (gp.tryResolveFreeText(trimmedPrompt)) return 'answered-batch';
 
     // ── Intercept: ask_user answer for a paused HANDOFF task ──────────────────
     // Queue-card ask_user cards (PartialFailureCard) submit answers here with the
@@ -8751,7 +8800,7 @@ app.whenReady().then(async () => {
         handoffRunner.answerQuestion(taskId, trimmedPrompt).catch(err => {
           console.error(`[HandoffRunner] answerQuestion failed for ${taskId}:`, err.message);
         });
-        return;
+        return 'answered-question';
       }
       // ── Guard: orphaned ask_user answer with no resumable state ──────────────
       // Neither a serial paused state nor a handoff pending question exists —
@@ -8760,7 +8809,7 @@ app.whenReady().then(async () => {
       if (!pausedAutomationState) {
         console.warn(`[PromptQueue] Dropping orphaned isAskUserAnswer "${trimmedPrompt.slice(0, 60)}" — no paused state to resume`);
         safeSendUnified('automation:progress', { type: 'all_done', cancelled: true, completedCount: 0, totalCount: 0, ...(taskId ? { taskId } : {}) });
-        return;
+        return 'dropped';
       }
     }
 
@@ -8769,7 +8818,7 @@ app.whenReady().then(async () => {
     // Queue card buttons; a typed/voice "yes send it" fell through to the
     // classifier and spawned a duplicate task. Resolve it here instead.
     if (!isAskUserAnswer && _tryResolvePendingApproval(trimmedPrompt)) {
-      return;
+      return 'plan-approval';
     }
 
     if (pendingPlanContext && PLAN_MODE_CANCEL_RE.test(trimmedPrompt)) {
@@ -8782,8 +8831,27 @@ app.whenReady().then(async () => {
       if (promptCaptureWindow && !promptCaptureWindow.isDestroyed()) {
         safeSend(promptCaptureWindow, 'automation:progress', { type: 'plan:mode:cleared', source: 'prompt' });
       }
-      return;
+      return 'plan-cancel';
     }
+
+    // ── Fresh prompt supersedes pending question cards ──────────────────────
+    // Every answer-shaped intercept above declined, so this prompt is NEW
+    // work — and new work abandons every outstanding QuestionCard: gather
+    // batches (tagged + untagged) and the legacy wait resolve {} (the card
+    // clears, the awaiting task proceeds as "dismissed" instead of hanging on
+    // a card the user already moved past), and handoff tasks parked
+    // waiting-for-input are cancelled so they don't sit until the 10-min
+    // timeout. Parked serial state (pausedAutomationState) is untouched — its
+    // resume classifier decides answer-vs-fresh on the text itself.
+    try {
+      const _drained = gp.drainAll();
+      if (_drained) console.log(`[PromptQueue] Fresh prompt — drained ${_drained} pending question wait(s)`);
+      const _hr = require('./handoffRunner');
+      for (const _tid of (_hr.getPendingQuestionTaskIds ? _hr.getPendingQuestionTaskIds() : [])) {
+        console.log(`[PromptQueue] Fresh prompt — cancelling waiting-for-input task ${_tid}`);
+        try { _hr.cancel(_tid); } catch (_) {}
+      }
+    } catch (_) {}
 
     // ── Selection context — typed lane is explicit: only ⌘;-confirmed chips
     // (already wrapped as [Highlighted:] by the renderer) ride the prompt. An
@@ -8807,7 +8875,7 @@ app.whenReady().then(async () => {
     // comms routing would treat a typed "yes / option 2" as a new turn.
     if (!pendingPlanContext && !isAskUserAnswer && !pausedAutomationState) {
       if (routeThroughCommsGraph(trimmedPrompt, { selectedText, responseLanguage, sessionId: effectiveSessionId, thoughtContext })) {
-        return; // comms-graph dispatched — don't also enqueue
+        return 'comms'; // comms-graph dispatched — don't also enqueue
       }
     }
 
@@ -8854,9 +8922,12 @@ app.whenReady().then(async () => {
     }
 
     const id = promptQueue.enqueue(trimmedPrompt, enqueueOpts);
-    console.log(`[PromptQueue] IPC prompt-queue:submit → enqueued id=${id}`);
+    console.log(`[PromptQueue] prompt-queue:submit → enqueued id=${id}`);
     safeSendUnified('queue:enqueued', { id, isResume: !!pausedAutomationState || !!isAskUserAnswer });
-  });
+    return 'serial';
+  };
+  ipcMain.on('prompt-queue:submit', async (_event, payload) => { await _handlePromptSubmit(payload); });
+  _handlePromptSubmitFn = _handlePromptSubmit;
 
   ipcMain.on('prompt-queue:cancel', (_event, { id } = {}) => {
     if (!id) return;

@@ -270,6 +270,22 @@ export function UnifiedOverlay() {
   // still the PRE-change value, letting the zone-growth pin write an absolute
   // target instead of double-applying deltas the browser already anchored.
   const lastScrollTopRef = useRef(0);
+  // Entries grew while the user was scrolled up — gates ropt:tap's scroll-to-bottom.
+  const hasUnseenEntriesRef = useRef(false);
+  // Current deferredTab for debounced callbacks (suppress predicate runs after
+  // render — a state capture there can be a frame stale).
+  const deferredTabRef = useRef<string>(deferredTab as string);
+  deferredTabRef.current = deferredTab as string;
+
+  // Single writer for programmatic scrolls — keeps lastScrollTopRef fresh so
+  // the history-zone RO pin never applies a stale anchor, and tags each write
+  // so a future jump can be attributed via dbg.
+  const writeScrollTop = (el: HTMLElement, v: number, reason: string) => {
+    el.scrollTop = v;
+    lastScrollTopRef.current = v;
+    dbg('[scroll]', reason, v);
+  };
+
   // Fixed sections measured by useDynamicHeight (intrinsic content height, not the clipped root).
   const headerRef = useRef<HTMLDivElement>(null);
   const inputBarRef = useRef<HTMLDivElement>(null);
@@ -354,6 +370,10 @@ export function UnifiedOverlay() {
     Date.now() < manualCollapseUntilRef.current ||
     Date.now() - dragEndedAtRef.current < 180 ||
     userPinnedHeightRef.current > 0 ||
+    // Reading scrolled-up history: freeze the window so content growth can't
+    // clamp the scroll range under the reader — the feed scrolls inside the
+    // panel and resizes resume when they return to the bottom.
+    (deferredTabRef.current === 'results' && isScrolledUpRef.current) ||
     ((feedStore.getState().isSubmitting || hasActiveCommsTask() ||
       Date.now() - taskEndedAtRef.current < 800) &&
       targetHeight != null && targetHeight < window.innerHeight);
@@ -471,10 +491,17 @@ export function UnifiedOverlay() {
   const loadOlderHistory = useCallback(() => {
     if (!feedStore.getState().hasMoreHistory || feedStore.getState().historyLoading) return;
     const container = scrollContainerRef.current;
-    pendingPrependRef.current = container
+    const pending = container
       ? { prevScrollHeight: container.scrollHeight, prevScrollTop: container.scrollTop, zoneHeight: historyZoneRef.current?.offsetHeight || 0, committed: false }
       : null;
+    pendingPrependRef.current = pending;
     requestHistoryPage(feedStore.internal.historyCursor);
+    // A dropped/failed response would leave the pending object latched —
+    // the auto-scroll gate reads pendingPrependRef — so never let an
+    // uncommitted anchor outlive one round-trip.
+    if (pending) setTimeout(() => {
+      if (pendingPrependRef.current === pending && !pending.committed) pendingPrependRef.current = null;
+    }, 15000);
   }, [requestHistoryPage]);
 
   // After older entries prepend, keep the viewport anchored where the user was.
@@ -486,7 +513,12 @@ export function UnifiedOverlay() {
   // Assignment is ABSOLUTE (prevScrollTop + delta), not relative: by the time
   // this runs the browser may already have compensated (scroll anchoring /
   // max-scrollTop clamp), and a `+=` would double-apply and fling the view.
-  useEffect(() => {
+  // Consumed from two triggers: the [feedEntries] effect below (real prepends
+  // land post-commit) and a rAF scheduled by markPrependCommitted — an empty
+  // or all-dupe page produces no entries change, so without the rAF the
+  // committed pending would strand: the auto-scroll gate stays latched and the
+  // NEXT unrelated entries change snaps the view back to the fetch position.
+  const applyPendingPrepend = () => {
     const pending = pendingPrependRef.current;
     const container = scrollContainerRef.current;
     if (!pending || !container || !pending.committed) return;
@@ -498,16 +530,35 @@ export function UnifiedOverlay() {
       if (zone) {
         const zoneTop = zone.getBoundingClientRect().top - container.getBoundingClientRect().top + container.scrollTop;
         const loader = (feedStore.getState().hasMoreHistory ? zone.firstElementChild : null) as HTMLElement | null;
-        container.scrollTop = zoneTop + (loader?.offsetHeight || 0);
+        writeScrollTop(container, zoneTop + (loader?.offsetHeight || 0), 'jump');
       } else {
-        container.scrollTop = 0;
+        writeScrollTop(container, 0, 'jump');
       }
       return;
     }
-    container.scrollTop = pending.prevScrollTop + (zone
+    // scrollTop moved since the fetch — the user scrolled away mid-request or
+    // native anchoring already compensated; keep that position rather than
+    // snapping back to the fetch anchor.
+    if (Math.abs(container.scrollTop - pending.prevScrollTop) > 2) return;
+    writeScrollTop(container, pending.prevScrollTop + (zone
       ? zone.offsetHeight - pending.zoneHeight
-      : container.scrollHeight - pending.prevScrollHeight);
-  }, [feedEntries]);
+      : container.scrollHeight - pending.prevScrollHeight), 'prepend');
+  };
+  useEffect(applyPendingPrepend, [feedEntries]);
+
+  // Chromium can lose scrollTop when the results container re-lays out after
+  // display:none (tab switch). Restore the last known position on return —
+  // a no-op when the offset survived.
+  useEffect(() => {
+    if (deferredTab !== 'results') return;
+    const el = scrollContainerRef.current;
+    if (!el) return;
+    requestAnimationFrame(() => {
+      if (Math.abs(el.scrollTop - lastScrollTopRef.current) > 1) {
+        writeScrollTop(el, lastScrollTopRef.current, 'tab-restore');
+      }
+    });
+  }, [deferredTab]);
 
   // --- Bounded history: TTL eviction of prepended pages ────────────────────
   // Loaded history is temporary — after the TTL the prepended block drops,
@@ -543,7 +594,7 @@ export function UnifiedOverlay() {
           // bottom) and/or scroll anchoring — a relative write double-applies
           // and underflows to 0 (the "feed jumps to top" bug).
           const removedH = z ? (prevZoneH - z.offsetHeight) : (prevH - c.scrollHeight);
-          c.scrollTop = Math.max(0, prevScrollTop - removedH);
+          writeScrollTop(c, Math.max(0, prevScrollTop - removedH), 'evict');
           // Sync the zone observer's baseline — the eviction compensation above
           // already accounts for the shrink, so the RO must not apply it twice.
           if (z && zoneObsRef.current.el === z) zoneObsRef.current.h = z.offsetHeight;
@@ -572,7 +623,7 @@ export function UnifiedOverlay() {
       const zoneTop = zone.getBoundingClientRect().top - c.getBoundingClientRect().top + c.scrollTop;
       // Absolute target via lastScrollTopRef — native scroll anchoring may have
       // already applied this delta during layout; `+=` would double it.
-      if (c.scrollTop > zoneTop + next) c.scrollTop = lastScrollTopRef.current + delta;
+      if (c.scrollTop > zoneTop + next) writeScrollTop(c, lastScrollTopRef.current + delta, 'zone-pin');
     });
     zoneObsRef.current = { el: zone, h: zone.offsetHeight, ro };
     ro.observe(zone);
@@ -1170,7 +1221,7 @@ export function UnifiedOverlay() {
         // the bottom while in auto-scroll mode — the rAF scroll fires before the
         // animated setBounds finishes and can leave the view short of the bottom.
         const c = scrollContainerRef.current;
-        if (c && !isScrolledUpRef.current) c.scrollTop = c.scrollHeight;
+        if (c && !isScrolledUpRef.current) writeScrollTop(c, c.scrollHeight, 'resize');
       }, 300);
     };
     window.addEventListener('resize', handleWindowResize);
@@ -2178,6 +2229,11 @@ export function UnifiedOverlay() {
       setInstallPrompt,
       markPrependCommitted: () => {
         if (pendingPrependRef.current) pendingPrependRef.current.committed = true;
+        // Consume the anchor even when the response produced no prepend (empty
+        // or all-dupe page) — otherwise the pending object strands: it latches
+        // the auto-scroll gate off and the next unrelated entries change snaps
+        // the view back to the fetch position (the recurring "jump").
+        requestAnimationFrame(applyPendingPrepend);
       },
     });
     ipcRenderer.on('unified:set-prompt', handleSetPrompt, token);
@@ -2223,8 +2279,12 @@ export function UnifiedOverlay() {
     ipcRenderer.on('voice:final', handleVoiceFinal, token);
     ipcRenderer.on('voice:level', handleVoiceLevel, token);
     ipcRenderer.on('unified:clear', handleClear, token);
-    // Resolved single ROpt tap — scroll the feed to the latest entry.
-    ipcRenderer.on('ropt:tap', () => scrollToBottom(), token);
+    // Resolved single ROpt tap — scroll to the latest entry, but only when new
+    // content arrived since the user scrolled up; an idle tap while reading
+    // mid-feed must not yank the viewport.
+    ipcRenderer.on('ropt:tap', () => {
+      if (!isScrolledUpRef.current || hasUnseenEntriesRef.current) scrollToBottom();
+    }, token);
     // ⇧R-hold + ⌥R tap — same as the header expand/collapse button.
     ipcRenderer.on('ropt:expand', () => toggleWidthRef.current(), token);
     // ⌥R tap with a question card on top — focus its input (free text wins;
@@ -2237,10 +2297,14 @@ export function UnifiedOverlay() {
     // Timeline click — page history to that day and scroll to the fetched block.
     ipcRenderer.on('history:jump', ({ endDate }: { endDate: string }) => {
       const container = scrollContainerRef.current;
-      pendingPrependRef.current = container
+      const pending = container
         ? { prevScrollHeight: container.scrollHeight, prevScrollTop: container.scrollTop, zoneHeight: historyZoneRef.current?.offsetHeight || 0, committed: false, jumpToTop: true }
         : null;
+      pendingPrependRef.current = pending;
       requestHistoryPage(endDate);
+      if (pending) setTimeout(() => {
+        if (pendingPrependRef.current === pending && !pending.committed) pendingPrependRef.current = null;
+      }, 15000);
     }, token);
     ipcRenderer.on('automation:progress', handleAutomationProgress, token);
     // GhostLayer pending-question pill clicked → surface the waiting card:
@@ -2660,10 +2724,11 @@ export function UnifiedOverlay() {
       lastText = s.streamText; lastLen = s.entries.length; lastFlags = flags;
       if (!grew) return;
       const container = scrollContainerRef.current;
+      if (isScrolledUpRef.current) hasUnseenEntriesRef.current = true;
       if (!container || isScrolledUpRef.current || pendingPrependRef.current) return;
       // Defer past React's commit — notify() fires inside setEntries, before the
       // new entry is in the DOM; scrolling now would land above the appended row.
-      requestAnimationFrame(() => { container.scrollTop = container.scrollHeight; });
+      requestAnimationFrame(() => { writeScrollTop(container, container.scrollHeight, 'follow'); });
     });
   }, []);
 
@@ -2699,8 +2764,10 @@ export function UnifiedOverlay() {
       const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight <= threshold;
       setIsScrolledUp(!atBottom);
       isScrolledUpRef.current = !atBottom;
-      // Near the top → pull the next older 20
-      if (el.scrollTop < 60) loadOlderHistory();
+      if (atBottom) hasUnseenEntriesRef.current = false;
+      // Near the top → pull the next older 20 — only when there's a real
+      // scrollable range; a feed that fits the window pins scrollTop at 0.
+      if (el.scrollTop < 60 && el.scrollHeight > el.clientHeight + 24) loadOlderHistory();
     };
 
     el.addEventListener('scroll', updateScroll, { passive: true });

@@ -24,6 +24,8 @@
 
 const http = require('http');
 const { StateGraphBuilder, RealMCPAdapter, ThinkDropLLMBackend } = require('@thinkdrop/stategraph');
+const { skillEnvelope } = require('../../shared/route-envelope.cjs');
+const { stripProtocolFrames } = require('../../shared/protocol-frames.cjs');
 // Pending-question lifecycle — cancel() drains the task's gather waits so a
 // dead task can never leave a live card/interceptor behind (input lockout).
 const gp = require('./gatherPending.cjs');
@@ -165,6 +167,39 @@ const RUN_STALL_MS = parseInt(process.env.TASK_RUN_STALL_MS || '240000', 10);
 // only suspends while a user-question wait is in flight (that path has its own
 // 10-minute answer timeout upstream).
 const RUN_HARD_CAP_MS = parseInt(process.env.TASK_RUN_HARD_CAP_MS || '1800000', 10);
+
+// How long a pendingQuestion card waits for a human before auto-resolving with
+// the safest non-destructive option. User-blocked tasks hold the interactive
+// lane — an unanswered card otherwise stalls every queued task behind it for
+// the full 10-min cancel window (observed: barrage prompts parking 240s+ on
+// step-failure cards nobody could answer).
+const INPUT_AUTORESOLVE_MS = parseInt(process.env.THINKDROP_INPUT_AUTORESOLVE_MS || '90000', 10);
+
+// Nodes that run AFTER the answer already streamed to the user — a failure in
+// one (conversation-service circuit open on logConversation, advanceQueue
+// transport error) must not flip a delivered answer to 'failed'.
+const POST_ANSWER_NODES = new Set(['logConversation', 'advanceQueue']);
+
+// Pick the safest non-destructive answer for a pendingQuestion, or null when
+// no safe default exists. Never auto-picks Retry/try_again — re-running a
+// mutation unsupervised is the highest-blast option. Never answers questions
+// that require human knowledge (free-text/missing-input) or human authority
+// (OAuth reconnect, shell allowlist grants).
+function _safeQuestionAnswer(pq) {
+  if (!pq || typeof pq !== 'object') return null;
+  if (pq.freeText === true || pq._isOAuthGuidance || pq._isShellAllowlist || pq.userAllowlistHint) return null;
+  const opts = Array.isArray(pq.options) ? pq.options : [];
+  if (opts.length === 0) return null;
+  const _norm = (o) => (typeof o === 'string' ? o : (o && (o.label || o.value)) || '');
+  const _submit = (o) => (o && typeof o === 'object' ? (o.value || o.label || '') : String(o || ''));
+  // Prefer skipping the failed step — the run continues and synthesizes a
+  // partial answer. Then dismiss/cancel — an honest terminal state.
+  const skip = opts.find(o => /^skip(\s+this\s+step)?$/i.test(_norm(o)));
+  if (skip) return _submit(skip);
+  const cancel = opts.find(o => /^(dismiss|cancel|no)$/i.test(_norm(o)) || /^cancel$/i.test(_norm(o)));
+  if (cancel) return _submit(cancel);
+  return null;
+}
 
 // ── Pending plan contexts (per task) ───────────────────────────────────────────
 /** @type {Map<string, { planFile: string, prompt: string, agentId: string|null, source: string, originalPrompt: string|null, sessionId: string|null }>} */
@@ -329,10 +364,18 @@ let _onTaskCompleteFn = null;
 function setOnTaskComplete(fn) { _onTaskCompleteFn = fn || null; }
 
 function _notifyComplete(taskId, agentId, status, result, items, sessionId = null, planFile = null, trace = null, artifacts = null) {
-  if (_onTaskCompleteFn) {
-    try { _onTaskCompleteFn(taskId, status, result); } catch (_) {}
+  // Result text crossing to comms/the journal must never carry protocol
+  // frames — \x00 sentinels and bare {"id":..} tool frames painted raw when an
+  // upstream path leaked them into the answer (observed: a web_search task
+  // whose resultText was concatenated SSE-frame JSON).
+  const cleanResult = stripProtocolFrames(result);
+  if (cleanResult !== result) {
+    console.warn(`[HandoffRunner] stripped protocol frames from ${taskId} result (${(result || '').length}→${(cleanResult || '').length} chars)`);
   }
-  return _postToComms('/comms.complete', { taskId, agentId, status, result, items: items || null, sessionId, planFile, trace, artifacts });
+  if (_onTaskCompleteFn) {
+    try { _onTaskCompleteFn(taskId, status, cleanResult); } catch (_) {}
+  }
+  return _postToComms('/comms.complete', { taskId, agentId, status, result: cleanResult, items: items || null, sessionId, planFile, trace, artifacts });
 }
 
 // ── Create a fresh stategraph instance for a handoff task ──────────────────────
@@ -542,6 +585,7 @@ async function execute({ taskId, prompt, agentId, capabilityReason, source, orig
 
     // A fresh execute() for a taskId supersedes any stale paused question.
     try { clearTimeout(_pendingQuestions.get(taskId)?.timeoutTimer); } catch (_) {}
+    try { clearTimeout(_pendingQuestions.get(taskId)?.autoResolveTimer); } catch (_) {}
     _pendingQuestions.delete(taskId);
 
     // Build initial state for the stategraph.
@@ -557,6 +601,16 @@ async function execute({ taskId, prompt, agentId, capabilityReason, source, orig
         _ipcBroadcast('ws-bridge:message', { type: 'chunk', text: token, taskId });
       }
     };
+
+    // Compiler-hoist veto — only an envelope affirmatively describing
+    // executable work (task-shaped taskType / explicit command_automate,
+    // no non-skill flags) may carry a pre-compiled _skillPlan. An abstaining
+    // or absent envelope is not task evidence: strip and run the full
+    // pipeline — enforced on receipt, not only on send.
+    const _skillPlanVeto = !!_skillPlan && !skillEnvelope(routeDecision);
+    if (_skillPlanVeto) {
+      console.log(`[HandoffRunner] _skillPlan vetoed — no affirmative task signal (taskType=${routeDecision?.taskType || 'null'} suggestedIntent=${routeDecision?.suggestedIntent || 'null'}) — running full pipeline`);
+    }
 
     const initialState = _resumeState
       ? {
@@ -621,7 +675,9 @@ async function execute({ taskId, prompt, agentId, capabilityReason, source, orig
           // _skillPlan passthrough no-ops every upstream node (parseIntent,
           // decompose, gather, planSkills' compile) — the runtime decodes and
           // executes it with the standard contract guards.
-          ...(_skillPlan ? { _skillPlan } : {}),
+          // _skillPlanVeto (above) strips the plan when the envelope verdict
+          // names a non-skill lane the fast-path would bypass.
+          ...(_skillPlan && !_skillPlanVeto ? { _skillPlan } : {}),
           // Multi-intent queue restored across a plan-approval resume —
           // planExecutor maps these _resume* fields onto isMultiIntent/
           // intentQueue/intentResults/dataContext, and advanceQueue pops
@@ -729,6 +785,10 @@ async function execute({ taskId, prompt, agentId, capabilityReason, source, orig
       else if (finalState.skillResults.some(r => r && r.ok !== false) && !_failedStr) answer = 'Done.';
       else if (_failedStr) answer = `Failed — ${_failedStr}.`;
     }
+    // Strip protocol frames before every downstream consumer (done/failed
+    // substantive check, journal result) — a frames-only "answer" is not an
+    // answer and must not count toward done.
+    answer = stripProtocolFrames(answer);
     const intent = finalState?.intent?.type || 'command_automate';
     // Serving engine for the engine chip on the queue card (google-serp /
     // bing-copilot / brave-web / …). Null for non-search tasks — chip hidden.
@@ -1020,7 +1080,22 @@ async function execute({ taskId, prompt, agentId, capabilityReason, source, orig
         }
       }, 10 * 60 * 1000);
       timeoutTimer.unref?.();
-      _pendingQuestions.set(taskId, { finalState, prompt, agentId, source, originalPrompt, sessionId, timeoutTimer });
+      // Auto-resolve timer — a card with a safe non-destructive option resolves
+      // itself after INPUT_AUTORESOLVE_MS instead of parking the interactive
+      // lane for a human who may never answer. Retry-shaped options are never
+      // auto-picked; unanswerable cards keep the 10-min human window above.
+      let autoResolveTimer = null;
+      const _autoPick = _safeQuestionAnswer(finalState.pendingQuestion);
+      if (_autoPick != null) {
+        autoResolveTimer = setTimeout(() => {
+          if (!_pendingQuestions.has(taskId)) return;
+          console.warn(`[HandoffRunner] waiting-for-input auto-resolving ${taskId} after ${INPUT_AUTORESOLVE_MS}ms — picking "${_autoPick}"`);
+          answerQuestion(taskId, _autoPick).catch(err =>
+            console.warn(`[HandoffRunner] auto-resolve resume failed for ${taskId}:`, err.message));
+        }, INPUT_AUTORESOLVE_MS);
+        autoResolveTimer.unref?.();
+      }
+      _pendingQuestions.set(taskId, { finalState, prompt, agentId, source, originalPrompt, sessionId, timeoutTimer, autoResolveTimer });
       // Emit pipeline:done so AutomationProgress clears any planning spinner
       progressCallback({ type: 'pipeline:done', contract: finalState._contract });
       _notifyComplete(taskId, agentId, 'waiting-for-input', '', null, finalState.resolvedSessionId || sessionId, null, null, _artifactSnapshot(taskId));
@@ -1066,12 +1141,18 @@ async function execute({ taskId, prompt, agentId, capabilityReason, source, orig
       }
       return { ok: true, status: 'cancelled' };
 
-    } else if ((finalState.error || finalState.failedNode || finalState.failedStep) && !finalState.cancelled) {
+    } else if ((finalState.error || finalState.failedNode || finalState.failedStep) && !finalState.cancelled
+               && !(answer && answer.length >= 20
+                    && (finalState.failedNode == null || POST_ANSWER_NODES.has(finalState.failedNode)))) {
       // Graph ended in a failure state but resolved anyway — node crash, loop
       // abort, or an unrecovered failedStep. `state.error` is distinct from
       // `state.planError` (handled above): an executeCommand throw lands here,
       // not in the planError branch, and was reporting 'done' for a failed run
       // (observed: stepContracts TDZ crash → failure-prose answer marked done).
+      // The exception above: housekeeping nodes run AFTER the answer already
+      // streamed to the user — their failure (e.g. conversation-service
+      // circuit open on logConversation) must not flip a delivered answer to
+      // 'failed' (observed: correct time/summary answers under status=failed).
       const _errMsg = finalState.error
         || (finalState.failedStep ? `Step failed: ${finalState.failedStep.skill || 'unknown'}${finalState.failedStep.error ? ` — ${finalState.failedStep.error}` : ''}` : 'Execution failed');
       console.log(`[HandoffRunner] Task ${taskId} ended in failure state (node: ${finalState.failedNode || 'n/a'}): ${_errMsg}`);
@@ -1101,6 +1182,11 @@ async function execute({ taskId, prompt, agentId, capabilityReason, source, orig
 
     } else {
       // Normal completion
+      if ((finalState.error || finalState.failedNode || finalState.failedStep)
+          && answer && answer.length >= 20
+          && (finalState.failedNode == null || POST_ANSWER_NODES.has(finalState.failedNode))) {
+        console.warn(`[HandoffRunner] Task ${taskId} — post-answer housekeeping failure downgraded (node: ${finalState.failedNode || 'n/a'}): ${finalState.error || 'failedStep'} — reporting done (answer already delivered)`);
+      }
       const thinking = finalState.thinking || null;
       console.log(`[HandoffRunner] Task ${taskId} completed — ${answer.length} chars${thinking ? ` (thinking: ${thinking.length} chars)` : ''}${sources.length ? ` (sources: ${sources.length})` : ''}${items.length ? ` (items: ${items.length})` : ''}`);
       // Emit pipeline:done so AutomationProgress clears the planning spinner.
@@ -1258,6 +1344,7 @@ async function answerQuestion(taskId, answer) {
     return { ok: false, error: 'No pending question' };
   }
   try { clearTimeout(ctx.timeoutTimer); } catch (_) {}
+  try { clearTimeout(ctx.autoResolveTimer); } catch (_) {}
   _pendingQuestions.delete(taskId);
 
   const paused = ctx.finalState;
@@ -1568,6 +1655,7 @@ function cancel(taskId) {
   // still intercepts typed input if left alive (the cancel-lockout bug).
   try { gp.drainForTasks(taskId); } catch (_) {}
   try { clearTimeout(_pendingQuestions.get(taskId)?.timeoutTimer); } catch (_) {}
+  try { clearTimeout(_pendingQuestions.get(taskId)?.autoResolveTimer); } catch (_) {}
   _pendingQuestions.delete(taskId);
   // Also drop a pending plan-approval context — a task paused at the approval
   // gate has no active run to abort, but cancelling it must prevent a later

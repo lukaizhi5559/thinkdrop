@@ -89,6 +89,7 @@ interface FeedInternal {
   taskStreamEntry: Map<string, string>;
   synthTasks: Set<string>;
   pendingEntryPatches: Map<string, string>; // entryId → text, flushed on rAF
+  terminalTasks: Set<string>;    // taskIds that reached done/failed/cancelled — late events must not resurrect their run card
 }
 
 export interface FeedStore {
@@ -492,6 +493,7 @@ export function createFeedStore(now: () => number = () => Date.now()): FeedStore
     taskStreamEntry: new Map(),
     synthTasks: new Set(),
     pendingEntryPatches: new Map(),
+    terminalTasks: new Set(),
   };
   const listeners = new Set<() => void>();
   let flushScheduled = false;
@@ -631,7 +633,7 @@ export function createFeedStore(now: () => number = () => Date.now()): FeedStore
   };
 
   const ensureRunEntry = (taskId: string, prompt?: string | null) => {
-    if (!taskId) return;
+    if (!taskId || internal.terminalTasks.has(taskId)) return;
     const p = prompt || internal.taskPrompts.get(taskId) || '';
     if (p && !internal.taskPrompts.has(taskId)) internal.taskPrompts.set(taskId, p);
     const exchangeId = exchangeForTask(taskId, p);

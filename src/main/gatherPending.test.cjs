@@ -178,4 +178,29 @@ reset();
 }
 reset();
 
+// ── drainAll settles every wait kind at once ─────────────────────────────────
+{
+  const b1 = addBatch('d1', { taskId: 'task_D1' });
+  const b2 = addBatch('d2'); // untagged
+  let legResolved = null;
+  gp.setLegacy({ resolve: (v) => { legResolved = v; }, question: 'leg?', taskId: null });
+  const n = gp.drainAll();
+  assert(n === 3, `drainAll settles all 3 waits (got ${n})`);
+  assert(b1.resolved && typeof b1.resolved === 'object' && !Object.keys(b1.resolved).length, 'tagged batch resolved {}');
+  assert(b2.resolved && typeof b2.resolved === 'object' && !Object.keys(b2.resolved).length, 'untagged batch resolved {}');
+  assert(legResolved === '', 'legacy resolved empty');
+  assert(!gp.batches.size && !gp.getLegacy(), 'no waits left');
+  const clears = emits.filter(e => e[0] === 'unified' && e[1] === 'gather:question_batch' && e[2].active === false);
+  assert(clears.length === 2, 'card-clear emitted for both batches');
+  assert(emits.some(e => e[0] === 'unified' && e[1] === 'gather:pending' && e[2].active === false), 'pending cleared');
+  assert(emits.some(e => e[0] === 'userwait' && e[1] === 'task_D1' && e[2] === false), 'tagged userwait off');
+  assert(emits.some(e => e[0] === 'ghost' && e[1] === 'gather:question-pending' && e[2].active === false), 'beacon cleared');
+  assert(emits.filter(e => e[0] === 'thought' && /dismissed/.test(e[1])).length === 2, 'batch dismissals audited (legacy drain audits silently like task-cancel drains)');
+}
+reset();
+{
+  assert(gp.drainAll() === 0, 'drainAll on empty state is a no-op');
+}
+reset();
+
 console.log('gatherPending.test.cjs — all assertions passed');

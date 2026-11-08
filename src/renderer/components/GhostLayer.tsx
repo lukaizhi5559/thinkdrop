@@ -83,6 +83,11 @@ function GhostLayer() {
   const [drop, setDrop] = useState<ProgressDropState | null>(null);
   const [dropVisible, setDropVisible] = useState(false);
   const captureReadyTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Re-shows the lock pill when a capture window runs long: the screenshot is
+  // taken ~0.5s after capture-ready, so by ~4s the shot is done (or stalled)
+  // and the pill can't taint OCR — but a hung screen.analyze would otherwise
+  // leave the user click-blocked with no "AI in Control" affordance.
+  const captureStallTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Persistent app-window boundary owned by the drop session (main.js). Unlike
   // BoundingBox highlights (which auto-exit after ~7s), this border stays up for
@@ -228,6 +233,10 @@ function GhostLayer() {
         setControlLock({ taskId: data.taskId ?? null, label: data.label || 'AI in Control' });
         setLockVisible(true);
       } else if (data.type === 'control_unlock') {
+        if (captureStallTimer.current) {
+          clearTimeout(captureStallTimer.current);
+          captureStallTimer.current = null;
+        }
         setControlLock(null);
         setLockVisible(false);
       } else if (data.type === 'capture_begin') {
@@ -241,11 +250,23 @@ function GhostLayer() {
         captureReadyTimer.current = setTimeout(() => {
           ipcRenderer?.send('ghostlayer:capture-ready');
         }, 420);
+        // Stall guard: if capture_end hasn't arrived within ~4s, the screenshot
+        // already fired (or the capture pipeline is hung) — restore the pill so
+        // the input lock never stays invisible for long.
+        if (captureStallTimer.current) clearTimeout(captureStallTimer.current);
+        captureStallTimer.current = setTimeout(() => {
+          captureStallTimer.current = null;
+          setLockVisible(true);
+        }, 4000);
       } else if (data.type === 'capture_end') {
         // Screenshot done — fade the drop back in.
         if (captureReadyTimer.current) {
           clearTimeout(captureReadyTimer.current);
           captureReadyTimer.current = null;
+        }
+        if (captureStallTimer.current) {
+          clearTimeout(captureStallTimer.current);
+          captureStallTimer.current = null;
         }
         setDropVisible(true);
         setLockVisible(true); // harmless if no lock — it only renders when set
@@ -259,6 +280,10 @@ function GhostLayer() {
         if (captureReadyTimer.current) {
           clearTimeout(captureReadyTimer.current);
           captureReadyTimer.current = null;
+        }
+        if (captureStallTimer.current) {
+          clearTimeout(captureStallTimer.current);
+          captureStallTimer.current = null;
         }
         setDrop(null);
         setDropVisible(false);
@@ -290,6 +315,10 @@ function GhostLayer() {
       ipcRenderer.removeListenerByToken('app-agent:highlight', GHOST_TOKEN);
       if (timerInterval.current) {
         clearInterval(timerInterval.current);
+      }
+      if (captureStallTimer.current) {
+        clearTimeout(captureStallTimer.current);
+        captureStallTimer.current = null;
       }
     };
   }, []);

@@ -1,0 +1,1846 @@
+[
+ {
+  "id": "ar-01",
+  "prompt": "what videos have I been watch today",
+  "expect": {
+   "status": "done",
+   "graphIntent": "memory_retrieve",
+   "maxMs": 120000
+  }
+ },
+ {
+  "id": "ar-02",
+  "prompt": "which videos did I watch",
+  "expect": {
+   "status": "done",
+   "graphIntent": "memory_retrieve",
+   "maxMs": 120000
+  }
+ },
+ {
+  "id": "ar-03",
+  "prompt": "which videos did I watch yesterday",
+  "expect": {
+   "status": "done",
+   "graphIntent": "memory_retrieve",
+   "maxMs": 120000
+  }
+ },
+ {
+  "id": "ar-04",
+  "prompt": "what were the videos about yesterday",
+  "expect": {
+   "status": "done",
+   "graphIntent": "memory_retrieve",
+   "maxMs": 120000
+  }
+ },
+ {
+  "id": "ar-05",
+  "prompt": "what music did I listen to today",
+  "expect": {
+   "status": "done",
+   "graphIntent": "memory_retrieve",
+   "maxMs": 120000
+  }
+ },
+ {
+  "id": "ar-06",
+  "prompt": "what websites did I visit this morning",
+  "expect": {
+   "status": "done",
+   "graphIntent": "memory_retrieve",
+   "maxMs": 120000
+  }
+ },
+ {
+  "id": "ar-07",
+  "prompt": "what did I watch last night",
+  "expect": {
+   "status": "done",
+   "graphIntent": "memory_retrieve",
+   "maxMs": 120000
+  }
+ },
+ {
+  "id": "ar-08",
+  "prompt": "what apps did I use today",
+  "expect": {
+   "status": "done",
+   "graphIntent": "memory_retrieve",
+   "maxMs": 120000
+  }
+ },
+ {
+  "id": "ar-09",
+  "prompt": "what podcasts have I been listening to",
+  "expect": {
+   "status": "done",
+   "graphIntent": "memory_retrieve",
+   "maxMs": 120000
+  }
+ },
+ {
+  "id": "ar-10",
+  "prompt": "what was I reading earlier today",
+  "expect": {
+   "status": "done",
+   "graphIntent": "memory_retrieve",
+   "maxMs": 120000
+  }
+ },
+ {
+  "id": "ar-11",
+  "prompt": "what youtube videos I seen lately",
+  "expect": {
+   "status": "done",
+   "graphIntent": "memory_retrieve",
+   "maxMs": 120000
+  }
+ },
+ {
+  "id": "ar-12",
+  "prompt": "what i been doing on the computer today",
+  "expect": {
+   "status": "done",
+   "graphIntent": "memory_retrieve",
+   "maxMs": 120000
+  }
+ },
+ {
+  "id": "cr-01",
+  "prompt": "what did I just say",
+  "expect": {
+   "status": "done",
+   "graphIntent": "memory_retrieve",
+   "maxMs": 120000
+  }
+ },
+ {
+  "id": "cr-02",
+  "prompt": "list my last 5 prompts",
+  "expect": {
+   "status": "done",
+   "graphIntent": "memory_retrieve",
+   "maxMs": 120000
+  }
+ },
+ {
+  "id": "cr-03",
+  "prompt": "what was my previous question",
+  "expect": {
+   "status": "done",
+   "graphIntent": "memory_retrieve",
+   "maxMs": 120000
+  }
+ },
+ {
+  "id": "cr-04",
+  "prompt": "repeat back what I asked before",
+  "expect": {
+   "status": "done",
+   "graphIntent": "memory_retrieve",
+   "maxMs": 120000
+  }
+ },
+ {
+  "id": "cr-05",
+  "prompt": "what have I asked you so far",
+  "expect": {
+   "status": "done",
+   "graphIntent": "memory_retrieve",
+   "maxMs": 120000
+  }
+ },
+ {
+  "id": "cr-06",
+  "prompt": "did I mention my dentist appointment",
+  "expect": {
+   "status": "done",
+   "graphIntent": "memory_retrieve",
+   "maxMs": 120000
+  }
+ },
+ {
+  "id": "cr-07",
+  "prompt": "what did we talk about earlier",
+  "expect": {
+   "status": "done",
+   "graphIntent": "memory_retrieve",
+   "maxMs": 120000
+  }
+ },
+ {
+  "id": "cr-08",
+  "prompt": "what was the first thing I asked today",
+  "expect": {
+   "status": "done",
+   "graphIntent": "memory_retrieve",
+   "maxMs": 120000
+  }
+ },
+ {
+  "id": "fu1-seed",
+  "prompt": "what were the videos about yesterday",
+  "sessionId": "e2e_rb_fu1",
+  "expect": {
+   "status": "done",
+   "graphIntent": "memory_retrieve",
+   "maxMs": 120000
+  }
+ },
+ {
+  "id": "fu1-details",
+  "prompt": "list details about the videos what they said",
+  "sessionId": "e2e_rb_fu1",
+  "expect": {
+   "status": "done",
+   "graphIntent": "memory_retrieve",
+   "maxMs": 120000
+  }
+ },
+ {
+  "id": "fu1-more",
+  "prompt": "summarize the first one",
+  "sessionId": "e2e_rb_fu1",
+  "expect": {
+   "status": "done",
+   "maxMs": 120000
+  }
+ },
+ {
+  "id": "fu2-seed",
+  "prompt": "what did I ask about the marathon",
+  "sessionId": "e2e_rb_fu2",
+  "expect": {
+   "status": "done",
+   "graphIntent": "memory_retrieve",
+   "maxMs": 120000
+  }
+ },
+ {
+  "id": "fu2-more",
+  "prompt": "what did the second video say",
+  "sessionId": "e2e_rb_fu2",
+  "expect": {
+   "status": "done",
+   "maxMs": 120000
+  }
+ },
+ {
+  "id": "fu3-seed",
+  "prompt": "draft a short email to my coworker Jake asking if he can review my PR today",
+  "sessionId": "e2e_rb_fu3",
+  "expect": {
+   "status": "done",
+   "maxMs": 120000
+  }
+ },
+ {
+  "id": "fu3-edit",
+  "prompt": "make it shorter",
+  "sessionId": "e2e_rb_fu3",
+  "expect": {
+   "status": "done",
+   "maxMs": 120000
+  }
+ },
+ {
+  "id": "fu3-edit2",
+  "prompt": "also mention friday",
+  "sessionId": "e2e_rb_fu3",
+  "expect": {
+   "status": "done",
+   "maxMs": 120000
+  }
+ },
+ {
+  "id": "fu4-seed",
+  "prompt": "search for hotels in hong kong",
+  "sessionId": "e2e_rb_fu4",
+  "expect": {
+   "status": "done",
+   "maxMs": 180000
+  }
+ },
+ {
+  "id": "fu4-more",
+  "prompt": "which one is cheapest",
+  "sessionId": "e2e_rb_fu4",
+  "expect": {
+   "status": "done",
+   "maxMs": 180000
+  }
+ },
+ {
+  "id": "fu5-seed",
+  "prompt": "what files did I download recently",
+  "sessionId": "e2e_rb_fu5",
+  "expect": {
+   "status": "done",
+   "maxMs": 120000
+  }
+ },
+ {
+  "id": "fu5-more",
+  "prompt": "open the first one",
+  "sessionId": "e2e_rb_fu5",
+  "expect": {
+   "status": "done",
+   "maxMs": 180000
+  }
+ },
+ {
+  "id": "web-01",
+  "prompt": "search for hotels in hong kong",
+  "expect": {
+   "status": "done",
+   "maxMs": 180000
+  }
+ },
+ {
+  "id": "web-02",
+  "prompt": "what is the capital of japan",
+  "expect": {
+   "status": "done",
+   "maxMs": 120000
+  }
+ },
+ {
+  "id": "web-03",
+  "prompt": "who wrote the book dune",
+  "expect": {
+   "status": "done",
+   "maxMs": 120000
+  }
+ },
+ {
+  "id": "web-04",
+  "prompt": "look up the weather in tokyo",
+  "expect": {
+   "status": "done",
+   "maxMs": 180000
+  }
+ },
+ {
+  "id": "web-05",
+  "prompt": "search the web for NYC marathon results 2026",
+  "expect": {
+   "status": "done",
+   "maxMs": 180000
+  }
+ },
+ {
+  "id": "web-06",
+  "prompt": "find me reviews of the macbook pro m4",
+  "expect": {
+   "status": "done",
+   "maxMs": 180000
+  }
+ },
+ {
+  "id": "web-07",
+  "prompt": "what's the latest news on AI regulation",
+  "expect": {
+   "status": "done",
+   "maxMs": 180000
+  }
+ },
+ {
+  "id": "web-08",
+  "prompt": "google how to fix a leaky faucet",
+  "expect": {
+   "status": "done",
+   "maxMs": 180000
+  }
+ },
+ {
+  "id": "task-01",
+  "prompt": "create a file called e2e-hello.txt on my desktop",
+  "approve": true,
+  "expect": {
+   "status": "done",
+   "maxMs": 240000
+  }
+ },
+ {
+  "id": "task-02",
+  "prompt": "open safari",
+  "approve": true,
+  "expect": {
+   "status": "done",
+   "maxMs": 180000
+  }
+ },
+ {
+  "id": "task-03",
+  "prompt": "take a screenshot",
+  "approve": true,
+  "expect": {
+   "status": "done",
+   "maxMs": 180000
+  }
+ },
+ {
+  "id": "task-04",
+  "prompt": "list files in my downloads folder",
+  "approve": true,
+  "expect": {
+   "status": "done",
+   "maxMs": 180000
+  }
+ },
+ {
+  "id": "task-05",
+  "prompt": "set a reminder for 3pm tomorrow",
+  "approve": true,
+  "expect": {
+   "status": "done",
+   "maxMs": 240000
+  }
+ },
+ {
+  "id": "task-06",
+  "prompt": "send an email to Jake saying the review is done",
+  "approve": true,
+  "authMode": "proceed",
+  "expect": {
+   "status": "done",
+   "maxMs": 240000
+  }
+ },
+ {
+  "id": "task-07",
+  "prompt": "open terminal and run pwd",
+  "approve": true,
+  "expect": {
+   "status": "done",
+   "maxMs": 240000
+  }
+ },
+ {
+  "id": "task-08",
+  "prompt": "create a new folder on desktop called e2e-test",
+  "approve": true,
+  "expect": {
+   "status": "done",
+   "maxMs": 240000
+  }
+ },
+ {
+  "id": "task-09",
+  "prompt": "what time is it right now",
+  "expect": {
+   "status": "done",
+   "maxMs": 120000
+  }
+ },
+ {
+  "id": "task-10",
+  "prompt": "turn my volume down",
+  "approve": true,
+  "expect": {
+   "status": "done",
+   "maxMs": 180000
+  }
+ },
+ {
+  "id": "cd-01",
+  "prompt": "cancel that",
+  "expect": {
+   "maxMs": 60000
+  }
+ },
+ {
+  "id": "cd-02",
+  "prompt": "never mind",
+  "expect": {
+   "maxMs": 60000
+  }
+ },
+ {
+  "id": "cd-03",
+  "prompt": "no thanks",
+  "expect": {
+   "maxMs": 60000
+  }
+ },
+ {
+  "id": "cd-04",
+  "prompt": "forget it",
+  "expect": {
+   "maxMs": 60000
+  }
+ },
+ {
+  "id": "cd-05",
+  "prompt": "stop",
+  "expect": {
+   "maxMs": 60000
+  }
+ },
+ {
+  "id": "scr-01",
+  "prompt": "what's on my screen",
+  "expect": {
+   "status": "done",
+   "maxMs": 120000
+  }
+ },
+ {
+  "id": "scr-02",
+  "prompt": "what am I looking at",
+  "expect": {
+   "status": "done",
+   "maxMs": 120000
+  }
+ },
+ {
+  "id": "scr-03",
+  "prompt": "read the text on my screen",
+  "expect": {
+   "status": "done",
+   "maxMs": 120000
+  }
+ },
+ {
+  "id": "scr-04",
+  "prompt": "what app is open right now",
+  "expect": {
+   "status": "done",
+   "maxMs": 120000
+  }
+ },
+ {
+  "id": "ms-01",
+  "prompt": "remember that my favorite color is blue",
+  "expect": {
+   "status": "done",
+   "commsIntent": "memory_store",
+   "maxMs": 120000
+  }
+ },
+ {
+  "id": "ms-02",
+  "prompt": "note that my wifi password is hunter2",
+  "expect": {
+   "status": "done",
+   "commsIntent": "memory_store",
+   "maxMs": 120000
+  }
+ },
+ {
+  "id": "ms-03",
+  "prompt": "remember my dentist appointment is friday",
+  "expect": {
+   "status": "done",
+   "commsIntent": "memory_store",
+   "maxMs": 120000
+  }
+ },
+ {
+  "id": "ms-04",
+  "prompt": "save this: the project codename is falcon",
+  "expect": {
+   "status": "done",
+   "commsIntent": "memory_store",
+   "maxMs": 120000
+  }
+ },
+ {
+  "id": "oos-01",
+  "prompt": "asdkfj alskdjf alskdjf",
+  "expect": {
+   "maxMs": 90000
+  }
+ },
+ {
+  "id": "oos-02",
+  "prompt": "blah blah blah",
+  "expect": {
+   "maxMs": 90000
+  }
+ },
+ {
+  "id": "oos-03",
+  "prompt": "potato carrot diagonal bicycle",
+  "expect": {
+   "maxMs": 90000
+  }
+ },
+ {
+  "id": "oos-04",
+  "prompt": "hmm",
+  "expect": {
+   "maxMs": 90000
+  }
+ },
+ {
+  "id": "oos-05",
+  "prompt": "the the the the the",
+  "expect": {
+   "maxMs": 90000
+  }
+ },
+ {
+  "id": "long-01",
+  "prompt": "Here are my meeting notes from the sprint planning: John will own the auth migration, Sarah takes the dashboard redesign, the demo is Thursday at 2pm, we need the staging env fixed by Wednesday, and Jake said he'd review the API spec. Also there's a bug in the payment flow that needs a hotfix before the demo. What time is the demo?",
+  "expect": {
+   "status": "done",
+   "maxMs": 120000
+  }
+ },
+ {
+  "id": "long-02",
+  "prompt": "A new study from MIT shows that rats exposed to intermittent fasting cycles of 16 hours demonstrated improved insulin sensitivity and reduced inflammation markers over a 12-week period, though the effect diminished when the fasting window was paired with a high-sugar diet. Researchers noted that circadian alignment of the feeding window appeared to matter more than the fasting duration itself. Summarize this.",
+  "expect": {
+   "status": "done",
+   "maxMs": 120000
+  }
+ },
+ {
+  "id": "long-03",
+  "prompt": "Error: ECONNREFUSED at TCPConnectWrap.afterConnect errno -111 code ECONNREFUSED syscall connect address 127.0.0.1 port 3001. Stack: at Object.exports._errnoException at exports._exceptionWithHostPort at TCPConnectWrap.afterConnect. Why did this fail?",
+  "expect": {
+   "status": "done",
+   "maxMs": 120000
+  }
+ },
+ {
+  "id": "long-04",
+  "prompt": "hey team, just wanted to touch base about the thing we discussed last week, i know everyone's super busy right now but i was hoping we could maybe find some time to sync up about the project timeline and make sure we're all on the same page about deliverables, no rush though whenever works. Make this more professional.",
+  "expect": {
+   "status": "done",
+   "maxMs": 120000
+  }
+ },
+ {
+  "id": "long-05",
+  "prompt": "I've been watching a lot of videos about marathons and running recently and I'm trying to remember the specific details of what was said in the one about the runner who died near the finish line, what was her name again",
+  "expect": {
+   "status": "done",
+   "graphIntent": "memory_retrieve",
+   "maxMs": 120000
+  }
+ },
+ {
+  "id": "long-06",
+  "prompt": "I need you to go through my activity from the last three days, find every instance where I watched a YouTube video, and compile a list with the titles, the channels, and the approximate times I watched them",
+  "expect": {
+   "status": "done",
+   "graphIntent": "memory_retrieve",
+   "maxMs": 180000
+  }
+ },
+ {
+  "id": "long-07",
+  "prompt": "function calculateDiscount(price, tier) { const rates = { gold: 0.25, silver: 0.15, bronze: 0.05 }; const rate = rates[tier] || 0; return price - (price * rate); } What does this function do?",
+  "expect": {
+   "status": "done",
+   "maxMs": 120000
+  }
+ },
+ {
+  "id": "long-08",
+  "prompt": "So the current status is the backend migration is about 60% done, the frontend is blocked on the new API schema, QA found 14 bugs last week and 9 are still open, the client demo got moved up to next Tuesday, and half the team is out Thursday and Friday. What should I prioritize?",
+  "expect": {
+   "status": "done",
+   "maxMs": 120000
+  }
+ },
+ {
+  "id": "mixed-01",
+  "prompt": "what's 2+2",
+  "expect": {
+   "status": "done",
+   "maxMs": 90000
+  }
+ },
+ {
+  "id": "mixed-02",
+  "prompt": "hello",
+  "expect": {
+   "status": "done",
+   "maxMs": 90000
+  }
+ },
+ {
+  "id": "mixed-03",
+  "prompt": "how are you doing today",
+  "expect": {
+   "status": "done",
+   "maxMs": 90000
+  }
+ },
+ {
+  "id": "mixed-04",
+  "prompt": "click the first result",
+  "sessionId": "e2e_rb_mixed4",
+  "expect": {
+   "status": "done",
+   "maxMs": 180000
+  }
+ },
+ {
+  "id": "mixed-05",
+  "prompt": "tell me a joke",
+  "expect": {
+   "status": "done",
+   "maxMs": 90000
+  }
+ },
+ {
+  "id": "mixed-06",
+  "prompt": "explain quantum entanglement simply",
+  "expect": {
+   "status": "done",
+   "maxMs": 120000
+  }
+ },
+ {
+  "id": "mixed-07",
+  "prompt": "what does the fox say",
+  "expect": {
+   "status": "done",
+   "maxMs": 90000
+  }
+ },
+ {
+  "id": "mixed-08",
+  "prompt": "help me write a haiku about coffee",
+  "expect": {
+   "status": "done",
+   "maxMs": 120000
+  }
+ },
+ {
+  "id": "ar-13",
+  "prompt": "what youtube videos did I watch today",
+  "expect": {
+   "status": "done",
+   "maxMs": 120000,
+   "graphIntent": "memory_retrieve"
+  }
+ },
+ {
+  "id": "ar-14",
+  "prompt": "what netflix shows did I watch last night",
+  "expect": {
+   "status": "done",
+   "maxMs": 120000,
+   "graphIntent": "memory_retrieve"
+  }
+ },
+ {
+  "id": "ar-15",
+  "prompt": "what spotify songs did I listen to this morning",
+  "expect": {
+   "status": "done",
+   "maxMs": 120000,
+   "graphIntent": "memory_retrieve"
+  }
+ },
+ {
+  "id": "ar-16",
+  "prompt": "what was playing on my computer earlier",
+  "expect": {
+   "status": "done",
+   "maxMs": 120000,
+   "graphIntent": "memory_retrieve"
+  }
+ },
+ {
+  "id": "ar-17",
+  "prompt": "what did I have open yesterday afternoon",
+  "expect": {
+   "status": "done",
+   "maxMs": 120000,
+   "graphIntent": "memory_retrieve"
+  }
+ },
+ {
+  "id": "ar-18",
+  "prompt": "what was I doing on friday night",
+  "expect": {
+   "status": "done",
+   "maxMs": 120000,
+   "graphIntent": "memory_retrieve"
+  }
+ },
+ {
+  "id": "ar-19",
+  "prompt": "show me what I browsed this weekend",
+  "expect": {
+   "status": "done",
+   "maxMs": 120000,
+   "graphIntent": "memory_retrieve"
+  }
+ },
+ {
+  "id": "ar-20",
+  "prompt": "what articles did I read this week",
+  "expect": {
+   "status": "done",
+   "maxMs": 120000,
+   "graphIntent": "memory_retrieve"
+  }
+ },
+ {
+  "id": "ar-21",
+  "prompt": "did I watch anything about cooking today",
+  "expect": {
+   "status": "done",
+   "maxMs": 120000,
+   "graphIntent": "memory_retrieve"
+  }
+ },
+ {
+  "id": "ar-22",
+  "prompt": "what was the last thing I looked at",
+  "expect": {
+   "status": "done",
+   "maxMs": 120000,
+   "graphIntent": "memory_retrieve"
+  }
+ },
+ {
+  "id": "ar-23",
+  "prompt": "what did I have on screen an hour ago",
+  "expect": {
+   "status": "done",
+   "maxMs": 120000,
+   "graphIntent": "memory_retrieve"
+  }
+ },
+ {
+  "id": "ar-24",
+  "prompt": "which podcasts did I listen to yesterday",
+  "expect": {
+   "status": "done",
+   "maxMs": 120000,
+   "graphIntent": "memory_retrieve"
+  }
+ },
+ {
+  "id": "cr-9",
+  "prompt": "what was my first prompt today",
+  "expect": {
+   "status": "done",
+   "maxMs": 120000,
+   "graphIntent": "memory_retrieve"
+  }
+ },
+ {
+  "id": "cr-10",
+  "prompt": "what have I asked you this week",
+  "expect": {
+   "status": "done",
+   "maxMs": 120000,
+   "graphIntent": "memory_retrieve"
+  }
+ },
+ {
+  "id": "cr-11",
+  "prompt": "show me my recent prompts",
+  "expect": {
+   "status": "done",
+   "maxMs": 120000,
+   "graphIntent": "memory_retrieve"
+  }
+ },
+ {
+  "id": "cr-12",
+  "prompt": "what questions did I ask yesterday",
+  "expect": {
+   "status": "done",
+   "maxMs": 120000,
+   "graphIntent": "memory_retrieve"
+  }
+ },
+ {
+  "id": "cr-13",
+  "prompt": "did I ask about the weather",
+  "expect": {
+   "status": "done",
+   "maxMs": 120000,
+   "graphIntent": "memory_retrieve"
+  }
+ },
+ {
+  "id": "cr-14",
+  "prompt": "what was the last thing I told you",
+  "expect": {
+   "status": "done",
+   "maxMs": 120000,
+   "graphIntent": "memory_retrieve"
+  }
+ },
+ {
+  "id": "cr-15",
+  "prompt": "remind me what we discussed",
+  "expect": {
+   "status": "done",
+   "maxMs": 120000,
+   "graphIntent": "memory_retrieve"
+  }
+ },
+ {
+  "id": "cr-16",
+  "prompt": "what did I say about the meeting",
+  "expect": {
+   "status": "done",
+   "maxMs": 120000,
+   "graphIntent": "memory_retrieve"
+  }
+ },
+ {
+  "id": "fu6-seed",
+  "prompt": "what videos did I watch yesterday",
+  "expect": {
+   "status": "done",
+   "maxMs": 120000,
+   "graphIntent": "memory_retrieve"
+  },
+  "sessionId": "e2e_rb_fu6"
+ },
+ {
+  "id": "fu6-more",
+  "prompt": "list details about them",
+  "expect": {
+   "status": "done",
+   "maxMs": 120000,
+   "graphIntent": "memory_retrieve"
+  },
+  "sessionId": "e2e_rb_fu6"
+ },
+ {
+  "id": "fu6-more2",
+  "prompt": "summarize the second one",
+  "expect": {
+   "status": "done",
+   "maxMs": 120000,
+   "graphIntent": "memory_retrieve"
+  },
+  "sessionId": "e2e_rb_fu6"
+ },
+ {
+  "id": "fu6-more3",
+  "prompt": "what was the title of the last one",
+  "expect": {
+   "status": "done",
+   "maxMs": 120000,
+   "graphIntent": "memory_retrieve"
+  },
+  "sessionId": "e2e_rb_fu6"
+ },
+ {
+  "id": "fu7-seed",
+  "prompt": "what did I read about the marathon",
+  "expect": {
+   "status": "done",
+   "maxMs": 120000,
+   "graphIntent": "memory_retrieve"
+  },
+  "sessionId": "e2e_rb_fu7"
+ },
+ {
+  "id": "fu7-more",
+  "prompt": "what else did it say",
+  "expect": {
+   "status": "done",
+   "maxMs": 120000,
+   "graphIntent": "memory_retrieve"
+  },
+  "sessionId": "e2e_rb_fu7"
+ },
+ {
+  "id": "fu7-more2",
+  "prompt": "who was mentioned in it",
+  "expect": {
+   "status": "done",
+   "maxMs": 120000,
+   "graphIntent": "memory_retrieve"
+  },
+  "sessionId": "e2e_rb_fu7"
+ },
+ {
+  "id": "fu7-more3",
+  "prompt": "when did I read that",
+  "expect": {
+   "status": "done",
+   "maxMs": 120000,
+   "graphIntent": "memory_retrieve"
+  },
+  "sessionId": "e2e_rb_fu7"
+ },
+ {
+  "id": "fu8-seed",
+  "prompt": "search for cheap flights to tokyo",
+  "expect": {
+   "status": "done",
+   "maxMs": 120000
+  },
+  "sessionId": "e2e_rb_fu8"
+ },
+ {
+  "id": "fu8-more",
+  "prompt": "which airline is cheapest",
+  "expect": {
+   "status": "done",
+   "maxMs": 120000
+  },
+  "sessionId": "e2e_rb_fu8"
+ },
+ {
+  "id": "fu8-more2",
+  "prompt": "does it have layovers",
+  "expect": {
+   "status": "done",
+   "maxMs": 120000
+  },
+  "sessionId": "e2e_rb_fu8"
+ },
+ {
+  "id": "fu8-more3",
+  "prompt": "book the first option",
+  "expect": {
+   "status": "done",
+   "maxMs": 120000
+  },
+  "sessionId": "e2e_rb_fu8"
+ },
+ {
+  "id": "fu9-seed",
+  "prompt": "what files are in my downloads",
+  "expect": {
+   "status": "done",
+   "maxMs": 120000,
+   "graphIntent": "command_automate"
+  },
+  "sessionId": "e2e_rb_fu9"
+ },
+ {
+  "id": "fu9-more",
+  "prompt": "open the biggest one",
+  "expect": {
+   "status": "done",
+   "maxMs": 120000,
+   "graphIntent": "command_automate"
+  },
+  "sessionId": "e2e_rb_fu9"
+ },
+ {
+  "id": "fu9-more2",
+  "prompt": "what about the second one",
+  "expect": {
+   "status": "done",
+   "maxMs": 120000,
+   "graphIntent": "command_automate"
+  },
+  "sessionId": "e2e_rb_fu9"
+ },
+ {
+  "id": "fu9-more3",
+  "prompt": "delete the oldest",
+  "expect": {
+   "status": "done",
+   "maxMs": 120000,
+   "graphIntent": "command_automate"
+  },
+  "sessionId": "e2e_rb_fu9"
+ },
+ {
+  "id": "fu10-seed",
+  "prompt": "write a poem about autumn",
+  "expect": {
+   "status": "done",
+   "maxMs": 120000
+  },
+  "sessionId": "e2e_rb_fu10"
+ },
+ {
+  "id": "fu10-more",
+  "prompt": "make it shorter",
+  "expect": {
+   "status": "done",
+   "maxMs": 120000
+  },
+  "sessionId": "e2e_rb_fu10"
+ },
+ {
+  "id": "fu10-more2",
+  "prompt": "rhyme the second line",
+  "expect": {
+   "status": "done",
+   "maxMs": 120000
+  },
+  "sessionId": "e2e_rb_fu10"
+ },
+ {
+  "id": "fu10-more3",
+  "prompt": "now about winter instead",
+  "expect": {
+   "status": "done",
+   "maxMs": 120000
+  },
+  "sessionId": "e2e_rb_fu10"
+ },
+ {
+  "id": "fu11-seed",
+  "prompt": "what did we talk about this morning",
+  "expect": {
+   "status": "done",
+   "maxMs": 120000,
+   "graphIntent": "memory_retrieve"
+  },
+  "sessionId": "e2e_rb_fu11"
+ },
+ {
+  "id": "fu11-more",
+  "prompt": "what was the main topic",
+  "expect": {
+   "status": "done",
+   "maxMs": 120000,
+   "graphIntent": "memory_retrieve"
+  },
+  "sessionId": "e2e_rb_fu11"
+ },
+ {
+  "id": "fu11-more2",
+  "prompt": "did I mention work",
+  "expect": {
+   "status": "done",
+   "maxMs": 120000,
+   "graphIntent": "memory_retrieve"
+  },
+  "sessionId": "e2e_rb_fu11"
+ },
+ {
+  "id": "fu11-more3",
+  "prompt": "repeat the last thing I said",
+  "expect": {
+   "status": "done",
+   "maxMs": 120000,
+   "graphIntent": "memory_retrieve"
+  },
+  "sessionId": "e2e_rb_fu11"
+ },
+ {
+  "id": "web-9",
+  "prompt": "search for the best pizza in brooklyn",
+  "expect": {
+   "status": "done",
+   "maxMs": 120000
+  }
+ },
+ {
+  "id": "web-10",
+  "prompt": "find reviews of the iphone 17",
+  "expect": {
+   "status": "done",
+   "maxMs": 120000
+  }
+ },
+ {
+  "id": "web-11",
+  "prompt": "look up how tall mount everest is",
+  "expect": {
+   "status": "done",
+   "maxMs": 120000
+  }
+ },
+ {
+  "id": "web-12",
+  "prompt": "google the price of bitcoin right now",
+  "expect": {
+   "status": "done",
+   "maxMs": 120000
+  }
+ },
+ {
+  "id": "web-13",
+  "prompt": "what's the latest on the NYC marathon",
+  "expect": {
+   "status": "done",
+   "maxMs": 120000
+  }
+ },
+ {
+  "id": "web-14",
+  "prompt": "research best practices for morning routines",
+  "expect": {
+   "status": "done",
+   "maxMs": 120000
+  }
+ },
+ {
+  "id": "web-15",
+  "prompt": "compare react vs vue for a small project",
+  "expect": {
+   "status": "done",
+   "maxMs": 120000
+  }
+ },
+ {
+  "id": "web-16",
+  "prompt": "search the web for cheap flights to paris",
+  "expect": {
+   "status": "done",
+   "maxMs": 120000
+  }
+ },
+ {
+  "id": "web-17",
+  "prompt": "find me a good thai restaurant nearby",
+  "expect": {
+   "status": "done",
+   "maxMs": 120000
+  }
+ },
+ {
+  "id": "web-18",
+  "prompt": "look up who won the world series",
+  "expect": {
+   "status": "done",
+   "maxMs": 120000
+  }
+ },
+ {
+  "id": "web-19",
+  "prompt": "what's new in macOS 26",
+  "expect": {
+   "status": "done",
+   "maxMs": 120000
+  }
+ },
+ {
+  "id": "web-20",
+  "prompt": "search for apartments in austin under 1500",
+  "expect": {
+   "status": "done",
+   "maxMs": 120000
+  }
+ },
+ {
+  "id": "web-21",
+  "prompt": "how do I fix a leaking pipe",
+  "expect": {
+   "status": "done",
+   "maxMs": 120000
+  }
+ },
+ {
+  "id": "web-22",
+  "prompt": "what time does target close today",
+  "expect": {
+   "status": "done",
+   "maxMs": 120000
+  }
+ },
+ {
+  "id": "web-23",
+  "prompt": "search for a good beginner guitar",
+  "expect": {
+   "status": "done",
+   "maxMs": 120000
+  }
+ },
+ {
+  "id": "task-11",
+  "prompt": "create a folder on desktop called test-backup",
+  "expect": {
+   "status": "done",
+   "maxMs": 120000
+  }
+ },
+ {
+  "id": "task-12",
+  "prompt": "move e2e-hello.txt to the trash",
+  "expect": {
+   "status": "done",
+   "maxMs": 120000
+  }
+ },
+ {
+  "id": "task-13",
+  "prompt": "open finder",
+  "expect": {
+   "status": "done",
+   "maxMs": 120000
+  }
+ },
+ {
+  "id": "task-14",
+  "prompt": "launch activity monitor",
+  "expect": {
+   "status": "done",
+   "maxMs": 120000
+  }
+ },
+ {
+  "id": "task-15",
+  "prompt": "turn the brightness up",
+  "expect": {
+   "status": "done",
+   "maxMs": 120000
+  }
+ },
+ {
+  "id": "task-16",
+  "prompt": "mute the volume",
+  "expect": {
+   "status": "done",
+   "maxMs": 120000
+  }
+ },
+ {
+  "id": "task-17",
+  "prompt": "empty the trash",
+  "expect": {
+   "status": "done",
+   "maxMs": 120000
+  }
+ },
+ {
+  "id": "task-18",
+  "prompt": "open notes and write meeting notes",
+  "expect": {
+   "status": "done",
+   "maxMs": 120000
+  }
+ },
+ {
+  "id": "task-19",
+  "prompt": "rename e2e-hello.txt to hello.txt",
+  "expect": {
+   "status": "done",
+   "maxMs": 120000
+  }
+ },
+ {
+  "id": "task-20",
+  "prompt": "copy my downloads folder path",
+  "expect": {
+   "status": "done",
+   "maxMs": 120000
+  }
+ },
+ {
+  "id": "task-21",
+  "prompt": "make a new note called groceries",
+  "expect": {
+   "status": "done",
+   "maxMs": 120000
+  }
+ },
+ {
+  "id": "task-22",
+  "prompt": "quit safari",
+  "expect": {
+   "status": "done",
+   "maxMs": 120000
+  }
+ },
+ {
+  "id": "task-23",
+  "prompt": "open system preferences",
+  "expect": {
+   "status": "done",
+   "maxMs": 120000
+  }
+ },
+ {
+  "id": "task-24",
+  "prompt": "eject my usb drive",
+  "expect": {
+   "status": "done",
+   "maxMs": 120000
+  }
+ },
+ {
+  "id": "task-25",
+  "prompt": "show hidden files in finder",
+  "expect": {
+   "status": "done",
+   "maxMs": 120000
+  }
+ },
+ {
+  "id": "scr-5",
+  "prompt": "whats on my screen right now",
+  "expect": {
+   "status": "done",
+   "maxMs": 120000
+  }
+ },
+ {
+  "id": "scr-6",
+  "prompt": "tell me what my screen shows",
+  "expect": {
+   "status": "done",
+   "maxMs": 120000
+  }
+ },
+ {
+  "id": "scr-7",
+  "prompt": "describe what you see on screen",
+  "expect": {
+   "status": "done",
+   "maxMs": 120000
+  }
+ },
+ {
+  "id": "scr-8",
+  "prompt": "what window is in front",
+  "expect": {
+   "status": "done",
+   "maxMs": 120000
+  }
+ },
+ {
+  "id": "scr-9",
+  "prompt": "can you see my screen",
+  "expect": {
+   "status": "done",
+   "maxMs": 120000
+  }
+ },
+ {
+  "id": "scr-10",
+  "prompt": "what text is visible on screen",
+  "expect": {
+   "status": "done",
+   "maxMs": 120000
+  }
+ },
+ {
+  "id": "scr-11",
+  "prompt": "read my screen",
+  "expect": {
+   "status": "done",
+   "maxMs": 120000
+  }
+ },
+ {
+  "id": "scr-12",
+  "prompt": "is there an error on my screen",
+  "expect": {
+   "status": "done",
+   "maxMs": 120000
+  }
+ },
+ {
+  "id": "scr-13",
+  "prompt": "what does my screen say",
+  "expect": {
+   "status": "done",
+   "maxMs": 120000
+  }
+ },
+ {
+  "id": "scr-14",
+  "prompt": "look at my screen and tell me what app is open",
+  "expect": {
+   "status": "done",
+   "maxMs": 120000
+  }
+ },
+ {
+  "id": "ms-5",
+  "prompt": "keep in mind that I prefer morning meetings",
+  "expect": {
+   "status": "done",
+   "maxMs": 120000,
+   "commsIntent": "memory_store"
+  }
+ },
+ {
+  "id": "ms-6",
+  "prompt": "dont forget my anniversary is june 12",
+  "expect": {
+   "status": "done",
+   "maxMs": 120000,
+   "commsIntent": "memory_store"
+  }
+ },
+ {
+  "id": "ms-7",
+  "prompt": "save this for later: the wifi password is hunter2",
+  "expect": {
+   "status": "done",
+   "maxMs": 120000,
+   "commsIntent": "memory_store"
+  }
+ },
+ {
+  "id": "ms-8",
+  "prompt": "note down that my gate code is 4471",
+  "expect": {
+   "status": "done",
+   "maxMs": 120000,
+   "commsIntent": "memory_store"
+  }
+ },
+ {
+  "id": "ms-9",
+  "prompt": "remember this: I drive a blue civic",
+  "expect": {
+   "status": "done",
+   "maxMs": 120000,
+   "commsIntent": "memory_store"
+  }
+ },
+ {
+  "id": "ms-10",
+  "prompt": "store the fact that my shoe size is 11",
+  "expect": {
+   "status": "done",
+   "maxMs": 120000,
+   "commsIntent": "memory_store"
+  }
+ },
+ {
+  "id": "ms-11",
+  "prompt": "my license expires in march \u2014 remember that",
+  "expect": {
+   "status": "done",
+   "maxMs": 120000,
+   "commsIntent": "memory_store"
+  }
+ },
+ {
+  "id": "ms-12",
+  "prompt": "for future reference my boss is named Dana",
+  "expect": {
+   "status": "done",
+   "maxMs": 120000,
+   "commsIntent": "memory_store"
+  }
+ },
+ {
+  "id": "ms-13",
+  "prompt": "remember I am allergic to peanuts",
+  "expect": {
+   "status": "done",
+   "maxMs": 120000,
+   "commsIntent": "memory_store"
+  }
+ },
+ {
+  "id": "ms-14",
+  "prompt": "take note that my gym membership renews friday",
+  "expect": {
+   "status": "done",
+   "maxMs": 120000,
+   "commsIntent": "memory_store"
+  }
+ },
+ {
+  "id": "ms-15",
+  "prompt": "remember the code to the storage unit is 8823",
+  "expect": {
+   "status": "done",
+   "maxMs": 120000,
+   "commsIntent": "memory_store"
+  }
+ },
+ {
+  "id": "ms-16",
+  "prompt": "jot down that I take my meds at 8am",
+  "expect": {
+   "status": "done",
+   "maxMs": 120000,
+   "commsIntent": "memory_store"
+  }
+ },
+ {
+  "id": "oos-6",
+  "prompt": "xkcd potato purple monkey",
+  "expect": {
+   "status": "done",
+   "maxMs": 120000
+  }
+ },
+ {
+  "id": "oos-7",
+  "prompt": "asdf qwer zxcv",
+  "expect": {
+   "status": "done",
+   "maxMs": 120000
+  }
+ },
+ {
+  "id": "oos-8",
+  "prompt": "\ud83c\udf89\ud83c\udf82\ud83c\udf88",
+  "expect": {
+   "status": "done",
+   "maxMs": 120000
+  }
+ },
+ {
+  "id": "oos-9",
+  "prompt": "hmm ok",
+  "expect": {
+   "status": "done",
+   "maxMs": 120000
+  }
+ },
+ {
+  "id": "oos-10",
+  "prompt": "yabadabadoo",
+  "expect": {
+   "status": "done",
+   "maxMs": 120000
+  }
+ },
+ {
+  "id": "oos-11",
+  "prompt": "flibberty gibbet snizzle",
+  "expect": {
+   "status": "done",
+   "maxMs": 120000
+  }
+ },
+ {
+  "id": "oos-12",
+  "prompt": "1234567",
+  "expect": {
+   "status": "done",
+   "maxMs": 120000
+  }
+ },
+ {
+  "id": "oos-13",
+  "prompt": "...",
+  "expect": {
+   "status": "done",
+   "maxMs": 120000
+  }
+ },
+ {
+  "id": "oos-14",
+  "prompt": "word",
+  "expect": {
+   "status": "done",
+   "maxMs": 120000
+  }
+ },
+ {
+  "id": "oos-15",
+  "prompt": "can you make me a sandwich",
+  "expect": {
+   "status": "done",
+   "maxMs": 120000
+  }
+ },
+ {
+  "id": "oos-16",
+  "prompt": "turn my microwave on",
+  "expect": {
+   "status": "done",
+   "maxMs": 120000
+  }
+ },
+ {
+  "id": "oos-17",
+  "prompt": "text my mom something nice",
+  "expect": {
+   "status": "done",
+   "maxMs": 120000
+  }
+ },
+ {
+  "id": "long-9",
+  "prompt": "Meeting notes \u2014 Q4 planning. Action items: migration finishes Nov 15 (Sarah), docs by Nov 20 (Mike), review Dec 1. Budget approved for 2 contractors. Next check-in Thursday 3pm. what did we decide about the migration deadline",
+  "expect": {
+   "status": "done",
+   "maxMs": 120000,
+   "graphIntent": "memory_retrieve"
+  }
+ },
+ {
+  "id": "long-10",
+  "prompt": "LOG: 2026-11-07 14:23:11 ERROR worker-3 OOM killed, heap 4096MB exceeded. Restart attempted 3x. 14:25:02 WARN fallback active. 14:31:00 INFO recovered. what crashed and when",
+  "expect": {
+   "status": "done",
+   "maxMs": 120000,
+   "graphIntent": "memory_retrieve"
+  }
+ },
+ {
+  "id": "long-11",
+  "prompt": "The Federal Reserve held rates steady Wednesday, citing persistent shelter inflation. Chair Powell signaled cuts are unlikely before Q2 pending clearer labor data. Markets dipped 0.4% on the statement. summarize what the fed did",
+  "expect": {
+   "status": "done",
+   "maxMs": 120000
+  }
+ },
+ {
+  "id": "long-12",
+  "prompt": "def fib(n):\n    if n<2: return n\n    return fib(n-1)+fib(n-2)\n\nprint([fib(i) for i in range(10)]) what does this code print",
+  "expect": {
+   "status": "done",
+   "maxMs": 120000
+  }
+ },
+ {
+  "id": "long-13",
+  "prompt": "RECIPE: Sourdough \u2014 500g flour, 375g water, 100g starter, 10g salt. Autolyse 1h, fold 4x over 2h, shape, cold retard overnight, bake 230C 45min. how much water does this recipe use",
+  "expect": {
+   "status": "done",
+   "maxMs": 120000
+  }
+ },
+ {
+  "id": "long-14",
+  "prompt": "TODO list:\n1. renew car registration\n2. call dentist\n3. buy groceries\n4. ship the package\n5. update resume what errands do I have",
+  "expect": {
+   "status": "done",
+   "maxMs": 120000
+  }
+ },
+ {
+  "id": "long-15",
+  "prompt": "Changelog v2.4.0: added dark mode, fixed memory leak in video player, improved search latency 40%, deprecated legacy API v1 endpoints (removal in v3.0). what changed in the video player",
+  "expect": {
+   "status": "done",
+   "maxMs": 120000
+  }
+ },
+ {
+  "id": "long-16",
+  "prompt": "Contract excerpt: \"Either party may terminate this Agreement with sixty (60) days written notice. Upon termination, all licenses granted hereunder shall immediately cease.\" how much notice to terminate",
+  "expect": {
+   "status": "done",
+   "maxMs": 120000
+  }
+ },
+ {
+  "id": "long-17",
+  "prompt": "Flight confirmation UA3847: SFO\u2192JFK departs Nov 12 8:15AM arrives 4:40PM. Seat 14A. Confirmation code XR7T2K. what is my confirmation code",
+  "expect": {
+   "status": "done",
+   "maxMs": 120000
+  }
+ },
+ {
+  "id": "long-18",
+  "prompt": "Product spec: The XR-500 supports USB-C PD 100W, 2x HDMI 2.1, 4x USB-A 3.2, ethernet 2.5GbE. Dimensions 5.1x2.1x0.8in. Weight 340g. does the XR-500 have ethernet",
+  "expect": {
+   "status": "done",
+   "maxMs": 120000
+  }
+ },
+ {
+  "id": "cd-6",
+  "prompt": "no that's not what I meant",
+  "expect": {
+   "status": "done",
+   "maxMs": 120000
+  }
+ },
+ {
+  "id": "cd-7",
+  "prompt": "actually never mind that",
+  "expect": {
+   "status": "done",
+   "maxMs": 120000
+  }
+ },
+ {
+  "id": "cd-8",
+  "prompt": "that's wrong, try again",
+  "expect": {
+   "status": "done",
+   "maxMs": 120000
+  }
+ },
+ {
+  "id": "cd-9",
+  "prompt": "not that one",
+  "expect": {
+   "status": "done",
+   "maxMs": 120000
+  }
+ },
+ {
+  "id": "cd-10",
+  "prompt": "yes do it",
+  "expect": {
+   "status": "done",
+   "maxMs": 120000
+  }
+ },
+ {
+  "id": "cd-11",
+  "prompt": "go ahead",
+  "expect": {
+   "status": "done",
+   "maxMs": 120000
+  }
+ },
+ {
+  "id": "mixed-9",
+  "prompt": "why is the sky blue",
+  "expect": {
+   "status": "done",
+   "maxMs": 120000
+  }
+ },
+ {
+  "id": "mixed-10",
+  "prompt": "explain dns to a 10 year old",
+  "expect": {
+   "status": "done",
+   "maxMs": 120000
+  }
+ },
+ {
+  "id": "mixed-11",
+  "prompt": "whats heavier a pound of feathers or a pound of bricks",
+  "expect": {
+   "status": "done",
+   "maxMs": 120000
+  }
+ },
+ {
+  "id": "mixed-12",
+  "prompt": "how many days until christmas",
+  "expect": {
+   "status": "done",
+   "maxMs": 120000
+  }
+ },
+ {
+  "id": "mixed-13",
+  "prompt": "convert 72 fahrenheit to celsius",
+  "expect": {
+   "status": "done",
+   "maxMs": 120000
+  }
+ },
+ {
+  "id": "mixed-14",
+  "prompt": "what is 15% of 240",
+  "expect": {
+   "status": "done",
+   "maxMs": 120000
+  }
+ },
+ {
+  "id": "mixed-15",
+  "prompt": "give me a random fact",
+  "expect": {
+   "status": "done",
+   "maxMs": 120000
+  }
+ },
+ {
+  "id": "mixed-16",
+  "prompt": "spell supercalifragilisticexpialidocious",
+  "expect": {
+   "status": "done",
+   "maxMs": 120000
+  }
+ }
+]

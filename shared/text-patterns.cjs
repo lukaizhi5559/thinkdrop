@@ -156,6 +156,49 @@ function isLocalFileEdit(text, opts = {}) {
  */
 const EPISODIC_RE = /\b(yesterday|recently|last\s+(night|week|month|time|monday|tuesday|wednesday|thursday|friday|saturday|sunday)|this\s+(morning|afternoon)|earlier(\s+today)?|a\s+(few|couple)\s+(minutes|hours|days|weeks|months)\s+ago|\d+\s+(minutes|hours|days|weeks|months)\s+ago|the\s+other\s+day|what\s+was\s+i|was\s+i\s+(watching|listening|reading|playing|browsing|looking)|what\s+did\s+i|what\s+was\s+on\s+my\s+screen)\b/i;
 
+/**
+ * Activity-recall questions — first-person PAST-tense consumption/activity
+ * ("what videos have I been watch today", "what did I listen to", "what was
+ * I working on"). Gates the isActivityQuery flag inside classifyTask — the
+ * LLM flakes on ungrammatical/STT-mangled phrasings ("have I been watch"),
+ * and the typed flag is the only signal the decompose layer can trust.
+ *
+ * Answers live in episodic memory — NOT the web, NOT the chat transcript
+ * (CONVERSATION_RECALL_META_RE owns transcript meta-questions; its check
+ * runs first so overlaps like "what did i say" never reach this pattern).
+ *
+ * Anchors: first-person + past auxiliary ONLY. Deliberate misses — each
+ * stays on its own lane via the LLM:
+ *   "watch this video"          imperative        → command_automate
+ *   "what's on my screen"       live observation  → screen_intelligence
+ *   "what video is playing"     live observation  → screen_intelligence
+ *   "what should I watch"       recommendation    → web/general
+ *   "what did I say/ask"        transcript meta   → isConversationRecall
+ *   "what did you watch"        third person      → not user activity
+ */
+const ACTIVITY_RECALL_RE = new RegExp([
+  // noun-first: "what <media/activity-noun> (have|has|did|was|were) i …"
+  // "what videos have i been watch", "what apps did i use",
+  // "what music was i listening to", "what sites was i on"
+  '\\bwhat\\s+(?:kind\\s+of\\s+)?(?:videos?|songs?|music|movies?|films?|shows?|series|episodes?|podcasts?|audiobooks?|articles?|streams?|channels?|websites?|sites?|pages?|apps?|games?|books?|clips?|reels?|shorts?|documentar\\w*|tutorials?|lectures?|sermons?)\\s+(?:have|has|did|was|were)\\s+i\\b',
+  // verb-first: "what (all|else)? (have|did|was|were) i (been|just)? <activity>"
+  // "what have i been watching", "what did i watch", "what was i doing",
+  // "what have i been up to", "what did i have open/running",
+  // "what all did i play", "what else was i reading"
+  '\\bwhat\\s+(?:all\\s+|else\\s+)?(?:have|has|did|was|were)\\s+i\\s+(?:been\\s+|just\\s+)?(?:watch\\w*|listen\\w*|read\\w*|play\\w*|brows\\w*|work\\w*|do\\w*|look\\w*|stream\\w*|view\\w*|check\\w*|edit\\w*|writ\\w*|us\\w*|spend\\w*|stud\\w*|research\\w*|learn\\w*|ha(?:d|ve)\\s+(?:open|running|up)|up\\s+to)\\b',
+  // aux-dropped/STT forms: "what i been watching", "what i've been listen to"
+  '\\bwhat\\s+i(?:\'ve|’ve|\\s+have|\\s+has)?\\s+been\\s+(?:watch\\w*|listen\\w*|read\\w*|play\\w*|brows\\w*|work\\w*|do\\w*|look\\w*|stream\\w*|view\\w*|us\\w*|spend\\w*|up\\s+to)\\b',
+  // past screen content: "what was on my screen (earlier)"
+  '\\bwhat\\s+(?:was|were)\\s+on\\s+my\\s+(?:screen|desktop|display)\\b',
+  // ambient media: "what song was playing", "what was playing"
+  '\\bwhat\\s+(?:song|music|video|show|movie|podcast)\\s+was\\s+(?:playing|on)\\b|\\bwhat\\s+was\\s+playing\\b',
+  // bare yes/no recall: "did i watch the game", "have i been listening"
+  '\\b(?:did|have|has)\\s+i\\s+(?:been\\s+)?(?:watch\\w*|listen\\w*|read\\w*|play\\w*|brows\\w*|stream\\w*|view\\w*)\\b',
+  // screen-time/duration: "how long was i on youtube",
+  // "how much time did i spend", "how many hours did i work"
+  '\\bhow\\s+(?:much\\s+time|long|many\\s+(?:hours|minutes))\\s+(?:did|have|was|were)\\s+i\\b',
+].join('|'), 'i');
+
 // ── Media / image requests ───────────────────────────────────────────────────
 
 /** Image/picture request phrasings — route to web_search (image carousel),
@@ -309,6 +352,14 @@ const DEICTIC_CONTINUATION_RE = new RegExp([
   // "tell me (more) about that", "what about that", "more on this"
   '\\b(?:tell me(?: more)? about|more about|what about|how about|expand on|elaborate on|go on about)\\s+(?:that|this|it|those|them)\\b',
 ].join('|'), 'i');
+
+/**
+ * Deictic + artifact/content noun ("that file", "this error", "the video") —
+ * the deictic legitimately resolves to an ambient/doc referent, so a bare-
+ * deictic continuation check must NOT treat it as an unresolved misref.
+ * Shared by the decompose ambient-misref trigger and the routeTable mirror.
+ */
+const DEICTIC_ARTIFACT_RE = /\b(?:that|this|it|those|them)\s+(?:file|page|site|website|tab|document|doc|folder|screen|window|app|dialog|error|link|article|video|song|post|image|photo|picture|recipe|message|email)\b/i;
 
 /** Third-person / deictic pronouns that carry no referent of their own. */
 const THIRD_PERSON_SUBJECT_RE = /\b(he|she|they|him|her|them|his|their|it|that|this|those|these)\b/i;
@@ -560,6 +611,15 @@ const FILE_PATH_RE = /(?:^|[\s"'`(])\/(?:[\w.~-]+\/)+[\w.~-]+|(?:^|[\s"'`])~\/[\
 // (screen.capture skill), never a display payload.
 const SCREEN_CAPTURE_RE = /\b(?:take|capture|snap|grab|shoot|record)\s+(?:a\s+|an\s+|the\s+|my\s+)?(?:quick\s+|new\s+|full\s+)?(?:screenshot|screen\s*(?:shot|recording|capture|grab)|picture\s+of\s+(?:my\s+|the\s+)screen|photo\s+of\s+(?:my\s+|the\s+)screen)\b/i;
 
+// Pure-text generative artifact asks — "write a haiku", "compose a poem",
+// "draft a speech". These are single-shot LLM generations, not local/file/app
+// tasks: classifyTask's taskType can put them in a SINGLE_STEP bucket
+// (observed: "help me write a haiku about coffee" → local-short-circuit
+// command_automate while the LLM correctly picked general_knowledge). Used as
+// a suppressor on local/task rules; deliberately EXCLUDES email/script/file/
+// document/code — those can be real deliverables (draft-and-send, file write).
+const GENERATIVE_TEXT_RE = /\b(?:write|wright|compose|draft|generate|create|make\s+up|help\s+me\s+(?:write|draft|compose|create|make))\s+(?:(?:a|an|the|some)\s+|me\s+(?:a|an|the|some)\s+|up\s+a\s+|out\s+a\s+)?(?:short|long|funny|silly|sad|new|quick|little|good|nice|original|short\s+\w+|few\s+\w+)*\s*(?:haiku|poem|poetry|limerick|sonnet|story|short\s+story|essay|joke|jokes|pun|riddle|song|lyrics|rap|speech|toast|letter|paragraph|caption|tagline|slogan|quote|prayer|recipe|bio|blurb)\b/i;
+
 const DEVICE_STATE_RE = /\b(?:battery|disk\s+(?:space|usage)|storage|free\s+space|uptime|wifi|wi-?fi|bluetooth|volume|brightness|cpu|gpu|memory\s+(?:usage|pressure|ram)|ram\s+usage|charging|charger|(?:cpu|gpu|system|device|laptop|mac|pc|internal|my|computer)\s+temperature|temperature\s+(?:of|inside)\s+(?:my|the|this)\s+(?:computer|mac|pc|laptop|system)|fan(?:s)?\s+speed|network\s+(?:status|interfaces?)|ip\s+address|hostname|os\s+version|macos\s+version|kernel)\b|\bhow\s+much\s+(?:ram|memory|storage|disk|battery)\b|\b(?:ram|memory|disk|storage|battery)\s+(?:do\s+i\s+have|left|available|free|remaining|full)\b|\bhow\s+long\s+has\s+(?:my|the|this)\s+(?:computer|mac|pc|laptop|machine|system|phone)\s+been\s+(?:running|on|up)\b|\b(?:processes?|apps?|programs?)\s+(?:using|consuming|hogging|eating)\s+(?:the\s+)?(?:most\s+)?(?:memory|cpu|ram|resources?)\b|\btop\s+\d*\s*(?:processes?|apps?|programs?)\s+(?:by|using|consuming|sorted)\b|\b(?:running|open|active)\s+(?:apps?|applications|programs?|processes?)\b|\b(?:apps?|applications|programs?|processes?)\s+(?:\w+\s+){0,3}(?:running|open)\b/i;
 
 /** Local filesystem/git/system probes — questions or ops whose ONLY answer
@@ -706,6 +766,7 @@ module.exports = {
   LOCAL_FILE_EDIT_RE,
   isLocalFileEdit,
   EPISODIC_RE,
+  ACTIVITY_RECALL_RE,
   IMAGE_REQUEST_RES,
   REFERENTIAL_RE,
   PERSON_PRONOUN_RE,
@@ -722,6 +783,7 @@ module.exports = {
   LIVE_PAGE_REF_RE,
   PAGE_ITEM_REF_RE,
   DEICTIC_CONTINUATION_RE,
+  DEICTIC_ARTIFACT_RE,
   THIRD_PERSON_SUBJECT_RE,
   isContextDependent,
   AMBIENT_ARTIFACT_RE,
@@ -742,6 +804,7 @@ module.exports = {
   LOCAL_FS_PROBE_RE,
   FILE_PATH_RE,
   SCREEN_CAPTURE_RE,
+  GENERATIVE_TEXT_RE,
   SCRIPTURE_REF_RE,
   SCREEN_CONCRETE_SUBJECT_RE,
   inferScreenOutput,

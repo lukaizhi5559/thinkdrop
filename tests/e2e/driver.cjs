@@ -40,8 +40,8 @@ const http = require('http');
 const fs = require('fs');
 const path = require('path');
 
-const COMMS = 'http://127.0.0.1:3015';
-const STUB = 'http://127.0.0.1:3010';
+const COMMS = process.env.E2E_COMMS_URL || 'http://127.0.0.1:3015';
+const STUB = process.env.E2E_STUB_URL || 'http://127.0.0.1:3010';
 // The stategraph writes the intent log under process.cwd()/logs/ — which dir
 // that is depends on how the stub was launched (repo root vs tests/e2e).
 // Probe both candidates each read; newest file wins. INTENT_LOG_PATH overrides.
@@ -93,6 +93,30 @@ async function _getTask(taskId) {
   if (!r.json || !Array.isArray(r.json.tasks)) return null;
   return r.json.tasks.find(t => t.id === taskId) || null;
 }
+
+// Correlate a journal task by prompt text for submissions that don't return
+// a taskId (app-target /prompt.submit is fire-and-forget like the IPC).
+async function _findTaskByPrompt(promptText, t0, tries = 10) {
+  const probe = String(promptText || '').slice(0, 120);
+  for (let i = 0; i < tries; i++) {
+    const r = await _get(COMMS, '/tasks');
+    const tasks = Array.isArray(r.json?.tasks) ? r.json.tasks : [];
+    let best = null;
+    for (const t of tasks) {
+      const tp = String(t.prompt || t.originalPrompt || '').slice(0, 120);
+      if (tp === probe && (t.createdAt || 0) >= t0 - 5000) {
+        if (!best || (t.createdAt || 0) > (best.createdAt || 0)) best = t;
+      }
+    }
+    if (best) return best;
+    await sleep(1500);
+  }
+  return null;
+}
+
+// Task held waiting-for-input by an earlier holdQuestion prompt — the next
+// fresh submit should drain it (expect.drainedHeldTask).
+let _heldTaskId = null;
 
 // Find the intent-classifier.log entry for a prompt text (newest match ≥ t0).
 // Comparison is case-insensitive — comms-graph's translate step normalizes
@@ -164,6 +188,37 @@ function _checkExpect(entry, outcome) {
   if (ex.maxMs && outcome.totalMs > ex.maxMs) {
     failures.push(`latency: ${outcome.totalMs}ms > budget ${ex.maxMs}ms`);
   }
+  if (ex.commsIntentNot) {
+    const banned = Array.isArray(ex.commsIntentNot) ? ex.commsIntentNot : [ex.commsIntentNot];
+    if (banned.includes(outcome.commsIntent)) {
+      failures.push(`commsIntent: got banned "${outcome.commsIntent}"`);
+    }
+  }
+  if (ex.outcome && outcome.outcome !== ex.outcome) {
+    failures.push(`outcome: expected "${ex.outcome}", got "${outcome.outcome}"`);
+  }
+  if (ex.drainedHeldTask) {
+    if (!outcome.drainedStatus) failures.push('drainedHeldTask: no held task was pending to drain');
+    else if (!['done', 'failed', 'cancelled'].includes(outcome.drainedStatus)) {
+      failures.push(`drainedHeldTask: held task still "${outcome.drainedStatus}" after fresh prompt`);
+    }
+  }
+  if (ex.cardSurfaced) {
+    const saw = (outcome.eventLog || []).some(e => e.channel === 'gather:question_batch' && e.data?.active === true);
+    if (!saw) failures.push('cardSurfaced: no gather:question_batch active event recorded');
+  }
+  if (ex.cardCleared) {
+    const saw = (outcome.eventLog || []).some(e => e.channel === 'gather:question_batch' && e.data?.active === false);
+    if (!saw) failures.push('cardCleared: no gather:question_batch clear event recorded');
+  }
+  if (ex.noPendingAfter) {
+    const p = outcome.pendingAfter;
+    if (!p) failures.push('noPendingAfter: pending state was not sampled');
+    else {
+      const n = (p.batches || 0) + (p.legacy ? 1 : 0) + (p.pendingQuestions || []).length;
+      if (n > 0) failures.push(`noPendingAfter: ${n} wait(s) still pending (batches=${p.batches} legacy=${p.legacy} questions=${(p.pendingQuestions || []).length})`);
+    }
+  }
   // Universal hygiene checks — always on
   // Match the full error-answer shape ("[Error generating answer: … Intent: x]")
   // rather than a bare substring — screen_intelligence answers legitimately
@@ -191,23 +246,79 @@ async function runPrompt(entry, opts) {
     approvals: 0, questions: 0, authResumes: 0, totalMs: 0, error: null,
   };
 
+  const harness = opts.harness !== false;
+
   // Stage scripted answers for the next task (consumed by the stub on handoff)
-  if (Array.isArray(entry.answers) && entry.answers.length) {
+  if (harness && Array.isArray(entry.answers) && entry.answers.length) {
     await _post(STUB, '/harness/next-answers', { answers: entry.answers });
     await _post(STUB, '/harness/answers-global', { answers: entry.answers.map(a => typeof a === 'string' ? a : a) });
   }
+  // holdQuestion → the next task's gather asks register real pending waits
+  // (stub) so a subsequent fresh submit has a live card to drain.
+  if (harness && entry.holdQuestion) {
+    await _post(STUB, '/harness/hold-questions', {});
+  }
+  // stageBatch → fabricate REAL gp.batches waits (stub) before the submit —
+  // deterministic question-card surface for drain/cancel assertions without
+  // needing an LLM-cooperative task. Entry: {stageBatch: {questions:[…]}} or
+  // {stageBatches: [ {question…}, {question…} ]} for multi-wait scenarios.
+  if (harness && (entry.stageBatch || entry.stageBatches)) {
+    const specs = entry.stageBatches || [entry.stageBatch];
+    for (const s of specs) await _post(STUB, '/harness/stage-batch', s || {});
+  }
 
-  const screensBefore = (await _get(STUB, '/harness/screens')).json?.screens?.length || 0;
-  const eventsBefore = (await _get(STUB, '/harness/events')).json?.total || 0;
+  const screensBefore = harness ? ((await _get(STUB, '/harness/screens')).json?.screens?.length || 0) : 0;
+  const eventsBefore = harness ? ((await _get(STUB, '/harness/events')).json?.total || 0) : 0;
 
-  const proc = await _post(COMMS, '/comms.process', {
-    text: entry.prompt,
-    source: entry.source || 'text',
-    language: entry.language || 'auto',
-    ...(entry.sessionId ? { sessionId: entry.sessionId } : {}),
-    ...(entry.thoughtContext ? { thoughtContext: entry.thoughtContext } : {}),
-    ...(entry.speakerProfile ? { speakerProfile: entry.speakerProfile } : {}),
-  }, Math.min(entry.timeoutMs || 240000, 90000));
+  // ── Submit ────────────────────────────────────────────────────────────────
+  // 'comms' (default): POST /comms.process — the routing path the real bridge
+  // wraps. 'bridge': POST /prompt.submit on :3010 — the full user-submit chain
+  // (gather intercepts, question-card drain, comms routing) in stub or app.
+  let proc;
+  if (opts.submit === 'bridge') {
+    const sub = await _post(STUB, '/prompt.submit', {
+      prompt: entry.prompt,
+      source: entry.source || 'text',
+      responseLanguage: entry.language || null,
+      sessionId: entry.sessionId || null,
+      thoughtContext: entry.thoughtContext || null,
+      isAskUserAnswer: !!entry.isAskUserAnswer,
+      taskId: entry.taskId || null,
+      wait: !entry.fireAndForget,
+    }, entry.fireAndForget ? 15000 : Math.min(entry.timeoutMs || 240000, 120000));
+    outcome.outcome = sub.json?.outcome || null;
+    if (entry.fireAndForget) {
+      outcome.status = 'fired';
+      outcome.totalMs = Date.now() - t0;
+      outcome.graphIntent = _graphIntentFor(entry.prompt, t0);
+      return outcome;
+    }
+    // Normalize into the comms.process response shape so downstream code
+    // (error check, data extraction) works unchanged for both targets.
+    proc = { status: sub.status === 202 ? 200 : sub.status, json: { ok: sub.json?.ok !== false, data: sub.json?.data || {} } };
+    // Bridge consumed the prompt as an answer — nothing new to settle.
+    if (outcome.outcome && outcome.outcome !== 'comms') {
+      outcome.status = outcome.outcome;
+      outcome.totalMs = Date.now() - t0;
+      outcome.graphIntent = _graphIntentFor(entry.prompt, t0);
+      return outcome;
+    }
+    // App target returns no comms data — correlate the journal by prompt.
+    if (!sub.json?.data) {
+      outcome.status = 'submitted';
+      const task = await _findTaskByPrompt(entry.prompt, t0, 6);
+      if (task) { outcome.taskId = task.id; outcome.status = 'dispatched'; }
+    }
+  } else {
+    proc = await _post(COMMS, '/comms.process', {
+      text: entry.prompt,
+      source: entry.source || 'text',
+      language: entry.language || 'auto',
+      ...(entry.sessionId ? { sessionId: entry.sessionId } : {}),
+      ...(entry.thoughtContext ? { thoughtContext: entry.thoughtContext } : {}),
+      ...(entry.speakerProfile ? { speakerProfile: entry.speakerProfile } : {}),
+    }, Math.min(entry.timeoutMs || 240000, 90000));
+  }
 
   if (proc.status !== 200 || !proc.json?.ok) {
     outcome.status = 'comms-error';
@@ -218,8 +329,8 @@ async function runPrompt(entry, opts) {
   const data = proc.json.data || {};
   outcome.commsIntent = data.intentName;
   outcome.commsLatencyMs = data.metadata?.latencyMs ?? null;
-  outcome.taskId = data.metadata?.taskId || null;
-  outcome.status = outcome.taskId ? 'dispatched' : 'done';
+  outcome.taskId = outcome.taskId || data.metadata?.taskId || null;
+  outcome.status = outcome.taskId ? 'dispatched' : (outcome.status === 'submitted' ? 'submitted' : 'done');
   outcome.resultText = data.fullText || data.text || '';
 
   // Quick intents complete synchronously — no task to poll.
@@ -242,6 +353,16 @@ async function runPrompt(entry, opts) {
     if (!task) continue;
     outcome.status = task.status;
 
+    // holdQuestion + live question card → leave it pending. Covers BOTH card
+    // surfaces: journal 'waiting-for-input' (pendingQuestion parks) AND a
+    // gp.batches wait (task stays 'running' mid-gather — the active batch
+    // event is the tell).
+    if (entry.holdQuestion && harness && task.status === 'running') {
+      const evNow = await _get(STUB, `/harness/events?since=${eventsBefore}`, 8000);
+      const held = (evNow.json?.events || []).some(e => e.channel === 'gather:question_batch' && e.data?.active === true && e.data?.taskId === outcome.taskId);
+      if (held) { _heldTaskId = outcome.taskId; outcome.held = true; break; }
+    }
+
     if (TERMINAL.has(task.status)) {
       outcome.resultText = task.result || '';
       outcome.trace = Array.isArray(task.trace) ? task.trace : null;
@@ -253,10 +374,23 @@ async function runPrompt(entry, opts) {
       handledAt.approval = Date.now();
       outcome.approvals++;
       if (opts.verbose) console.log(`      → auto-approving plan for ${outcome.taskId}`);
-      await _post(STUB, '/harness/approve', { taskId: outcome.taskId });
+      if (harness) {
+        await _post(STUB, '/harness/approve', { taskId: outcome.taskId });
+      } else {
+        // App target — approvals ride the real submit path (_tryResolvePendingApproval)
+        await _post(STUB, '/prompt.submit', { prompt: 'yes', isAskUserAnswer: false });
+      }
       continue;
     }
     if (task.status === 'waiting-for-input') {
+      // holdQuestion → leave the card pending: record the held task so a
+      // later prompt's drainedHeldTask assert can verify the fresh submit
+      // cancelled it. No auto-answer — that IS the test.
+      if (entry.holdQuestion) {
+        _heldTaskId = outcome.taskId;
+        outcome.held = true;
+        break;
+      }
       if (Date.now() - handledAt.question < 4000 || outcome.questions >= 8) continue;
       handledAt.question = Date.now();
       outcome.questions++;
@@ -265,11 +399,15 @@ async function runPrompt(entry, opts) {
       const _rawAns = scriptedAnswers.length ? scriptedAnswers.shift() : 'yes';
       const ans = (_rawAns && typeof _rawAns === 'object') ? (_rawAns.answer ?? 'yes') : _rawAns;
       if (opts.verbose) console.log(`      → answering pending question for ${outcome.taskId}: "${ans}"`);
-      await _post(STUB, '/harness/question', { taskId: outcome.taskId, answer: ans });
+      if (harness) {
+        await _post(STUB, '/harness/question', { taskId: outcome.taskId, answer: ans });
+      } else {
+        await _post(STUB, '/prompt.submit', { prompt: String(ans), isAskUserAnswer: true, taskId: outcome.taskId });
+      }
       continue;
     }
     if (task.status === 'auth-required') {
-      if (authMode === 'none') break;
+      if (authMode === 'none' || !harness) break;
       if (outcome.authResumes >= 4) break; // resume failed to bypass — don't loop to deadline
       // A successful resume re-runs the whole graph (~30-60s) before the
       // journal status flips — long cooldown so we don't exhaust the resume
@@ -303,10 +441,24 @@ async function runPrompt(entry, opts) {
     }
   }
 
-  const scr = await _get(STUB, '/harness/screens');
-  outcome.screens = (scr.json?.screens || []).slice(screensBefore);
-  const ev = await _get(STUB, `/harness/events?since=${eventsBefore}`);
-  outcome.events = ev.json?.total ?? 0;
+  // A fresh prompt may drain a task held waiting-for-input by an earlier
+  // holdQuestion entry — poll it briefly and record where it landed.
+  if (entry.expect?.drainedHeldTask && _heldTaskId) {
+    const held = _heldTaskId;
+    _heldTaskId = null;
+    for (let i = 0; i < 10; i++) {
+      const t = await _getTask(held);
+      if (t && TERMINAL.has(t.status)) { outcome.drainedStatus = t.status; break; }
+      outcome.drainedStatus = t?.status || 'gone';
+      await sleep(1200);
+    }
+  }
+
+  const scr = harness ? await _get(STUB, '/harness/screens') : null;
+  outcome.screens = (scr?.json?.screens || []).slice(screensBefore);
+  const ev = harness ? await _get(STUB, `/harness/events?since=${eventsBefore}`) : null;
+  outcome.events = ev?.json?.total ?? 0;
+  outcome.eventLog = ev?.json?.events || [];
   outcome.graphIntent = _graphIntentFor(entry.prompt, t0);
   outcome.totalMs = Date.now() - t0;
   return outcome;
@@ -325,15 +477,21 @@ async function main() {
   const sessionOverride = flag('session', null);
   const stopOnFail = has('stop-on-fail');
   const verbose = has('verbose');
+  const submitMode = flag('submit', 'comms');   // 'comms' | 'bridge' (/prompt.submit)
+  const target = flag('target', 'stub');        // 'stub' | 'app' (real Electron app)
+  const harness = target === 'stub';
 
   const prompts = JSON.parse(fs.readFileSync(file, 'utf8'));
   const stageName = path.basename(file).replace(/\.json$/, '');
 
-  // Sanity: stub + comms must both be up
-  const h1 = await _get(STUB, '/health', 3000);
+  // Sanity: harness target + comms must both be up
+  const h1 = harness ? await _get(STUB, '/health', 3000) : await _get(STUB, '/activity', 3000);
   const h2 = await _get(COMMS, '/health', 3000);
-  if (!h1.json?.ok) { console.error('✖ main-stub not reachable on :3010 — start: node tests/e2e/main-stub.cjs'); process.exit(2); }
+  if (!h1.json?.ok && !(h1.status === 200)) { console.error(`✖ ${harness ? 'main-stub' : 'app overlay'} not reachable on :3010`); process.exit(2); }
   if (!h2.json?.ok) { console.error('✖ comms-graph not reachable on :3015 — start services: yarn start:services'); process.exit(2); }
+  if (submitMode === 'bridge' || target === 'app') {
+    console.log(`  submit=${submitMode} target=${target}${harness ? '' : ' (no harness endpoints — journal correlation)'}`);
+  }
 
   const allRuns = [];
   for (let run = 0; run < runs; run++) {
@@ -348,6 +506,7 @@ async function main() {
     await _post(COMMS, '/tasks/reset', {}, 5000).catch(() => {});
 
     for (const entry of prompts) {
+      if (!entry.prompt) { if (verbose && entry._section) console.log(`\n  ── ${entry._section}`); continue; }
       if (only && !only.includes(entry.id)) continue;
       const e = { ...entry };
       e.timeoutMs = e.timeoutMs || defaultTimeout;
@@ -357,7 +516,14 @@ async function main() {
 
       const t = Date.now();
       process.stdout.write(`  ${e.id}  "${String(e.prompt).slice(0, 60)}${e.prompt.length > 60 ? '…' : ''}" `);
-      const outcome = await runPrompt(e, { verbose });
+      const outcome = await runPrompt(e, { verbose, submit: submitMode, harness });
+      // Pending-wait snapshot AFTER the whole run settles — covers every
+      // return path (answered-batch, fired, quick-lane done, task terminal).
+      // noPendingAfter asserts the submit drained all question waits.
+      if (harness) {
+        const pend = await _get(STUB, '/harness/pending', 5000);
+        outcome.pendingAfter = pend?.json || null;
+      }
       const failures = _checkExpect(e, outcome);
       outcome.failures = failures;
       outcome.pass = failures.length === 0;

@@ -101,6 +101,46 @@ it('episodic+: "what was I watching on Netflix"', () => assert(hits(P.EPISODIC_R
 it('episodic+: "yesterday"', () => assert(hits(P.EPISODIC_RE, 'what did I do yesterday')));
 it('episodic-: "schedule for tomorrow"', () => assert(!hits(P.EPISODIC_RE, 'schedule a meeting tomorrow')));
 
+// ── ACTIVITY_RECALL_RE (first-person past-activity recall → isActivityQuery) ──
+section('ACTIVITY_RECALL_RE');
+
+const ACTIVITY_POS = [
+  'what videos have I been watch today',       // the observed failure — ungrammatical
+  'what videos have I been watching today',
+  'what did I watch yesterday',
+  'what have i been listening to',
+  'what was I working on this morning',
+  'what was on my screen',
+  'what apps did i use today',
+  'what music did i listen to',
+  'what i been watching',
+  "what i've been playing",
+  'what did i do yesterday',
+  'what have i been up to',
+  'what did i have open',
+  'what all did i watch',
+  'did i watch the game last night',
+  'have i been listening to anything new',
+  'how long was i on youtube',
+  'how much time did i spend on figma',
+  'what song was playing',
+];
+const ACTIVITY_NEG = [
+  'watch this video',                          // imperative → command_automate
+  "what's on my screen",                       // live → screen_intelligence
+  'what video is playing',                     // live → screen_intelligence
+  'find videos about machine learning',        // → web_search
+  'what should i watch tonight',               // recommendation
+  'what did i say',                            // transcript meta → isConversationRecall
+  'what did you watch',                        // third person
+  'remind me to watch the sermon',             // scheduling
+  'open youtube',                              // automation
+  'what was i supposed to do',                 // rhetorical, not activity recall
+  'show me videos of cats',                    // media listing → web_search
+];
+for (const s of ACTIVITY_POS) it(`activity+: "${s}"`, () => assert(hits(P.ACTIVITY_RECALL_RE, s), 'no match'));
+for (const s of ACTIVITY_NEG) it(`activity-: "${s}"`, () => assert(!hits(P.ACTIVITY_RECALL_RE, s), 'false positive'));
+
 const IMG_POS = ['show me pics of baby clothes', 'find photos of waterfalls', 'show me a picture of a corgi', 'what does a capybara look like'];
 const IMG_NEG = ['show me the data', 'picture this scenario', 'describe the image on my screen'];
 for (const s of IMG_POS) it(`img+: "${s}"`, () => assert(P.IMAGE_REQUEST_RES.some(r => r.test(s)), 'no match'));

@@ -264,10 +264,22 @@ function listSkills() { return Object.keys(CONTRACTS); }
  * same `name{args} — what it does` form the core canon already teaches.
  */
 function contractsVocabularyBlock() {
+  let _browserOff = false;
+  try { _browserOff = !require('./browser-automation.cjs').isBrowserAutomationEnabled(); } catch (_) {}
+  const _BROWSER_DRIVING = (() => {
+    try { return require('./browser-automation.cjs').BROWSER_DRIVING_SKILLS; } catch (_) { return new Set(); }
+  })();
   const lines = ['## Skill contracts (authoritative arg schemas)'];
   for (const [name, c] of Object.entries(CONTRACTS)) {
+    if (_browserOff && _BROWSER_DRIVING.has(name)) continue;
     const argBits = Object.entries(c.args).map(([k, v]) => `${k}${v.startsWith('?') ? '?' : ''}`).join(', ');
     lines.push(`- ${name}{${argBits}} — ${c.desc}`);
+  }
+  if (_browserOff) {
+    lines.push(
+      '',
+      'NOTE — browser automation is DISABLED in this environment: url.first.agent, dom.act, turn.loop.agent, browser.act, browser.agent, playwright.agent, gesture.agent, arrow.grid.agent are NOT dispatchable and MUST NOT appear in plans. Navigate via shell.run {cmd:"open",argv:[url]}; read pages via app.agent {action:"scan_page",preferOs:true}; CLI services via cli.agent.'
+    );
   }
   lines.push(
     '',

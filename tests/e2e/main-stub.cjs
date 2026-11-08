@@ -60,6 +60,7 @@ console.log(`[Harness] node trace → ${RUN_LOG}`);
 const { RealMCPAdapter, ThinkDropLLMBackend } = require('@thinkdrop/stategraph');
 const ThinkDropMCPClient = require('../../src/main/ThinkDropMCPClient');
 const handoffRunner = require('../../src/main/handoffRunner');
+const gp = require('../../src/main/gatherPending.cjs');
 
 // ── Recorded surfaces ─────────────────────────────────────────────────────────
 const events = [];        // ipcBroadcast events: task:created, task:complete, automation:progress, plan:generated…
@@ -73,7 +74,19 @@ let displaySeq = 0;
 // pendingQuestions let the driver see what the graph asked (for debugging).
 let nextAnswers = null;
 const taskAnswers = new Map(); // taskId → answers array
+const taskHolds = new Set();   // taskId → hold gather questions pending (no auto-answer)
+let holdQuestionsNext = false; // staged for the NEXT /comms.handoff task
+let holdArmed = 0;             // batches to hold — decremented per held gather (batches carry no taskId)
 const askedQuestions = [];     // { taskId|null, question|batch, at }
+
+// gatherPending wired like main.js — card surfaces land in `events` so the
+// driver can assert gather:question_batch active/clear over /harness/events.
+gp.init({
+  sendUnified: (ch, payload) => events.push({ at: Date.now(), channel: ch, data: payload }),
+  postUserWait: (taskId, waiting) => events.push({ at: Date.now(), channel: 'userwait', data: { taskId, waiting } }),
+  postThought: (text) => thoughtEvents.push({ at: Date.now(), evt: { text } }),
+  sendGhost: (ch, payload) => events.push({ at: Date.now(), channel: `ghost:${ch}`, data: payload }),
+});
 
 function _answersFor(taskId) { return taskAnswers.get(taskId) || null; }
 
@@ -99,9 +112,30 @@ function _pickScripted(answers, questionText) {
 //   batch:  ({batch:true, batchId, questions[], routeConfirmation}) → Promise<{[id]:value}>
 function gatherAnswerCallback(questionOrBatch) {
   if (questionOrBatch && typeof questionOrBatch === 'object' && questionOrBatch.batch) {
-    const { batchId, questions } = questionOrBatch;
+    const { batchId, questions, taskId } = questionOrBatch;
     askedQuestions.push({ at: Date.now(), batchId, questions });
     console.log(`[Harness] gather batch ${batchId}: ${(questions || []).length} question(s)`);
+    // ── Hold mode — a task was flagged holdQuestions (holdArmed). Stategraph
+    // batch payloads carry no taskId (same as production — main.js reads
+    // questionOrBatch.taskId which is null for these call sites), so the arm
+    // is a counter consumed by the next batch gather; the armed task id is
+    // attached only as an observation hint.
+    if (holdArmed > 0) {
+      holdArmed--;
+      const heldTask = [...taskHolds].pop() || taskId || null;
+      const key = batchId || `batch_${Date.now()}`;
+      return new Promise((resolve) => {
+        const entry = {
+          resolve,
+          data: { batchId: key, questions, taskId: heldTask },
+          timer: setTimeout(() => gp.resolveBatch(key, {}), 10 * 60 * 1000),
+        };
+        gp.batches.set(key, entry);
+        events.push({ at: Date.now(), channel: 'gather:question_batch', data: { active: true, batchId: key, questions, taskId: heldTask } });
+        gp.broadcastPending();
+        console.log(`[Harness] gather batch ${key} HELD pending (task=${heldTask}) — awaits card/typed answer or drain`);
+      });
+    }
     const out = {};
     // Scripted answers are usually staged under a wildcard task key '*' because
     // gatherAnswerCallback doesn't know the taskId — the driver sets them via
@@ -227,6 +261,54 @@ const server = http.createServer(async (req, res) => {
       : a));
     return _json(res, 200, { ok: true });
   }
+  if (pathName === '/harness/hold-questions' && req.method === 'POST') {
+    holdQuestionsNext = true;
+    return _json(res, 200, { ok: true });
+  }
+  // Stage a REAL gp.batches wait without a task — deterministic card surface
+  // for drain/cancel tests. Same shape gatherAnswerCallback produces: batchId,
+  // questions[], optional taskId tag, pending until /harness/answer-batch,
+  // tryResolveFreeText (single-question), drainAll (fresh submit), or the
+  // 10-min timer.
+  if (pathName === '/harness/stage-batch' && req.method === 'POST') {
+    const raw = await _readBody(req);
+    const b = JSON.parse(raw || '{}');
+    const key = b.batchId || `staged_${Date.now()}`;
+    const questions = Array.isArray(b.questions) && b.questions.length
+      ? b.questions
+      : [{ id: 'q1', text: b.question || 'Staged test question?', type: 'text', freeText: true }];
+    const entry = {
+      resolve: (v) => { entry._value = v; },
+      data: { batchId: key, questions, taskId: b.taskId || null },
+      timer: setTimeout(() => gp.resolveBatch(key, {}), 10 * 60 * 1000),
+    };
+    gp.batches.set(key, entry);
+    events.push({ at: Date.now(), channel: 'gather:question_batch', data: { active: true, batchId: key, questions, taskId: b.taskId || null } });
+    gp.broadcastPending();
+    console.log(`[Harness] staged batch ${key}: ${questions.length} question(s) held pending`);
+    return _json(res, 200, { ok: true, batchId: key });
+  }
+  // Pending-wait introspection — how many question waits are live right now
+  // (batches + legacy + handoff pendingQuestions). The post-drain assertion.
+  if (pathName === '/harness/pending' && req.method === 'GET') {
+    return _json(res, 200, {
+      ok: true,
+      batches: gp.batches.size,
+      batchIds: [...gp.batches.keys()],
+      legacy: !!gp.getLegacy(),
+      pendingQuestions: (handoffRunner.getPendingQuestionTaskIds ? handoffRunner.getPendingQuestionTaskIds() : []),
+    });
+  }
+  // Card-submit path — mirrors the gather:answer_batch IPC the QuestionCard
+  // fires: resolves a pending gp batch with real answers.
+  if (pathName === '/harness/answer-batch' && req.method === 'POST') {
+    const raw = await _readBody(req);
+    const b = JSON.parse(raw || '{}');
+    const key = gp.findBatchKey({ batchId: b.batchId, taskId: b.taskId });
+    if (!key) return _json(res, 404, { ok: false, error: 'no pending batch' });
+    gp.resolveBatch(key, b.answers || {});
+    return _json(res, 200, { ok: true, batchId: key });
+  }
   if (pathName === '/harness/question' && req.method === 'POST') {
     const raw = await _readBody(req);
     const b = JSON.parse(raw || '{}');
@@ -263,6 +345,7 @@ const server = http.createServer(async (req, res) => {
       const { taskId, prompt, agentId, source, originalPrompt, guessedIntent, sessionId, userApproved, thoughtContext } = JSON.parse(raw || '{}');
       console.log(`[CommsGraph] Handoff received — task=${taskId} agent=${agentId || 'auto'} source=${source} guessedIntent=${guessedIntent || 'null'} session=${sessionId || 'none'}${thoughtContext?.id ? ` thought=${thoughtContext.id}` : ''}`);
       if (nextAnswers) { taskAnswers.set(taskId, nextAnswers); taskAnswers.set('*', nextAnswers); nextAnswers = null; }
+      if (holdQuestionsNext) { taskHolds.add(taskId); holdArmed++; holdQuestionsNext = false; console.log(`[Harness] task ${taskId} flagged holdQuestions — gather asks will pend`); }
       events.push({ at: Date.now(), channel: 'task:created', data: { taskId, prompt: originalPrompt || prompt, agentId: agentId || null, source: source || 'text', guessedIntent: guessedIntent ?? null } });
       handoffRunner.execute({
         taskId,
@@ -292,6 +375,67 @@ const server = http.createServer(async (req, res) => {
       }
       return _json(res, 200, { ok: true });
     } catch (err) { return _json(res, 400, { error: err.message }); }
+  }
+
+  // ── POST /prompt.submit — mirrors main.js's prompt-queue:submit handler ────
+  // Same intercept chain: legacy gather → free-text batch answer → isAskUserAnswer
+  // → question-card drain (fresh prompt supersedes) → comms-graph routing.
+  // Returns the outcome tag like the production endpoint; when the prompt
+  // routes to comms the upstream result rides along so the driver keeps its
+  // {intentName, metadata.taskId, fullText} contract. `wait:false` skips the
+  // upstream await (rapid-fire supersede testing).
+  if (pathName === '/prompt.submit' && req.method === 'POST') {
+    const raw = await _readBody(req);
+    const b = JSON.parse(raw || '{}');
+    const text = String(b.prompt || '').trim();
+    if (!text) return _json(res, 400, { ok: false, error: 'prompt is required' });
+
+    if (gp.getLegacy()) {
+      gp.resolveLegacy(text);
+      return _json(res, 202, { ok: true, outcome: 'answered-legacy' });
+    }
+    if (gp.tryResolveFreeText(text)) {
+      return _json(res, 202, { ok: true, outcome: 'answered-batch' });
+    }
+    if (b.isAskUserAnswer) {
+      if (b.taskId && handoffRunner.hasPendingQuestion && handoffRunner.hasPendingQuestion(b.taskId)) {
+        handoffRunner.answerQuestion(b.taskId, text).catch(err => console.error('[Harness] answerQuestion failed:', err.message));
+        return _json(res, 202, { ok: true, outcome: 'answered-question' });
+      }
+      return _json(res, 202, { ok: true, outcome: 'dropped' });
+    }
+
+    // ── Fresh prompt supersedes pending question cards (same as main.js) ──
+    try {
+      const drained = gp.drainAll();
+      if (drained) console.log(`[Harness] prompt.submit — drained ${drained} pending question wait(s)`);
+      for (const tid of (handoffRunner.getPendingQuestionTaskIds ? handoffRunner.getPendingQuestionTaskIds() : [])) {
+        console.log(`[Harness] prompt.submit — cancelling waiting-for-input task ${tid}`);
+        try { handoffRunner.cancel(tid); } catch (_) {}
+      }
+    } catch (_) {}
+
+    const commsBody = {
+      text,
+      source: b.source || 'text',
+      language: b.responseLanguage || 'auto',
+      sessionId: b.sessionId || null,
+      thoughtContext: b.thoughtContext || null,
+      selectedText: b.selectedText || null,
+    };
+    if (b.wait === false) {
+      _postJson(COMMS_PORT, '/comms.process', commsBody, 120000)
+        .catch(() => {});
+      return _json(res, 202, { ok: true, outcome: 'comms', awaited: false });
+    }
+    const upstream = await _postJson(COMMS_PORT, '/comms.process', commsBody, 120000);
+    const data = upstream.json?.data ?? null;
+    return _json(res, upstream.status === 200 ? 200 : (upstream.status || 502), {
+      ok: upstream.status === 200 && upstream.json?.ok !== false,
+      outcome: 'comms',
+      data,
+      error: upstream.json?.error || upstream.error || null,
+    });
   }
 
   // Proxy used by the renderer in production — lets the driver optionally route
