@@ -1215,6 +1215,9 @@ async function execute({ taskId, prompt, agentId, capabilityReason, source, orig
           source,
           sessionId: finalState.resolvedSessionId || sessionId || null,
           artifacts: _artifactSnapshot(taskId),
+          // Actionable card — e.g. a permission-denied screen grab surfaces
+          // "Open Screen Recording settings" via the QuestionCard machinery.
+          choices: finalState.choices || null,
         });
       }
       return { ok: true, status: 'done', answer, thinking, intent };

@@ -48,6 +48,12 @@ const CONVERSATION_RECALL_RE = new RegExp([
   // "summarize/recap our conversation", "the messages we chatted/sent"
   '\\b(?:summarize|recap|sum\\s+up)\\s+.{0,20}?\\b(?:conversations?|chats?|discussed)\\b',
   '\\bmessages?\\s+we\\s+(?:chatted|talked|sent|discussed|exchanged)\\b',
+  '\\brepeat\\s+(?:back\\s+)?(?:what\\s+i\\s+said|the\\s+last\\s+thing(?:\\s+i\\s+said)?|my\\s+last\\s+\\w+|everything\\s+(?:i|we)\\s+said)\\b',
+  // present-perfect ask enumeration: "what have I asked you so far"
+  '\\bwhat\\s+have\\s+i\\s+(?:asked|said|requested|mentioned|told\\s+you|written|sent)\\b',
+  // prompt/message listing: "list my last 5 prompts", "show my recent questions"
+  '\\b(?:list|show|give|tell)\\s+(?:me\\s+)?(?:my\\s+)?(?:last|recent|previous)\\s+(?:\\d+\\s+|few\\s+|couple\\s+of\\s+)?(?:prompts?|questions?|messages?|requests?|turns?)\\b',
+  '\\bwhat\\s+(?:were|are|was|is)\\s+my\\s+(?:last|recent|previous)\\s+(?:\\d+\\s+|few\\s+)?(?:prompts?|questions?|messages?|requests?)\\b',
   // "no/any conversation with you (at all)", "conversations with you"
   '\\bconversations?\\s+with\\s+(?:you|thinkdrop)\\b',
 ].join('|'), 'i');
@@ -58,7 +64,7 @@ const CONVERSATION_RECALL_RE = new RegExp([
  * Intentionally narrower than CONVERSATION_RECALL_RE: broad topical recall
  * phrasing would over-trigger the transcript-injection path.
  */
-const CONVERSATION_RECALL_META_RE = /\b(?:what did i (?:just )?ask(?:ed)?|what did i (?:just )?say|what did we talk about|what were we (?:just )?talking about|what did we discuss|did we (?:talk|speak|chat|discuss)|have we (?:talked|discussed|spoken|mentioned)|what was my (?:last|previous|recent) (?:question|prompt|message)|what did you (?:just )?say|what did i ask you .* ago|summarize our conversation|what have we been (?:discussing|talking about)|repeat what i said|remind me what we were talking about|go back to what i said (?:earlier|before)|look (?:that |it )? up in (?:your |the )?(?:memory|conversation|chat|history)|check (?:your |the )?(?:memory|conversation|chat|history)|in our (?:conversation|chat|history))\b/i;
+const CONVERSATION_RECALL_META_RE = /\b(?:what did i (?:just )?ask(?:ed)?|what did i (?:just )?say|what did we talk about|what were we (?:just )?talking about|what did we discuss|did we (?:talk|speak|chat|discuss)|have we (?:talked|discussed|spoken|mentioned)|what was my (?:last|previous|recent) (?:question|prompt|message)|what did you (?:just )?say|what did i ask you .* ago|summarize our conversation|what have we been (?:discussing|talking about)|repeat what i said|remind me what we were talking about|go back to what i said (?:earlier|before)|look (?:that |it )? up in (?:your |the )?(?:memory|conversation|chat|history)|check (?:your |the )?(?:memory|conversation|chat|history)|in our (?:conversation|chat|history)|did\s+i\s+(?:just\s+)?(?:mention|say|ask|tell|bring\s+up|talk\s+about|say\s+about|say\s+to\s+you)|did\s+we\s+(?:mention|talk\s+about|discuss|say|speak\s+about)|repeat\s+(?:back\s+)?(?:what\s+i\s+said|the\s+last\s+thing(?:\s+i\s+said)?|my\s+last\s+(?:message|prompt|question|thing|reply|answer|response)|everything\s+(?:i|we)\s+said)|what\s+have\s+i\s+(?:asked|said|requested|mentioned|told\s+you)\b|(?:list|show)\s+(?:me\s+)?(?:my\s+)?(?:last|recent|previous)\s+(?:\d+\s+|few\s+|couple\s+of\s+)?(?:prompts?|questions?|messages?|requests?)\b|what\s+(?:were|are|was|is)\s+my\s+(?:last|recent|previous)\s+(?:\d+\s+|few\s+)?(?:prompts?|questions?|messages?|requests?)\b|remind\s+me\s+what\s+we\s+(?:discussed|talked\s+about|said|went\s+over|covered|agreed\s+on|decided|worked\s+on|chatted\s+about)|did\s+i\s+ask(?:ed)?\s+(?:about|you|for|whether|if)|did\s+i\s+tell\s+you\b|what\s+did\s+i\s+tell\s+you\s+(?:about|to\s+do|earlier|before))\b/i;
 
 /**
  * Retrieval-side recall query detector (subject+noun pairs) — decides whether
@@ -198,6 +204,23 @@ const ACTIVITY_RECALL_RE = new RegExp([
   // "how much time did i spend", "how many hours did i work"
   '\\bhow\\s+(?:much\\s+time|long|many\\s+(?:hours|minutes))\\s+(?:did|have|was|were)\\s+i\\b',
 ].join('|'), 'i');
+
+/**
+ * Explicit fact/note write directives. This is intentionally narrower than
+ * generic "remember" vocabulary: questions such as "remember what I asked?"
+ * are conversation recall, and "remember to call Jake" is a task/reminder.
+ * The same predicate is used by ingress and the stategraph envelope so a
+ * boundary phrasing cannot land in planning on one side and memory_store on
+ * the other.
+ */
+const MEMORY_STORE_DIRECTIVE_RE = /^(?:(?:please|also|and|just|now)\s+)*(?:remember\s+(?!(?:what|when|where|who|why|how|which|if|whether|to\b|the\s+(?:last|previous|earlier)|my\s+(?:last|previous|recent))\b)(?:that|this|it|my|our|the|i\b)|(?:note|record)\s*(?::|that\b|this\b|down\b)|take\s+(?:a\s+)?note\b|(?:write|jot)\s+(?:this|that|it)\s+down\b|keep\s+in\s+mind\b|(?:save|store)\s+(?:this|that|it)\b|(?:store|record)\s+the\s+fact\b|(?:do\s+not|don't|dont)\s+forget\s+(?!to\b)|for\s+future\s+reference\b|fyi\s*:)/i;
+
+/** Short continuation-shaped requests whose subject is wholly inherited:
+ * "list details about them", "summarize the second one", "what else did it
+ * say", "open the first one", and draft edits such as "make it shorter".
+ * This is a candidate detector; classifyTask supplies the prior-turn target
+ * and lane, while no-match text remains ordinary standalone input. */
+const ELLIPTICAL_FOLLOWUP_RE = /\b(?:what|who|where|when|which)\s+else\b|\b(?:list|show|give|tell|summar(?:y|ize)|describe|explain|detail(?:s)?|expand|elaborate|compare|open|click|play|watch|download|delete|select|choose)\b[\s\S]{0,50}\b(?:them|those|these|it|that|this|one|ones|first|second|third|last|next|other|above|mentioned|oldest|newest|biggest|smallest|latest|earliest|cheapest|priciest|they|their)\b|\b(?:who|what|where|when|which|why|how)\b[\s\S]{0,50}\b(?:it|that|this|them|those|these|one|ones|first|second|third|last|oldest|newest|biggest|smallest|latest|earliest|cheapest|priciest)\b|\b(?:make|keep|rewrite|shorten|shorter|longer|change|add|remove)\s+(?:it|that|this|the\s+above)\b|\bwhat\s+was\s+the\s+(?:main\s+|overall\s+|key\s+|central\s+|big\s+)?(?:topic|point|gist|subject|theme|takeaway|bottom\s+line|focus)\b(?:\s+(?:of|in|on|for|about)\s+(?:our|the)\s+(?:conversation|chat|discussion|meeting|call|talk|session))?[\s?.!]*$/i;
 
 // ── Media / image requests ───────────────────────────────────────────────────
 
@@ -458,7 +481,7 @@ const SCREEN_OBSERVATION_RE = new RegExp([
  *  deictic→scan_page choice. 'screen' is intentionally absent — a screen
  *  referent routes to screen_intelligence (OCR/read_screen), not the 'url'
  *  doc pipeline these callers feed. */
-const LIVE_PAGE_REF_RE = /\b(?:this|the|current|open)\s+(?:page|tab|site|website|article|listing|form|dialog)\b|\bon\s+this\s+(?:page|site|website|tab|form)\b|\b(?:my|the|this|that)\s+\w+\s+tab\b|\bmy\s+open\s+tab\b|\bform\s+(?:on|in)\s+(?:my|the|this)\s+(?:screen|browser|tab|page|window)\b/i;
+const LIVE_PAGE_REF_RE = /\b(?:this|the|current|open)\s+(?:web\s+)?(?:page|tab|site|website|article|listing|form|dialog)\b|\bon\s+(?:this|the)\s+(?:web\s+)?(?:page|site|website|tab|form)\b|\b(?:my|the|this|that)\s+\w+\s+tab\b|\bmy\s+open\s+tab\b|\bform\s+(?:on|in)\s+(?:my|the|this)\s+(?:screen|browser|tab|page|window)\b/i;
 
 /** Ordinal/deictic item referent — "the first three items", "the second
  *  listing", "click on it" won't match this (no ordinal) but FOLLOWUP_SHAPE
@@ -672,6 +695,11 @@ const ROUTING_PROMISE_RE = new RegExp([
   // present-participle deferral without the "let me" lead: "passing that
   // along", "handing it over", "forwarding this to…", "routing that to…"
   '\\b(?:passing|handing|forwarding|routing|kicking|punting|sending)\\s+(?:that|this|it|those|them|your\\s+\\w+)\\s+(?:along|over|off|to|up|on)\\b',
+  // memory/history fetch deferral with a domain object instead of a pronoun:
+  // "let me check your records", "I'll dig through the history", "let me
+  // search our conversation archive" — observed slipping the invariant and
+  // reaching the user as a final answer with no task behind it.
+  '\\b(?:let\\s+me|i\'ll|i\\s+will|i\'m\\s+(?:going\\s+to|gonna)|while\\s+i|i\\s+need\\s+to)\\s+(?:check|look|search|scan|review|dig|sift|pull|pull\\s+up|go\\s+through|browse|retrieve|pull\\s+from)\\s+(?:through\\s+|into\\s+|in\\s+|up\\s+)?(?:your|the|my|our|its|their)\\s+\\w*(?:record|histor|memor|file|note|log|archive|transcript|conversation|chat|journal|activit|data|storage|profile|account|calendar|schedule|inbox|mail|message|download)\\w*\\b',
 ].join('|'), 'i');
 
 function inferScreenOutput(message) {
@@ -767,6 +795,8 @@ module.exports = {
   isLocalFileEdit,
   EPISODIC_RE,
   ACTIVITY_RECALL_RE,
+  MEMORY_STORE_DIRECTIVE_RE,
+  ELLIPTICAL_FOLLOWUP_RE,
   IMAGE_REQUEST_RES,
   REFERENTIAL_RE,
   PERSON_PRONOUN_RE,

@@ -134,7 +134,17 @@ function _graphIntentFor(promptText, t0) {
       const rowMsg = typeof row.message === 'string'
         ? row.message.split('\n[Additional context')[0].slice(0, 120).toLowerCase()
         : '';
-      if (rowMsg && rowMsg === probe) {
+      // Decided rows log the referent-SUBSTITUTED message ("list details
+      // about the YouTube videos…") while the user typed the deictic original
+      // — match either so follow-up turns aren't reported graphIntent=undefined.
+      const rowOrig = typeof row.originalMessage === 'string'
+        ? row.originalMessage.split('\n[Additional context')[0].slice(0, 120).toLowerCase()
+        : '';
+      if ((rowMsg && rowMsg === probe) || (rowOrig && rowOrig === probe)) {
+        // Shadow entries from older stategraph builds carried `decided` but
+        // not the canonical `intent`; never let one mask a valid route entry
+        // and report graphIntent=undefined.
+        if (typeof row.intent !== 'string' || !row.intent) continue;
         return { intent: row.intent, parser: row.parser, subPrompts: row.subPrompts?.length, subIntents: (row.subPrompts || []).map(s => s.estimatedIntent) };
       }
     }

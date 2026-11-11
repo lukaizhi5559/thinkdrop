@@ -4415,6 +4415,22 @@ async function _dispatchPlanCheckHit(hit) {
       .approvePlanTask(hit.planId, hit.taskNum, { skip: hit.action === 'skip-task' });
     return hit.action === 'skip-task' ? 'Skipped it.' : 'Approved — resuming.';
   }
+  // dismiss — a card's opt-out pick ("Not now"): close the card silently,
+  // never route "not now" to an LLM lane as a contentless prompt.
+  if (hit.action === 'dismiss') {
+    return 'Okay.';
+  }
+  // open-url — a fix-it card's declared action (e.g. Screen Recording
+  // settings). The url comes from the node that emitted the card, not from
+  // the LLM — openExternal fires only after the user's pick.
+  if (hit.action === 'open-url' && typeof hit.url === 'string') {
+    try {
+      await require('electron').shell.openExternal(hit.url);
+      return 'Opened it.';
+    } catch (err) {
+      return `Couldn't open that link — ${err.message}`;
+    }
+  }
   await _handlePlanCheckAction({
     planId: hit.planId || _pendingPlanCheck?.planId || _planningMode?.planId,
     planFile: hit.planFile || _pendingPlanCheck?.planFile || _planningMode?.planFile,
@@ -4539,14 +4555,30 @@ function _matchPlanCheckAction(text) {
   }
   // Choices card: "option 2" / "pick 2" / "2" selects deterministically.
   if (_pendingChoices && _pendingChoices.options.length) {
+    const norm = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9 ]/g, ' ').replace(/\s+/g, ' ').trim();
+    // An option carrying an `action` descriptor (e.g. open-url for the
+    // screen-permission fix) resolves to the action itself — the label must
+    // never reach an LLM lane where the effect would be re-planned.
+    const _toHit = (opt, fallback = '') => (opt.action && typeof opt.action === 'object')
+      ? { ...opt.action }
+      : { prompt: opt.label || opt.value || fallback };
+    // Action-carrying options intercept their own value text exactly — a
+    // clicked fix-it card submits the value verbatim, and it must resolve to
+    // the declared action, never leak to an LLM lane. Gated to action options
+    // so a plain-text value can't shadow the card matchers below (a value of
+    // e.g. "cancel" would otherwise eat the cancel-plan phrase).
+    const _exact = _pendingChoices.options.find(o => o.action && o.value && norm(o.value) === norm(t));
+    if (_exact) {
+      _pendingChoices = null;
+      return _toHit(_exact);
+    }
     const m = t.match(/^(?:option|pick|choose|number)?\s*(\d+)$/);
     if (m) {
       const idx = parseInt(m[1], 10) - 1;
       const opt = _pendingChoices.options[idx];
       if (opt) {
-        const label = opt.label || opt.value || String(idx + 1);
         _pendingChoices = null;
-        return { prompt: label }; // pass through as the planning answer
+        return _toHit(opt, String(idx + 1));
       }
     }
     // Non-numeric pick — "option scroll to the bottom" echoes a label back
@@ -4555,7 +4587,6 @@ function _matchPlanCheckAction(text) {
     // remainder against option labels.
     const lm = t.match(/^(?:option|pick|choose|select)\s+(.+)$/);
     if (lm) {
-      const norm = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9 ]/g, ' ').replace(/\s+/g, ' ').trim();
       const nw = norm(lm[1]);
       if (nw.length >= 3) {
         const hit = _pendingChoices.options.find(o => {
@@ -4564,7 +4595,7 @@ function _matchPlanCheckAction(text) {
         });
         if (hit) {
           _pendingChoices = null;
-          return { prompt: hit.label || hit.value || '' };
+          return _toHit(hit);
         }
       }
     }
@@ -5337,6 +5368,20 @@ function initStateGraph() {
               try { _openSetupSession(data, data.taskId || null).catch(() => {}); } catch (_) {}
             }
             if (_credAsk) _interceptCredentialAsk(data).catch(() => {});
+          }
+          // Actionable card from a handoff task — e.g. a permission-denied
+          // screen grab offers "Open Screen Recording settings". Same emit as
+          // the planning lane's <choices>: plan:question renders the card and
+          // _pendingChoices lets _matchPlanCheckAction resolve the pick
+          // (clicked value / typed ordinal / label echo) to its action.
+          if (channel === 'task:complete' && data
+              && Array.isArray(data.choices?.options) && data.choices.options.length) {
+            _pendingChoices = { planId: null, ...data.choices };
+            safeSendUnified('plan:question', {
+              planId: null,
+              question: data.choices.question,
+              options: data.choices.options,
+            });
           }
           // Voice TTS fan-out — a handoff task submitted by voice speaks its
           // final answer when it completes (the ack was already spoken).
@@ -8476,6 +8521,11 @@ app.whenReady().then(async () => {
             require('./planRunner')
               .approvePlanTask(hit.planId, hit.taskNum, { skip: hit.action === 'skip-task' })
               .catch(err => console.warn('[PlanReview] voice action failed:', err.message));
+          } else if (hit.action === 'open-url' || hit.action === 'dismiss') {
+            // Fix-it card pick — shared dispatcher owns the effect
+            // (openExternal / silent close), nothing routes onward.
+            _dispatchPlanCheckHit(hit)
+              .catch(err => console.warn('[PlanCheck] card action failed:', err.message));
           } else {
             _handlePlanCheckAction({ planId: hit.planId || _pendingPlanCheck?.planId || _planningMode?.planId, planFile: hit.planFile || _pendingPlanCheck?.planFile || _planningMode?.planFile, itemId: hit.itemId, action: hit.action })
               .catch(err => console.warn('[PlanCheck] voice action failed:', err.message));

@@ -342,7 +342,7 @@ const server = http.createServer(async (req, res) => {
   if (pathName === '/comms.handoff' && req.method === 'POST') {
     const raw = await _readBody(req);
     try {
-      const { taskId, prompt, agentId, source, originalPrompt, guessedIntent, sessionId, userApproved, thoughtContext } = JSON.parse(raw || '{}');
+      const { taskId, prompt, agentId, source, originalPrompt, guessedIntent, sessionId, userApproved, thoughtContext, routeDecision, planId, planTaskNum, planTask, preflightAuthBypass, deterministicPlan, priorResults, refs, capabilityReason, allowPlannerFallback, compiledPlan } = JSON.parse(raw || '{}');
       console.log(`[CommsGraph] Handoff received — task=${taskId} agent=${agentId || 'auto'} source=${source} guessedIntent=${guessedIntent || 'null'} session=${sessionId || 'none'}${thoughtContext?.id ? ` thought=${thoughtContext.id}` : ''}`);
       if (nextAnswers) { taskAnswers.set(taskId, nextAnswers); taskAnswers.set('*', nextAnswers); nextAnswers = null; }
       if (holdQuestionsNext) { taskHolds.add(taskId); holdArmed++; holdQuestionsNext = false; console.log(`[Harness] task ${taskId} flagged holdQuestions — gather asks will pend`); }
@@ -357,6 +357,17 @@ const server = http.createServer(async (req, res) => {
         userApproved: userApproved === true,
         thoughtContext: thoughtContext || null,
         guessedIntent: guessedIntent ?? null,
+        routeDecision: routeDecision || null,
+        planId: planId || null,
+        planTaskNum: planTaskNum ?? null,
+        planTask: planTask === true,
+        preflightAuthBypass: preflightAuthBypass || null,
+        _deterministicPlan: deterministicPlan || null,
+        _priorResults: priorResults || null,
+        _refs: refs || null,
+        capabilityReason: capabilityReason || null,
+        _allowPlannerFallback: allowPlannerFallback === true,
+        _skillPlan: compiledPlan || null,
       }).catch(err => console.error(`[CommsGraph] Handoff ${taskId} error:`, err.message));
       return _json(res, 200, { ok: true, taskId });
     } catch (err) {
