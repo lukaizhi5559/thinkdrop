@@ -472,6 +472,11 @@ const SCREEN_OBSERVATION_RE = new RegExp([
   // so bare nouns can't drift in ("scan the images" is image analysis, "read
   // page 42" is a book/file read — neither is a live-surface observation).
   '\\b(?:scan|read|inspect|examine|analy[sz]e|review|check|look\\s+(?:at|over|through)|go\\s+(?:over|through))\\s+(?:(?:the|my|this|that|current|open|whole|entire|full|loaded|visible)\\s+)+(?:screen|page|tab|site|website|window)\\b',
+  // investigation-verb + screen locative — "look into this company on my
+  // screen", "tell me about the page on my screen", "read the error on my
+  // screen". Verb list is report/investigation only — display verbs
+  // (show/put/display/paint/draw/clear/hide/dismiss) stay on the output lane.
+  '\\b(?:look(?:\\s+(?:into|at|over|through|up))?|check|read|see|investigat\\w*|research\\w*|analy[sz]\\w*|describ\\w*|explain\\w*|tell\\s+me\\s+(?:about|what)|find\\s+out|dig\\s+into|review\\w*|examin\\w*|inspect\\w*|scan\\w*|verif\\w*|identif\\w*)\\b[^.]{0,45}\\bon\\s+(?:my\\s+|the\\s+)?screen\\b',
 ].join('|'), 'i');
 
 /** Deictic live-page referent — "this page", "the tab", "on this site". The
