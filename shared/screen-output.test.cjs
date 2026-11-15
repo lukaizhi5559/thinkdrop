@@ -85,6 +85,23 @@ it('blocking stays false unless explicitly true', () => {
   assert(normalizeScreenOutput({ kind: 'alert', text: 'x', blocking: 'yes' }).output.blocking === false);
 });
 
+it('locked stays false unless explicitly true; ruleId normalizes', () => {
+  assert(normalizeScreenOutput({ kind: 'alert', text: 'x' }).output.locked === false);
+  const { output: o } = normalizeScreenOutput({ kind: 'alert', text: 'x', blocking: true, locked: true, ruleId: 'rmw1gyxud' });
+  assert(o.locked === true && o.ruleId === 'rmw1gyxud');
+  assert(normalizeScreenOutput({ kind: 'alert', text: 'x', locked: 'yes' }).output.locked === false);
+  assert(normalizeScreenOutput({ kind: 'alert', text: 'x' }).output.ruleId === null);
+});
+
+it('alert accepts body as a text alias (guardian producers send body)', () => {
+  const { output: o } = normalizeScreenOutput({ kind: 'alert', body: 'curtain body', title: 't' });
+  assert(o.text === 'curtain body');
+  // explicit text wins over body
+  assert(normalizeScreenOutput({ kind: 'alert', text: 'real text', body: 'ignored' }).output.text === 'real text');
+  // body alone satisfies the text-or-title requirement
+  assert(normalizeScreenOutput({ kind: 'alert', body: 'only body' }).ok === true);
+});
+
 // ── Mood / emoji / animate ───────────────────────────────────────────────────
 section('mood / emoji / animate');
 

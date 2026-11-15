@@ -357,7 +357,7 @@ const RichContentRenderer: React.FC<RichContentRendererProps> = ({
     return (
       <div
         className={`rich-content-container prose-sm max-w-none ${animated ? 'animate-fade-in' : ''} ${className}`}
-        style={{ overflowWrap: 'break-word', wordBreak: 'break-word', minWidth: 0, ...(animated ? { animation: 'fadeIn 0.3s ease-in-out' } : {}) }}
+        style={{ overflowWrap: 'break-word', wordBreak: 'break-word', minWidth: 0, ...(animated ? { animation: 'fadeInLift 0.3s ease-in-out' } : {}) }}
       >
         <style>{LIST_FIX_CSS}</style>
         {renderContentWithCarousels(processedContent, imageUrlToOriginal, onFileLinkClick)}
@@ -370,7 +370,7 @@ const RichContentRenderer: React.FC<RichContentRendererProps> = ({
   return (
     <div
       className={`rich-content-container prose-sm max-w-none ${animated ? 'animate-fade-in' : ''} ${className}`}
-      style={{ overflowWrap: 'break-word', wordBreak: 'break-word', minWidth: 0, ...(animated ? { animation: 'fadeIn 0.3s ease-in-out' } : {}) }}
+      style={{ overflowWrap: 'break-word', wordBreak: 'break-word', minWidth: 0, ...(animated ? { animation: 'fadeInLift 0.3s ease-in-out' } : {}) }}
     >
       <style>{LIST_FIX_CSS}</style>
       <ReactMarkdown

@@ -2,6 +2,7 @@ import React, { useState, useRef, useEffect, useImperativeHandle, forwardRef, us
 import { flushSync } from 'react-dom';
 import VoiceButton from './VoiceButton';
 import VoiceBars from './VoiceBars';
+import VoiceLangPicker from './VoiceLangPicker';
 import RoptKeyIcon from './RoptKeyIcon';
 import type { RefObject } from 'react';
 import type { AIActivityPanelHandle } from './AIActivityPanel';
@@ -138,10 +139,7 @@ function PromptInputBarImpl(
   }, []);
   // --- Input state (owned by this component so typing doesn't re-render parent) ---
   const [promptText, setPromptText] = useState('');
-  const [promptHistory, setPromptHistory] = useState<string[]>([]);
-  const [promptHistoryIndex, setPromptHistoryIndex] = useState(-1);
-  const [terminalHistory, setTerminalHistory] = useState<string[]>([]);
-  const [terminalHistoryIndex, setTerminalHistoryIndex] = useState(-1);
+  const [, setTerminalHistory] = useState<string[]>([]);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   // Guard against double-submit during the brief window before the parent's
   // isSubmitting prop updates (parent state is now in a startTransition).
@@ -156,6 +154,15 @@ function PromptInputBarImpl(
   const [pttInterim, setPttInterim] = useState('');
   // ⓘ legend tooltip open state (hover + click-toggle).
   const [legendOpen, setLegendOpen] = useState(false);
+  // Avatar mode ("Optyons") — droplet toggle next to the planning button.
+  const [avatarMode, setAvatarMode] = useState(false);
+  useEffect(() => {
+    const ipc = (window as any).electron?.ipcRenderer;
+    if (!ipc) return;
+    const T = 'inputbar-avatar';
+    ipc.on('avatar:mode', (d: any) => setAvatarMode(!!d?.on), T);
+    return () => { try { ipc.removeListenerByToken('avatar:mode', T); } catch (_) {} };
+  }, []);
   const promptTextRef = useRef(promptText);
   promptTextRef.current = promptText;
   const onSubmitRef = useRef(onSubmit);
@@ -192,6 +199,19 @@ function PromptInputBarImpl(
       ipc.removeListenerByToken?.('ptt:interim', T);
       ipc.removeListenerByToken?.('ptt:transcript', T);
     };
+  }, []);
+
+  // PTT dictation language — pref lives in main (settings.json); changes
+  // arrive as voice:lang-state broadcasts.
+  const [voiceLang, setVoiceLang] = useState<string | null>(null);
+  useEffect(() => {
+    const ipc = (window as any).electron?.ipcRenderer;
+    if (!ipc) return;
+    const T = 'inputbar-vlang';
+    const onLang = (d: { lang?: string | null }) => setVoiceLang(d?.lang ?? null);
+    ipc.on('voice:lang-state', onLang, T);
+    ipc.send('voice:lang'); // pull the current pref on mount
+    return () => { ipc.removeListenerByToken?.('voice:lang-state', T); };
   }, []);
 
   // Imperative handle — lets parent inject text (voice) and focus the textarea.
@@ -234,15 +254,6 @@ function PromptInputBarImpl(
     // route around a running automation). The button shows Cancel while a task
     // runs, but Enter must always send.
 
-    // Save to prompt history (normal prompts only, not gather answers)
-    if (!gatherPending && text.trim()) {
-      setPromptHistory(prev => {
-        const newHistory = [text.trim(), ...prev.filter(p => p !== text.trim())].slice(0, 100);
-        return newHistory;
-      });
-      setPromptHistoryIndex(-1);
-    }
-
     // Clear the textarea synchronously — fast because this component is small.
     // Debounce double-fires for 600ms, but don't latch on isSubmitting — a
     // long-running task would otherwise deadlock every later submit.
@@ -264,70 +275,23 @@ function PromptInputBarImpl(
 
   // --- Keydown ---
   const handleTextareaKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    // Debug mode: handle terminal commands and history
+    // Debug mode: Enter executes the terminal command. Arrow keys always move
+    // the text cursor — history recall on ArrowUp/Down was removed (it kept
+    // hijacking navigation while editing).
     if (isDebugMode) {
       if (e.key === 'Enter' && !e.shiftKey) {
         e.preventDefault();
         const command = promptText.trim();
         if (command) {
           setTerminalHistory(prev => [command, ...prev].slice(0, 50));
-          setTerminalHistoryIndex(-1);
           aiActivityPanelRef.current?.executeCommand(command);
           setPromptText('');
         }
         return;
       }
-
-      if (e.key === 'ArrowUp') {
-        e.preventDefault();
-        if (terminalHistoryIndex < terminalHistory.length - 1) {
-          const newIndex = terminalHistoryIndex + 1;
-          setTerminalHistoryIndex(newIndex);
-          setPromptText(terminalHistory[newIndex] || '');
-        }
-        return;
-      }
-
-      if (e.key === 'ArrowDown') {
-        e.preventDefault();
-        if (terminalHistoryIndex > 0) {
-          const newIndex = terminalHistoryIndex - 1;
-          setTerminalHistoryIndex(newIndex);
-          setPromptText(terminalHistory[newIndex] || '');
-        } else if (terminalHistoryIndex === 0) {
-          setTerminalHistoryIndex(-1);
-          setPromptText('');
-        }
-        return;
-      }
     }
 
-    // Normal mode: Prompt history navigation with Up/Down arrows
-    if (!isDebugMode && promptHistory.length > 0) {
-      if (e.key === 'ArrowUp') {
-        e.preventDefault();
-        if (promptHistoryIndex < promptHistory.length - 1) {
-          const newIndex = promptHistoryIndex + 1;
-          setPromptHistoryIndex(newIndex);
-          setPromptText(promptHistory[newIndex]);
-        }
-        return;
-      }
-      if (e.key === 'ArrowDown') {
-        e.preventDefault();
-        if (promptHistoryIndex > 0) {
-          const newIndex = promptHistoryIndex - 1;
-          setPromptHistoryIndex(newIndex);
-          setPromptText(promptHistory[newIndex]);
-        } else if (promptHistoryIndex === 0) {
-          setPromptHistoryIndex(-1);
-          setPromptText('');
-        }
-        return;
-      }
-    }
-
-    // Normal mode: standard submit
+    // Normal mode: standard submit (Shift+Enter inserts a newline).
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
       doSubmit();
@@ -540,6 +504,8 @@ function PromptInputBarImpl(
           <textarea
             ref={textareaRef}
             value={promptText}
+            spellCheck
+            lang="en"
             onChange={handleTextareaChange}
             onKeyDown={handleTextareaKeyDown}
             onPaste={onPaste}
@@ -557,177 +523,188 @@ function PromptInputBarImpl(
         </div>
       )}
 
-      {/* Action Buttons */}
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          {/* Attach Button */}
+      {/* Action Buttons — fixed left-to-right order:
+          Avatar, Attach, Planning, Option, Voice, Send, Language. */}
+      <div className="flex items-center gap-2">
+        {/* Avatar mode toggle — switches the overlay for the Optyons
+            companion avatar on the GhostLayer. */}
+        <button
+          onClick={() => (window as any).electron?.ipcRenderer?.send('avatar:toggle')}
+          className="relative flex items-center justify-center w-9 h-9 p-0 rounded-lg text-sm font-medium border transition-all"
+          style={{
+            backgroundColor: avatarMode ? 'rgba(96,165,250,0.18)' : 'rgba(255,255,255,0.05)',
+            color: avatarMode ? '#60a5fa' : '#9ca3af',
+            borderColor: avatarMode ? 'rgba(96,165,250,0.45)' : 'rgba(255,255,255,0.1)',
+          }}
+          title={avatarMode ? 'Exit Avatar mode — back to overlay' : 'Avatar mode — the Optyons companion takes over'}
+        >
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+            <circle cx="12" cy="12.5" r="8" />
+            <circle cx="8.8" cy="10" r="1" fill="currentColor" stroke="none" />
+            <circle cx="15.2" cy="10" r="1" fill="currentColor" stroke="none" />
+            <path d="M8 15 Q12 18.5 16 15" />
+          </svg>
+        </button>
+
+        {/* Attach Button */}
+        <button
+          onClick={onAttachClick}
+          className="flex items-center justify-center w-9 h-9 p-0 rounded-lg text-sm font-medium bg-white/5 text-gray-400 border border-white/10 hover:bg-white/10 transition-all"
+          title="Attach files"
+        >
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48" />
+          </svg>
+        </button>
+
+        {/* Planning-mode toggle — orbiting cyan ring while active. */}
+        <div className="relative flex items-center">
+          {planning?.active && <span className="planning-toggle-ring" aria-hidden="true" />}
           <button
-            onClick={onAttachClick}
-            className="flex items-center justify-center w-9 h-9 p-0 rounded-lg text-sm font-medium bg-white/5 text-gray-400 border border-white/10 hover:bg-white/10 transition-all"
+            onClick={onPlanningToggle}
+            className="relative flex items-center justify-center w-9 h-9 p-0 rounded-lg text-sm font-medium border transition-all"
+            style={{
+              backgroundColor: planning?.active ? 'rgba(34,211,238,0.15)' : 'rgba(255,255,255,0.05)',
+              color: planning?.active ? '#22d3ee' : '#9ca3af',
+              borderColor: planning?.active ? 'rgba(34,211,238,0.4)' : 'rgba(255,255,255,0.1)',
+            }}
+            title={planning?.active ? 'Exit planning mode' : 'Start a plan — multi-task prompts draft a plan first'}
           >
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48" />
+              <path d="M9 4L3 6v14l6 2 6-2V4l-6 2-6-2z"/><polyline points="9 4 9 18"/><polyline points="15 6 15 20"/>
             </svg>
           </button>
+        </div>
 
-          {/* Planning-mode toggle — orbiting cyan ring while active (same
-              affordance grammar as the paste-context button). */}
-          <div className="relative flex items-center">
-            {planning?.active && <span className="planning-toggle-ring" aria-hidden="true" />}
-            <button
-              onClick={onPlanningToggle}
-              className="relative flex items-center justify-center w-9 h-9 p-0 rounded-lg text-sm font-medium border transition-all"
+        {/* Compact Option control — the trigger keeps the existing legend. */}
+        <div
+          className="relative flex items-center"
+          onMouseEnter={() => setLegendOpen(true)}
+          onMouseLeave={() => setLegendOpen(false)}
+        >
+          <button
+            type="button"
+            onClick={() => setLegendOpen(v => !v)}
+            className="flex items-center justify-center w-9 h-9 rounded-lg text-base font-medium border transition-all"
+            style={{
+              backgroundColor: legendOpen ? 'rgba(96,165,250,0.18)' : 'rgba(255,255,255,0.05)',
+              color: legendOpen ? '#60a5fa' : '#9ca3af',
+              borderColor: legendOpen ? 'rgba(96,165,250,0.45)' : 'rgba(255,255,255,0.1)',
+            }}
+            title="Option-key shortcuts"
+            aria-label="Option-key shortcuts"
+          >
+            ⌥
+          </button>
+          {legendOpen && (
+            <div
+              className="absolute flex flex-col gap-2 px-3 py-2.5 rounded-lg"
               style={{
-                backgroundColor: planning?.active ? 'rgba(34,211,238,0.15)' : 'rgba(255,255,255,0.05)',
-                color: planning?.active ? '#22d3ee' : '#9ca3af',
-                borderColor: planning?.active ? 'rgba(34,211,238,0.4)' : 'rgba(255,255,255,0.1)',
+                bottom: 46,
+                left: '50%',
+                transform: 'translateX(-50%)',
+                zIndex: 60,
+                width: 330,
+                backgroundColor: 'rgba(12,16,24,0.96)',
+                border: '1px solid rgba(255,255,255,0.14)',
+                boxShadow: '0 8px 28px rgba(0,0,0,0.5)',
               }}
-              title={planning?.active ? 'Exit planning mode' : 'Start a plan — multi-task prompts draft a plan first'}
             >
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M9 4L3 6v14l6-2 6 2 6-2V4l-6 2-6-2z"/><polyline points="9 4 9 18"/><polyline points="15 6 15 20"/>
-              </svg>
-            </button>
-          </div>
-
-          {/* Terminal Button */}
-          {/* <button
-            onClick={() => setIsDebugMode(!isDebugMode)}
-            className={`flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium border transition-all ${
-              isDebugMode
-                ? 'bg-blue-600/20 text-blue-400 border-blue-500/50 hover:bg-blue-600/30'
-                : 'bg-white/5 text-gray-400 border-white/10 hover:bg-white/10'
-            }`}
-            title={isDebugMode ? 'Exit Debug Mode' : 'Enter Debug Mode'}
-          >
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <polyline points="4 17 10 11 4 5" />
-              <line x1="12" y1="19" x2="20" y2="19" />
-            </svg>
-          </button> */}
+              {[
+                { keys: <><RoptKeyIcon size={22} /><span>double-tap</span></>, desc: 'prompt · focus input' },
+                { keys: <><RoptKeyIcon size={22} /><span>hold</span></>, desc: 'talk (PTT)' },
+                { keys: <><RoptKeyIcon size={22} /><span>hold 3s</span></>, desc: 'cancel automation' },
+                { keys: <><RoptKeyIcon size={22} /><span>tap</span></>, desc: 'confirm · approve · run plan · mute' },
+                { keys: <><RoptKeyIcon size={22} /><span>tap (scrolled up)</span></>, desc: 'jump to latest' },
+                { keys: <><RoptKeyIcon size={22} mod="shift" /><span>hold +</span><RoptKeyIcon size={22} /><span>tap</span></>, desc: 'show / hide' },
+                { keys: <><RoptKeyIcon size={22} mod="shift" /><span>hold +</span><RoptKeyIcon size={22} /><span>double-tap</span></>, desc: 'history' },
+                { keys: <><RoptKeyIcon size={22} side="left" /><span>hold +</span><RoptKeyIcon size={22} /><span>tap</span></>, desc: 'cancel / exit' },
+              ].map((row, i) => (
+                <div key={i} className="flex items-center justify-between" style={{ fontSize: 11.5 }}>
+                  <span className="flex items-center gap-1.5" style={{ color: '#d1d5db', fontWeight: 500, whiteSpace: 'nowrap' }}>{row.keys}</span>
+                  <span style={{ color: '#6b7280', textAlign: 'right' }}>{row.desc}</span>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
 
-        {/* Gesture legend — centered "Key Cmds ⌥", hover/click shows all
-            Right-Option commands */}
-        <div className="flex-1 flex items-center justify-center">
-          <div
-            className="relative flex items-center"
-            onMouseEnter={() => setLegendOpen(true)}
-            onMouseLeave={() => setLegendOpen(false)}
-          >
-            <button
-              type="button"
-              onClick={() => setLegendOpen(v => !v)}
-              className="flex items-center gap-1.5 px-2 py-1 rounded-md text-gray-500 hover:text-gray-300 hover:bg-white/5 transition-colors"
-              style={{ fontSize: 11, fontWeight: 500 }}
-              title="Option-key shortcuts"
-            >
-              Option Key Cmds
-              <RoptKeyIcon size={22} />
-            </button>
-            {legendOpen && (
-              <div
-                className="absolute flex flex-col gap-2 px-3 py-2.5 rounded-lg"
-                style={{
-                  bottom: 46,
-                  left: '50%',
-                  transform: 'translateX(-50%)',
-                  zIndex: 60,
-                  width: 330,
-                  backgroundColor: 'rgba(12,16,24,0.96)',
-                  border: '1px solid rgba(255,255,255,0.14)',
-                  boxShadow: '0 8px 28px rgba(0,0,0,0.5)',
-                }}
-              >
-                {[
-                  { keys: <><RoptKeyIcon size={22} /><span>double-tap</span></>, desc: 'show / hide' },
-                  { keys: <><RoptKeyIcon size={22} /><span>hold</span></>, desc: 'talk (PTT)' },
-                  { keys: <><RoptKeyIcon size={22} /><span>hold 3s</span></>, desc: 'cancel automation' },
-                  { keys: <><RoptKeyIcon size={22} /><span>tap</span></>, desc: 'confirm · approve · run plan · mute' },
-                  { keys: <><RoptKeyIcon size={22} /><span>tap (scrolled up)</span></>, desc: 'jump to latest' },
-                  { keys: <><RoptKeyIcon size={22} mod="shift" /><span>hold +</span><RoptKeyIcon size={22} /><span>tap</span></>, desc: 'expand / collapse' },
-                  { keys: <><RoptKeyIcon size={22} mod="shift" /><span>hold +</span><RoptKeyIcon size={22} /><span>double-tap</span></>, desc: 'history' },
-                  { keys: <><RoptKeyIcon size={22} side="left" /><span>hold +</span><RoptKeyIcon size={22} /><span>tap</span></>, desc: 'cancel / exit' },
-                ].map((row, i) => (
-                  <div key={i} className="flex items-center justify-between" style={{ fontSize: 11.5 }}>
-                    <span className="flex items-center gap-1.5" style={{ color: '#d1d5db', fontWeight: 500, whiteSpace: 'nowrap' }}>{row.keys}</span>
-                    <span style={{ color: '#6b7280', textAlign: 'right' }}>{row.desc}</span>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-        </div>
+        {/* Voice/PTT */}
+        <VoiceButton compact={true} icon="voice" ptt={pttActive} style={{ width: '36px', height: '36px', borderRadius: '8px' }} />
 
         {/* Submit/Cancel Button - Matching StandalonePromptCapture style */}
-        <div className="flex items-center gap-2">
-          <div
-            className={isSubmitting ? 'relative group' : ''}
-            style={{
-              width: '36px',
-              height: '36px',
-              borderRadius: '8px',
-              backgroundColor: isSubmitting
-                ? 'rgba(239, 68, 68, 0.15)'
-                : hasContent ? 'rgba(59, 130, 246, 0.2)' : 'rgba(255, 255, 255, 0.05)',
-              border: '1px solid',
-              borderColor: isSubmitting
-                ? 'rgba(239, 68, 68, 0.3)'
-                : hasContent ? 'rgba(59, 130, 246, 0.3)' : 'rgba(255, 255, 255, 0.1)',
-              flexShrink: 0,
-              marginTop: '0px',
-              cursor: (isSubmitting || hasContent) ? 'pointer' : 'default',
-              transition: 'background-color 0.15s, border-color 0.15s',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              position: 'relative',
-            }}
-            onMouseEnter={(e) => {
-              if (isSubmitting) {
-                e.currentTarget.style.backgroundColor = 'rgba(239, 68, 68, 0.25)';
-                e.currentTarget.style.borderColor = 'rgba(239, 68, 68, 0.5)';
-              }
-            }}
-            onMouseLeave={(e) => {
-              if (isSubmitting) {
-                e.currentTarget.style.backgroundColor = 'rgba(239, 68, 68, 0.15)';
-                e.currentTarget.style.borderColor = 'rgba(239, 68, 68, 0.3)';
-              }
-            }}
-            title={isSubmitting ? 'Cancel' : 'Send'}
-            onClick={isSubmitting ? onCancel : hasContent ? doSubmit : undefined}
-          >
-            {/* Red glow ring on hover when cancelling */}
-            {isSubmitting && (
-              <div
-                className="cancel-glow-ring group-hover:active"
-                style={{ borderRadius: '8px' }}
-              />
-            )}
-            {isSubmitting ? (
-              /* Stop square — like ChatGPT/Windsurf cancel */
-              <svg width="10" height="10" viewBox="0 0 10 10" className="group-hover:fill-[#ef4444] transition-colors" fill="#9ca3af">
-                <rect x="0" y="0" width="10" height="10" rx="2" />
-              </svg>
-            ) : (
-              <svg
-                width="14"
-                height="14"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke={hasContent ? '#60a5fa' : '#abafb8'}
-                strokeWidth="2"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              >
-                <path d="M9 10l-5 5 5 5" />
-                <path d="M20 4v7a4 4 0 0 1-4 4H4" />
-              </svg>
-            )}
-          </div>
-          <VoiceButton compact={true} icon="voice" ptt={pttActive} style={{ width: '36px', height: '36px', borderRadius: '8px' }} />
+        <div
+          className={isSubmitting ? 'relative group' : ''}
+          style={{
+            width: '36px',
+            height: '36px',
+            borderRadius: '8px',
+            backgroundColor: isSubmitting
+              ? 'rgba(239, 68, 68, 0.15)'
+              : hasContent ? 'rgba(59, 130, 246, 0.2)' : 'rgba(255, 255, 255, 0.05)',
+            border: '1px solid',
+            borderColor: isSubmitting
+              ? 'rgba(239, 68, 68, 0.3)'
+              : hasContent ? 'rgba(59, 130, 246, 0.3)' : 'rgba(255, 255, 255, 0.1)',
+            flexShrink: 0,
+            marginTop: '0px',
+            cursor: (isSubmitting || hasContent) ? 'pointer' : 'default',
+            transition: 'background-color 0.15s, border-color 0.15s',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            position: 'relative',
+          }}
+          onMouseEnter={(e) => {
+            if (isSubmitting) {
+              e.currentTarget.style.backgroundColor = 'rgba(239, 68, 68, 0.25)';
+              e.currentTarget.style.borderColor = 'rgba(239, 68, 68, 0.5)';
+            }
+          }}
+          onMouseLeave={(e) => {
+            if (isSubmitting) {
+              e.currentTarget.style.backgroundColor = 'rgba(239, 68, 68, 0.15)';
+              e.currentTarget.style.borderColor = 'rgba(239, 68, 68, 0.3)';
+            }
+          }}
+          title={isSubmitting ? 'Cancel' : 'Send'}
+          onClick={isSubmitting ? onCancel : hasContent ? doSubmit : undefined}
+        >
+          {isSubmitting && (
+            <div
+              className="cancel-glow-ring group-hover:active"
+              style={{ borderRadius: '8px' }}
+            />
+          )}
+          {isSubmitting ? (
+            <svg width="10" height="10" viewBox="0 0 10 10" className="group-hover:fill-[#ef4444] transition-colors" fill="#9ca3af">
+              <rect x="0" y="0" width="10" height="10" rx="2" />
+            </svg>
+          ) : (
+            <svg
+              width="14"
+              height="14"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke={hasContent ? '#60a5fa' : '#abafb8'}
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            >
+              <path d="M9 10l-5 5 5 5" />
+              <path d="M20 4v7a4 4 0 0 1-4 4H4" />
+            </svg>
+          )}
         </div>
+
+        <VoiceLangPicker
+          lang={voiceLang}
+          onPick={(code) => { setVoiceLang(code); (window as any).electron?.ipcRenderer?.send('voice:set-lang', { lang: code }); }}
+          buttonStyle={{
+            width: '28px', height: '36px', borderRadius: '8px',
+            background: 'transparent', fontSize: 14,
+          }}
+        />
       </div>
     </div>
   );

@@ -64,7 +64,12 @@ function _scan() {
   let dirMtime = 0;
   try { dirMtime = fs.statSync(dir).mtimeMs; } catch (_) {}
 
-  const key = `${dir}:${dirMtime}:${aliasesFile}:${a.mtime}:${userFile}:${u.mtime}`;
+  // Browser-type service agents are retired — the descriptors stay on disk but
+  // no longer register (planner catalog, URL mapping, suggestions, Agents tab
+  // all flow from this scan). THINKDROP_LEGACY_BROWSER_AGENTS=1 restores them
+  // for debugging.
+  const legacyBrowser = !!process.env.THINKDROP_LEGACY_BROWSER_AGENTS;
+  const key = `${dir}:${dirMtime}:${aliasesFile}:${a.mtime}:${userFile}:${u.mtime}:${legacyBrowser}`;
   if (_cache && _cache.key === key) return _cache;
 
   const shortcut = { ...(a.data?.shortcut_domains || {}), ...(u.data?.shortcut_domains || {}) };
@@ -120,6 +125,8 @@ function _scan() {
         urlM: src.match(/^start_url:\s*(https?:\/\/\S+)\s*$/m),
         signM: src.match(/^sign_in_url:\s*(https?:\/\/\S+)\s*$/m),
       };
+      // Retired browser descriptors never enter the registry indexes.
+      if (!legacyBrowser && entry.type === 'browser') continue;
       files.push(entry);
       byName.set(stem, entry);
       byName.set(entry.service, entry);

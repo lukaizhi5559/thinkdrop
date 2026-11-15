@@ -278,6 +278,10 @@ interface AutomationProgressProps {
   /** When set, this instance only processes events tagged with this taskId (queue card mode).
    *  When unset, this instance processes global events (Results tab) and ignores task-scoped events. */
   taskId?: string;
+  /** Avatar embed: the avatar has a single surface, so its instance accepts
+   *  task-scoped AND untagged events — whatever run is live shows on Optyon.
+   *  Ignored when taskId is set (explicit scope always wins). */
+  acceptAnyTask?: boolean;
   /** For queue card recovery: task.planFile from task:complete. If set on mount,
    *  initializes phase='plan_review' even if the plan:generated event was missed. */
   planFile?: string;
@@ -947,7 +951,7 @@ function parsePlanStepTitles(content: string): string[] {
 // a second mount would overwrite the first's handler and unmounting one kills both).
 let _apInstanceSeq = 0;
 
-export default function AutomationProgress({ onHeightChange, onActiveChange, onOpenRules, onAskUserShown, setIsSubmitting, onAuthPending, suppressIfScheduled, activeTab, taskId, planFile, onRunSummary, onApplyDraft, seedSummary }: AutomationProgressProps) {
+export default function AutomationProgress({ onHeightChange, onActiveChange, onOpenRules, onAskUserShown, setIsSubmitting, onAuthPending, suppressIfScheduled, activeTab, taskId, acceptAnyTask, planFile, onRunSummary, onApplyDraft, seedSummary }: AutomationProgressProps) {
   perfRender('AutomationProgress');
   const [instanceSeq] = useState(() => ++_apInstanceSeq);
   const [phase, setPhase] = useState<AutomationPhase>('idle');
@@ -1043,30 +1047,16 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
   const executionStartRef = useRef<number | null>(null);
   const suppressIfScheduledRef = useRef<boolean>(!!suppressIfScheduled);
   suppressIfScheduledRef.current = !!suppressIfScheduled;
+  // Avatar embed — one surface accepts every run's events (explicit taskId
+  // scope still wins when set).
+  const acceptAllTasks = !!acceptAnyTask && !taskId;
 
-  // Name-a-plan state (Part 5)
-  const [showNamePlan, setShowNamePlan] = useState(false);
-  const [planNameInput, setPlanNameInput] = useState('');
-  const [planNameSaved, setPlanNameSaved] = useState(false);
-  const [planNameError, setPlanNameError] = useState('');
   const [savedContextRule, setSavedContextRule] = useState<{ ruleText: string; contextKey: string; category: string } | null>(null);
   const [failureAnswer, setFailureAnswer] = useState<string | null>(null);
   const [parallelLoginServices, setParallelLoginServices] = useState<ParallelLoginService[] | null>(null);
   const [parallelLoginDecisions, setParallelLoginDecisions] = useState<Record<string, ParallelLoginDecision>>({});
   const [parallelLoginCountdown, setParallelLoginCountdown] = useState<number>(180); // 3 minute timeout countdown
   const _planFileRef = useRef<string>('');
-  const DOT_NAME_RE = /^[a-z][a-z0-9]*(?:\.[a-z][a-z0-9]*)+$/;
-  const isValidDotName = (n: string) => {
-    if (!DOT_NAME_RE.test(n)) return false;
-    const segs = n.split('.');
-    return segs.length >= 2 && segs.length <= 5;
-  };
-  const derivePlanName = (title: string) => {
-    const stop = new Set(['a','an','the','for','to','in','on','at','of','and','or','with','from','by','check','find','get','run','go']);
-    const words = title.toLowerCase().replace(/[^a-z0-9\s]/g, ' ').split(/\s+/).filter(w => w.length >= 3 && !stop.has(w)).slice(0, 5);
-    const c = words.join('.');
-    return isValidDotName(c) ? c : '';
-  };
 
   // Maintenance scan state — currently read-only: the 'scan:progress' channel
   // is not whitelisted in preload `on`, so no setter call sites remain. The JSX
@@ -1472,11 +1462,14 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
       // ── Task-scoped event filtering ──────────────────────────────────────────
       // When this instance has a taskId (queue card mode), it ONLY accepts events
       // explicitly tagged with that taskId. When this instance has no taskId
-      // (Results tab), it ignores all task-scoped events.
-      if (taskId) {
-        if (!data?.taskId || data.taskId !== taskId) return;
-      } else {
-        if (data?.taskId) return;
+      // (Results tab), it ignores all task-scoped events — unless acceptAnyTask
+      // (avatar embed), where the single surface shows whatever run is live.
+      if (!acceptAllTasks) {
+        if (taskId) {
+          if (!data?.taskId || data.taskId !== taskId) return;
+        } else {
+          if (data?.taskId) return;
+        }
       }
       // ── Helper: append an entry to the live agent sub-step log ──────────────
       const _appendAgentStepLog = (stepIdx: number, entry: Omit<AgentStepLogEntry, 'id' | 'timestamp'>) => {
@@ -3103,16 +3096,7 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
           }
           setPhase('done');
           setTotalCount(prev => Math.max(prev, (data.totalCount || 0) + stepOffsetRef.current));
-          // Trigger name-a-plan card if 2+ steps all succeeded
-          if (Array.isArray(data.skillResults) && data.skillResults.length >= 2 && data.skillResults.every((r: any) => r.ok || r.skipped)) {
-            const _pf = data.planFile || '';
-            _planFileRef.current = _pf;
-            const _suggested = derivePlanName(planReview?.title || '');
-            setPlanNameInput(_suggested);
-            setPlanNameSaved(false);
-            setPlanNameError('');
-            setShowNamePlan(true);
-          }
+          if (data.planFile) _planFileRef.current = data.planFile;
           // Merge any final stdout from skillResults into steps.
           // Also backfill savedFilePath onto the step that wrote it so the
           // inline file link appears on the step row (shell.run write steps
@@ -3317,13 +3301,6 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
           setPhase('done');
           break;
 
-        case 'plan:name_saved':
-          if (data.ok) {
-            setPlanNameSaved(true);
-          } else {
-            setPlanNameError(data.error || 'Save failed');
-          }
-          break;
       }
     };
 
@@ -3332,7 +3309,7 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
     // chunks (task-tagged tokens belong to the queue card, not the Results tab).
     const handleBridgeMessage = (message: any) => {
       if (!message) return;
-      if (taskId ? message.taskId !== taskId : !!message.taskId) return;
+      if (!acceptAllTasks && (taskId ? message.taskId !== taskId : !!message.taskId)) return;
       if (message.type === 'chunk' || message.type === 'llm_stream_chunk') {
         const text = message?.text || message.payload?.text || '';
         if (text) {
@@ -3364,7 +3341,7 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
       // Batches tagged with a taskId render inside that task's feed card;
       // untagged batches render in the global (untagged) instance only.
       // Untagged clears ({active:false}) are broadcast — all instances reset.
-      if (data?.active && (taskId ? data?.taskId !== taskId : !!data?.taskId)) return;
+      if (data?.active && !acceptAllTasks && (taskId ? data?.taskId !== taskId : !!data?.taskId)) return;
       if (data?.active && data?.questions) {
         setGrillProcessing(false);
         // Switch to gathering so the planning/gathering spinner header is hidden
@@ -3380,7 +3357,7 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
         // Scoped deactivation (timeout/answer of ONE batch) — must not clear a
         // different task's pending card. Only clear when the taskId and batchId
         // match this instance's live batch.
-        if (taskId ? (data?.taskId && data.taskId !== taskId) : !!data?.taskId) return;
+        if (!acceptAllTasks && (taskId ? (data?.taskId && data.taskId !== taskId) : !!data?.taskId)) return;
         setQuestionBatch(prev => (data?.batchId && prev?.batchId && data.batchId !== prev.batchId) ? prev : null);
         setGrillProcessing(false);
       } else {
@@ -5719,87 +5696,6 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
               Cancel
             </button>
           </div>
-        </div>
-      )}
-
-      {/* ── Name-a-plan card (Part 5) ───────────────────────────────────────── */}
-      {phase === 'done' && showNamePlan && !planNameSaved && (
-        <div style={{
-          marginTop: 12,
-          padding: '12px 14px',
-          borderRadius: 10,
-          backgroundColor: 'rgba(99,102,241,0.07)',
-          border: '1px solid rgba(99,102,241,0.25)',
-        }}>
-          <div style={{ fontSize: '0.75rem', fontWeight: 600, color: '#a5b4fc', marginBottom: 4, display: 'flex', alignItems: 'center', gap: 6 }}>
-            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#a5b4fc" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/>
-            </svg>
-            Save this plan for later?
-          </div>
-          <div style={{ fontSize: '0.69rem', color: '#94a3b8', marginBottom: 8 }}>
-            Give it a name and recall it anytime by prompt.
-          </div>
-          <input
-            type="text"
-            value={planNameInput}
-            onChange={e => {
-              const v = e.target.value.toLowerCase().replace(/[^a-z0-9.]/g, '');
-              setPlanNameInput(v);
-              setPlanNameError(!v || isValidDotName(v) ? '' : 'Only dot-syntax allowed: e.g. perplexity.history.vegan');
-            }}
-            placeholder="e.g. perplexity.history.vegan"
-            style={{
-              width: '100%',
-              padding: '6px 8px',
-              borderRadius: 6,
-              border: `1px solid ${planNameError ? 'rgba(239,68,68,0.6)' : isValidDotName(planNameInput) ? 'rgba(99,102,241,0.5)' : 'rgba(255,255,255,0.12)'}`,
-              backgroundColor: 'rgba(15,15,25,0.6)',
-              color: '#e2e8f0',
-              fontSize: '0.75rem',
-              fontFamily: 'monospace',
-              outline: 'none',
-              marginBottom: 4,
-              boxSizing: 'border-box',
-            }}
-          />
-          {planNameError && (
-            <div style={{ fontSize: '0.67rem', color: '#f87171', marginBottom: 6 }}>{planNameError}</div>
-          )}
-          {planNameInput && isValidDotName(planNameInput) && (
-            <div style={{ fontSize: '0.67rem', color: '#abafb8', marginBottom: 8, fontStyle: 'italic' }}>
-              Recall later: &ldquo;Run {planNameInput}&rdquo;
-            </div>
-          )}
-          <div style={{ display: 'flex', gap: 8 }}>
-            <button
-              disabled={!isValidDotName(planNameInput)}
-              onClick={() => {
-                if (isValidDotName(planNameInput)) {
-                  const pf = _planFileRef.current || planReview?.planFile || '';
-                  ipcRenderer?.send('plan:save_name', { planFile: pf, planName: planNameInput });
-                }
-              }}
-              style={{
-                padding: '5px 14px', borderRadius: 6, fontSize: '0.72rem', fontWeight: 600, cursor: isValidDotName(planNameInput) ? 'pointer' : 'not-allowed',
-                backgroundColor: isValidDotName(planNameInput) ? 'rgba(99,102,241,0.25)' : 'rgba(99,102,241,0.07)',
-                border: '1px solid rgba(99,102,241,0.4)', color: isValidDotName(planNameInput) ? '#a5b4fc' : '#4b5563',
-              }}
-            >
-              Save Plan
-            </button>
-            <button
-              onClick={() => setShowNamePlan(false)}
-              style={{ padding: '5px 12px', borderRadius: 6, fontSize: '0.72rem', cursor: 'pointer', backgroundColor: 'transparent', border: '1px solid rgba(107,114,128,0.3)', color: '#abafb8' }}
-            >
-              Skip
-            </button>
-          </div>
-        </div>
-      )}
-      {phase === 'done' && planNameSaved && (
-        <div style={{ marginTop: 8, padding: '7px 12px', borderRadius: 8, backgroundColor: 'rgba(34,197,94,0.08)', border: '1px solid rgba(34,197,94,0.25)', fontSize: '0.72rem', color: '#4ade80' }}>
-          ✓ Plan saved as <span style={{ fontFamily: 'monospace', fontWeight: 600 }}>{planNameInput}</span> — recall with &ldquo;Run {planNameInput}&rdquo;
         </div>
       )}
 

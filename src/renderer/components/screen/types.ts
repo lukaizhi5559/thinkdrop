@@ -86,6 +86,11 @@ export interface ScreenOutput {
   durationMs: number;      // 0 = sticky
   dismiss: 'auto' | 'manual';
   blocking: boolean;
+  /** passcode-gated display (guardian blocks) — Esc/click/clear paths all
+   *  skip it; dismissal requires rules:guardian:unlock verification. */
+  locked?: boolean;
+  /** guardian rule that produced this display — unlock stamps a re-arm grace. */
+  ruleId?: string | null;
   /** capture pointer input only while the cursor is over the content —
    *  wheel scroll / swipe nav. No full-window capture, no backdrop dismiss. */
   interactive: boolean;

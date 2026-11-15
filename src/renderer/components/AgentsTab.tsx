@@ -1046,6 +1046,11 @@ function _AgentsTab({ items, onRefresh, onContentResize, modalCardRef }: AgentsT
 
   // Filter agents by type from props (items now includes ALL agents with type field from DB)
   const browserAgents = items.filter(agent => agent.type === 'browser');
+  // Browser-type service agents are retired — the subtab and its create entry
+  // only exist while legacy descriptors are registered server-side
+  // (THINKDROP_LEGACY_BROWSER_AGENTS=1). An empty list ⇒ CLI-only surface.
+  const browserAgentsEnabled = browserAgents.length > 0;
+  const effSubtab = browserAgentsEnabled ? activeSubtab : 'cli';
   const cliAgents = items.filter(agent => agent.type === 'cli' || agent.type === 'api_key');
   // const appAgents = items.filter(agent => agent.type === 'app'); // App agents removed
 
@@ -1798,33 +1803,35 @@ function _AgentsTab({ items, onRefresh, onContentResize, modalCardRef }: AgentsT
         borderBottom: '1px solid rgba(255,255,255,0.1)',
         paddingBottom: 8,
       }}>
+        {browserAgentsEnabled && (
         <button
           onClick={() => setActiveSubtab('browser')}
           style={{
             padding: '6px 14px',
             borderRadius: 6,
             border: 'none',
-            backgroundColor: activeSubtab === 'browser' ? 'rgba(99,102,241,0.25)' : 'transparent',
-            color: activeSubtab === 'browser' ? '#818cf8' : '#abafb8',
+            backgroundColor: effSubtab === 'browser' ? 'rgba(99,102,241,0.25)' : 'transparent',
+            color: effSubtab === 'browser' ? '#818cf8' : '#abafb8',
             fontSize: '0.8rem',
             cursor: 'pointer',
-            fontWeight: activeSubtab === 'browser' ? 500 : 400,
+            fontWeight: effSubtab === 'browser' ? 500 : 400,
             transition: 'all 0.15s',
           }}
         >
           Browser Agents
         </button>
+        )}
         <button
           onClick={() => setActiveSubtab('cli')}
           style={{
             padding: '6px 14px',
             borderRadius: 6,
             border: 'none',
-            backgroundColor: activeSubtab === 'cli' ? 'rgba(16,185,129,0.25)' : 'transparent',
-            color: activeSubtab === 'cli' ? '#10b981' : '#abafb8',
+            backgroundColor: effSubtab === 'cli' ? 'rgba(16,185,129,0.25)' : 'transparent',
+            color: effSubtab === 'cli' ? '#10b981' : '#abafb8',
             fontSize: '0.8rem',
             cursor: 'pointer',
-            fontWeight: activeSubtab === 'cli' ? 500 : 400,
+            fontWeight: effSubtab === 'cli' ? 500 : 400,
             transition: 'all 0.15s',
           }}
         >
@@ -1852,18 +1859,18 @@ function _AgentsTab({ items, onRefresh, onContentResize, modalCardRef }: AgentsT
         <div style={{ flex: 1 }} />
         <button
           onClick={() => {
-            if (activeSubtab === 'browser') setIsCreateBrowserModalOpen(true);
+            if (effSubtab === 'browser') setIsCreateBrowserModalOpen(true);
             else setIsCreateCliModalOpen(true);
           }}
           disabled={isCreating}
-          title={activeSubtab === 'browser' ? 'Create Browser Agent' : 'Create CLI Agent'}
+          title={effSubtab === 'browser' ? 'Create Browser Agent' : 'Create CLI Agent'}
           style={{
             display: 'inline-flex', alignItems: 'center', gap: 4,
             padding: '5px 11px',
             borderRadius: 6,
-            border: `1px solid ${activeSubtab === 'browser' ? 'rgba(99,102,241,0.4)' : 'rgba(16,185,129,0.4)'}`,
-            backgroundColor: activeSubtab === 'browser' ? 'rgba(99,102,241,0.14)' : 'rgba(16,185,129,0.12)',
-            color: activeSubtab === 'browser' ? '#818cf8' : '#10b981',
+            border: `1px solid ${effSubtab === 'browser' ? 'rgba(99,102,241,0.4)' : 'rgba(16,185,129,0.4)'}`,
+            backgroundColor: effSubtab === 'browser' ? 'rgba(99,102,241,0.14)' : 'rgba(16,185,129,0.12)',
+            color: effSubtab === 'browser' ? '#818cf8' : '#10b981',
             fontSize: '0.75rem',
             fontWeight: 500,
             cursor: isCreating ? 'not-allowed' : 'pointer',
@@ -1877,7 +1884,7 @@ function _AgentsTab({ items, onRefresh, onContentResize, modalCardRef }: AgentsT
       </div>
 
       {/* Browser Agents Tab */}
-      {activeSubtab === 'browser' && (
+      {effSubtab === 'browser' && (
       <>
       {/* Edit error toast */}
       {editError && (
@@ -1988,7 +1995,7 @@ function _AgentsTab({ items, onRefresh, onContentResize, modalCardRef }: AgentsT
       )}
 
       {/* CLI Agents Tab */}
-      {activeSubtab === 'cli' && (
+      {effSubtab === 'cli' && (
         <div style={{ marginTop: 8 }}>
           {/* Empty state */}
           {cliAgents.length === 0 && (

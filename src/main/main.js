@@ -67,6 +67,7 @@ protocol.registerSchemesAsPrivileged([
 
 const { startCryptoBridge, stopCryptoBridge } = require('./cryptoBridge');
 const { normalizeScreenOutput } = require('../../shared/screen-output.cjs');
+const { resolveFace, glyphForText, FACE_KEYS } = require('../../shared/emoji-catalog.cjs');
 // Pending gather-question lifecycle — single authority for every "waiting for
 // the user's answer" wait (batch cards + serial legacy). All settles/drains
 // route through it so every cancel entrypoint reaches terminal state.
@@ -105,6 +106,157 @@ function safeSendUnified(channel, ...args) {
         _notifyQuestion(_am.question || _am.text, _am.taskId ? 'queue' : 'results');
       }
     } catch (_) {}
+  }
+  // Avatar bubble — while avatar mode owns the surface, mirror the response
+  // stream onto the GhostLayer so the avatar's speech bubble stays in sync.
+  if (_avatarMode) {
+    try { _relayAvatarStream(channel, args[0]); } catch (_) {}
+  }
+}
+
+// Normalizes the unified-window event stream into avatar:stream messages for
+// the GhostLayer's AvatarCompanion. Text answers ride ws-bridge:message; task-
+// routed answers settle via task:complete (the feed does the same), and
+// web/image results travel as \x00ITEMS\x00/\x00SOURCES\x00 sentinel chunks.
+function _relayAvatarStream(channel, payload) {
+  // Raw passthrough — the embedded AutomationProgress inside the avatar
+  // bubble subscribes to these channels itself, so it needs the verbatim
+  // events, not the bubble-shaped translations below. unified:set-prompt and
+  // queue:enqueued are its new-prompt reset triggers — without them a stale
+  // run card survives into the next run.
+  if (channel === 'automation:progress' || channel === 'gather:question_batch'
+    || channel === 'ws-bridge:message' || channel === 'plan:approved'
+    || channel === 'app-control:mode-change' || channel === 'scan:discovery'
+    || channel === 'unified:set-prompt' || channel === 'queue:enqueued') {
+    _sendGhostChannel(channel, payload);
+  }
+  if (channel === 'unified:set-prompt') {
+    // Prompts that didn't originate in avatar:submit (voice, overlay handoffs,
+    // queued resumes) still open a scrollback entry. The renderer dedupes —
+    // avatar-originated prompts already sent type:'prompt' at submit time and
+    // hit this path again when the queue dispatches them.
+    const t = typeof payload === 'string' ? payload : (payload?.prompt || payload?.text || '');
+    if (t) _sendGhostChannel('avatar:stream', { type: 'prompt', text: t });
+    return;
+  }
+  if (channel === 'terminal:activity') {
+    const line = typeof payload?.line === 'string' ? payload.line.trim() : '';
+    if (line) _sendGhostChannel('avatar:stream', { type: 'thinking', label: line.slice(0, 100) });
+    return;
+  }
+  if (channel === 'planning:moved') {
+    _sendGhostChannel('avatar:stream', { type: 'thinking', label: 'Moved to planning…', fresh: true });
+    return;
+  }
+  if (channel === 'plan:question') {
+    const question = String(payload?.question || 'Choose an option');
+    const options = Array.isArray(payload?.options) ? payload.options : [];
+    const choices = options.slice(0, 6).map((o, i) => `${i + 1}. ${o?.label || o?.value || o}`).join(' · ');
+    _sendGhostChannel('avatar:stream', {
+      type: 'question',
+      label: [question, choices].filter(Boolean).join(' — ').slice(0, 500),
+    });
+    return;
+  }
+  if (channel === 'plan:check') {
+    if (payload?.allClear) {
+      _sendGhostChannel('avatar:stream', {
+        type: 'question',
+        label: 'Plan ready — say "run it" or press ⌥R',
+      });
+    }
+    return;
+  }
+  if (channel === 'ws-bridge:message') {
+    const m = payload;
+    const t = typeof m?.text === 'string' ? m.text : '';
+    if (m?.type === 'chunk' && t.startsWith('\x00')) {
+      // Sentinel chunk — structured payload, never answer text.
+      const mm = /^\x00([A-Z_]+)\x00([\s\S]*)$/.exec(t);
+      if (!mm) return;
+      const [, tag, raw] = mm;
+      if (tag === 'ITEMS' || tag === 'SOURCES') {
+        try {
+          const arr = JSON.parse(raw);
+          if (Array.isArray(arr) && arr.length) {
+            _sendGhostChannel('avatar:stream', { type: tag === 'ITEMS' ? 'items' : 'sources', items: arr });
+          }
+        } catch (_) {}
+      } else if (tag === 'ENGINE' && raw) {
+        _sendGhostChannel('avatar:stream', { type: 'engine', text: raw });
+      } else if (tag === 'REPLACE') {
+        // The placeholder ack ("Checking on that…") gets swapped for the real
+        // answer via this sentinel — forward it or the bubble never updates.
+        _sendGhostChannel('avatar:stream', { type: 'replace', text: raw });
+      } else if (tag === 'SEARCHING' && raw) {
+        _sendGhostChannel('avatar:stream', { type: 'thinking', label: `Searching ${raw.trim()}…` });
+      }
+      return;
+    }
+    if (m?.type === 'voice_utterance' && m?.role === 'assistant') {
+      _sendGhostChannel('avatar:stream', { type: 'utterance', text: m.text || '' });
+      return;
+    }
+    _sendGhostChannel('avatar:stream', m);
+    return;
+  }
+  if (channel === 'task:created') {
+    _sendGhostChannel('avatar:stream', { type: 'thinking', label: 'Working…', fresh: true });
+    return;
+  }
+  if (channel === 'task:progress') {
+    const label = payload?.node || payload?.step || payload?.status;
+    if (typeof label === 'string' && label.length && label.length <= 60) {
+      _sendGhostChannel('avatar:stream', { type: 'thinking', label });
+    }
+    return;
+  }
+  if (channel === 'automation:progress') {
+    // ask_user events carry the question — surface it as a question bubble
+    // (answerable through the avatar input via gp.tryResolveFreeText) instead
+    // of a transient thinking label that silently parks the run.
+    if (payload?.type === 'ask_user') {
+      const q = payload?.question || payload?.message || 'Needs your input';
+      _sendGhostChannel('avatar:stream', { type: 'question', label: String(q).slice(0, 300) });
+      return;
+    }
+    const label = payload?.message || payload?.status || payload?.step;
+    if (typeof label === 'string' && label.length && label.length <= 60) {
+      _sendGhostChannel('avatar:stream', { type: 'thinking', label });
+    }
+    return;
+  }
+  if (channel === 'gather:question_batch') {
+    if (payload?.active) {
+      const q0 = Array.isArray(payload?.questions) ? payload.questions[0] : null;
+      const label = q0?.question || q0?.text || 'Needs your input';
+      _sendGhostChannel('avatar:stream', { type: 'question', label: String(label).slice(0, 300) });
+    } else {
+      _sendGhostChannel('avatar:stream', { type: 'thinking', label: 'Resuming…', fresh: true });
+    }
+    return;
+  }
+  if (channel === 'task:complete') {
+    const d = payload || {};
+    const status = d.status || (d.error ? 'failed' : 'done');
+    // User-blocked statuses park the task on a question — surface it so the
+    // avatar doesn't freeze on the last working label.
+    if (status === 'waiting-for-input' || status === 'awaiting-approval' || status === 'auth-required') {
+      // task:complete carries no question text — the specific question already
+      // went out via gather:question_batch/ask_user. An empty label tells the
+      // renderer "still parked" without overwriting that specific text.
+      const q = d.question || d.pendingQuestion?.question || d.pendingQuestion?.text || '';
+      _sendGhostChannel('avatar:stream', { type: 'question', label: String(q).slice(0, 300) });
+      return;
+    }
+    // Other non-terminal statuses (running/needs_plan/plan_update) aren't
+    // answers — forwarding them would misreport as errors or empty 'done's.
+    if (status !== 'done' && status !== 'cancelled' && status !== 'failed') return;
+    _sendGhostChannel('avatar:stream', {
+      type: status === 'done' ? 'done' : (status === 'cancelled' ? 'cancelled' : 'error'),
+      text: status === 'done' ? (d.answer || d.result || '') : (d.error || d.result || ''),
+      items: Array.isArray(d.items) ? d.items : undefined,
+    });
   }
 }
 
@@ -189,12 +341,16 @@ const screenDisplays = new Map(); // id -> { blocking: boolean, arrowNav: boolea
 // while clicks still pass through; the renderer reports pointer-enter/leave
 // over interactive regions, and we lift click-through only while hovered.
 let _hoverInteractive = false;
+// Mid-drag lift — the uiohook mouse-move watcher sets this while the pointer
+// is inside the avatar's screen rect. Kept separate from _hoverInteractive
+// (renderer-owned) so the two never fight over the same flag.
+let _avatarZoneLift = false;
 
 function _applyScreenClickThrough() {
   if (!ghostLayerWindow || ghostLayerWindow.isDestroyed()) return;
   const blocking = [...screenDisplays.values()].some(d => d && d.blocking);
   try {
-    if (blocking || _hoverInteractive || controlLock || _sceneControlMode || _historyViewOpen) {
+    if (blocking || _hoverInteractive || _avatarZoneLift || controlLock || _sceneControlMode || _historyViewOpen) {
       ghostLayerWindow.setIgnoreMouseEvents(false);
     } else {
       ghostLayerWindow.setIgnoreMouseEvents(true, { forward: true });
@@ -240,7 +396,7 @@ function _suppressEscBriefly(ms = 1200) {
 // flipped; if it didn't, escalate to a hide/showInactive order-out (a window
 // that is ordered out cannot be key; showInactive re-shows without retaking it).
 async function _releaseOverlayKeyFocus() {
-  const wins = [unifiedWindow, promptCaptureWindow, resultsWindow];
+  const wins = [unifiedWindow, promptCaptureWindow, resultsWindow, avatarInputWindow];
   let anyFocused = false;
   for (const win of wins) {
     try {
@@ -280,6 +436,35 @@ function _guardOverlayWindowFocus(win) {
   });
 }
 
+// Right-click spelling suggestions — the builtin spellchecker (macOS native
+// APIs) underlines misspellings once a field opts in via spellcheck="true";
+// this adds the suggestion menu: pick a correction, learn a word, or use the
+// standard edit roles.
+function _attachSpellcheckMenu(win) {
+  if (!win || win.isDestroyed() || win._spellMenuAttached) return;
+  win._spellMenuAttached = true;
+  win.webContents.on('context-menu', (_e, params) => {
+    if (!params.isEditable) return;
+    try {
+      const { Menu, MenuItem } = require('electron');
+      const menu = new Menu();
+      for (const s of params.dictionarySuggestions || []) {
+        menu.append(new MenuItem({ label: s, click: () => win.webContents.replaceMisspelling(s) }));
+      }
+      if (params.misspelledWord) {
+        if (menu.items.length) menu.append(new MenuItem({ type: 'separator' }));
+        menu.append(new MenuItem({
+          label: 'Add to Dictionary',
+          click: () => win.webContents.session.addWordToSpellCheckerDictionary(params.misspelledWord),
+        }));
+        menu.append(new MenuItem({ type: 'separator' }));
+      }
+      for (const role of ['cut', 'copy', 'paste', 'selectAll']) menu.append(new MenuItem({ role }));
+      if (menu.items.length) menu.popup({ window: win });
+    } catch (_) {}
+  });
+}
+
 function _onEscClear() {
   if (Date.now() < _escSuppressUntil) {
     // Safety net for a key that slipped through after re-arm.
@@ -296,6 +481,12 @@ function _onEscClear() {
     const taskId = controlLock.taskId;
     console.log(`[Screen] Esc pressed during AI-control lock — cancelling task ${taskId || '(none)'}`);
     _cancelLockedTask();
+    return;
+  }
+  // Avatar response bubble → Esc dismisses it (the bubble is the only reason
+  // Esc is globally captured in avatar mode — it frees on dismiss).
+  if (_avatarBubbleShowing) {
+    _sendGhostChannel('avatar:stream', { type: 'dismiss-bubble' });
     return;
   }
   // A doc display in source-edit mode gets first dibs — Esc exits the editor,
@@ -324,7 +515,7 @@ function _cancelLockedTask() {
 }
 
 function _updateEscShortcut() {
-  const want = screenDisplays.size > 0 || !!controlLock;
+  const want = screenDisplays.size > 0 || !!controlLock || _avatarBubbleShowing;
   if (want && !_escRegistered) {
     try {
       _escRegistered = globalShortcut.register('Escape', _onEscClear);
@@ -400,6 +591,8 @@ function _sendNav(dir) {
   }
 }
 
+const _navKeyDirs = new Map(); // accel -> dir currently bound (re-register on change)
+
 function _updateNavShortcut() {
   // No displays → control mode can't stay armed.
   if (screenDisplays.size === 0 && _sceneControlMode) _setSceneControlMode(false);
@@ -415,13 +608,26 @@ function _updateNavShortcut() {
   if (_sceneControlMode) {
     for (const [accel, dir] of Object.entries(_CTRL_KEYS)) want.set(accel, dir);
   }
+  // Avatar history browse — Optyon's Up/Down scrollback. Set after the display
+  // loop so it wins ties: a user who just clicked the avatar meant the avatar.
+  if (_avatarHistoryArmed) { want.set('Up', 'avatar_up'); want.set('Down', 'avatar_down'); }
   for (const [accel, dir] of want) {
+    // A held accel whose meaning changed (display key → avatar browse) must be
+    // re-registered — the callback captured the old dir at register time.
+    if (_navKeyDirs.has(accel) && _navKeyDirs.get(accel) !== dir) {
+      try { globalShortcut.unregister(accel); } catch (_) {}
+      _navKeys.delete(accel); _navKeyDirs.delete(accel);
+    }
     if (!_navKeys.has(accel)) {
       try {
         if (globalShortcut.register(accel, () => {
           if (dir === 'control_mode') { _setSceneControlMode(!_sceneControlMode); return; }
+          if (dir === 'avatar_up' || dir === 'avatar_down') {
+            _sendGhostChannel('avatar:stream', { type: 'history-nav', dir: dir === 'avatar_up' ? 'up' : 'down' });
+            return;
+          }
           _sendNav(dir);
-        })) _navKeys.add(accel);
+        })) { _navKeys.add(accel); _navKeyDirs.set(accel, dir); }
         else console.warn(`[Screen] ${accel} registration failed — key nav unavailable`);
       } catch (e) {
         console.warn(`[Screen] ${accel} registration error:`, e.message);
@@ -431,7 +637,7 @@ function _updateNavShortcut() {
   for (const key of [..._navKeys]) {
     if (!want.has(key)) {
       try { globalShortcut.unregister(key); } catch (_) {}
-      _navKeys.delete(key);
+      _navKeys.delete(key); _navKeyDirs.delete(key);
     }
   }
 }
@@ -442,6 +648,21 @@ function _updateNavShortcut() {
  * plan-check card's "Open plan"). Returns { ok:true, id } | { ok:false, error }.
  */
 async function _displayOnScreen(parsed) {
+  // Avatar surface — while Optyon is up, an emoji display IS a companion
+  // reaction, not a fullscreen card. Intercept BEFORE normalize so an
+  // emoji-missing payload ("show me a sad face") still morphs the face —
+  // the raw fields carry enough to resolve.
+  if (parsed && parsed.kind === 'emoji' && _avatarMode && _avatarVisible) {
+    const face = await _resolveAvatarFace(
+      parsed.emoji || [parsed.title, parsed.text, parsed.mood].filter(Boolean).join(' '));
+    if (face) {
+      _sendGhostChannel('avatar:face', {
+        face,
+        ttlMs: typeof parsed.durationMs === 'number' && parsed.durationMs > 0 ? parsed.durationMs : undefined,
+      });
+      return { ok: true, id: parsed.id || `av-face-${Date.now()}`, avatar: true };
+    }
+  }
   const norm = normalizeScreenOutput(parsed);
   if (!norm.ok) return { ok: false, error: norm.error };
   const output = norm.output;
@@ -496,6 +717,12 @@ async function _displayOnScreen(parsed) {
 
   screenDisplays.set(output.id, {
     blocking: output.blocking === true,
+    // Passcode-gated displays (guardian blocks) survive every unauthenticated
+    // clear path — Esc, backdrop click, /screen/clear. Only the
+    // rules:guardian:unlock handler clears them (force), after stamping a
+    // re-arm grace on ruleId so an unlock isn't instantly re-blocked.
+    locked: output.locked === true,
+    ruleId: output.ruleId || null,
     arrowNav: (output.kind === 'deck' && output.deck && output.deck.controls === true)
       // Multi-image carousels navigate with ←/→ too.
       || (output.kind === 'image' && Array.isArray(output.images) && output.images.length > 1),
@@ -512,8 +739,9 @@ async function _displayOnScreen(parsed) {
     ghostLayerWindow.webContents.send('ghostlayer:display', output);
     // A blocking editable doc is a real editor surface — the ghost window is
     // focusable:false by design, so typing needs an explicit flip while the
-    // display is live. Restored when the display clears (clearScreenDisplays).
-    if (output.kind === 'doc' && output.doc?.editable && output.blocking) {
+    // display is live. Same for a locked guardian curtain: its passcode input
+    // needs key events. Restored when the display clears (clearScreenDisplays).
+    if ((output.kind === 'doc' && output.doc?.editable && output.blocking) || output.locked === true) {
       try {
         ghostLayerWindow.setFocusable(true);
         ghostLayerWindow.focus();
@@ -524,7 +752,8 @@ async function _displayOnScreen(parsed) {
   return { ok: true, id: output.id };
 }
 
-/** Release the doc-editor focus flip — window returns to focusable:false. */
+/** Release the input-focus flip (editable doc / locked passcode field) —
+ *  window returns to focusable:false. */
 function _releaseDocFocus() {
   if (!ghostLayerWindow || ghostLayerWindow.isDestroyed()) return;
   try {
@@ -535,29 +764,55 @@ function _releaseDocFocus() {
 
 /**
  * Shared clear path for /screen/clear, the Esc shortcut, and future callers.
- * id=null clears all. The renderer confirms vacancy via 'ghostlayer:display-idle'.
+ * id=null clears all UNLOCKED displays — locked (passcode-gated) curtains are
+ * skipped so a child can't Esc or clear-request past them; the
+ * rules:guardian:unlock path passes force to remove its own id.
+ * Non-force clear-all sends per-id clears rather than the {id:null}
+ * broadcast — a broadcast would out-phase locked items in the renderer while
+ * main still tracks them → desync.
  */
-function clearScreenDisplays(id = null) {
-  // Doc focus flip lives per-display — releasing here covers both the
-  // single-clear and clear-all paths.
-  const hadDocFocus = id
-    ? screenDisplays.get(id)?.editableDoc
-    : [...screenDisplays.values()].some(d => d?.editableDoc);
-  if (hadDocFocus) _releaseDocFocus();
-  if (id) screenDisplays.delete(id);
-  else screenDisplays.clear();
+function clearScreenDisplays(id = null, { force = false } = {}) {
+  const ids = id ? [id] : [...screenDisplays.keys()];
+  const cleared = [];
+  let skippedLocked = false;
+  for (const cid of ids) {
+    const d = screenDisplays.get(cid);
+    if (!d) continue;
+    if (d.locked && !force) { skippedLocked = true; continue; }
+    screenDisplays.delete(cid);
+    cleared.push(cid);
+  }
+  // Input focus flip lives per-display (editable doc source view, locked
+  // passcode field) — release once nothing on screen still needs typing.
+  const needsFocus = [...screenDisplays.values()].some(d => d?.editableDoc || d?.locked);
+  if (!needsFocus) _releaseDocFocus();
   _applyScreenClickThrough();
   _updateEscShortcut();
   _updateNavShortcut();
-  if (ghostLayerWindow && !ghostLayerWindow.isDestroyed()) {
-    try { ghostLayerWindow.webContents.send('ghostlayer:display-clear', { id: id || null }); } catch (_) {}
+  if (!ghostLayerWindow || ghostLayerWindow.isDestroyed()) return;
+  // Clear messages: a locked skip sends nothing (the curtain must stay). An
+  // id that wasn't tracked still gets its clear — the renderer may hold a
+  // desynced item. Same for clear-all with nothing tracked: the {id:null}
+  // broadcast mops up ghost items. Non-force clear-all with some locked
+  // survivors sends per-id clears only — a broadcast would out-phase the
+  // locked items renderer-side while main still tracks them → desync.
+  const out = [];
+  if (id) {
+    if (!skippedLocked) out.push(id);
+  } else if (force || (cleared.length === 0 && !skippedLocked)) {
+    out.push(null);
+  } else {
+    out.push(...cleared);
+  }
+  for (const oid of out) {
+    try { ghostLayerWindow.webContents.send('ghostlayer:display-clear', { id: oid }); } catch (_) {}
   }
 }
 
 // hideGhostLayer for non-display features — a live screen display keeps the
 // window up even when app.agent clears its highlights.
 function maybeHideGhostLayer() {
-  if (screenDisplays.size === 0) hideGhostLayer();
+  if (screenDisplays.size === 0 && !(_avatarMode && _avatarVisible)) hideGhostLayer();
 }
 
 function _sendGhost(data) {
@@ -577,7 +832,7 @@ function _restorePanelFromDrop() {
   dropSessionActive = false;
   _dropBoundaryToken++; // invalidate any in-flight session boundary draw
   _sendGhost({ type: 'progress_clear' });
-  try { if (typeof hideGhostLayer === 'function') hideGhostLayer(); } catch (_) {}
+  try { if (typeof hideGhostLayer === 'function' && !(_avatarMode && _avatarVisible)) hideGhostLayer(); } catch (_) {}
   if (unifiedWindow && !unifiedWindow.isDestroyed() && unifiedWindow._dropHidden) {
     unifiedWindow._dropHidden = false;
     try { unifiedWindow.showInactive(); } catch (_) {}
@@ -928,7 +1183,10 @@ function _warmVoiceWorker(attempt = 1) {
     if (res.statusCode !== 200) { retry(); return; }
     if (_voiceSessionActive) return;
     _postJson(new URL('/voice.session.start', svcUrl), { mode: 'warm' })
-      .then(() => console.log('[Voice] Warm start — worker resident, SR primed, not listening'))
+      .then(() => {
+        console.log('[Voice] Warm start — worker resident, SR primed, not listening');
+        _syncVoiceLang(); // land a saved language pref on the fresh worker
+      })
       .catch(err => console.warn('[Voice] Warm start failed:', err.message));
   });
   req.on('timeout', () => { req.destroy(); });
@@ -950,6 +1208,16 @@ let activeCronProgressCallback = null;
 // Playwright Chrome worker and relays events to POST /voice.event below.
 let _voiceSessionActive = false;
 let _voiceLang = 'en';
+// User-chosen SR language (BCP-47) — applied to PTT + session dictation via
+// /voice.lang on the voice-bridge; null = system default (navigator.language).
+let _voiceLangPref;
+function _getVoiceLangPref() {
+  if (_voiceLangPref === undefined) _voiceLangPref = _loadSettings().voiceLang || null;
+  return _voiceLangPref;
+}
+function _syncVoiceLang() {
+  _postJson(_pttServiceUrl('/voice.lang'), { lang: _getVoiceLangPref() }).catch(() => {});
+}
 // 'pipeline' | 'realtime' — set by session-start opts and server 'mode' events.
 let _voiceMode = null;
 // Most recent voice-sourced handoff task — spoken/tool cancels target it.
@@ -1364,11 +1632,33 @@ function startOverlayControlServer() {
               }
               const waited = Date.now() - waitStart;
               if (waited > 60) console.log(`[PTT] drained in-flight selection capture before transcript relay (${waited}ms)`);
-              safeSendUnified('ptt:transcript', { transcript: evt.text || '', detectedLanguage: evt.lang || 'en' });
+              const cleaned = _cleanTranscript(evt.text || '');
+              if (!cleaned) break; // empty transcript never opens an input
+              if (_avatarMode) {
+                // Avatar lane — review-then-send: prefill the mini input at the
+                // avatar; Enter submits, Esc discards. No auto-submit here.
+                if (avatarInputWindow && !avatarInputWindow.isDestroyed() && avatarInputWindow.isVisible()) {
+                  // Input already open (e.g. holding dropped-attachment chips) —
+                  // MERGE the transcript into it; a full reset payload would
+                  // wipe the chips and look like a second prompt appearing.
+                  _sendAvatarInput({ pttText: cleaned });
+                } else {
+                  openAvatarInput({ at: 'avatar', prefill: cleaned });
+                }
+              } else {
+                safeSendUnified('ptt:transcript', { transcript: cleaned, detectedLanguage: evt.lang || 'en' });
+              }
               break;
             }
             case 'ptt-interim':
-              safeSendUnified('ptt:interim', { text: evt.text || '' });
+              if (_avatarMode) {
+                _sendGhostChannel('avatar:ptt-interim', { text: evt.text || '' });
+                // Live dictation into the open input too — the field shows
+                // base-text + interim while the hold is in flight.
+                if (avatarInputWindow && !avatarInputWindow.isDestroyed() && avatarInputWindow.isVisible()) {
+                  _sendAvatarInput({ interim: evt.text || '' });
+                }
+              } else safeSendUnified('ptt:interim', { text: evt.text || '' });
               break;
             case 'level':
               safeSendUnified('voice:level', { level: evt.level || 0 });
@@ -1386,7 +1676,7 @@ function startOverlayControlServer() {
               _sendGhostChannel('voice:state', { state, reason: evt.reason });
               if (state === 'disconnected' || state === 'error') {
                 _voiceSessionActive = false;
-                _voiceMuted = false;
+                _clearVoiceMute();
                 safeSendUnified('voice:session', { active: false, reason: evt.reason });
               }
               break;
@@ -4180,6 +4470,7 @@ let _planningMode = { active: false, planId: null, planName: null, planFile: nul
 function _setPlanningMode(mode) {
   _planningMode = { active: !!mode?.active, planId: mode?.planId || null, planName: mode?.planName || null, planFile: mode?.planFile || null, escalated: !!mode?.escalated };
   safeSendUnified('planning:state', _planningMode);
+  _sendGhostChannel('avatar:planning', _planningMode);
 }
 
 /**
@@ -5162,7 +5453,7 @@ let _userHasMovedPanel = false;
 //
 // COLLAPSED_HEIGHT = header (row1 ~36) + tabbar (~40) + input area (~120) + footer/padding.
 // Keep in sync with the same constant in src/renderer/components/utils/useDynamicHeight.ts.
-const UNIFIED_COLLAPSED_HEIGHT = 220;
+const UNIFIED_COLLAPSED_HEIGHT = 450;
 const UNIFIED_MIN_WIDTH = 400;
 const UNIFIED_MAX_WIDTH = 800;
 const UNIFIED_MARGIN = 20;
@@ -5340,6 +5631,12 @@ function initStateGraph() {
         llmBackend,
         gatherCredentialCallback: _makeGatherCredentialCallback(null),
         ipcBroadcast: (channel, data) => {
+          // Handoff tasks take this broadcast path, NOT safeSendUnified — the
+          // avatar relay must run here too or task-routed answers never reach
+          // Optyon's bubble (placeholders showed, answers didn't).
+          if (_avatarMode) {
+            try { _relayAvatarStream(channel, data); } catch (_) {}
+          }
           // Credential-shaped ask_user from a cli-family agent → intercept into
           // the terminal setup lane instead of dead-ending on a chat card.
           // Suppress the broadcast now; _interceptCredentialAsk re-forwards the
@@ -5597,6 +5894,16 @@ let _uIOhookInstance = null;
 let _mouseDownPos = null;            // { x, y, t } from last outside mousedown (drag tracking)
 let _lastOutsideClick = null;        // { x, y, t } — double-click detection
 let _dragGestureSeen = false;        // once per drag — a >5px drag candidate; validated at mouseup
+// Button-held drag tracking for the file-drop hoist below — a text-selection
+// drag crossing Optyon's zone must NOT lift click-through (the ghost would
+// swallow the app's mouseup and the selection never finalizes → arm-validation
+// reads no text → select→⌥R dies). Only drags sourced from file managers
+// hoist; plain hover still lifts (it's the avatar's only proximity detector).
+let _dragBtnDown = false;            // left button currently held
+let _dragFromUs = false;             // drag started on a ThinkDrop surface (Optyon reposition etc.)
+let _dragAppQueried = false;         // frontmost-app query already ran this drag
+let _dragAppName = null;             // frontmost app at zone entry — file drags keep the source app frontmost
+const _FILE_DRAG_SOURCES = new Set(['Finder', 'Path Finder', 'ForkLift', 'Commander One', 'Transmit', 'QSpace']);
 let _validationInFlight = false;     // gesture validation running (AX/probe ladder)
 let _validationQueued = false;       // a second drag fired mid-validation — re-run once current ends
 let _userCopiedDuringProbe = false;  // real Cmd+C landed during validation — adopt it, veto restore
@@ -5629,6 +5936,15 @@ let _roptHoldTimer = null;
 let _loptArmTimer = null;
 let _roptPendingTapTimer = null;   // single-tap waits out the double-tap window
 let _voiceMuted = false;           // ROpt-tap voice mute state (mute-state relay)
+// Session-end mute reset — the GhostLayer "Muted — tap ⌥R" pill + VoiceButton
+// tint only move on mute-state events, so clearing the flag alone left the
+// pill visible after the S2S session stopped.
+function _clearVoiceMute() {
+  if (!_voiceMuted) return;
+  _voiceMuted = false;
+  safeSendUnified('voice:mute-state', { muted: false });
+  _sendGhostChannel('voice:mute-state', { muted: false });
+}
 let _roptOtherKey = false;           // non-modifier key seen while ROpt held — aborts tap/hold
 let _roptConsumed = false;           // this ROpt press already acted (confirm/cancel/chord)
 let _roptLastTapAt = 0;
@@ -5636,6 +5952,18 @@ let _pttActive = false;              // ROpt-hold PTT in flight
 let _roptCancelTimer = null;         // ROpt-hold → "Cancelling in 3…2…1" countdown interval
 let _roptCancelLeft = 0;             // countdown seconds remaining while armed
 let _inflightCommsReq = null;        // live /comms.process request — a newer prompt destroys it
+
+// ── Avatar mode ("Optyons") ─────────────────────────────────────────────────
+// _avatarMode picks the avatar as the active surface (the overlay stays
+// hidden); _avatarVisible tracks the avatar itself — ⌥R double-tap shows/hides
+// it. Both hidden = "quiet" state (see _quietState): PTT, selection arming,
+// and ⌥R-tap confirms deactivate; double-tap is the wake.
+let _avatarMode = false;
+let _avatarVisible = false;
+let _avatarPos = null;             // { x, y } screen coords of avatar top-left
+let _avatarColor = '#60a5fa';
+let avatarInputWindow = null;      // small focusable prompt panel (?mode=avatarinput)
+let _avatarPendingFiles = [];      // files dropped on Optyon, awaiting the next prompt
 // Paused serial-lane state — set when the thin recovery handler parks on
 // ASK_USER, cleared on resume or abort. Declared at module scope so
 // _automationCancelable/_cancelAutomationRun can see it (was IPC-closure local).
@@ -5667,7 +5995,7 @@ function _selLog(msg) {
  * Check if a point is inside any ThinkDrop window (so we can ignore internal clicks).
  */
 function _isInsideThinkDropWindow(x, y) {
-  const windows = [unifiedWindow, promptCaptureWindow].filter(w => w && !w.isDestroyed());
+  const windows = [unifiedWindow, promptCaptureWindow, avatarInputWindow].filter(w => w && !w.isDestroyed());
   for (const win of windows) {
     try {
       const b = win.getBounds();
@@ -5677,8 +6005,18 @@ function _isInsideThinkDropWindow(x, y) {
   return false;
 }
 
+// The GhostLayer itself is fullscreen — clicks on it must NOT count as "inside"
+// or selection-drag detection dies. The avatar's hover zone is the exception:
+// mousedowns there seed no drags and disarm no selection (same as our panels).
+function _isOnAvatar(x, y) {
+  if (!(_avatarMode && _avatarVisible)) return false;
+  const p = _avatarPos || _avatarDefaultPos();
+  const pad = 30; // matches AvatarCompanion's inflated hover zone
+  return x >= p.x - pad && x <= p.x + 104 + pad && y >= p.y - pad && y <= p.y + 104 + pad;
+}
+
 function _overlayHasFocus() {
-  return [unifiedWindow, promptCaptureWindow].some(
+  return [unifiedWindow, promptCaptureWindow, avatarInputWindow].some(
     w => w && !w.isDestroyed() && w.isFocused());
 }
 
@@ -5733,8 +6071,12 @@ function _broadcastSelectionState() {
     } catch (_) {}
     if (!dropSessionActive) showGhostLayer();
     _sendGhostChannel('selection:armed', { ...payload, anchor });
+    if (_avatarMode) {
+      _sendGhostChannel('avatar:context', { armed: true, sourceApp: _selectionApp, excerpt: (_capturedSelectionText || '').slice(0, 140) });
+    }
   } else {
     _sendGhostChannel('selection:armed', { armed: false });
+    if (_avatarMode) _sendGhostChannel('avatar:context', { armed: false, captured: false });
   }
 }
 
@@ -5752,7 +6094,21 @@ function _dropDeliveredChip() {
   _chipAutoDelivered = false;
 }
 
+// Drop held highlight context entirely — the X on an input chip, or ⌥L+⌥R
+// while a capture is held. _disarmSelection alone leaves _capturedSelectionText
+// live (by design — consume needs it to outlive the arm), so an explicit clear
+// must also reach the avatar's held ring, the open avatar input's chip, and any
+// delivered overlay chip, or the highlight still rides the next prompt.
+function _clearSelectionCapture(reason) {
+  _dropDeliveredChip(); // clears _capturedSelectionText + pulls auto-chips
+  _disarmSelection(reason || 'cleared');
+  if (_avatarMode) _sendGhostChannel('avatar:context', { armed: false, captured: false });
+  _sendAvatarInput({ contextClear: true });
+}
+
 function _armSelection(sourceApp) {
+  // Quiet state (overlay + avatar both hidden) — no surface to arm against.
+  if (_quietState()) return;
   const wasArmed = _selectionArmed;
   _selectionArmGen++;
   _selectionArmed = true;
@@ -6190,6 +6546,16 @@ async function _captureArmedToChip(refocusWindow, { auto = false } = {}) {
   }
   _capturedSelectionText = text;
   _capturedArmGen = gen;
+  if (_avatarMode) {
+    // Avatar lane: hold the text for the next avatar submit and surface the
+    // "holding context" state — there's no unified input chip to deliver to.
+    if (_selectionArmed) _disarmSelection('captured-to-chip');
+    _sendGhostChannel('avatar:context', { armed: false, captured: true, excerpt: text.slice(0, 140) });
+    // An already-open avatar input gets the chip live — otherwise it only
+    // learns the excerpt on its next open.
+    _sendAvatarInput({ contextExcerpt: text.slice(0, 140), contextOnly: true });
+    return;
+  }
   _deliverSelectionChip(text, { auto });
   if (_selectionArmed) {
     // The disarm broadcast already pushes captured+excerpt to voice (the text
@@ -6250,6 +6616,8 @@ async function _consumeSelectionForPrompt(prompt, selectedText, { lane = 'typed'
   _disarmSelection('consumed');
   _selectionSentToChip = false;
   _chipAutoDelivered = false;
+  // Clear the avatar's "holding context" state — the text now rides this prompt.
+  _sendGhostChannel('avatar:context', { armed: false, captured: false });
   if (!captured || !captured.trim()) return { prompt, selectedText };
 
   const trimmed = captured.trim();
@@ -6358,16 +6726,39 @@ function _pttServiceUrl(path) {
   return new URL(path, process.env.VOICE_SERVICE_URL || 'http://127.0.0.1:3006');
 }
 
+// Rule-based STT cleanup — no model call: collapse whitespace, drop leading
+// filler interjections, collapse repeated words, capitalize, and add terminal
+// punctuation (a ? when the sentence opens like a question). Idempotent.
+function _cleanTranscript(text) {
+  let t = String(text || '').replace(/\s+/g, ' ').trim();
+  if (!t) return t;
+  t = t.replace(/^(?:(?:um+|uh+|erm?|hmm+|like),?\s+)+/i, '');
+  t = t.replace(/\b(\w+)(\s+\1\b)+/gi, '$1');
+  t = t.replace(/\bi\b/g, 'I');
+  t = t.charAt(0).toUpperCase() + t.slice(1);
+  if (!/[.!?…]["')\]]?\s*$/.test(t)) {
+    const isQ = /^(who|what|what's|when|where|why|how|how's|can|could|would|should|shall|is|are|am|do|does|did|will|won't|may|might|have|has)\b/i.test(t);
+    t += isQ ? '?' : '.';
+  }
+  return t;
+}
+
 function pttStart() {
   if (_pttActive) return;
   _pttActive = true;
   console.log('🎙️ [PTT] ROpt hold — start (voice-bridge SR)');
-  _postJson(_pttServiceUrl('/voice.ptt.start'), {}).catch(err =>
+  _postJson(_pttServiceUrl('/voice.ptt.start'), { lang: _getVoiceLangPref() }).catch(err =>
     console.warn('[PTT] voice.ptt.start failed:', err.message));
-  safeSendUnified('voice:ptt-start');
-  // PTT fired with the panel hidden — surface it so the transcript is visible.
-  if (unifiedWindow && !unifiedWindow.isDestroyed() && !unifiedWindow.isVisible()) {
-    showUnifiedOverlay();
+  if (_avatarMode) {
+    // Avatar lane — listening state + interim pill live on the GhostLayer;
+    // the overlay stays hidden.
+    _sendGhostChannel('avatar:ptt-start');
+  } else {
+    safeSendUnified('voice:ptt-start');
+    // PTT fired with the panel hidden — surface it so the transcript is visible.
+    if (unifiedWindow && !unifiedWindow.isDestroyed() && !unifiedWindow.isVisible()) {
+      showUnifiedOverlay();
+    }
   }
 }
 
@@ -6377,7 +6768,8 @@ function _pttEnd(discard) {
   console.log(`🎙️ [PTT] ROpt release — ${discard ? 'abort' : 'stop'}`);
   _postJson(_pttServiceUrl('/voice.ptt.stop'), { discard }).catch(err =>
     console.warn('[PTT] voice.ptt.stop failed:', err.message));
-  safeSendUnified('voice:ptt-stop');
+  if (_avatarMode) _sendGhostChannel('avatar:ptt-stop');
+  else safeSendUnified('voice:ptt-stop');
 }
 const pttStop = () => _pttEnd(false);
 const pttAbort = () => _pttEnd(true);
@@ -6436,7 +6828,7 @@ function _automationCancelable() {
 
 function _cancelableExists() {
   return !!(_automationCancelable()
-    || _voiceSessionActive || _planningMode?.active || _selectionArmed);
+    || _voiceSessionActive || _planningMode?.active || _selectionArmed || _capturedSelectionText);
 }
 
 /**
@@ -6452,6 +6844,8 @@ function _gestureCancel() {
   }
   if (_voiceSessionActive) {
     console.log('[Gesture] ⌥L+⌥R — stopping voice session');
+    _voiceSessionActive = false;
+    _clearVoiceMute();
     _postJson(_pttServiceUrl('/voice.session.stop'), {}).catch(err =>
       console.warn('[Gesture] voice.session.stop failed:', err.message));
     return;
@@ -6461,9 +6855,12 @@ function _gestureCancel() {
     _handlePlanCheckAction({ action: 'cancel-plan', planId: _planningMode.planId, planFile: _planningMode.planFile });
     return;
   }
-  if (_selectionArmed) {
-    console.log('[Gesture] ⌥L+⌥R — disarming selection');
-    _disarmSelection('gesture-cancel');
+  // Held highlight context — armed gesture OR text already captured. One
+  // clear covers both: _disarmSelection alone leaves captured text live, so
+  // the highlight would still ride the next prompt.
+  if (_selectionArmed || _capturedSelectionText) {
+    console.log('[Gesture] ⌥L+⌥R — clearing selection context');
+    _clearSelectionCapture('gesture-cancel');
   }
 }
 
@@ -6518,9 +6915,39 @@ function _startRoptCancelCountdown() {
  */
 function _fireExpandToggle() {
   _rshiftChordTapAt = 0;
+  // ⇧R+⌥R tap is context-sensitive: expand-width while the overlay owns the
+  // surface; the cursor-anchored mini input while the avatar does (nothing
+  // in quiet state — no surface to type into).
+  if (_avatarMode) {
+    if (!_quietState()) openAvatarInput({ at: 'cursor' });
+    return;
+  }
   if (!unifiedWindow || unifiedWindow.isDestroyed()) return;
   if (!unifiedWindow.isVisible()) showUnifiedOverlay();
   safeSendUnified('ropt:expand');
+}
+
+// ⇧R+⌥R single tap — show/hide the active surface (moved off ⌥R double-tap,
+// which is now the prompt gesture). ⇧R+⌥R×2 still opens the history timeline.
+function _toggleSurfaceGesture() {
+  _rshiftChordTapAt = 0;
+  if (_avatarMode) _toggleAvatarSurface();
+  else toggleUnifiedOverlay();
+}
+
+// ⌥R double-tap — the prompt gesture. Avatar mode opens Optyon's input (waking
+// the avatar first when hidden); overlay mode shows the panel and puts the
+// cursor in the prompt field.
+function _primaryPromptAction() {
+  if (_avatarMode) {
+    if (_avatarVisible) openAvatarInput({ at: 'cursor' });
+    else _showAvatar();
+    return;
+  }
+  if (!unifiedWindow || unifiedWindow.isDestroyed()) return;
+  if (!unifiedWindow.isVisible()) showUnifiedOverlay();
+  try { unifiedWindow.focus(); } catch (_) {}
+  safeSendUnified('selection:focus-input');
 }
 
 /**
@@ -6552,6 +6979,7 @@ function _approveOrFocusPending() {
   try { pendingQuestion = (require('./handoffRunner').getPendingQuestionTaskIds?.() || [])[0] || null; } catch (_) {}
   if (_pendingChoices || pendingQuestion || pausedAutomationState || _contextAskPending > 0 || gp.getLegacy() || gp.batches.size) {
     console.log('[Gesture] ⌥R tap — focusing pending question input');
+    if (_avatarMode) { openAvatarInput({ at: 'avatar' }); return true; }
     if (unifiedWindow && !unifiedWindow.isDestroyed() && !unifiedWindow.isVisible()) showUnifiedOverlay();
     safeSendUnified('ropt:focus-answer');
     return true;
@@ -6598,13 +7026,14 @@ function _onRshiftDown() {
 
 function _onRshiftUp() {
   _rshiftDownAt = 0;
-  // Releasing ⇧R with a committed ⌥R tap still pending — the expand decision
-  // was already made; fire it now rather than letting the chord dead-end.
+  // Releasing ⇧R with a committed ⌥R tap still pending — the show/hide
+  // decision was already made; fire it now rather than letting the chord
+  // dead-end.
   const t = _rshiftExpandTimer;
   _rshiftExpandTimer = null;
   if (t) {
     clearTimeout(t);
-    _fireExpandToggle();
+    _toggleSurfaceGesture();
   }
 }
 
@@ -6613,8 +7042,8 @@ function _onRoptDown() {
   _roptOtherKey = false;
   _roptConsumed = false;
   if (_rshiftDownAt) {
-    // ⇧R+⌥R chord — single tap toggles width (after the double-tap window);
-    // a second press inside it opens the history timeline instead.
+    // ⇧R+⌥R chord — single tap shows/hides the active surface (after the
+    // double-tap window); a second press inside it opens the history timeline.
     _roptConsumed = true;
     if (Date.now() - _rshiftChordTapAt < ROPT_DTAP_MS) {
       _rshiftChordTapAt = 0;
@@ -6624,7 +7053,7 @@ function _onRoptDown() {
     } else {
       _rshiftChordTapAt = Date.now();
       clearTimeout(_rshiftExpandTimer);
-      _rshiftExpandTimer = setTimeout(_fireExpandToggle, ROPT_DTAP_MS);
+      _rshiftExpandTimer = setTimeout(_toggleSurfaceGesture, ROPT_DTAP_MS);
     }
     return;
   }
@@ -6641,7 +7070,8 @@ function _onRoptDown() {
     return;
   }
   // Armed selection: the press itself confirms — keep holding to speak about it.
-  if (_selectionArmed) {
+  // Quiet state (no surface up) — the confirm is dead, same as PTT below.
+  if (_selectionArmed && !_quietState()) {
     _roptConsumed = true;
     console.log('[Gesture] ROpt — selection armed → confirm; continued hold → PTT');
     void _captureArmedToChip(unifiedWindow);
@@ -6664,6 +7094,8 @@ function _onRoptDown() {
       _postJson(_pttServiceUrl('/voice.interrupt'), {}).catch(() => {});
       return;
     }
+    // Quiet state — nothing visible to dictate into; the hold is a no-op.
+    if (_quietState()) return;
     pttStart();
   }, ROPT_HOLD_MS);
 }
@@ -6673,14 +7105,20 @@ function _onRoptUp() {
   _roptDownAt = 0;
   clearTimeout(_roptHoldTimer);
   _stopRoptCancelCountdown(); // release before 3s disarms; after fire it's a no-op
-  if (_pttActive) { pttStop(); return; }
+  // Option used as a MODIFIER (Option+Delete/Arrow/accent in another app) rides
+  // the 200ms hold threshold and starts PTT — but the other-key press marks it
+  // as modifier use, not dictation. Discard the recording so ambient noise
+  // can't transcribe and steal focus into the avatar input.
+  if (_pttActive) { _pttEnd(!!_roptOtherKey); return; }
   if (_roptConsumed || _roptOtherKey || heldMs >= ROPT_HOLD_MS) { _roptLastTapAt = 0; return; }
-  // A real tap — double-tap toggles the overlay; a resolved single tap is
-  // context-aware (mute / run-plan / scroll-to-bottom).
+  // A real tap — double-tap is the prompt gesture (avatar → Optyon's input,
+  // overlay → focus the prompt); a resolved single tap is context-aware
+  // (mute / run-plan / dismiss bubble / scroll-to-bottom). Show/hide moved to
+  // the ⇧R+⌥R single tap.
   if (Date.now() - _roptLastTapAt < ROPT_DTAP_MS) {
     _roptLastTapAt = 0;
     clearTimeout(_roptPendingTapTimer);
-    toggleUnifiedOverlay();
+    _primaryPromptAction();
   } else {
     _roptLastTapAt = Date.now();
     clearTimeout(_roptPendingTapTimer);
@@ -6698,6 +7136,8 @@ function _onRoptUp() {
  * everywhere; ⌥L+⌥R is always its cancel.
  */
 function _roptSingleTap() {
+  // Quiet state — a lone tap means nothing when no surface is up.
+  if (_quietState()) return;
   if (_voiceSessionActive) {
     _postJson(_pttServiceUrl('/voice.mute'), { on: !_voiceMuted })
       .catch(err => console.warn('[Gesture] voice.mute failed:', err.message));
@@ -6709,6 +7149,9 @@ function _roptSingleTap() {
     return;
   }
   if (_approveOrFocusPending()) return;
+  // Avatar mode: no pending card → the tap is the esc-style dismissal for the
+  // response bubble (option-key-native; Esc itself stays out of global scope).
+  if (_avatarMode) { _sendGhostChannel('avatar:stream', { type: 'dismiss-bubble' }); return; }
   safeSendUnified('ropt:tap'); // renderer scrolls the feed to bottom
 }
 
@@ -6854,8 +7297,12 @@ function startMouseSelectionMonitor() {
 
     uIOhook.on('mousedown', (e) => {
       if (e.button !== 1) { _mouseDownPos = null; return; } // left button only
-      const inside = _isInsideThinkDropWindow(e.x, e.y);
+      const inside = _isInsideThinkDropWindow(e.x, e.y) || _isOnAvatar(e.x, e.y);
       const now = Date.now();
+      _dragBtnDown = true;
+      _dragFromUs = inside;
+      _dragAppQueried = false;
+      _dragAppName = null;
 
       if (inside) {
         // Clicks inside our panels never seed a drag. Capture is explicit-only
@@ -6899,15 +7346,48 @@ function startMouseSelectionMonitor() {
     });
 
     uIOhook.on('mouseup', (e) => {
+      _dragBtnDown = false;
+      _dragFromUs = false;
+      // Button released — any drag-session lift is over. Re-assert the real
+      // click-through state so no stale interactive patch lingers.
+      if (_avatarZoneLift && !_isOnAvatar(e.x, e.y)) {
+        _avatarZoneLift = false;
+        _applyScreenClickThrough();
+      }
       if (!_mouseDownPos) return;
       _mouseDownPos = null;
-      const endedInside = _isInsideThinkDropWindow(e.x, e.y);
+      const endedInside = _isInsideThinkDropWindow(e.x, e.y) || _isOnAvatar(e.x, e.y);
       // A drag that ENDS inside a ThinkDrop window is a drag-onto-the-input,
       // not a selection in another app — skip validation entirely.
       if (_dragGestureSeen && !endedInside) {
         void _validateGestureSelection();
       }
       _dragGestureSeen = false;
+    });
+
+    // File-drop hoist — macOS never delivers OS drag sessions to a
+    // click-through window (the ghost is skipped in drag hit-testing, so
+    // dragenter/drop can't fire). uiohook sees global dragged-moves anyway:
+    // EVENT_MOUSE_DRAGGED is remapped to MOUSE_MOVED in the native layer.
+    // Plain hover lifts freely — it's the avatar's only proximity detector
+    // (renderer mouseenter can't fire on a click-through window). A
+    // button-held drag only lifts when the drag's source app is a file
+    // manager: a TEXT-selection drag crossing/ending under Optyon must never
+    // be swallowed — the stolen mouseup leaves the source app mid-gesture,
+    // arm-validation reads no text, and select→⌥R is dead. Drags that
+    // started on our own surfaces (repositioning Optyon) are exempt.
+    uIOhook.on('mousemove', (e) => {
+      let inside = _isOnAvatar(e.x, e.y);
+      if (inside && _dragBtnDown && !_dragFromUs) {
+        if (!_dragAppQueried) {
+          _dragAppName = _getFrontmostAppName();
+          _dragAppQueried = true;
+        }
+        if (!_FILE_DRAG_SOURCES.has(_dragAppName || '')) inside = false;
+      }
+      if (inside === _avatarZoneLift) return;
+      _avatarZoneLift = inside;
+      _applyScreenClickThrough();
     });
 
     uIOhook.start();
@@ -6929,6 +7409,8 @@ function stopMouseSelectionMonitor() {
   } catch (_) {}
   _uIOhookInstance = null;
   _mouseDownPos = null;
+  _dragBtnDown = false;
+  _dragFromUs = false;
   _disarmSelection('monitor-stopped');
 }
 
@@ -7030,7 +7512,192 @@ function createPromptCaptureWindow() {
   });
 
   _guardOverlayWindowFocus(promptCaptureWindow);
+  _attachSpellcheckMenu(promptCaptureWindow);
   return promptCaptureWindow;
+}
+
+// ── Avatar mode ("Optyons") ─────────────────────────────────────────────────
+// A persistent companion avatar rendered on the GhostLayer. _avatarMode picks
+// the avatar as the active surface (the overlay stays hidden); _avatarVisible
+// tracks the avatar itself — ⌥R double-tap shows/hides it. Both hidden =
+// "quiet" state: PTT, selection arming, and ⌥R-tap confirms deactivate; the
+// double-tap wake and the cancel paths stay armed.
+
+function _quietState() {
+  const overlayUp = !!(unifiedWindow && !unifiedWindow.isDestroyed() && unifiedWindow.isVisible());
+  return !overlayUp && !(_avatarMode && _avatarVisible);
+}
+
+function _avatarDefaultPos() {
+  try {
+    const d = screen.getPrimaryDisplay();
+    const wa = d.workArea;
+    return { x: wa.x + wa.width - 176, y: wa.y + wa.height - 256 };
+  } catch (_) {
+    return { x: 40, y: 40 };
+  }
+}
+
+function _avatarStatePayload() {
+  const w = (unifiedWindow && !unifiedWindow.isDestroyed()) ? unifiedWindow.getBounds().width : UNIFIED_MIN_WIDTH;
+  return { on: _avatarMode && _avatarVisible, pos: _avatarPos || _avatarDefaultPos(), color: _avatarColor, overlayWidth: w, planning: !!_planningMode?.active, voiceLang: _getVoiceLangPref() };
+}
+
+function _showAvatar() {
+  _avatarVisible = true;
+  showGhostLayer();
+  _sendGhostChannel('avatar:state', _avatarStatePayload());
+}
+
+function _hideAvatar() {
+  _avatarVisible = false;
+  _setAvatarHistoryArmed(false); // hidden avatar can't keep swallowing arrows
+  // Drop any active zone lift — a hidden avatar must not leave an invisible
+  // interactive patch on screen (it's the same rect, just not rendered).
+  if (_avatarZoneLift) {
+    _avatarZoneLift = false;
+    _applyScreenClickThrough();
+  }
+  _sendGhostChannel('avatar:state', { on: false });
+  closeAvatarInput();
+}
+
+function _toggleAvatarSurface() {
+  if (_avatarVisible) _hideAvatar(); else _showAvatar();
+}
+
+function _setAvatarMode(on) {
+  on = !!on;
+  if (_avatarMode === on) return;
+  _avatarMode = on;
+  _saveSetting('avatarMode', on);
+  if (on) {
+    if (unifiedWindow && !unifiedWindow.isDestroyed() && unifiedWindow.isVisible()) {
+      _intentionalHide = true;
+      unifiedWindow.hide();
+      stopClipboardMonitoring();
+    }
+    _showAvatar();
+  } else {
+    _hideAvatar();
+    showUnifiedOverlay();
+  }
+  safeSendUnified('avatar:mode', { on });
+}
+
+// Mini prompt panel — the GhostLayer is non-focusable so text entry lives on
+// this small panel window, opened at the cursor (⇧R+⌥R tap), at the avatar
+// (PTT release / hover prompt button), or prefilled with a PTT transcript.
+function createAvatarInputWindow() {
+  avatarInputWindow = new BrowserWindow({
+    width: 380,
+    height: 72,
+    resizable: false,
+    transparent: true,
+    frame: false,
+    alwaysOnTop: true,
+    skipTaskbar: true,
+    movable: false,
+    minimizable: false,
+    maximizable: false,
+    closable: true,
+    hasShadow: false,
+    show: false,
+    focusable: true,
+    ...(process.platform === 'darwin' ? { type: 'panel' } : {}),
+    webPreferences: {
+      nodeIntegration: false,
+      contextIsolation: true,
+      preload: path.join(__dirname, 'preload.js'),
+      backgroundThrottling: false,
+    },
+  });
+  if (process.platform === 'darwin') {
+    avatarInputWindow.setWindowButtonVisibility(false);
+    avatarInputWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+    avatarInputWindow.setAlwaysOnTop(true, 'floating', 6);
+  }
+  if (process.env.NODE_ENV === 'development') {
+    avatarInputWindow.loadURL('http://localhost:5173/index.html?mode=avatarinput&cacheBust=' + Date.now());
+  } else {
+    avatarInputWindow.loadFile(path.join(__dirname, '../../dist-renderer/index.html'), { query: { mode: 'avatarinput' } });
+  }
+  // Clicking away dismisses the mini input — same convention as our popovers.
+  avatarInputWindow.on('blur', () => {
+    if (avatarInputWindow && !avatarInputWindow.isDestroyed() && avatarInputWindow.isVisible()) {
+      avatarInputWindow.hide();
+      _sendGhostChannel('avatar:stream', { type: 'input-open', on: false });
+    }
+  });
+  avatarInputWindow.on('closed', () => {
+    _sendGhostChannel('avatar:stream', { type: 'input-open', on: false });
+    avatarInputWindow = null;
+  });
+  _guardOverlayWindowFocus(avatarInputWindow);
+  _attachSpellcheckMenu(avatarInputWindow);
+  return avatarInputWindow;
+}
+
+function _sendAvatarInput(payload) {
+  if (avatarInputWindow && !avatarInputWindow.isDestroyed()) {
+    try { avatarInputWindow.webContents.send('avatar:input-state', payload); } catch (_) {}
+  }
+}
+
+function openAvatarInput({ at = 'cursor', prefill = '' } = {}) {
+  if (!_avatarMode || !_avatarVisible) return;
+  if (!avatarInputWindow || avatarInputWindow.isDestroyed()) createAvatarInputWindow();
+  // An open input must own Up/Down (cursor moves) — the globally-registered
+  // history keys would swallow them. The renderer also exits browse on the
+  // dismiss-bubble below; this releases the keys without waiting on it.
+  _setAvatarHistoryArmed(false);
+  _sendGhostChannel('avatar:stream', { type: 'input-open', on: true });
+  // The response bubble would overlap the input pill — opening the prompt is
+  // the esc-style dismissal (the response stays click-recoverable on Optyon).
+  _sendGhostChannel('avatar:stream', { type: 'dismiss-bubble' });
+  const W = 460, H = 78;
+  const MAX_INPUT_H = 200;
+  let x, y;
+  if (at === 'avatar') {
+    const p = _avatarPos || _avatarDefaultPos();
+    x = p.x + 52 - W / 2;   // centered over the ~104px avatar
+    y = p.y - H - 14;       // just above it
+  } else {
+    const pt = screen.getCursorScreenPoint();
+    x = pt.x - W / 2;
+    y = pt.y + 18;          // just below the cursor
+  }
+  const d = screen.getDisplayNearestPoint({ x: Math.round(x + W / 2), y: Math.round(y) });
+  const wa = d.workArea;
+  x = Math.min(Math.max(x, wa.x + 8), wa.x + wa.width - W - 8);
+  y = Math.min(Math.max(y, wa.y + 8), wa.y + wa.height - H - 8);
+  // Reserve the full growth envelope once, at open time. The input content
+  // grows downward inside this envelope; later keystrokes must not move the
+  // native window and steal the user's visual anchor.
+  y = Math.min(y, wa.y + wa.height - MAX_INPUT_H - 8);
+  avatarInputWindow.setBounds({ x: Math.round(x), y: Math.round(y), width: W, height: H });
+  const send = () => {
+    const pending = _avatarPendingFiles.splice(0); // consume drops on Optyon
+    _sendAvatarInput({
+      prefill,
+      contextExcerpt: (_capturedSelectionText || '').slice(0, 140),
+      files: pending.map(e => e.p),
+      dirs: pending.filter(e => e.dir).map(e => e.p),
+      planning: !!_planningMode?.active,
+      planName: _planningMode?.planName || null,
+    });
+  };
+  if (avatarInputWindow.webContents.isLoading()) {
+    avatarInputWindow.webContents.once('did-finish-load', send);
+  } else send();
+  try { avatarInputWindow.show(); avatarInputWindow.focus(); } catch (_) {}
+}
+
+function closeAvatarInput() {
+  _sendGhostChannel('avatar:stream', { type: 'input-open', on: false });
+  if (avatarInputWindow && !avatarInputWindow.isDestroyed()) {
+    try { avatarInputWindow.hide(); } catch (_) {}
+  }
 }
 
 function createResultsWindow() {
@@ -7197,6 +7864,19 @@ function createUnifiedWindow() {
     unifiedWindow.setAlwaysOnTop(true, 'floating', 5);
   }
 
+  // Avatar-mode surface gate — while avatar mode owns the surface, ambient
+  // restore paths (journal replay, scan/highlight restore, bridge messages,
+  // scheduler, NSPanel auto-reshow, second-instance focus) call these directly
+  // and would resurrect the panel under Optyon. focus/moveTop are gated too:
+  // on macOS makeKeyAndOrderFront/orderFront on a hidden window SHOWS it.
+  // Wrapping once at creation gates every current + future caller; explicit
+  // exits flip _avatarMode first (avatar:exit → _setAvatarMode(false) → show).
+  const gate = (fn) => (...a) => { if (_avatarMode) return; return fn(...a); };
+  unifiedWindow.show = gate(unifiedWindow.show.bind(unifiedWindow));
+  unifiedWindow.showInactive = gate(unifiedWindow.showInactive.bind(unifiedWindow));
+  unifiedWindow.focus = gate(unifiedWindow.focus.bind(unifiedWindow));
+  unifiedWindow.moveTop = gate(unifiedWindow.moveTop.bind(unifiedWindow));
+
   // will-resize fires ONLY for user edge-drags — programmatic setBounds does
   // not emit it. It's the authoritative signal that the user took over the
   // window height; the renderer pins it and suppresses content-driven resizes
@@ -7327,6 +8007,7 @@ function createUnifiedWindow() {
   });
 
   _guardOverlayWindowFocus(unifiedWindow);
+  _attachSpellcheckMenu(unifiedWindow);
   return unifiedWindow;
 }
 
@@ -7513,13 +8194,13 @@ ipcMain.on('ghostlayer:capture-ready', () => {
 // fully exited (after out-animations). We clear our id set, restore
 // click-through, and hide the window — unless a drop session owns the screen.
 ipcMain.on('ghostlayer:display-idle', () => {
-  if ([...screenDisplays.values()].some(d => d?.editableDoc)) _releaseDocFocus();
+  if ([...screenDisplays.values()].some(d => d?.editableDoc || d?.locked)) _releaseDocFocus();
   screenDisplays.clear();
   _hoverInteractive = false;
   _applyScreenClickThrough();
   _updateEscShortcut();
   _updateNavShortcut();
-  if (!dropSessionActive) hideGhostLayer();
+  if (!dropSessionActive && !(_avatarMode && _avatarVisible)) hideGhostLayer();
 });
 
 // Interactive-region hover — scrollable text cards / interactive items report
@@ -7671,6 +8352,224 @@ ipcMain.on('ghostlayer:open-scene-prompt', (_e, data) => {
   } catch (_) {}
 });
 
+// ── Avatar mode IPC ─────────────────────────────────────────────────────────
+ipcMain.on('avatar:toggle', () => { _setAvatarMode(!_avatarMode); });
+ipcMain.on('avatar:exit', () => { _setAvatarMode(false); });
+ipcMain.on('avatar:open-input', () => { openAvatarInput({ at: 'avatar' }); });
+
+// Files dropped on Optyon — stash them, open the input (chips land there via
+// input-state), or forward straight into the already-open input.
+ipcMain.on('avatar:files', (_e, data) => {
+  const paths = Array.isArray(data?.paths) ? data.paths.filter(p => typeof p === 'string' && p) : [];
+  const dirs = new Set(Array.isArray(data?.dirs) ? data.dirs.filter(p => typeof p === 'string' && p) : []);
+  if (!paths.length || !_avatarMode || !_avatarVisible) return;
+  if (avatarInputWindow && !avatarInputWindow.isDestroyed() && avatarInputWindow.isVisible()) {
+    _sendAvatarInput({ files: paths, dirs: [...dirs], filesOnly: true });
+    return;
+  }
+  _avatarPendingFiles = _avatarPendingFiles.concat(paths.map(p => ({ p, dir: dirs.has(p) })));
+  openAvatarInput({ at: 'avatar' });
+});
+ipcMain.on('avatar:pick-files', async () => {
+  if (!_avatarMode || !_avatarVisible) return;
+  const { dialog } = require('electron');
+  const win = avatarInputWindow && !avatarInputWindow.isDestroyed() ? avatarInputWindow : ghostLayerWindow;
+  const r = await dialog.showOpenDialog(win, {
+    title: 'Attach files',
+    properties: ['openFile', 'multiSelections'],
+  });
+  const paths = (r && !r.canceled ? r.filePaths : []).filter(Boolean);
+  if (!paths.length) return;
+  const dirs = paths.filter(p => { try { return require('fs').statSync(p).isDirectory(); } catch (_) { return false; } });
+  if (avatarInputWindow && !avatarInputWindow.isDestroyed() && avatarInputWindow.isVisible()) {
+    _sendAvatarInput({ files: paths, dirs, filesOnly: true });
+    return;
+  }
+  _avatarPendingFiles = _avatarPendingFiles.concat(paths.map(p => ({ p, dir: dirs.includes(p) })));
+  openAvatarInput({ at: 'avatar' });
+});
+let _avatarBubbleShowing = false;
+ipcMain.on('avatar:bubble-state', (_e, data) => {
+  const showing = !!(data && data.showing);
+  if (showing === _avatarBubbleShowing) return;
+  _avatarBubbleShowing = showing;
+  _updateEscShortcut();
+});
+
+// Avatar history browse — while armed, bare Up/Down are globally registered
+// (ghost is focusable:false) and routed to the renderer as history-nav events.
+// Disarmed by the renderer (Esc/tap/browse-past-latest), a new submit, or the
+// avatar hiding. Same scoped-capture tradeoff as Esc.
+let _avatarHistoryArmed = false;
+function _setAvatarHistoryArmed(on) {
+  on = !!on;
+  if (_avatarHistoryArmed === on) return;
+  _avatarHistoryArmed = on;
+  _updateNavShortcut();
+}
+ipcMain.on('avatar:history-state', (_e, data) => {
+  _setAvatarHistoryArmed(!!(data && data.armed));
+});
+ipcMain.on('avatar:query', () => { _sendGhostChannel('avatar:state', _avatarStatePayload()); });
+// PTT/session dictation language — both surfaces (overlay VoiceButton flag +
+// avatar lang control) read this; changes fan out as voice:lang-state and go
+// to the voice-bridge worker.
+function _broadcastVoiceLang() {
+  const payload = { lang: _getVoiceLangPref() };
+  _sendGhostChannel('voice:lang-state', payload);
+  safeSendUnified('voice:lang-state', payload);
+}
+ipcMain.on('voice:set-lang', (_e, data) => {
+  const lang = typeof data === 'string' ? data : data?.lang;
+  if (lang !== null && !(typeof lang === 'string' && /^[a-zA-Z]{2,3}(-[a-zA-Z0-9]{2,8}){0,3}$/.test(lang))) return;
+  _voiceLangPref = lang || null;
+  _saveSetting('voiceLang', _voiceLangPref);
+  _syncVoiceLang();
+  _broadcastVoiceLang();
+});
+ipcMain.on('voice:lang', () => { _broadcastVoiceLang(); });
+ipcMain.on('avatar:input-close', () => { closeAvatarInput(); });
+ipcMain.on('avatar:input-resize', (_e, data) => {
+  if (!avatarInputWindow || avatarInputWindow.isDestroyed()) return;
+  const h = Math.max(72, Math.min(200, Math.round(data?.height || 72)));
+  try {
+    const b = avatarInputWindow.getBounds();
+    if (b.height === h) return;
+    // openAvatarInput() reserves the full 200px growth envelope and establishes
+    // the top anchor. Resize only the height; recalculating y here made the
+    // prompt visibly climb on every chip/line added while typing.
+    avatarInputWindow.setBounds({ x: b.x, y: b.y, width: b.width, height: h });
+  } catch (_) {}
+});
+ipcMain.on('avatar:moved', (_e, pos) => {
+  if (pos && typeof pos.x === 'number' && typeof pos.y === 'number') {
+    _avatarPos = { x: Math.round(pos.x), y: Math.round(pos.y) };
+    _saveSetting('avatarPos', _avatarPos);
+  }
+});
+ipcMain.on('avatar:color', (_e, data) => {
+  const c = typeof data === 'string' ? data : data?.color;
+  if (typeof c === 'string' && /^#[0-9a-fA-F]{6}$/.test(c)) {
+    _avatarColor = c;
+    _saveSetting('avatarColor', c);
+    _sendGhostChannel('avatar:state', _avatarStatePayload());
+  }
+});
+ipcMain.on('avatar:session', async (_e, data) => {
+  const on = !!(data && (data.on ?? data.active));
+  // Same semantics as voice:session-start/stop — the avatar's S2S button is
+  // just another trigger for Talk Mode (⌥R-tap mute still applies).
+  if (on && _selectionArmed && !_capturedSelectionText) {
+    void _captureArmedToChip(null, { auto: true });
+  }
+  try {
+    if (on) {
+      await _postJson(_pttServiceUrl('/voice.session.start'), { mode: 'auto' });
+      _voiceSessionActive = true;
+      _clearVoiceMute();
+      _voiceMode = null;
+      safeSendUnified('voice:session', { active: true });
+    } else {
+      await _postJson(_pttServiceUrl('/voice.session.stop'), {});
+      _voiceSessionActive = false;
+      _clearVoiceMute();
+      _voiceMode = null;
+      safeSendUnified('voice:session', { active: false });
+    }
+  } catch (err) {
+    console.warn('[Avatar] session toggle failed:', err.message);
+    _voiceSessionActive = false;
+  }
+  _sendGhostChannel('avatar:session-state', { active: _voiceSessionActive });
+});
+
+// Avatar prompt — same routing as a typed overlay prompt: pending-answer and
+// approval resolution first (raw text), then comms-graph with a promptQueue
+// fallback. Any captured selection rides along via _consumeSelectionForPrompt.
+// Light sentiment → catalog face keys for Optyon (sticky — the face holds
+// until the next prompt reclassifies). Anchored keyword scan keeps the
+// purely cosmetic state change latency-free; semantic requests go through
+// _resolveAvatarFace's decision-model layer instead.
+function _classifyAvatarEmotion(text) {
+  const t = (text || '').toLowerCase();
+  if (/\b(hate|don't like|dont like|dislike|terrible|awful|sucks?|sad|depress|miserable|cry|broke(n)?\s?it|let me down|disappoint)\b/.test(t)) return 'pensive-face';
+  if (/\b(angry|furious|stupid|idiot|ugh|frustrat|damn|annoy|rage|wtf|shut up)\b/.test(t)) return 'angry-face';
+  if (/\b(love|thanks?|thank you|awesome|amazing|great|perfect|brilliant|nice|adore)\b/.test(t)) return 'heart-eyes';
+  if (/\b(wow|whoa|cool|insane|unbelievable|wild|incredible)\b/.test(t)) return 'face-open-mouth';
+  if (/\b(yay|congrats?|congratulations|party|birthday|celebrat|win|won)\b/.test(t)) return 'partying-face';
+  return null;
+}
+
+// Emoji layer — deterministic catalog resolution first (glyph | key | alias
+// | free text); on a miss the phi4 decision model picks ONE emoji, whose
+// glyph routes back into the catalog. The glyph is routing metadata — the
+// renderer only ever paints parametric SVG specs.
+async function _resolveAvatarFace(text) {
+  const det = resolveFace(text);
+  if (det) return det;
+  try {
+    const decision = require('../../comms-graph/src/decision.cjs');
+    const r = await decision.askDecision([{
+      id: 'emoji', type: 'text',
+      question: 'Reply with exactly one emoji that best matches this request — no words, just the emoji.',
+    }], { state: String(text || '').slice(0, 300), timeoutMs: 3000 });
+    const v = r && r.answers && r.answers.emoji;
+    const s = typeof v === 'string' ? v : (v && (v.text || v.label)) || '';
+    if (s) console.log(`[AvatarFace] decision pick "${s}" for "${String(text || '').slice(0, 60)}"`);
+    return resolveFace(s);
+  } catch (e) {
+    console.warn('[AvatarFace] decision layer failed:', e.message);
+    return null;
+  }
+}
+
+ipcMain.on('avatar:submit', async (_e, { text, files, dirs } = {}) => {
+  // Attached files ride as [File:]/[Folder:] chips — the same syntax
+  // extractAttachments parses downstream.
+  const dirSet = new Set(Array.isArray(dirs) ? dirs : []);
+  const fileChips = (Array.isArray(files) ? files : [])
+    .filter(p => typeof p === 'string' && p)
+    .map(p => `[${dirSet.has(p) ? 'Folder' : 'File'}: ${p}]`);
+  const t = ((fileChips.length ? fileChips.join('\n') + '\n' : '') + (text || '')).trim();
+  closeAvatarInput();
+  if (!t) return;
+  _setAvatarHistoryArmed(false); // a new prompt leaves history browse
+  // Pair the prompt with its coming response for the ↑/↓ scrollback.
+  _sendGhostChannel('avatar:stream', { type: 'prompt', text: t });
+  // Display-intent fast-path — "show me a sad face" is an Optyon reaction,
+  // not a task. Morph the face + a one-line ack, skipping the pipeline.
+  if (!fileChips.length
+    && /\b(show|display|make|give|put|be|do|react)\b[^.]{0,40}\b(face|emoji|emote|expression)\b/i.test(text || '')) {
+    const face = await _resolveAvatarFace(text);
+    if (face) {
+      _sendGhostChannel('avatar:face', { face });
+      _sendGhostChannel('avatar:stream', { type: 'done', text: `*${face.replace(/-/g, ' ')}*` });
+      return;
+    }
+  }
+  _sendGhostChannel('avatar:stream', { type: 'thinking', fresh: true });
+  const emotion = _classifyAvatarEmotion(text);
+  if (emotion) _sendGhostChannel('avatar:emotion', { emotion });
+  const consumed = await _consumeSelectionForPrompt(t, '', { lane: 'avatar' });
+  const prompt = consumed.prompt;
+  const selectedText = consumed.selectedText;
+  if (gp.getLegacy()) {
+    gp.resolveLegacy(t);
+    return;
+  }
+  if (!gp.tryResolveFreeText(t) && !_tryResolvePendingApproval(t)) {
+    const routed = !pausedAutomationState && _routeViaCommsGraph
+      ? _routeViaCommsGraph(prompt, { selectedText, sessionId: currentSessionId, source: 'avatar' })
+      : false;
+    if (!routed) {
+      if (!pausedAutomationState && (_automationCancelable() || promptQueue.getVisible().length)) {
+        _cancelAutomationRun().catch(() => {});
+      }
+      promptQueue.enqueue(prompt, { selectedText, sessionId: currentSessionId });
+    }
+  }
+});
+
 // Clipboard monitoring functionality
 function startClipboardMonitoring(checkInitial = false) {
   // Polling disabled — tagging is now explicit via Shift+Cmd+C shortcut
@@ -7817,6 +8716,19 @@ app.whenReady().then(async () => {
   // Create GhostLayer window for app.agent visual highlighting (hidden until needed)
   createGhostLayerWindow();
   console.log('[GhostLayer] Window created on startup (hidden)');
+
+  // Restore avatar mode — the GhostLayer renderer pulls state via 'avatar:query'
+  // once its bundle mounts, so here we only seed the persisted flags and show.
+  try {
+    const _av = _loadSettings();
+    if (typeof _av.avatarColor === 'string') _avatarColor = _av.avatarColor;
+    if (_av.avatarPos && typeof _av.avatarPos.x === 'number' && typeof _av.avatarPos.y === 'number') {
+      _avatarPos = _av.avatarPos;
+    }
+    // Avatar mode is the default surface — opt-out only. An explicit exit
+    // (× control / toggle) saves avatarMode:false and is respected on relaunch.
+    if (_av.avatarMode !== false) _setAvatarMode(true);
+  } catch (_) {}
 
   // Start overlay control HTTP server so command-service skills can hide/show windows before screenshotting
   startOverlayControlServer();
@@ -8420,9 +9332,12 @@ app.whenReady().then(async () => {
   // Hover-strip ✕ click → same as the close chord.
   ipcMain.on('history:view-close', () => _toggleHistoryView(false));
 
-  // Clicking a timeline point → reopen the overlay paged to that day.
+  // Clicking a timeline point → reopen the overlay paged to that day. In
+  // avatar mode the surface gate would drop the show — exit avatar first so
+  // the jump still lands on the feed.
   ipcMain.on('history:jump', (_event, { endDate } = {}) => {
     _toggleHistoryView(false);
+    if (_avatarMode) _setAvatarMode(false);
     if (unifiedWindow && !unifiedWindow.isDestroyed() && !unifiedWindow.isVisible()) {
       showUnifiedOverlay();
     }
@@ -8686,7 +9601,8 @@ app.whenReady().then(async () => {
             // renderer so the cyan chip + Plans tab refresh immediately.
             // Skipped on exit turns (<plan_exit/> / plan.cancel): the reply
             // still carries planId, and pinning here would undo the exit.
-            if (!metadata?.exitPlanning && (intent === 6 || metadata?.planId) && metadata?.planId) {
+            if (!metadata?.exitPlanning && !metadata?.releasePin
+                && (intent === 6 || metadata?.planId) && metadata?.planId) {
               _setPlanningMode({
                 active: true,
                 planId: metadata.planId,
@@ -8722,6 +9638,8 @@ app.whenReady().then(async () => {
             // The planner can't say "planning mode is off" without the marker;
             // when it does emit one, this is the real state flip behind it.
             if (metadata?.exitPlanning) {
+              _exitPlanningLane();
+            } else if (metadata?.releasePin) {
               _exitPlanningLane();
             }
 
@@ -12021,12 +12939,11 @@ app.whenReady().then(async () => {
   });
 
   // Selection context clear — renderer asks to drop the armed state / pending
-  // capture (e.g. user dismisses the context affordance).
+  // capture (e.g. user dismisses the context affordance, or clicks the X on
+  // the avatar input's highlight chip). _clearSelectionCapture also reaches
+  // the ghost's held ring and the open avatar input — disarm alone wouldn't.
   ipcMain.on('selection:clear', () => {
-    _disarmSelection('cleared');
-    _capturedSelectionText = '';
-    _selectionSentToChip = false;
-    _chipAutoDelivered = false;
+    _clearSelectionCapture('cleared');
   });
 
   // Selection context capture — the overlay's "Paste context" button. Routes
@@ -14480,7 +15397,12 @@ app.whenReady().then(async () => {
 
       // Proxy to command-service — GET /agents.list returns { ok, agents: [...] }
       const _listResult = await _cmdGet('/agents.list').catch(() => null);
-      const _rawAgents = _listResult?.agents || [];
+      // Browser-type service agents are retired — hidden from the Agents tab
+      // (skills live on their own). THINKDROP_LEGACY_BROWSER_AGENTS=1 restores
+      // them for debugging.
+      const _rawAgents = process.env.THINKDROP_LEGACY_BROWSER_AGENTS
+        ? (_listResult?.agents || [])
+        : (_listResult?.agents || []).filter(a => a.type !== 'browser');
       const agents = _rawAgents.map(r => {
         const apiKeyUrl = r.descriptor?.match(/^api_key_url:\s*(.+)$/m)?.[1]?.trim();
         const apiKeyEnv = r.descriptor?.match(/^api_key_env:\s*(.+)$/m)?.[1]?.trim();
@@ -18150,6 +19072,104 @@ app.whenReady().then(async () => {
         req.end();
       });
     }
+
+    const GUARDIAN_RULES_PATH = require('path').join(
+      __dirname,
+      '../../mcp-services/command-service/src/skill-helpers/rules.cjs'
+    );
+    let guardianRules;
+    try {
+      guardianRules = require(GUARDIAN_RULES_PATH);
+    } catch (err) {
+      console.error('[IPC] Guardian rules module unavailable:', err.message);
+      guardianRules = null;
+    }
+
+    function authorizeGuardianMutation(passphrase) {
+      if (!guardianRules) return { ok: false, error: 'Guardian rules are unavailable' };
+      if (!guardianRules.hasPassphrase()) return { ok: true };
+      if (!guardianRules.verifyPassphrase(passphrase)) {
+        return { ok: false, error: 'Guardian passphrase is required or incorrect' };
+      }
+      return { ok: true };
+    }
+
+    ipcMain.handle('rules:guardian:list', async () => {
+      if (!guardianRules) return { ok: false, error: 'Guardian rules are unavailable', rules: [], hasPassphrase: false };
+      try {
+        return {
+          ok: true,
+          rules: guardianRules.listRules(),
+          hasPassphrase: guardianRules.hasPassphrase(),
+        };
+      } catch (err) {
+        console.error('[IPC] rules:guardian:list failed:', err.message);
+        return { ok: false, error: err.message, rules: [], hasPassphrase: false };
+      }
+    });
+
+    ipcMain.handle('rules:guardian:set_enabled', async (_event, payload = {}) => {
+      const auth = authorizeGuardianMutation(payload.passphrase);
+      if (!auth.ok) return auth;
+      if (!payload.id || typeof payload.enabled !== 'boolean') {
+        return { ok: false, error: 'id and enabled are required' };
+      }
+      try {
+        return guardianRules.setRuleEnabled(payload.id, payload.enabled);
+      } catch (err) {
+        console.error('[IPC] rules:guardian:set_enabled failed:', err.message);
+        return { ok: false, error: err.message };
+      }
+    });
+
+    ipcMain.handle('rules:guardian:delete', async (_event, payload = {}) => {
+      const auth = authorizeGuardianMutation(payload.passphrase);
+      if (!auth.ok) return auth;
+      if (!payload.id) return { ok: false, error: 'id is required' };
+      try {
+        return guardianRules.removeRule(payload.id);
+      } catch (err) {
+        console.error('[IPC] rules:guardian:delete failed:', err.message);
+        return { ok: false, error: err.message };
+      }
+    });
+
+    ipcMain.handle('rules:guardian:clear_all', async (_event, payload = {}) => {
+      const auth = authorizeGuardianMutation(payload.passphrase);
+      if (!auth.ok) return auth;
+      try {
+        return guardianRules.clearRules();
+      } catch (err) {
+        console.error('[IPC] rules:guardian:clear_all failed:', err.message);
+        return { ok: false, error: err.message };
+      }
+    });
+
+    // Passcode-gated screen unlock — the ONLY path that clears a `locked`
+    // display. Verifies the guardian passphrase in main (the hash never
+    // reaches the renderer), stamps a re-arm grace on the producing rule so
+    // the next judge pass doesn't instantly re-block, then force-clears.
+    // Throttled per display id — a curtain up for hours can't be guessed at.
+    const GUARDIAN_UNLOCK_GRACE_MS = parseInt(process.env.GUARDIAN_UNLOCK_GRACE_MS || '300000', 10); // 5 min
+    const _unlockFails = new Map(); // displayId → {n, first}
+    ipcMain.handle('rules:guardian:unlock', async (_event, payload = {}) => {
+      const id = typeof payload.id === 'string' ? payload.id : null;
+      const entry = id ? screenDisplays.get(id) : null;
+      if (!entry || !entry.locked) return { ok: false, error: 'display is not locked' };
+      const now = Date.now();
+      let f = _unlockFails.get(id);
+      if (!f || now - f.first > 60000) { f = { n: 0, first: now }; _unlockFails.set(id, f); }
+      if (f.n >= 5) return { ok: false, throttled: true, error: 'too many attempts — try again shortly' };
+      const pass = typeof payload.pass === 'string' ? payload.pass : payload.passphrase;
+      if (!guardianRules || !guardianRules.verifyPassphrase(pass)) {
+        f.n++;
+        return { ok: false, error: 'incorrect passcode' };
+      }
+      _unlockFails.delete(id);
+      try { if (entry.ruleId) guardianRules.suppressRule(entry.ruleId, GUARDIAN_UNLOCK_GRACE_MS); } catch (_) {}
+      clearScreenDisplays(id, { force: true });
+      return { ok: true };
+    });
 
     // Context rules handlers
     ipcMain.handle('rules:context:list_all', async () => {

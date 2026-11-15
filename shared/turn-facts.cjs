@@ -21,6 +21,7 @@
 const {
   ATTACHMENT_TAG_RE,
   FILE_REF_TAG_LINE_RE,
+  PLAN_TIME_PHRASE_RE,
 } = require('./text-patterns.cjs');
 const {
   PLANNING_EXIT_RE,
@@ -67,18 +68,33 @@ function deriveRequestText(userText) {
 
 const _QUESTION_RE = /^(?:what|who|whom|whose|which|when|where|why|how|does|do|did|is|are|was|were|can|could|should|would|will|may|explain|define|describe)\b/i;
 
-/** Plan referent — same shapes server.cjs used, but on userText only. */
+// Plan-existence phrasing — "do we have a plan for X", "i thought we had a
+// plan", "what plans do I have", "what's the plan for dinner". Informational
+// existence asks only — exported so classify's phrase guard can exclude them
+// (a bare "plan for X" inside an existence ask is not a draft request).
+const PLAN_EXISTENCE_RE = /\b(?:do|did|does)\s+(?:we|i|you)\s+(?:have|got)\b[^.?!]{0,50}\bplans?\b|\b(?:have|has|had|got)\s+(?:we|i|you)\b[^.?!]{0,50}\bplans?\b|\b(?:is|are|was|were)\s+there\b[^.?!]{0,50}\bplans?\b|\bi\s+thought\s+we\s+(?:had|have)\b[^.?!]{0,50}\bplans?\b|\bwhat\s+plans?\b|\bwhat(?:'s| is)\s+the\s+plans?\b/i;
+const _PLAN_ASK_RE = PLAN_EXISTENCE_RE;
+
+/** Plan referent — DEFINITE referents only ("the nylas plan", "the plan for
+ * lunch"). The old catch-all `(\w…) plan` scraped junk tokens out of any
+ * prompt mentioning "plan" ("We have a", "idea I brought up forgot that")
+ * and let the downstream fuzz-match bind an unrelated saved plan. */
 function _planRef(userText) {
   const s = String(userText || '');
-  const m = s.match(/\bthe\s+([\w][\w .-]{0,40}?)\s+plan\b/i)
-    || s.match(/\bplan\s+(?:for|about|on)\s+([\w][\w .-]{1,40})/i)
-    || s.match(/\b([\w][\w .-]{0,40}?)\s+plan\b/i);
+  const m = s.match(/\b(?:the|that|this|my|our|a|an)\s+([\w][\w .-]{0,40}?)\s+plan\b/i)
+    || s.match(/\b(?:the|that|this|my|our)\s+plan\s+(?:for|about|on|regarding|named|called|titled|of)\s+([\w][\w .-]{1,40})/i);
   if (!m || !m[1]) return null;
   const token = m[1].trim();
-  // "the plan" / "my plan" carries no name — a probe would fuzz-match noise.
-  const meaningful = token.split(/[^a-z0-9]+/i).filter(t => t.length > 1 && !/^(the|a|an|my|our|new|next|same|plan)$/i.test(t));
+  // "the plan" alone carries no name; >4 content words is a clause, not a
+  // referent ("the idea I brought up forgot that plan" — 7 words).
+  const words = token.split(/[^a-z0-9]+/i).filter(t => t.length > 1 && !/^(the|a|an|my|our|new|next|same|plan)$/i.test(t));
+  // A token ending in a closed-class word is a clause fragment, not a name
+  // ("the difference between a plan" scrapes "difference between a").
+  const rawWords = token.split(/[^a-z0-9]+/i).filter(Boolean);
+  const tail = rawWords[rawWords.length - 1] || '';
+  const tailJunk = /^(the|a|an|of|for|to|and|or|but|between|with|from|by|in|on|at|as|about|into|like|vs|than)$/i.test(tail);
   const informational = /\b(?:thought|think|remember|had|have|has|was|were|is|are|there|what|which|show|tell|do we|did we|find|search|look|any)\b/i.test(s);
-  return { token, meaningful: meaningful.length > 0, informational };
+  return { token, meaningful: words.length > 0 && words.length <= 4 && !tailJunk, informational };
 }
 
 /**
@@ -136,9 +152,20 @@ function computeTurnFacts({ rawText, selectedText = '', explicitTool = null } = 
     confirmish,
     runish,
     planRef: _planRef(userText),
+    // Time-scoped plan recall — "what plans did I do last week". Matched
+    // phrase is stored; window math lives in system-map.planWindowFor.
+    planTimeScope: (() => {
+      if (!/\bplans?\b/i.test(userText)) return null;
+      const tm = userText.match(PLAN_TIME_PHRASE_RE);
+      return tm ? tm[0] : null;
+    })(),
+    // Plan-existence question — "do we have a plan for X", "i thought we had
+    // a plan", "what plans do I have". Informational only: a definite
+    // referent still wins above; this is the honest "no plan named X" path.
+    planAsk: _PLAN_ASK_RE.test(userText),
     logMention: /\blogs?\b/i.test(userText),
     explicitTool,
   });
 }
 
-module.exports = { computeTurnFacts, deriveRequestText };
+module.exports = { computeTurnFacts, deriveRequestText, PLAN_EXISTENCE_RE };

@@ -1,0 +1,1935 @@
+{
+  "FACES": {
+    "grinning-face": {
+      "spec": {
+        "l": "dot",
+        "r": "dot",
+        "mouth": "beam"
+      }
+    },
+    "grinning-face-big-eyes": {
+      "spec": {
+        "l": "dotBig",
+        "r": "dotBig",
+        "mouth": "beam"
+      }
+    },
+    "grinning-face-smiling-eyes": {
+      "spec": {
+        "l": "happy",
+        "r": "happy",
+        "mouth": "beam"
+      }
+    },
+    "beaming-face": {
+      "spec": {
+        "l": "happy",
+        "r": "happy",
+        "mouth": "grin"
+      }
+    },
+    "grinning-squinting-face": {
+      "spec": {
+        "l": "squint",
+        "r": "squint",
+        "mouth": "beam"
+      }
+    },
+    "grinning-face-sweat": {
+      "spec": {
+        "l": "happy",
+        "r": "happy",
+        "mouth": "beam",
+        "extra": [
+          "sweat"
+        ]
+      }
+    },
+    "face-tears-of-joy": {
+      "spec": {
+        "l": "happy",
+        "r": "happy",
+        "mouth": "beam",
+        "extra": [
+          "drops3"
+        ]
+      }
+    },
+    "rolling-laughing": {
+      "spec": {
+        "l": "squint",
+        "r": "squint",
+        "mouth": "beam",
+        "extra": [
+          "drops3",
+          "tilt"
+        ]
+      }
+    },
+    "slightly-smiling-face": {
+      "spec": {
+        "l": "dot",
+        "r": "dot",
+        "mouth": "smileSmall"
+      }
+    },
+    "upside-down-face": {
+      "spec": {
+        "l": "dot",
+        "r": "dot",
+        "mouth": "smile",
+        "extra": [
+          "flip"
+        ]
+      }
+    },
+    "melting-face": {
+      "spec": {
+        "l": "dot",
+        "r": "dot",
+        "mouth": "wavy",
+        "extra": [
+          "melt"
+        ]
+      }
+    },
+    "winking-face": {
+      "spec": {
+        "l": "flat",
+        "r": "dot",
+        "mouth": "smirk"
+      }
+    },
+    "smiling-face-smiling-eyes": {
+      "spec": {
+        "l": "happy",
+        "r": "happy",
+        "mouth": "smile"
+      }
+    },
+    "smiling-face-halo": {
+      "spec": {
+        "l": "happy",
+        "r": "happy",
+        "mouth": "smile",
+        "extra": [
+          "halo"
+        ]
+      }
+    },
+    "smiling-face-hearts": {
+      "spec": {
+        "l": "happy",
+        "r": "happy",
+        "mouth": "smile",
+        "extra": [
+          "hearts3"
+        ]
+      }
+    },
+    "heart-eyes": {
+      "spec": {
+        "l": "heart",
+        "r": "heart",
+        "mouth": "beam"
+      }
+    },
+    "star-struck": {
+      "spec": {
+        "l": "star",
+        "r": "star",
+        "mouth": "beam"
+      }
+    },
+    "face-blowing-kiss": {
+      "spec": {
+        "l": "flat",
+        "r": "dot",
+        "mouth": "kiss",
+        "extra": [
+          "heartSm"
+        ]
+      }
+    },
+    "kissing-face": {
+      "spec": {
+        "l": "dot",
+        "r": "dot",
+        "mouth": "kiss"
+      }
+    },
+    "kissing-face-smiling-eyes": {
+      "spec": {
+        "l": "happy",
+        "r": "happy",
+        "mouth": "kiss"
+      }
+    },
+    "kissing-face-closed-eyes": {
+      "spec": {
+        "l": "closedDown",
+        "r": "closedDown",
+        "mouth": "kiss"
+      }
+    },
+    "face-savoring-food": {
+      "spec": {
+        "l": "happy",
+        "r": "happy",
+        "mouth": "lick"
+      }
+    },
+    "face-with-tongue": {
+      "spec": {
+        "l": "dot",
+        "r": "dot",
+        "mouth": "tongue"
+      }
+    },
+    "winking-face-tongue": {
+      "spec": {
+        "l": "flat",
+        "r": "dot",
+        "mouth": "tongue"
+      }
+    },
+    "zany-face": {
+      "spec": {
+        "l": "dotBig",
+        "r": "dot",
+        "mouth": "tongueBig"
+      }
+    },
+    "squinting-face-tongue": {
+      "spec": {
+        "l": "squint",
+        "r": "squint",
+        "mouth": "tongueBig"
+      }
+    },
+    "money-mouth-face": {
+      "spec": {
+        "l": "dollar",
+        "r": "dollar",
+        "mouth": "money"
+      }
+    },
+    "smiling-face-open-hands": {
+      "spec": {
+        "l": "happy",
+        "r": "happy",
+        "mouth": "smile",
+        "extra": [
+          "hands"
+        ]
+      }
+    },
+    "face-hand-over-mouth": {
+      "spec": {
+        "l": "happy",
+        "r": "happy",
+        "mouth": "none",
+        "extra": [
+          "handMouth"
+        ]
+      }
+    },
+    "face-peeking-eye": {
+      "spec": {
+        "l": "dot",
+        "r": "none",
+        "mouth": "none",
+        "extra": [
+          "peekHand"
+        ]
+      }
+    },
+    "shushing-face": {
+      "spec": {
+        "l": "closedDown",
+        "r": "closedDown",
+        "mouth": "none",
+        "extra": [
+          "shh"
+        ]
+      }
+    },
+    "thinking-face": {
+      "spec": {
+        "l": "dot",
+        "r": "dot",
+        "brows": "raiseL",
+        "mouth": "flat",
+        "extra": [
+          "thinkHand"
+        ]
+      }
+    },
+    "saluting-face": {
+      "spec": {
+        "l": "dot",
+        "r": "dot",
+        "mouth": "flat",
+        "extra": [
+          "salute"
+        ]
+      }
+    },
+    "zipper-mouth-face": {
+      "spec": {
+        "l": "dot",
+        "r": "dot",
+        "mouth": "zipper"
+      }
+    },
+    "raised-eyebrow-face": {
+      "spec": {
+        "l": "dot",
+        "r": "dot",
+        "brows": "raiseL",
+        "mouth": "flat"
+      }
+    },
+    "neutral-face": {
+      "spec": {
+        "l": "flat",
+        "r": "flat",
+        "mouth": "flat"
+      }
+    },
+    "expressionless-face": {
+      "spec": {
+        "l": "dash",
+        "r": "dash",
+        "mouth": "flat"
+      }
+    },
+    "face-without-mouth": {
+      "spec": {
+        "l": "dot",
+        "r": "dot",
+        "mouth": "none"
+      }
+    },
+    "dotted-line-face": {
+      "spec": {
+        "l": "dot",
+        "r": "dot",
+        "mouth": "flat",
+        "extra": [
+          "dotted"
+        ]
+      }
+    },
+    "face-in-clouds": {
+      "spec": {
+        "l": "dot",
+        "r": "dot",
+        "mouth": "none",
+        "extra": [
+          "clouds"
+        ]
+      }
+    },
+    "smirking-face": {
+      "spec": {
+        "l": "dot",
+        "r": "dot",
+        "brows": "raiseL",
+        "mouth": "smirk"
+      }
+    },
+    "unamused-face": {
+      "spec": {
+        "l": "flat",
+        "r": "flat",
+        "brows": "none",
+        "mouth": "flat"
+      }
+    },
+    "face-rolling-eyes": {
+      "spec": {
+        "l": "roll",
+        "r": "roll",
+        "mouth": "flat"
+      }
+    },
+    "grimacing-face": {
+      "spec": {
+        "l": "flat",
+        "r": "flat",
+        "mouth": "grimace"
+      }
+    },
+    "face-exhaling": {
+      "spec": {
+        "l": "closedDown",
+        "r": "closedDown",
+        "mouth": "flat",
+        "extra": [
+          "puff"
+        ]
+      }
+    },
+    "lying-face": {
+      "spec": {
+        "l": "dot",
+        "r": "dot",
+        "mouth": "flat",
+        "extra": [
+          "longnose"
+        ]
+      }
+    },
+    "relieved-face": {
+      "spec": {
+        "l": "closedDown",
+        "r": "closedDown",
+        "mouth": "smile"
+      }
+    },
+    "pensive-face": {
+      "spec": {
+        "l": "closedDown",
+        "r": "closedDown",
+        "mouth": "frown"
+      }
+    },
+    "sleepy-face": {
+      "spec": {
+        "l": "closedDown",
+        "r": "closedDown",
+        "mouth": "flat",
+        "extra": [
+          "snot"
+        ]
+      }
+    },
+    "drooling-face": {
+      "spec": {
+        "l": "happy",
+        "r": "happy",
+        "mouth": "drool"
+      }
+    },
+    "sleeping-face": {
+      "spec": {
+        "l": "closedDown",
+        "r": "closedDown",
+        "mouth": "open",
+        "extra": [
+          "zzz"
+        ]
+      }
+    },
+    "face-medical-mask": {
+      "spec": {
+        "l": "dot",
+        "r": "dot",
+        "mouth": "none",
+        "extra": [
+          "mask"
+        ]
+      }
+    },
+    "face-thermometer": {
+      "spec": {
+        "l": "dot",
+        "r": "dot",
+        "mouth": "flat",
+        "extra": [
+          "thermo"
+        ]
+      }
+    },
+    "face-head-bandage": {
+      "spec": {
+        "l": "dot",
+        "r": "dot",
+        "mouth": "frown",
+        "extra": [
+          "bandage"
+        ]
+      }
+    },
+    "nauseated-face": {
+      "spec": {
+        "l": "dot",
+        "r": "dot",
+        "mouth": "wavy"
+      }
+    },
+    "face-vomiting": {
+      "spec": {
+        "l": "dot",
+        "r": "dot",
+        "mouth": "vomit"
+      }
+    },
+    "sneezing-face": {
+      "spec": {
+        "l": "closedDown",
+        "r": "closedDown",
+        "mouth": "frown",
+        "extra": [
+          "spray"
+        ]
+      }
+    },
+    "hot-face": {
+      "spec": {
+        "l": "dot",
+        "r": "dot",
+        "mouth": "tongue",
+        "extra": [
+          "sweat",
+          "hot"
+        ]
+      }
+    },
+    "cold-face": {
+      "spec": {
+        "l": "flat",
+        "r": "flat",
+        "mouth": "teethGrit",
+        "extra": [
+          "cold"
+        ]
+      }
+    },
+    "woozy-face": {
+      "spec": {
+        "l": "dot",
+        "r": "spiral",
+        "brows": "raiseL",
+        "mouth": "wavy"
+      }
+    },
+    "face-crossed-eyes": {
+      "spec": {
+        "l": "x",
+        "r": "x",
+        "mouth": "flat"
+      }
+    },
+    "face-spiral-eyes": {
+      "spec": {
+        "l": "spiral",
+        "r": "spiral",
+        "mouth": "flat"
+      }
+    },
+    "exploding-head": {
+      "spec": {
+        "l": "dot",
+        "r": "dot",
+        "mouth": "open",
+        "extra": [
+          "explode"
+        ]
+      }
+    },
+    "cowboy-hat-face": {
+      "spec": {
+        "l": "happy",
+        "r": "happy",
+        "mouth": "smile",
+        "extra": [
+          "cowboy"
+        ]
+      }
+    },
+    "partying-face": {
+      "spec": {
+        "l": "happy",
+        "r": "happy",
+        "mouth": "smile",
+        "extra": [
+          "partyHat"
+        ]
+      }
+    },
+    "disguised-face": {
+      "spec": {
+        "l": "dot",
+        "r": "dot",
+        "mouth": "flat",
+        "extra": [
+          "disguise"
+        ]
+      }
+    },
+    "smiling-face-sunglasses": {
+      "spec": {
+        "l": "dot",
+        "r": "dot",
+        "mouth": "smile",
+        "extra": [
+          "shades"
+        ]
+      }
+    },
+    "nerd-face": {
+      "spec": {
+        "l": "dot",
+        "r": "dot",
+        "mouth": "smile",
+        "extra": [
+          "nerd"
+        ]
+      }
+    },
+    "face-monocle": {
+      "spec": {
+        "l": "dot",
+        "r": "dot",
+        "brows": "raiseL",
+        "mouth": "flat",
+        "extra": [
+          "monocle"
+        ]
+      }
+    },
+    "confused-face": {
+      "spec": {
+        "l": "dot",
+        "r": "dot",
+        "mouth": "wavy"
+      }
+    },
+    "face-diagonal-mouth": {
+      "spec": {
+        "l": "dot",
+        "r": "dot",
+        "mouth": "diagonal"
+      }
+    },
+    "worried-face": {
+      "spec": {
+        "l": "dot",
+        "r": "dot",
+        "brows": "worry",
+        "mouth": "frown"
+      }
+    },
+    "slightly-frowning-face": {
+      "spec": {
+        "l": "dot",
+        "r": "dot",
+        "brows": "worry",
+        "mouth": "frown"
+      }
+    },
+    "frowning-face": {
+      "spec": {
+        "l": "dot",
+        "r": "dot",
+        "brows": "worry",
+        "mouth": "frownBig"
+      }
+    },
+    "face-open-mouth": {
+      "spec": {
+        "l": "dot",
+        "r": "dot",
+        "mouth": "open"
+      }
+    },
+    "hushed-face": {
+      "spec": {
+        "l": "dot",
+        "r": "dot",
+        "mouth": "open"
+      }
+    },
+    "astonished-face": {
+      "spec": {
+        "l": "dotBig",
+        "r": "dotBig",
+        "mouth": "oval"
+      }
+    },
+    "flushed-face": {
+      "spec": {
+        "l": "dotBig",
+        "r": "dotBig",
+        "mouth": "flat",
+        "extra": [
+          "blush"
+        ]
+      }
+    },
+    "pleading-face": {
+      "spec": {
+        "l": "tear",
+        "r": "tear",
+        "brows": "worry",
+        "mouth": "frown"
+      }
+    },
+    "face-holding-tears": {
+      "spec": {
+        "l": "tear",
+        "r": "tear",
+        "brows": "worry",
+        "mouth": "wavy"
+      }
+    },
+    "frowning-face-open-mouth": {
+      "spec": {
+        "l": "dot",
+        "r": "dot",
+        "brows": "worry",
+        "mouth": "open"
+      }
+    },
+    "anguished-face": {
+      "spec": {
+        "l": "dotBig",
+        "r": "dotBig",
+        "brows": "worry",
+        "mouth": "oval"
+      }
+    },
+    "fearful-face": {
+      "spec": {
+        "l": "dot",
+        "r": "dot",
+        "brows": "worry",
+        "mouth": "frownBig"
+      }
+    },
+    "anxious-face-sweat": {
+      "spec": {
+        "l": "dot",
+        "r": "dot",
+        "brows": "worry",
+        "mouth": "open",
+        "extra": [
+          "sweat"
+        ]
+      }
+    },
+    "sad-relieved-face": {
+      "spec": {
+        "l": "closedDown",
+        "r": "closedDown",
+        "brows": "worry",
+        "mouth": "frown",
+        "extra": [
+          "sweat"
+        ]
+      }
+    },
+    "crying-face": {
+      "spec": {
+        "l": "dot",
+        "r": "dot",
+        "brows": "worry",
+        "mouth": "frown",
+        "extra": [
+          "tearL"
+        ]
+      }
+    },
+    "loudly-crying-face": {
+      "spec": {
+        "l": "closedDown",
+        "r": "closedDown",
+        "brows": "worry",
+        "mouth": "open",
+        "extra": [
+          "tearXL"
+        ]
+      }
+    },
+    "face-screaming-fear": {
+      "spec": {
+        "l": "dotBig",
+        "r": "dotBig",
+        "mouth": "oval",
+        "extra": [
+          "cheekHands"
+        ]
+      }
+    },
+    "confounded-face": {
+      "spec": {
+        "l": "squint",
+        "r": "squint",
+        "mouth": "zigzag"
+      }
+    },
+    "persevering-face": {
+      "spec": {
+        "l": "closedDown",
+        "r": "closedDown",
+        "mouth": "frownBig"
+      }
+    },
+    "disappointed-face": {
+      "spec": {
+        "l": "closedDown",
+        "r": "closedDown",
+        "brows": "worry",
+        "mouth": "frown"
+      }
+    },
+    "downcast-face-sweat": {
+      "spec": {
+        "l": "closedDown",
+        "r": "closedDown",
+        "brows": "worry",
+        "mouth": "frown",
+        "extra": [
+          "sweat"
+        ]
+      }
+    },
+    "weary-face": {
+      "spec": {
+        "l": "squint",
+        "r": "squint",
+        "mouth": "frownBig"
+      }
+    },
+    "tired-face": {
+      "spec": {
+        "l": "squint",
+        "r": "squint",
+        "brows": "worry",
+        "mouth": "frownBig"
+      }
+    },
+    "yawning-face": {
+      "spec": {
+        "l": "closedDown",
+        "r": "closedDown",
+        "mouth": "yawn"
+      }
+    },
+    "face-steam-nose": {
+      "spec": {
+        "l": "closedDown",
+        "r": "closedDown",
+        "mouth": "frown",
+        "extra": [
+          "steam"
+        ]
+      }
+    },
+    "enraged-face": {
+      "spec": {
+        "l": "dot",
+        "r": "dot",
+        "brows": "angry",
+        "mouth": "frownBig"
+      }
+    },
+    "angry-face": {
+      "spec": {
+        "l": "dot",
+        "r": "dot",
+        "brows": "angry",
+        "mouth": "frown"
+      }
+    },
+    "face-symbols-mouth": {
+      "spec": {
+        "l": "dot",
+        "r": "dot",
+        "brows": "angry",
+        "mouth": "symbols"
+      }
+    },
+    "smiling-face-horns": {
+      "spec": {
+        "l": "dot",
+        "r": "dot",
+        "mouth": "smirk",
+        "extra": [
+          "hornsS"
+        ]
+      }
+    },
+    "angry-face-horns": {
+      "spec": {
+        "l": "dot",
+        "r": "dot",
+        "brows": "angry",
+        "mouth": "frown",
+        "extra": [
+          "hornsL"
+        ]
+      }
+    },
+    "skull": {
+      "spec": {
+        "head": "skull",
+        "l": "hole",
+        "r": "hole",
+        "mouth": "teethGrit"
+      }
+    },
+    "skull-crossbones": {
+      "spec": {
+        "head": "skull",
+        "l": "hole",
+        "r": "hole",
+        "mouth": "teethGrit",
+        "extra": [
+          "crossbones"
+        ]
+      }
+    },
+    "pile-of-poo": {
+      "spec": {
+        "head": "poop",
+        "l": "happy",
+        "r": "happy",
+        "mouth": "smile"
+      }
+    },
+    "clown-face": {
+      "spec": {
+        "l": "dotBig",
+        "r": "dotBig",
+        "mouth": "beam",
+        "extra": [
+          "clownNose"
+        ]
+      }
+    },
+    "ogre": {
+      "spec": {
+        "l": "dot",
+        "r": "dot",
+        "brows": "angry",
+        "mouth": "fang",
+        "extra": [
+          "hornsL"
+        ]
+      }
+    },
+    "goblin": {
+      "spec": {
+        "l": "dot",
+        "r": "dot",
+        "brows": "angry",
+        "mouth": "frown",
+        "extra": [
+          "longnose"
+        ]
+      }
+    },
+    "ghost": {
+      "spec": {
+        "head": "ghost",
+        "l": "dot",
+        "r": "dot",
+        "mouth": "open"
+      }
+    },
+    "alien": {
+      "spec": {
+        "head": "alien",
+        "l": "alienEye",
+        "r": "alienEye",
+        "mouth": "flat"
+      }
+    },
+    "alien-monster": {
+      "spec": {
+        "head": "invader",
+        "l": "sq",
+        "r": "sq",
+        "mouth": "teethGrit"
+      }
+    },
+    "robot-face": {
+      "spec": {
+        "head": "robot",
+        "l": "sq",
+        "r": "sq",
+        "mouth": "teethGrit"
+      }
+    },
+    "globe-face": {
+      "spec": {
+        "head": "round",
+        "l": "none",
+        "r": "none",
+        "mouth": "none",
+        "extra": [
+          "globe"
+        ]
+      }
+    },
+    "inbox-face": {
+      "spec": {
+        "head": "round",
+        "l": "none",
+        "r": "none",
+        "mouth": "none",
+        "extra": [
+          "inbox"
+        ]
+      }
+    },
+    "speak-face": {
+      "spec": {
+        "l": "dot",
+        "r": "dot",
+        "mouth": "none",
+        "extra": [
+          "speakArcs"
+        ]
+      }
+    }
+  },
+  "RESOLVE": {
+    "grinning-face": {
+      "glyph": "😀",
+      "aliases": [
+        "grinning",
+        "grin",
+        "big smile",
+        "smiley",
+        "smile"
+      ]
+    },
+    "grinning-face-big-eyes": {
+      "glyph": "😃",
+      "aliases": [
+        "big eyes smile",
+        "huge smile"
+      ]
+    },
+    "grinning-face-smiling-eyes": {
+      "glyph": "😄",
+      "aliases": [
+        "smile eyes",
+        "smiling eyes",
+        "very happy"
+      ]
+    },
+    "beaming-face": {
+      "glyph": "😁",
+      "aliases": [
+        "beaming",
+        "cheese",
+        "grinning"
+      ]
+    },
+    "grinning-squinting-face": {
+      "glyph": "😆",
+      "aliases": [
+        "squinting",
+        "laughing hard"
+      ]
+    },
+    "grinning-face-sweat": {
+      "glyph": "😅",
+      "aliases": [
+        "phew",
+        "sweat smile",
+        "relief smile"
+      ]
+    },
+    "face-tears-of-joy": {
+      "glyph": "😂",
+      "aliases": [
+        "tears of joy",
+        "lmao",
+        "laugh cry",
+        "laughing crying"
+      ]
+    },
+    "rolling-laughing": {
+      "glyph": "🤣",
+      "aliases": [
+        "rofl",
+        "rolling",
+        "floor laughing"
+      ]
+    },
+    "slightly-smiling-face": {
+      "glyph": "🙂",
+      "aliases": [
+        "slight smile",
+        "content"
+      ]
+    },
+    "upside-down-face": {
+      "glyph": "🙃",
+      "aliases": [
+        "upside down",
+        "silly"
+      ]
+    },
+    "melting-face": {
+      "glyph": "🫠",
+      "aliases": [
+        "melting",
+        "melt"
+      ]
+    },
+    "winking-face": {
+      "glyph": "😉",
+      "aliases": [
+        "wink",
+        "winking"
+      ]
+    },
+    "smiling-face-smiling-eyes": {
+      "glyph": "😊",
+      "aliases": [
+        "warm smile",
+        "blush smile",
+        "shy"
+      ]
+    },
+    "smiling-face-halo": {
+      "glyph": "😇",
+      "aliases": [
+        "halo",
+        "angel",
+        "innocent",
+        "good"
+      ]
+    },
+    "smiling-face-hearts": {
+      "glyph": "🥰",
+      "aliases": [
+        "hearts",
+        "loved",
+        "adored"
+      ]
+    },
+    "heart-eyes": {
+      "glyph": "😍",
+      "aliases": [
+        "heart eyes",
+        "love",
+        "in love",
+        "adore"
+      ]
+    },
+    "star-struck": {
+      "glyph": "🤩",
+      "aliases": [
+        "star struck",
+        "starstruck",
+        "amazing",
+        "wow eyes"
+      ]
+    },
+    "face-blowing-kiss": {
+      "glyph": "😘",
+      "aliases": [
+        "blowing kiss",
+        "kiss",
+        "mwah"
+      ]
+    },
+    "kissing-face": {
+      "glyph": "😗",
+      "aliases": [
+        "kissing"
+      ]
+    },
+    "kissing-face-smiling-eyes": {
+      "glyph": "😙",
+      "aliases": [
+        "kiss smile"
+      ]
+    },
+    "kissing-face-closed-eyes": {
+      "glyph": "😚",
+      "aliases": [
+        "kiss closed"
+      ]
+    },
+    "face-savoring-food": {
+      "glyph": "😋",
+      "aliases": [
+        "yum",
+        "yummy",
+        "delicious",
+        "tasty"
+      ]
+    },
+    "face-with-tongue": {
+      "glyph": "😛",
+      "aliases": [
+        "tongue",
+        "tongue out",
+        "bleh"
+      ]
+    },
+    "winking-face-tongue": {
+      "glyph": "😜",
+      "aliases": [
+        "wink tongue",
+        "crazy tongue"
+      ]
+    },
+    "zany-face": {
+      "glyph": "🤪",
+      "aliases": [
+        "zany",
+        "crazy",
+        "wild"
+      ]
+    },
+    "squinting-face-tongue": {
+      "glyph": "😝",
+      "aliases": [
+        "squint tongue",
+        "playful tongue"
+      ]
+    },
+    "money-mouth-face": {
+      "glyph": "🤑",
+      "aliases": [
+        "money",
+        "rich",
+        "dollar",
+        "cha ching"
+      ]
+    },
+    "smiling-face-open-hands": {
+      "glyph": "🤗",
+      "aliases": [
+        "hug",
+        "hugging",
+        "open hands",
+        "embrace"
+      ]
+    },
+    "face-hand-over-mouth": {
+      "glyph": "🤭",
+      "aliases": [
+        "oops",
+        "giggle",
+        "hand mouth",
+        "tee hee"
+      ]
+    },
+    "face-peeking-eye": {
+      "glyph": "🫣",
+      "aliases": [
+        "peek",
+        "peeking",
+        "cant look",
+        "shy peek"
+      ]
+    },
+    "shushing-face": {
+      "glyph": "🤫",
+      "aliases": [
+        "shush",
+        "shh",
+        "quiet",
+        "secret"
+      ]
+    },
+    "thinking-face": {
+      "glyph": "🤔",
+      "aliases": [
+        "thinking",
+        "think",
+        "hmm",
+        "ponder"
+      ]
+    },
+    "saluting-face": {
+      "glyph": "🫡",
+      "aliases": [
+        "salute",
+        "yes sir",
+        "respect"
+      ]
+    },
+    "zipper-mouth-face": {
+      "glyph": "🤐",
+      "aliases": [
+        "zipper",
+        "zipped",
+        "silent",
+        "mum"
+      ]
+    },
+    "raised-eyebrow-face": {
+      "glyph": "🤨",
+      "aliases": [
+        "raised eyebrow",
+        "suspicious",
+        "skeptical",
+        "really"
+      ]
+    },
+    "neutral-face": {
+      "glyph": "😐",
+      "aliases": [
+        "neutral",
+        "meh",
+        "straight face"
+      ]
+    },
+    "expressionless-face": {
+      "glyph": "😑",
+      "aliases": [
+        "expressionless",
+        "blank",
+        "deadpan"
+      ]
+    },
+    "face-without-mouth": {
+      "glyph": "😶",
+      "aliases": [
+        "no mouth",
+        "speechless"
+      ]
+    },
+    "dotted-line-face": {
+      "glyph": "🫥",
+      "aliases": [
+        "dotted",
+        "invisible",
+        "fade"
+      ]
+    },
+    "face-in-clouds": {
+      "glyph": "😶‍🌫️",
+      "aliases": [
+        "clouds",
+        "foggy",
+        "head in clouds"
+      ]
+    },
+    "smirking-face": {
+      "glyph": "😏",
+      "aliases": [
+        "smirk",
+        "smug",
+        "sly"
+      ]
+    },
+    "unamused-face": {
+      "glyph": "😒",
+      "aliases": [
+        "unamused",
+        "unimpressed",
+        "side eye"
+      ]
+    },
+    "face-rolling-eyes": {
+      "glyph": "🙄",
+      "aliases": [
+        "eye roll",
+        "rolling eyes",
+        "whatever"
+      ]
+    },
+    "grimacing-face": {
+      "glyph": "😬",
+      "aliases": [
+        "grimace",
+        "awkward",
+        "yikes",
+        "eek"
+      ]
+    },
+    "face-exhaling": {
+      "glyph": "😮‍💨",
+      "aliases": [
+        "exhale",
+        "sigh",
+        "relieved sigh"
+      ]
+    },
+    "lying-face": {
+      "glyph": "🤥",
+      "aliases": [
+        "lying",
+        "liar",
+        "pinocchio"
+      ]
+    },
+    "relieved-face": {
+      "glyph": "😌",
+      "aliases": [
+        "relieved",
+        "calm smile",
+        "peaceful"
+      ]
+    },
+    "pensive-face": {
+      "glyph": "😔",
+      "aliases": [
+        "pensive",
+        "sad",
+        "hurt",
+        "disappointed",
+        "let down",
+        "dont like",
+        "don't like",
+        "hate",
+        "dislike",
+        "upset with you",
+        "mad at you"
+      ]
+    },
+    "sleepy-face": {
+      "glyph": "😪",
+      "aliases": [
+        "sleepy",
+        "drowsy",
+        "snore"
+      ]
+    },
+    "drooling-face": {
+      "glyph": "🤤",
+      "aliases": [
+        "drool",
+        "drooling",
+        "hungry"
+      ]
+    },
+    "sleeping-face": {
+      "glyph": "😴",
+      "aliases": [
+        "sleeping",
+        "sleep",
+        "asleep",
+        "zzz",
+        "tired",
+        "bedtime"
+      ]
+    },
+    "face-medical-mask": {
+      "glyph": "😷",
+      "aliases": [
+        "mask",
+        "sick mask",
+        "covid"
+      ]
+    },
+    "face-thermometer": {
+      "glyph": "🤒",
+      "aliases": [
+        "thermometer",
+        "fever",
+        "ill",
+        "sick"
+      ]
+    },
+    "face-head-bandage": {
+      "glyph": "🤕",
+      "aliases": [
+        "bandage",
+        "injured",
+        "hurt head"
+      ]
+    },
+    "nauseated-face": {
+      "glyph": "🤢",
+      "aliases": [
+        "nauseous",
+        "nauseated",
+        "queasy",
+        "gross"
+      ]
+    },
+    "face-vomiting": {
+      "glyph": "🤮",
+      "aliases": [
+        "vomit",
+        "vomiting",
+        "puke",
+        "barf"
+      ]
+    },
+    "sneezing-face": {
+      "glyph": "🤧",
+      "aliases": [
+        "sneeze",
+        "sneezing",
+        "achoo",
+        "cold"
+      ]
+    },
+    "hot-face": {
+      "glyph": "🥵",
+      "aliases": [
+        "hot",
+        "sweating",
+        "overheated",
+        "spicy"
+      ]
+    },
+    "cold-face": {
+      "glyph": "🥶",
+      "aliases": [
+        "freezing",
+        "frigid",
+        "ice cold"
+      ]
+    },
+    "woozy-face": {
+      "glyph": "🥴",
+      "aliases": [
+        "woozy",
+        "drunk",
+        "dizzy drunk",
+        "tipsy"
+      ]
+    },
+    "face-crossed-eyes": {
+      "glyph": "😵",
+      "aliases": [
+        "crossed eyes",
+        "dead eyes",
+        "knocked out"
+      ]
+    },
+    "face-spiral-eyes": {
+      "glyph": "😵‍💫",
+      "aliases": [
+        "spiral eyes",
+        "hypnotized",
+        "dizzy"
+      ]
+    },
+    "exploding-head": {
+      "glyph": "🤯",
+      "aliases": [
+        "exploding",
+        "mind blown",
+        "mindblown",
+        "boom"
+      ]
+    },
+    "cowboy-hat-face": {
+      "glyph": "🤠",
+      "aliases": [
+        "cowboy",
+        "yeehaw",
+        "western"
+      ]
+    },
+    "partying-face": {
+      "glyph": "🥳",
+      "aliases": [
+        "party",
+        "partying",
+        "celebrate",
+        "yay",
+        "congrats",
+        "congratulations",
+        "birthday"
+      ]
+    },
+    "disguised-face": {
+      "glyph": "🥸",
+      "aliases": [
+        "disguise",
+        "incognito",
+        "groucho"
+      ]
+    },
+    "smiling-face-sunglasses": {
+      "glyph": "😎",
+      "aliases": [
+        "sunglasses",
+        "cool",
+        "shades",
+        "awesome"
+      ]
+    },
+    "nerd-face": {
+      "glyph": "🤓",
+      "aliases": [
+        "nerd",
+        "geek",
+        "glasses"
+      ]
+    },
+    "face-monocle": {
+      "glyph": "🧐",
+      "aliases": [
+        "monocle",
+        "fancy",
+        "inspector"
+      ]
+    },
+    "confused-face": {
+      "glyph": "😕",
+      "aliases": [
+        "confused",
+        "huh",
+        "uncertain"
+      ]
+    },
+    "face-diagonal-mouth": {
+      "glyph": "🫤",
+      "aliases": [
+        "diagonal",
+        "ehh",
+        "iffy"
+      ]
+    },
+    "worried-face": {
+      "glyph": "😟",
+      "aliases": [
+        "worried",
+        "concerned",
+        "anxious"
+      ]
+    },
+    "slightly-frowning-face": {
+      "glyph": "🙁",
+      "aliases": [
+        "frown",
+        "slight frown",
+        "sad face",
+        "a little sad"
+      ]
+    },
+    "frowning-face": {
+      "glyph": "☹️",
+      "aliases": [
+        "big frown",
+        "very sad",
+        "unhappy"
+      ]
+    },
+    "face-open-mouth": {
+      "glyph": "😮",
+      "aliases": [
+        "open mouth",
+        "oh",
+        "wow",
+        "surprised",
+        "gasp"
+      ]
+    },
+    "hushed-face": {
+      "glyph": "😯",
+      "aliases": [
+        "hushed",
+        "soft oh"
+      ]
+    },
+    "astonished-face": {
+      "glyph": "😲",
+      "aliases": [
+        "astonished",
+        "shocked",
+        "stunned"
+      ]
+    },
+    "flushed-face": {
+      "glyph": "😳",
+      "aliases": [
+        "flushed",
+        "blushing",
+        "embarrassed"
+      ]
+    },
+    "pleading-face": {
+      "glyph": "🥺",
+      "aliases": [
+        "pleading",
+        "puppy eyes",
+        "please",
+        "beg"
+      ]
+    },
+    "face-holding-tears": {
+      "glyph": "🥹",
+      "aliases": [
+        "holding tears",
+        "teary",
+        "emotional",
+        "touched"
+      ]
+    },
+    "frowning-face-open-mouth": {
+      "glyph": "😦",
+      "aliases": [
+        "frown open"
+      ]
+    },
+    "anguished-face": {
+      "glyph": "😧",
+      "aliases": [
+        "anguished",
+        "distressed"
+      ]
+    },
+    "fearful-face": {
+      "glyph": "😨",
+      "aliases": [
+        "fearful",
+        "scared",
+        "afraid"
+      ]
+    },
+    "anxious-face-sweat": {
+      "glyph": "😰",
+      "aliases": [
+        "anxious sweat",
+        "nervous",
+        "cold sweat"
+      ]
+    },
+    "sad-relieved-face": {
+      "glyph": "😥",
+      "aliases": [
+        "sad relieved",
+        "whew sad"
+      ]
+    },
+    "crying-face": {
+      "glyph": "😢",
+      "aliases": [
+        "crying",
+        "cry",
+        "tear",
+        "sad tear",
+        "sob"
+      ]
+    },
+    "loudly-crying-face": {
+      "glyph": "😭",
+      "aliases": [
+        "loudly crying",
+        "sobbing",
+        "bawling",
+        "wail"
+      ]
+    },
+    "face-screaming-fear": {
+      "glyph": "😱",
+      "aliases": [
+        "scream",
+        "screaming",
+        "terrified",
+        "home alone"
+      ]
+    },
+    "confounded-face": {
+      "glyph": "😖",
+      "aliases": [
+        "confounded",
+        "frustrated",
+        "ugh"
+      ]
+    },
+    "persevering-face": {
+      "glyph": "😣",
+      "aliases": [
+        "persevering",
+        "struggling",
+        "determined"
+      ]
+    },
+    "disappointed-face": {
+      "glyph": "😞",
+      "aliases": [
+        "disappointed",
+        "letdown",
+        "sigh sad"
+      ]
+    },
+    "downcast-face-sweat": {
+      "glyph": "😓",
+      "aliases": [
+        "downcast",
+        "hard work"
+      ]
+    },
+    "weary-face": {
+      "glyph": "😩",
+      "aliases": [
+        "weary",
+        "exhausted",
+        "done"
+      ]
+    },
+    "tired-face": {
+      "glyph": "😫",
+      "aliases": [
+        "so tired",
+        "worn out",
+        "drained"
+      ]
+    },
+    "yawning-face": {
+      "glyph": "🥱",
+      "aliases": [
+        "yawn",
+        "yawning",
+        "bored"
+      ]
+    },
+    "face-steam-nose": {
+      "glyph": "😤",
+      "aliases": [
+        "triumph",
+        "steam nose",
+        "huff",
+        "determined mad"
+      ]
+    },
+    "enraged-face": {
+      "glyph": "😡",
+      "aliases": [
+        "enraged",
+        "furious",
+        "pouting",
+        "rage"
+      ]
+    },
+    "angry-face": {
+      "glyph": "😠",
+      "aliases": [
+        "angry",
+        "mad",
+        "annoyed",
+        "grr"
+      ]
+    },
+    "face-symbols-mouth": {
+      "glyph": "🤬",
+      "aliases": [
+        "cursing",
+        "swearing",
+        "symbols mouth",
+        "cussing"
+      ]
+    },
+    "smiling-face-horns": {
+      "glyph": "😈",
+      "aliases": [
+        "devil",
+        "devilish",
+        "mischief",
+        "evil smile"
+      ]
+    },
+    "angry-face-horns": {
+      "glyph": "👿",
+      "aliases": [
+        "angry devil",
+        "imp",
+        "demon"
+      ]
+    },
+    "skull": {
+      "glyph": "💀",
+      "aliases": [
+        "skull",
+        "dead",
+        "dying",
+        "im dead"
+      ]
+    },
+    "skull-crossbones": {
+      "glyph": "☠️",
+      "aliases": [
+        "crossbones",
+        "poison",
+        "pirate"
+      ]
+    },
+    "pile-of-poo": {
+      "glyph": "💩",
+      "aliases": [
+        "poop",
+        "poo",
+        "crap",
+        "turd"
+      ]
+    },
+    "clown-face": {
+      "glyph": "🤡",
+      "aliases": [
+        "clown"
+      ]
+    },
+    "ogre": {
+      "glyph": "👹",
+      "aliases": [
+        "ogre",
+        "monster"
+      ]
+    },
+    "goblin": {
+      "glyph": "👺",
+      "aliases": [
+        "goblin",
+        "tengu"
+      ]
+    },
+    "ghost": {
+      "glyph": "👻",
+      "aliases": [
+        "ghost",
+        "boo",
+        "spooky"
+      ]
+    },
+    "alien": {
+      "glyph": "👽",
+      "aliases": [
+        "alien",
+        "ufo",
+        "et"
+      ]
+    },
+    "alien-monster": {
+      "glyph": "👾",
+      "aliases": [
+        "space invader",
+        "arcade"
+      ]
+    },
+    "robot-face": {
+      "glyph": "🤖",
+      "aliases": [
+        "robot",
+        "bot",
+        "android"
+      ]
+    },
+    "globe-face": {
+      "glyph": "🌐",
+      "aliases": [
+        "globe",
+        "world",
+        "search",
+        "web",
+        "internet"
+      ]
+    },
+    "inbox-face": {
+      "glyph": "📥",
+      "aliases": [
+        "inbox",
+        "download",
+        "drop"
+      ]
+    },
+    "speak-face": {
+      "glyph": "🗣️",
+      "aliases": [
+        "speak",
+        "talk",
+        "speaking"
+      ]
+    }
+  }
+}

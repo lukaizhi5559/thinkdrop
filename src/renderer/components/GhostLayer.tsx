@@ -3,6 +3,7 @@ import RoptKeyIcon from './RoptKeyIcon';
 import { ThinkDropLogo } from './SlideoutDrawer';
 import { ScreenStage } from './screen/ScreenStage';
 import HistoryTimeline from './HistoryTimeline';
+import AvatarCompanion from './AvatarCompanion';
 
 const ipcRenderer = (window as any).electron?.ipcRenderer;
 // Listener token — untokened listeners can't be removed across contextBridge.
@@ -138,6 +139,7 @@ function GhostLayer() {
   // Selection context — pill shown while a text selection is armed for the
   // next prompt (main captures the text at submit time).
   const [selectionCtx, setSelectionCtx] = useState(false);
+  const [avatarOccupied, setAvatarOccupied] = useState(false); // AvatarCompanion up — keeps ghost alive, suppresses the selection pill
 
   // Pending gather questions — a question that scrolls out of the feed looks
   // like a stuck task; this pill is the beacon outside the fold. Click →
@@ -464,7 +466,7 @@ function GhostLayer() {
   // Tell main when the window goes fully idle — highlights gone, not scanning,
   // no drop/boundary, and no screen-output displays. Main then hides the
   // window + clears its display tracking (restores click-through).
-  const ghostOccupied = screenOccupied || isVisible || isScanning || !!drop || !!boundary || !!controlLock || !!fillerProgress || voiceSleeping || voiceStarting || webSearchStarting || selectionCtx || cancelArmed || cancelCountdown != null || voiceMuted || historyOpen || !!pendingQuestions;
+  const ghostOccupied = avatarOccupied || screenOccupied || isVisible || isScanning || !!drop || !!boundary || !!controlLock || !!fillerProgress || voiceSleeping || voiceStarting || webSearchStarting || selectionCtx || cancelArmed || cancelCountdown != null || voiceMuted || historyOpen || !!pendingQuestions;
   const prevOccupied = useRef(ghostOccupied);
   useEffect(() => {
     if (prevOccupied.current && !ghostOccupied) {
@@ -477,6 +479,10 @@ function GhostLayer() {
   // always-on sibling (not gated by isScanning/isVisible) so displays work
   // with zero highlights and alerts can preempt the scan UI.
   const stageNode = <ScreenStage onOccupancyChange={setScreenOccupied} />;
+
+  // Avatar companion — rendered in every path; reports occupancy so the
+  // window stays alive while the avatar owns the surface.
+  const avatarNode = <AvatarCompanion onOccupancyChange={setAvatarOccupied} />;
 
   // Voice-startup pill — covers the seconds while the hidden worker launches.
   const startNode = voiceStarting ? <VoiceStartingPill /> : null;
@@ -491,7 +497,8 @@ function GhostLayer() {
   const sleepNode = voiceSleeping ? <SleepOverlay /> : null;
 
   // Selection context pill — "Text Highlighted Context" while armed.
-  const selNode = selectionCtx ? <SelectionContextPill /> : null;
+  // Suppressed while the avatar owns the surface (it shows its own context state).
+  const selNode = selectionCtx && !avatarOccupied ? <SelectionContextPill /> : null;
 
   // Voice-muted pill — "Muted — tap ⌥R" while the session mic is dead.
   const muteNode = voiceMuted ? <MutedPill /> : null;
@@ -540,7 +547,7 @@ function GhostLayer() {
 
   // Show scanning overlay with dark background
   if (isScanning) {
-    return <>{stageNode}{fillerNode}{startNode}{webSearchNode}{sleepNode}{selNode}{lockNode}{cancelNode}{countdownNode}{muteNode}{historyNode}{questionNode}<ScanningOverlay timer={scanTimer} /></>;
+    return <>{stageNode}{avatarNode}{fillerNode}{startNode}{webSearchNode}{sleepNode}{selNode}{lockNode}{cancelNode}{countdownNode}{muteNode}{historyNode}{questionNode}<ScanningOverlay timer={scanTimer} /></>;
   }
 
   // The progress drop renders independently of bounding-box highlights — it is
@@ -552,12 +559,13 @@ function GhostLayer() {
   const boundaryNode = boundary ? <PersistentBoundary element={boundary} visible={dropVisible} /> : null;
 
   if (!isVisible || highlights.length === 0) {
-    return <>{stageNode}{boundaryNode}{dropNode}{fillerNode}{startNode}{webSearchNode}{sleepNode}{selNode}{lockNode}{cancelNode}{countdownNode}{muteNode}{historyNode}{questionNode}</>;
+    return <>{stageNode}{avatarNode}{boundaryNode}{dropNode}{fillerNode}{startNode}{webSearchNode}{sleepNode}{selNode}{lockNode}{cancelNode}{countdownNode}{muteNode}{historyNode}{questionNode}</>;
   }
 
   return (
     <>
     {stageNode}
+    {avatarNode}
     {webSearchNode}
     <div
       style={{

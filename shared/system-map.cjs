@@ -19,7 +19,7 @@ const path = require('path');
 const os = require('os');
 
 const THINKDROP_HOME = path.join(os.homedir(), '.thinkdrop');
-const PLANS_DIR = path.join(THINKDROP_HOME, 'plans');
+const PLANS_DIR = process.env.THINKDROP_PLANS_DIR || path.join(THINKDROP_HOME, 'plans');
 
 // ── ~/.thinkdrop layout ──────────────────────────────────────────────────────
 // What each entry is for — the map an agent needs before it goes digging.
@@ -222,6 +222,7 @@ function _planMeta(planId, filePath) {
       name: fm.name || null,
       title: titleMatch ? titleMatch[1].trim() : null,
       originalPrompt: fm.original_prompt || '',
+      created: fm.created || null,
       status: fm.status || 'drafting',
       totalTasks: tasks.length,
       pendingCount: tasks.length - doneCount,
@@ -269,6 +270,148 @@ function findPlans(query) {
 }
 
 /**
+ * Referent-scoped lookup — a definite "the X plan" resolves by name, title,
+ * or planId ONLY. Prompt/task content is never scored: that's what let a
+ * stray token ("We have a", "screenshot") bind an unrelated saved plan.
+ * findPlans' content fuzz is reserved for the in-lane plan.find search tool.
+ * @returns {Array} matches sorted by score desc, then mtime desc
+ */
+function findPlansByName(query) {
+  const q = String(query || '').trim();
+  if (!q || !fs.existsSync(PLANS_DIR)) return [];
+  const qNorm = _norm(q);
+  const qTokens = _tokens(q);
+  const out = [];
+  for (const f of fs.readdirSync(PLANS_DIR)) {
+    if (!f.endsWith('.md') || !f.startsWith('plan')) continue;
+    const filePath = path.join(PLANS_DIR, f);
+    const planId = f.replace(/\.md$/, '');
+    const meta = _planMeta(planId, filePath);
+    if (!meta) continue;
+    const nameNorm = _norm(`${meta.name || ''} ${meta.title || ''}`);
+    const nameTokens = new Set(_tokens(`${meta.name || ''} ${meta.title || ''}`));
+    let score = 0;
+    if (planId === q || planId === qNorm) score = 100;
+    else if (qNorm && (_norm(meta.name || '') === qNorm || _norm(meta.title || '') === qNorm)) score = 10;
+    else if (qNorm && nameNorm.includes(qNorm)) score = 8;
+    else if (qTokens.length && qTokens.every(t => nameTokens.has(t))) score = 6;
+    if (score > 0) out.push({ ...meta, score, mtime: fs.statSync(filePath).mtimeMs });
+  }
+  out.sort((a, b) => b.score - a.score || b.mtime - a.mtime);
+  return out;
+}
+
+// ── Time-scoped plan recall ──────────────────────────────────────────────────
+const _DAY_MS = 24 * 60 * 60 * 1000;
+const _WEEKDAY_IX = { sunday: 0, monday: 1, tuesday: 2, wednesday: 3, thursday: 4, friday: 5, saturday: 6 };
+const _MONTH_IX = {
+  jan: 0, january: 0, feb: 1, february: 1, mar: 2, march: 2, apr: 3, april: 3,
+  may: 4, jun: 5, june: 5, jul: 6, july: 6, aug: 7, august: 7, sep: 8,
+  sept: 8, september: 8, oct: 9, october: 9, nov: 10, november: 10,
+  dec: 11, december: 11,
+};
+const _MONTH_RE = 'jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t|tember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?';
+
+function _dayStart(ms) { const d = new Date(ms); d.setHours(0, 0, 0, 0); return d.getTime(); }
+
+/**
+ * Resolve a past-facing time phrase into { fromMs, toMs, label }.
+ * Relative periods are rolling windows ("last week" = past 7 days);
+ * named days/dates resolve to the most recent past occurrence.
+ * Returns null when no phrase matches.
+ */
+function planWindowFor(text, now = Date.now()) {
+  const s = String(text || '').toLowerCase();
+  const today = _dayStart(now);
+  const eod = today + _DAY_MS - 1;
+  let m;
+  if (/\bthis\s+(?:morning|afternoon|evening)\b/.test(s)) return { fromMs: today, toMs: eod, label: 'today' };
+  if (/\b(?:today|tonight)\b/.test(s)) return { fromMs: today, toMs: eod, label: 'today' };
+  if (/\b(?:yesterday|last\s+night)\b/.test(s)) return { fromMs: today - _DAY_MS, toMs: today - 1, label: 'yesterday' };
+  if (/\bthe\s+other\s+day\b/.test(s) || /\ba\s+(?:few|couple(?:\s+of)?)\s+days?\s+ago\b/.test(s)) {
+    return { fromMs: today - 5 * _DAY_MS, toMs: today - _DAY_MS, label: 'a few days ago' };
+  }
+  if ((m = s.match(/\b(\d+)\s+(days?|weeks?|months?)\s+ago\b/))) {
+    const n = parseInt(m[1], 10);
+    const back = m[2].startsWith('d') ? n : m[2].startsWith('w') ? n * 7 : n * 30;
+    const day = today - back * _DAY_MS;
+    return { fromMs: day, toMs: day + _DAY_MS - 1, label: m[0] };
+  }
+  if (/\ba\s+(?:week|month)\s+ago\b/.test(s)) {
+    const back = /week/.test(s.match(/\ba\s+(?:week|month)\s+ago\b/)[0]) ? 7 : 30;
+    const day = today - back * _DAY_MS;
+    return { fromMs: day, toMs: day + _DAY_MS - 1, label: back === 7 ? 'a week ago' : 'a month ago' };
+  }
+  if (/\bthis\s+week\b/.test(s)) {
+    const mon = today - ((new Date(today).getDay() + 6) % 7) * _DAY_MS;
+    return { fromMs: mon, toMs: eod, label: 'this week' };
+  }
+  if (/\blast\s+week\b/.test(s)) return { fromMs: today - 7 * _DAY_MS, toMs: eod, label: 'the last 7 days' };
+  if (/\bthis\s+month\b/.test(s)) {
+    const d = new Date(today);
+    return { fromMs: new Date(d.getFullYear(), d.getMonth(), 1).getTime(), toMs: eod, label: 'this month' };
+  }
+  if (/\blast\s+month\b/.test(s)) return { fromMs: today - 30 * _DAY_MS, toMs: eod, label: 'the last 30 days' };
+  if (/\bthis\s+year\b/.test(s)) {
+    return { fromMs: new Date(new Date(today).getFullYear(), 0, 1).getTime(), toMs: eod, label: 'this year' };
+  }
+  if (/\blast\s+year\b/.test(s)) {
+    const y = new Date(today).getFullYear();
+    return { fromMs: new Date(y - 1, 0, 1).getTime(), toMs: new Date(y, 0, 1).getTime() - 1, label: 'last year' };
+  }
+  if ((m = s.match(new RegExp(`\\b(?:on|from)\\s+(${_MONTH_RE})\\s+(\\d{1,2})(?:st|nd|rd|th)?`)))) {
+    const d = new Date(today);
+    let day = new Date(d.getFullYear(), _MONTH_IX[m[1]], parseInt(m[2], 10)).getTime();
+    if (day > today) day = new Date(d.getFullYear() - 1, _MONTH_IX[m[1]], parseInt(m[2], 10)).getTime();
+    return { fromMs: day, toMs: day + _DAY_MS - 1, label: m[0].replace(/^(?:on|from)\s+/, '') };
+  }
+  if ((m = s.match(/\b(?:on|from)\s+(\d{1,2})\/(\d{1,2})(?:\/(\d{2,4}))?/))) {
+    const mo = parseInt(m[1], 10) - 1, dd = parseInt(m[2], 10);
+    let y = m[3] ? (m[3].length === 2 ? 2000 + parseInt(m[3], 10) : parseInt(m[3], 10)) : new Date(today).getFullYear();
+    let day = new Date(y, mo, dd).getTime();
+    if (!m[3] && day > today) day = new Date(y - 1, mo, dd).getTime();
+    return { fromMs: day, toMs: day + _DAY_MS - 1, label: m[0].replace(/^(?:on|from)\s+/, '') };
+  }
+  if ((m = s.match(new RegExp(`\\bin\\s+(${_MONTH_RE})\\b`)))) {
+    const d = new Date(today);
+    const y = _MONTH_IX[m[1]] > d.getMonth() ? d.getFullYear() - 1 : d.getFullYear();
+    return {
+      fromMs: new Date(y, _MONTH_IX[m[1]], 1).getTime(),
+      toMs: Math.min(new Date(y, _MONTH_IX[m[1]] + 1, 1).getTime() - 1, eod),
+      label: m[0],
+    };
+  }
+  if ((m = s.match(/\b(?:last\s+|on\s+)?(monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b/))) {
+    const back = (new Date(today).getDay() - _WEEKDAY_IX[m[1]] + 7) % 7;
+    const day = today - back * _DAY_MS;
+    return { fromMs: day, toMs: day + _DAY_MS - 1, label: m[0] };
+  }
+  return null;
+}
+
+/**
+ * Plans touched inside a window — frontmatter `created` OR file mtime, so
+ * "plans I made last week" and "plans I worked on last week" both answer.
+ */
+function plansInWindow({ fromMs, toMs }) {
+  if (!fs.existsSync(PLANS_DIR) || !(fromMs > 0)) return [];
+  const hi = Number.isFinite(toMs) ? toMs : Date.now();
+  const out = [];
+  for (const f of fs.readdirSync(PLANS_DIR)) {
+    if (!f.endsWith('.md') || !f.startsWith('plan')) continue;
+    const filePath = path.join(PLANS_DIR, f);
+    const meta = _planMeta(f.replace(/\.md$/, ''), filePath);
+    if (!meta) continue;
+    const mtime = fs.statSync(filePath).mtimeMs;
+    const created = Date.parse(meta.created || '') || 0;
+    const inWindow = (created >= fromMs && created <= hi) || (mtime >= fromMs && mtime <= hi);
+    if (inWindow) out.push({ ...meta, created: created || null, mtime });
+  }
+  out.sort((a, b) => Math.max(b.created || 0, b.mtime) - Math.max(a.created || 0, a.mtime));
+  return out;
+}
+
+/**
  * Plans the user could plausibly resume: not done/cancelled, and at least one
  * task not done. Failed plans qualify — reopening resets failed/skipped tasks.
  */
@@ -294,5 +437,5 @@ module.exports = {
   LAYOUT, SERVICE_PORTS,
   projectRoot, logsDir, listLogs, tailLog, headLog, grepLog, logRange,
   renderLayout, renderEnvironment,
-  findPlans, resumablePlans,
+  findPlans, findPlansByName, planWindowFor, plansInWindow, resumablePlans,
 };

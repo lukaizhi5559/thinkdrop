@@ -541,7 +541,7 @@ function ResultsContentImpl({
                   <div
                     className="relative text-sm leading-relaxed"
                     style={{
-                      animation: isStreaming ? 'fadeIn 0.3s ease-out' : 'none',
+                      animation: isStreaming ? 'fadeInLift 0.3s ease-out' : 'none',
                       lineHeight: '1.6'
                     }}
                   >

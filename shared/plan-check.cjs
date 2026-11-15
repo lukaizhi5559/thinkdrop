@@ -213,7 +213,9 @@ async function computePlanCheck(tasks, opts = {}) {
       }
 
       // ── Browser service agents ──────────────────────────────────────
-      const ok = authState === 'authed' || authState === 'bypassed';
+      // 'none-required' means the descriptor needs no sign-in at all — it
+      // passes readiness like an authed session, not a Sign-in issue.
+      const ok = authState === 'authed' || authState === 'bypassed' || authState === 'none-required';
       items.push({
         id: `t${n}-${desc.agentId}`,
         taskNum: n, agentId: desc.agentId,

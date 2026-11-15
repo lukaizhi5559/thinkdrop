@@ -55,7 +55,11 @@ export function ScreenStage({ onOccupancyChange }: { onOccupancyChange?: (occupi
       setItems(prev => {
         const idx = prev.findIndex(i => i.output.id === output.id);
         if (idx >= 0) {
-          // Same id = update → restart the lifecycle (fresh mount via key).
+          // Same id + identical content → silent swap. Guardian blocks re-fire
+          // on a stable id every judge pass; remounting would replay the
+          // entrance every ~5-30s. A genuinely changed payload (e.g. the
+          // prompt→scene loop's regenerated scene:active) still remounts.
+          if (sameDisplayPayload(prev[idx].output, output)) return prev;
           const next = prev.slice();
           next[idx] = { output, outSeq: 0, mountKey: prev[idx].mountKey + 1 };
           return next;
@@ -197,9 +201,10 @@ function ScreenItem({ output, outSeq, stackIndex = 0, onRemove }: {
 
   const onBackdropClick = (e: React.MouseEvent) => {
     // Blocking displays (interactive charts, alert curtains) dismiss on a
-    // click outside the content card. Route through main's clear path so
+    // click outside the content card — EXCEPT locked curtains, which only
+    // the guardian passcode clears. Route through main's clear path so
     // screenDisplays + the Esc shortcut stay consistent.
-    if (!output.blocking || e.target !== e.currentTarget) return;
+    if (!output.blocking || output.locked || e.target !== e.currentTarget) return;
     try { ipcRenderer?.send('ghostlayer:display-clear-request', { id: output.id }); } catch (_) {}
   };
 
@@ -214,11 +219,13 @@ function ScreenItem({ output, outSeq, stackIndex = 0, onRemove }: {
         pointerEvents: output.blocking ? 'auto' : 'none',
       }}
     >
-      <Scrim output={output} />
+      <Scrim output={output} phase={phase} />
       {/* ESC affordance — every display advertises the exit key. The chip is
           the only always-interactive element: hover-capture lifts
           click-through while over it, so it stays clickable on non-blocking
-          items too. Staggered per item so stacked displays each show one. */}
+          items too. Staggered per item so stacked displays each show one.
+          Locked curtains hide it — Esc can't dismiss a passcode gate. */}
+      {!output.locked && (
       <div
         data-esc-badge={output.id}
         onMouseEnter={() => { try { ipcRenderer?.send('ghostlayer:hover-interactive', { hovering: true }); } catch (_) {} }}
@@ -257,6 +264,7 @@ function ScreenItem({ output, outSeq, stackIndex = 0, onRemove }: {
         }}>ESC</span>
         <span style={{ opacity: 0.85 }}>exit</span>
       </div>
+      )}
       <div style={{ position: 'relative', display: 'flex', width: '100%', ...positionFlex(output.position) }}>
         {/* Interactive items (non-blocking): the content box lifts
             click-through only while hovered — main forwards pointer moves so
@@ -287,6 +295,15 @@ function ScreenItem({ output, outSeq, stackIndex = 0, onRemove }: {
 }
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
+
+/** Same-id display updates: is the incoming payload content-identical to the
+ *  live one? Volatile fields (createdAt — re-stamped by the normalizer on
+ *  every POST) are ignored. Exported so the dedupe rule stays testable. */
+export function sameDisplayPayload(a: ScreenOutput, b: ScreenOutput): boolean {
+  const { createdAt: _ca, ...restA } = a as any;
+  const { createdAt: _cb, ...restB } = b as any;
+  return JSON.stringify(restA) === JSON.stringify(restB);
+}
 
 function animateClasses(output: ScreenOutput, phase: Phase): string {
   const a = output.animate || {};
@@ -320,22 +337,30 @@ function positionFlex(position: ScreenOutput['position']): React.CSSProperties {
   }
 }
 
-function Scrim({ output }: { output: ScreenOutput }) {
+function Scrim({ output, phase }: { output: ScreenOutput; phase: Phase }) {
   const { scrim, opacity } = output;
   if (!scrim || scrim === 'none') return null;
-  const style: React.CSSProperties = { position: 'absolute', inset: 0 };
+  // Block-severity curtains are child-safety surfaces — fully opaque so the
+  // content behind can never bleed through (0.85 read as a dim preview).
+  const blockOpaque = output.severity === 'block' ? 1 : opacity;
+  const style: React.CSSProperties = { position: 'absolute', inset: 0, opacity: 1 };
   if (scrim === 'dim') {
     style.backgroundColor = `rgba(0,0,0,${opacity})`;
   } else if (scrim === 'black') {
-    style.backgroundColor = `rgba(0,0,0,${Math.max(0.85, opacity)})`;
+    style.backgroundColor = `rgba(0,0,0,${Math.max(0.85, blockOpaque)})`;
   } else if (scrim === 'white') {
-    style.backgroundColor = `rgba(255,255,255,${Math.max(0.85, opacity)})`;
+    style.backgroundColor = `rgba(255,255,255,${Math.max(0.85, blockOpaque)})`;
   } else if (scrim === 'blur') {
     style.backdropFilter = 'blur(14px)';
     (style as any).WebkitBackdropFilter = 'blur(14px)';
     style.backgroundColor = 'rgba(0,0,0,0.25)';
   }
-  return <div style={style} />;
+  // The scrim fades with the item lifecycle — before this it mounted
+  // instantly while the card ran fadeIn, which read as a pop/wipe.
+  const cls = phase === 'out'
+    ? 'animate__animated animate__fadeOut animate__faster'
+    : 'animate__animated animate__fadeIn';
+  return <div className={cls} style={style} />;
 }
 
 // ── Kind dispatch ───────────────────────────────────────────────────────────

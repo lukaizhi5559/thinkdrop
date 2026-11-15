@@ -2,7 +2,7 @@ import { useEffect, useRef, useCallback, RefObject } from 'react';
 
 // Collapsed height = header (row1 ~36) + tabbar (~40) + input area (~120) + footer/padding.
 // Keep in sync with UNIFIED_COLLAPSED_HEIGHT in src/main/main.js (applyUnifiedBounds).
-export const COLLAPSED_HEIGHT = 220;
+export const COLLAPSED_HEIGHT = 450;
 
 // Maximum total window height the renderer will ever request. The main process
 // also clamps to (workAreaHeight - 2*margin), so this is just an upper bound for

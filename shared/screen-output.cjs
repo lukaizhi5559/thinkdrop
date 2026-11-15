@@ -21,6 +21,9 @@
  *   durationMs — auto-dismiss after N ms (per-kind default when omitted; 0 = sticky)
  *   dismiss    — 'auto' | 'manual' (manual waits for /screen/clear)
  *   blocking   — lift click-through while displayed (alerts)
+ *   locked     — display can only be dismissed via rules:guardian:unlock
+ *                (guardian passcode); Esc/click/clear paths all skip it
+ *   ruleId     — guardian rule that produced this display (unlock grace)
  *   priority   — stacking order; alerts > deck > text > effect, etc.
  *   position   — 'center' | 'top' | 'bottom' | 'banner' | 'fullscreen'
  *   scrim      — 'none' | 'dim' | 'blur' | 'black' | 'white'
@@ -222,7 +225,14 @@ function normalizeScreenOutput(raw) {
     opacity: _num(raw.opacity, 0, 1) ?? (d.scrim === 'dim' ? 0.45 : 0.6),
     durationMs: _num(raw.durationMs, 0, 10 * 60 * 1000) ?? d.durationMs,
     dismiss: _oneOf(raw.dismiss, DISMISS) || 'auto',
-    blocking: raw.blocking === true,
+    // locked implies blocking — a click-through passcode field is useless.
+    blocking: raw.blocking === true || raw.locked === true,
+    // locked — passcode-gated display (guardian blocks). Main skips every
+    // unauthenticated clear path; dismissal requires rules:guardian:unlock.
+    locked: raw.locked === true,
+    // ruleId — the guardian rule that produced this display; main uses it to
+    // stamp a re-arm grace on the rule after a successful passcode unlock.
+    ruleId: _str(raw.ruleId, 100),
     // interactive — capture pointer input only while the cursor is over the
     // item's content (wheel scroll, swipe nav). Unlike `blocking` it does NOT
     // capture the full window and carries no backdrop-dismiss semantics.
@@ -271,13 +281,22 @@ function normalizeScreenOutput(raw) {
       break;
     }
     case 'emoji': {
+      // Missing emoji arg → derive from title/text/mood via the emoji
+      // catalog ("emoji kind requires an emoji" used to hard-fail here).
+      if (!out.emoji) {
+        try {
+          const { glyphForText } = require('./emoji-catalog.cjs');
+          out.emoji = glyphForText([raw.title, raw.text, raw.mood].filter(Boolean).join(' '));
+        } catch (_) {}
+      }
       if (!out.emoji) return { ok: false, error: 'emoji kind requires an emoji' };
       out.text = _str(raw.text, MAX_TEXT_LEN); // optional caption
       break;
     }
     case 'alert': {
       out.severity = _oneOf(raw.severity, SEVERITIES) || d.severity;
-      out.text = _str(raw.text, MAX_TEXT_LEN);
+      // `body` accepted as an alias — guardian/monitor producers send body.
+      out.text = _str(raw.text, MAX_TEXT_LEN) || _str(raw.body, MAX_TEXT_LEN);
       if (!out.text && !out.title) return { ok: false, error: 'alert kind requires text or title' };
       break;
     }

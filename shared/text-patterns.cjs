@@ -206,6 +206,15 @@ const ACTIVITY_RECALL_RE = new RegExp([
 ].join('|'), 'i');
 
 /**
+ * Past-facing time phrases for saved-plan recall — "what plans did I do last
+ * week", "the plan from tuesday", "plans in march". Detection only; the
+ * window math lives in system-map.planWindowFor. Deliberately excludes
+ * forward phrases ("tomorrow") — a future-facing "plan for tomorrow" is a
+ * draft request, not a recall.
+ */
+const PLAN_TIME_PHRASE_RE = /\b(?:today|tonight|yesterday|last\s+night|this\s+(?:morning|afternoon|evening|week|month|year)|last\s+(?:week|month|year)|(?:last\s+|on\s+)?(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday)|\d+\s+(?:days?|weeks?|months?)\s+ago|a\s+(?:week|month|(?:few|couple(?:\s+of)?)\s+days?)\s+ago|the\s+other\s+day|(?:on|from)\s+(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t|tember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\s+\d{1,2}(?:st|nd|rd|th)?|(?:on|from)\s+\d{1,2}\/\d{1,2}(?:\/\d{2,4})?|in\s+(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t|tember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?))\b/i;
+
+/**
  * Explicit fact/note write directives. This is intentionally narrower than
  * generic "remember" vocabulary: questions such as "remember what I asked?"
  * are conversation recall, and "remember to call Jake" is a task/reminder.
@@ -800,6 +809,7 @@ module.exports = {
   isLocalFileEdit,
   EPISODIC_RE,
   ACTIVITY_RECALL_RE,
+  PLAN_TIME_PHRASE_RE,
   MEMORY_STORE_DIRECTIVE_RE,
   ELLIPTICAL_FOLLOWUP_RE,
   IMAGE_REQUEST_RES,

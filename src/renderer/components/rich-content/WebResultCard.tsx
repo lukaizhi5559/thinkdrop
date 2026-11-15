@@ -22,6 +22,7 @@ export interface WebResultItem {
   price?: string;
   snippet?: string;
   hostname?: string;
+  displayDomain?: string;
   // Structured SERP rich-snippet fields (google-serp); when absent the card
   // parses item.snippet for the same patterns (Bing/DDG + cached results).
   rating?: number;
@@ -88,7 +89,9 @@ const WebResultCard: React.FC<WebResultCardProps> = ({ item, variant = 'card' })
   const isVideo = item.mediaType === 'video';
   const isMedia = isVideo || item.mediaType === 'image';
 
-  const hostname = item.hostname || (() => {
+  // Prefer the extractor's displayDomain over URL-derived — google.com/goto
+  // wrapped links would otherwise label every card as google.com.
+  const hostname = item.hostname || item.displayDomain || (() => {
     try { return new URL(item.url || item.imageUrl || '').hostname.replace(/^www\./, ''); } catch (_) { return ''; }
   })();
 

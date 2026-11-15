@@ -45,13 +45,51 @@ assert(f.userText === 'update the verses', `userText: ${f.userText}`);
 // planRef on clean user text — "the nylas plan" extracts the referent.
 f = computeTurnFacts({ rawText: 'continue the nylas plan' });
 assert(f.planRef && /nylas/i.test(f.planRef.token) && f.planRef.meaningful, `planRef: ${JSON.stringify(f.planRef)}`);
-// Bare "the plan" with a long prefix captures the phrase — the findPlans
-// score floor is what stops it binding a random plan.
+// Bare "the plan" carries NO referent — recall binds by name only now, and
+// there is no name to resolve. The old catch-all used to fabricate a token.
 f = computeTurnFacts({ rawText: 'what happened with the plan' });
-assert(f.planRef && f.planRef.meaningful, 'prefix phrase is meaningful');
-assert(f.planRef.informational, 'what-question is informational');
+assert(f.planRef === null, `bare "the plan" must not produce a referent: ${JSON.stringify(f.planRef)}`);
 f = computeTurnFacts({ rawText: 'the plan' });
-assert(f.planRef && !f.planRef.meaningful, 'bare "the plan" is not meaningful');
+assert(f.planRef === null, 'bare "the plan" → null');
+f = computeTurnFacts({ rawText: 'we have a plan' });
+assert(f.planRef === null, '"we have a plan" is not a referent');
+// Definite referents still extract — the +descriptor and X-before-plan forms.
+f = computeTurnFacts({ rawText: 'the plan for lunch' });
+assert(f.planRef && f.planRef.token === 'lunch' && f.planRef.meaningful, `planRef: ${JSON.stringify(f.planRef)}`);
+f = computeTurnFacts({ rawText: 'a career plan would help' });
+assert(f.planRef && /career/i.test(f.planRef.token), `planRef: ${JSON.stringify(f.planRef)}`);
+// "a plan for X" is an indefinite draft request, never a referent — the
+// existence-question surface is planAsk below, not a bindable name.
+f = computeTurnFacts({ rawText: 'a plan for lunch sounds good' });
+assert(f.planRef === null, 'indefinite "a plan for X" → null');
+f = computeTurnFacts({ rawText: 'do we have a plan for the picnic' });
+assert(f.planRef === null, 'indefinite existence ask is not a referent');
+// A clause before "plan" is not a name — >4 content words rejects it even
+// though the regex still matches ("the idea I brought up forgot that plan").
+f = computeTurnFacts({ rawText: "I don't want that plan I want to discuss the idea I brought up forgot that plan" });
+assert(f.planRef && !f.planRef.meaningful, `clause-length referent rejected: ${JSON.stringify(f.planRef)}`);
+
+// planTimeScope — plan word + past-facing time phrase.
+f = computeTurnFacts({ rawText: 'what plans did I do last week' });
+assert(/last\s+week/i.test(f.planTimeScope || ''), `planTimeScope: ${f.planTimeScope}`);
+f = computeTurnFacts({ rawText: 'show me the plans from march 14' });
+assert(f.planTimeScope, `planTimeScope: ${f.planTimeScope}`);
+f = computeTurnFacts({ rawText: 'what plans did I do on tuesday' });
+assert(/tuesday/i.test(f.planTimeScope || ''), `planTimeScope: ${f.planTimeScope}`);
+f = computeTurnFacts({ rawText: 'make a plan for tomorrow' });
+assert(!f.planTimeScope, 'tomorrow is forward-facing — no recall scope');
+f = computeTurnFacts({ rawText: 'last week was rough' });
+assert(!f.planTimeScope, 'time phrase without "plan" is not a scope');
+
+// planAsk — plan-existence phrasing (informational only, never binds).
+f = computeTurnFacts({ rawText: 'do we have a plan for the picnic' });
+assert(f.planAsk, 'existence ask registers');
+f = computeTurnFacts({ rawText: 'i thought we had a plan for the move' });
+assert(f.planAsk, '"i thought we had" registers');
+f = computeTurnFacts({ rawText: 'what plans do I have' });
+assert(f.planAsk, '"what plans" registers');
+f = computeTurnFacts({ rawText: 'build a plan for the launch' });
+assert(!f.planAsk, 'imperative draft request is not an existence ask');
 
 // logMention only on userText.
 f = computeTurnFacts({ rawText: '[Highlighted: check the logs]\n\nwhat does warn mean' });

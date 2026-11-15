@@ -1,5 +1,6 @@
 import { UnifiedOverlay } from './components/UnifiedOverlay';
 import { GhostLayer } from './components/GhostLayer';
+import { AvatarInputBar } from './components/AvatarInputBar';
 
 function App() {
   const params = new URLSearchParams(window.location.search);
@@ -11,6 +12,10 @@ function App() {
 
   if (mode === 'ghostlayer') {
     return <GhostLayer />;
+  }
+
+  if (mode === 'avatarinput') {
+    return <AvatarInputBar />;
   }
 
   if (mode === 'testoverlay') {
