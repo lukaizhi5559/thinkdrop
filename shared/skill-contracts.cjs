@@ -110,8 +110,8 @@ const CONTRACTS = {
     required: ['action'],
   },
   'app.agent': {
-    desc: 'native macOS app automation via shortcuts + OCR; run_agent drives an app\'s built-in AI assistant',
-    args: { action: 'string', appName: '?string', goal: '?string', searchText: '?string', filePath: '?string', prompt: '?string' },
+    desc: 'native macOS app automation via shortcuts + OCR; run_agent drives an app\'s built-in AI assistant (task, or filePath+prompt for file-open); discovery actions: check_installed / build_agent / discover_shortcuts',
+    args: { action: 'string', appName: '?string', goal: '?string', task: '?string', searchText: '?string', filePath: '?string', prompt: '?string', category: '?string', force: '?boolean', preferOs: '?boolean' },
     required: ['action'],
     mutates: true,
   },

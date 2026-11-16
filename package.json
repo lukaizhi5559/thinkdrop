@@ -18,7 +18,8 @@
     "restart:services:gate": "yarn stop:services && sleep 2 && yarn start:services:gate",
     "sync:stategraph": "rsync -av --delete stategraph-module/src/ node_modules/@thinkdrop/stategraph/src/ && rsync -av --delete shared/ node_modules/@thinkdrop/shared/",
     "dev:synced": "yarn sync:stategraph && yarn dev",
-    "rebuild:native": "electron-rebuild -f -w uiohook-napi"
+    "rebuild:native": "electron-rebuild -f -w uiohook-napi",
+    "icons": "ELECTRON_RUN_AS_NODE= electron scripts/make-icons.cjs"
   },
   "keywords": [
     "electron",
@@ -94,7 +95,8 @@
     ],
     "mac": {
       "category": "public.app-category.productivity",
-      "target": "dmg"
+      "target": "dmg",
+      "icon": "build/icon.icns"
     },
     "electronRebuild": {
       "onlyModules": [

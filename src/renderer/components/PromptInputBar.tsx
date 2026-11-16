@@ -331,7 +331,7 @@ function PromptInputBarImpl(
               }}
             >
               <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M9 4L3 6v14l6-2 6 2 6-2V4l-6 2-6-2z"/><polyline points="9 4 9 18"/><polyline points="15 6 15 20"/>
+                <path d="M9 2L3 6v15l6-4 6 4 6-4V2l-6 4-6-4z"/><polyline points="9 2 9 17"/><polyline points="15 6 15 21"/>
               </svg>
               <span className="truncate max-w-[180px]">
                 Planning{planning.planName ? `: ${planning.planName}` : ' mode'}
@@ -523,14 +523,15 @@ function PromptInputBarImpl(
         </div>
       )}
 
-      {/* Action Buttons — fixed left-to-right order:
-          Avatar, Attach, Planning, Option, Voice, Send, Language. */}
-      <div className="flex items-center gap-2">
+      {/* Action Buttons — three zones: left group (Avatar, Attach, Planning),
+          centered Option legend, right-justified (Language, Voice, Send). */}
+      <div className="relative flex items-center gap-2">
+        <div className="flex items-center gap-2 shrink-0">
         {/* Avatar mode toggle — switches the overlay for the Optyons
             companion avatar on the GhostLayer. */}
         <button
           onClick={() => (window as any).electron?.ipcRenderer?.send('avatar:toggle')}
-          className="relative flex items-center justify-center w-9 h-9 p-0 rounded-lg text-sm font-medium border transition-all"
+          className="relative flex items-center justify-center w-9 h-9 p-0 rounded-lg text-sm font-medium border transition-all shrink-0"
           style={{
             backgroundColor: avatarMode ? 'rgba(96,165,250,0.18)' : 'rgba(255,255,255,0.05)',
             color: avatarMode ? '#60a5fa' : '#9ca3af',
@@ -549,7 +550,7 @@ function PromptInputBarImpl(
         {/* Attach Button */}
         <button
           onClick={onAttachClick}
-          className="flex items-center justify-center w-9 h-9 p-0 rounded-lg text-sm font-medium bg-white/5 text-gray-400 border border-white/10 hover:bg-white/10 transition-all"
+          className="flex items-center justify-center w-9 h-9 p-0 rounded-lg text-sm font-medium bg-white/5 text-gray-400 border border-white/10 hover:bg-white/10 transition-all shrink-0"
           title="Attach files"
         >
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -558,11 +559,11 @@ function PromptInputBarImpl(
         </button>
 
         {/* Planning-mode toggle — orbiting cyan ring while active. */}
-        <div className="relative flex items-center">
+        <div className="relative flex items-center shrink-0">
           {planning?.active && <span className="planning-toggle-ring" aria-hidden="true" />}
           <button
             onClick={onPlanningToggle}
-            className="relative flex items-center justify-center w-9 h-9 p-0 rounded-lg text-sm font-medium border transition-all"
+            className="relative flex items-center justify-center w-9 h-9 p-0 rounded-lg text-sm font-medium border transition-all shrink-0"
             style={{
               backgroundColor: planning?.active ? 'rgba(34,211,238,0.15)' : 'rgba(255,255,255,0.05)',
               color: planning?.active ? '#22d3ee' : '#9ca3af',
@@ -570,24 +571,28 @@ function PromptInputBarImpl(
             }}
             title={planning?.active ? 'Exit planning mode' : 'Start a plan — multi-task prompts draft a plan first'}
           >
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M9 4L3 6v14l6 2 6-2V4l-6 2-6-2z"/><polyline points="9 4 9 18"/><polyline points="15 6 15 20"/>
+            {/* Map glyph with a deepened ±4-unit fold — the previous path was
+                also malformed (never reached x=21), rendering squished in the
+                left half of the viewBox. */}
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
+              <path d="M9 2L3 6v15l6-4 6 4 6-4V2l-6 4-6-4z"/><polyline points="9 2 9 17"/><polyline points="15 6 15 21"/>
             </svg>
           </button>
         </div>
+        </div>
 
-        {/* Compact Option control — the trigger keeps the existing legend. */}
+        {/* Compact Option control — centered between the left group and the
+            right-justified voice cluster; the trigger keeps the legend. */}
         <div
-          className="relative flex items-center"
+          className="absolute left-1/2 -translate-x-1/2 flex items-center"
           onMouseEnter={() => setLegendOpen(true)}
           onMouseLeave={() => setLegendOpen(false)}
         >
           <button
             type="button"
             onClick={() => setLegendOpen(v => !v)}
-            className="flex items-center justify-center w-9 h-9 rounded-lg text-base font-medium border transition-all"
+            className="flex items-center justify-center w-9 h-9 text-base font-medium transition-all"
             style={{
-              backgroundColor: legendOpen ? 'rgba(96,165,250,0.18)' : 'rgba(255,255,255,0.05)',
               color: legendOpen ? '#60a5fa' : '#9ca3af',
               borderColor: legendOpen ? 'rgba(96,165,250,0.45)' : 'rgba(255,255,255,0.1)',
             }}
@@ -629,6 +634,18 @@ function PromptInputBarImpl(
           )}
         </div>
 
+        {/* Right group — Language (ambers with the voice button while PTT
+            is held), Voice, Send. */}
+        <div className="ml-auto flex items-center gap-2 shrink-0">
+        <VoiceLangPicker
+          lang={voiceLang}
+          highlighted={pttActive}
+          onPick={(code) => { setVoiceLang(code); (window as any).electron?.ipcRenderer?.send('voice:set-lang', { lang: code }); }}
+          buttonStyle={{
+            width: '28px', height: '36px', borderRadius: '8px',
+            background: 'transparent', fontSize: 14,
+          }}
+        />
         {/* Voice/PTT */}
         <VoiceButton compact={true} icon="voice" ptt={pttActive} style={{ width: '36px', height: '36px', borderRadius: '8px' }} />
 
@@ -696,15 +713,7 @@ function PromptInputBarImpl(
             </svg>
           )}
         </div>
-
-        <VoiceLangPicker
-          lang={voiceLang}
-          onPick={(code) => { setVoiceLang(code); (window as any).electron?.ipcRenderer?.send('voice:set-lang', { lang: code }); }}
-          buttonStyle={{
-            width: '28px', height: '36px', borderRadius: '8px',
-            background: 'transparent', fontSize: 14,
-          }}
-        />
+        </div>
       </div>
     </div>
   );

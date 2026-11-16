@@ -4471,6 +4471,48 @@ function _setPlanningMode(mode) {
   _planningMode = { active: !!mode?.active, planId: mode?.planId || null, planName: mode?.planName || null, planFile: mode?.planFile || null, escalated: !!mode?.escalated };
   safeSendUnified('planning:state', _planningMode);
   _sendGhostChannel('avatar:planning', _planningMode);
+  // Keep the menu-bar tray's Planning Mode checkbox in sync — this is the
+  // single choke point for every planning-state change (renderer toggle,
+  // comms-graph pin, tray click).
+  try { const mi = trayMenu?.getMenuItemById('planning'); if (mi) mi.checked = _planningMode.active; } catch (_) {}
+}
+
+// ── macOS menu-bar tray ────────────────────────────────────────────────────
+// Monochrome template droplet — macOS inverts it for light/dark menu bars.
+// Menu: Show/Hide overlay, Planning Mode checkbox, Quit.
+let tray = null;
+let trayMenu = null;
+
+function initTray() {
+  if (process.platform !== 'darwin' || tray) return;
+  const { Tray, Menu, nativeImage } = require('electron');
+  const img = nativeImage.createFromPath(path.join(__dirname, 'assets', 'tray-iconTemplate.png'));
+  if (img.isEmpty()) { console.warn('[Tray] src/main/assets/tray-iconTemplate.png missing — run `yarn icons`'); return; }
+  img.setTemplateImage(true);
+  tray = new Tray(img);
+  tray.setToolTip('ThinkDrop');
+  trayMenu = Menu.buildFromTemplate([
+    {
+      label: 'Show/Hide ThinkDrop',
+      click: () => {
+        // unifiedWindow.show* is avatar-gated — exit avatar mode first or the
+        // show is a silent no-op under Optyon.
+        if (_avatarMode) { _setAvatarMode(false); return; }
+        toggleUnifiedOverlay();
+      },
+    },
+    { type: 'separator' },
+    {
+      id: 'planning',
+      label: 'Planning Mode',
+      type: 'checkbox',
+      checked: !!_planningMode?.active,
+      click: (item) => _setPlanningMode({ active: item.checked }),
+    },
+    { type: 'separator' },
+    { label: 'Quit ThinkDrop', click: () => app.quit() },
+  ]);
+  tray.setContextMenu(trayMenu);
 }
 
 /**
@@ -8398,8 +8440,9 @@ ipcMain.on('avatar:bubble-state', (_e, data) => {
 
 // Avatar history browse — while armed, bare Up/Down are globally registered
 // (ghost is focusable:false) and routed to the renderer as history-nav events.
-// Disarmed by the renderer (Esc/tap/browse-past-latest), a new submit, or the
-// avatar hiding. Same scoped-capture tradeoff as Esc.
+// Armed is hover-driven: the renderer sends it while the pointer is over the
+// avatar zone or tray with non-empty history, and drops it on unhover, avatar
+// off, or unmount. Same scoped-capture tradeoff as Esc.
 let _avatarHistoryArmed = false;
 function _setAvatarHistoryArmed(on) {
   on = !!on;
@@ -8712,6 +8755,17 @@ app.whenReady().then(async () => {
 
   // Create unified window (combines prompt capture and results)
   createUnifiedWindow();
+
+  // macOS branding — dev runs show Electron's default dock icon otherwise.
+  // Packaged builds pick up build/icon.icns via electron-builder.
+  if (process.platform === 'darwin') {
+    try {
+      const { nativeImage } = require('electron');
+      const dockImg = nativeImage.createFromPath(path.join(__dirname, '..', 'renderer', 'assets', 'logo.jpg'));
+      if (!dockImg.isEmpty()) app.dock?.setIcon(dockImg);
+    } catch (_) {}
+    initTray();
+  }
 
   // Create GhostLayer window for app.agent visual highlighting (hidden until needed)
   createGhostLayerWindow();

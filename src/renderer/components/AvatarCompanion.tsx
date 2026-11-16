@@ -230,7 +230,7 @@ export function AvatarCompanion({ onOccupancyChange }: { onOccupancyChange?: (oc
   const [searching, setSearching] = useState(false);
   const [sleepTick, setSleepTick] = useState(0);
   // Prompt/response scrollback — browseIdx null = live view; a number points
-  // into exchanges. Keys are armed in main (ghost can't hold focus).
+  // into exchanges. Keys arm in main while hovered (ghost can't hold focus).
   const [exchanges, setExchanges] = useState<Exchange[]>([]);
   const [browseIdx, setBrowseIdx] = useState<number | null>(null);
   const exchangesRef = useRef<Exchange[]>([]); exchangesRef.current = exchanges;
@@ -329,7 +329,10 @@ export function AvatarCompanion({ onOccupancyChange }: { onOccupancyChange?: (oc
     }
   }, []);
   // History browse — armed keys live in main (ghost can't hold focus); the
-  // renderer owns the index. Down past the newest exits back to live.
+  // renderer owns the index. Keys arm on HOVER (see keysArmed effect below),
+  // not on entering browse — no click needed. Live (null) sits just off the
+  // ring: ↑ enters at the newest, ↓ at the oldest, and both ends wrap — so
+  // arrow navigation can never exit-and-hide the tray.
   const sendHistoryArmed = useCallback((armed: boolean) => {
     try { ipcRenderer?.send('avatar:history-state', { armed }); } catch (_) {}
   }, []);
@@ -337,25 +340,21 @@ export function AvatarCompanion({ onOccupancyChange }: { onOccupancyChange?: (oc
     if (browseRef.current == null) return;
     browseRef.current = null;
     setBrowseIdx(null);
-    sendHistoryArmed(false);
-  }, [sendHistoryArmed]);
+  }, []);
   const enterBrowse = useCallback(() => {
     const len = exchangesRef.current.length;
     if (!len) return;
     setBrowseIdx(len - 1);
-    sendHistoryArmed(true);
-  }, [sendHistoryArmed]);
+  }, []);
   const navBrowse = useCallback((dir: 'up' | 'down') => {
     setBrowseIdx(i => {
       const len = exchangesRef.current.length;
-      if (!len) { sendHistoryArmed(false); return null; }
-      const cur = i == null ? len - 1 : i;
+      if (!len) return null;
+      const cur = i == null ? (dir === 'down' ? -1 : len) : i;
       const next = dir === 'down' ? cur + 1 : cur - 1;
-      if (next < 0) return 0;
-      if (next >= len) { sendHistoryArmed(false); return null; }
-      return next;
+      return ((next % len) + len) % len;
     });
-  }, [sendHistoryArmed]);
+  }, []);
   const dismissBubble = useCallback(() => {
     exitBrowse();
     setBubble(null);
@@ -651,6 +650,20 @@ export function AvatarCompanion({ onOccupancyChange }: { onOccupancyChange?: (oc
   };
 
   useEffect(() => () => sendHover(false), []);
+  useEffect(() => () => sendHistoryArmed(false), [sendHistoryArmed]);
+
+  // Arrow keys arm on HOVER — no click required. Main globally registers bare
+  // Up/Down while armed (ghost is focusable:false) and routes them here as
+  // history-nav events. Scoped to (hover || trayHover) so the grab releases
+  // the moment the pointer leaves; gated on real history existing so arrows
+  // aren't stolen for an empty scrollback.
+  const keysArmed = on && (hover || trayHover) && exchanges.length > 0;
+  const keysArmedRef = useRef(false);
+  useEffect(() => {
+    if (keysArmed === keysArmedRef.current) return;
+    keysArmedRef.current = keysArmed;
+    sendHistoryArmed(keysArmed);
+  }, [keysArmed, sendHistoryArmed]);
 
   // A dismissed/hidden bubble unmounts under the cursor — its mouseleave never
   // fires, so trayHover must be reset here or it suppresses every future
@@ -918,8 +931,8 @@ export function AvatarCompanion({ onOccupancyChange }: { onOccupancyChange?: (oc
           />
         </div>
 
-        {/* browse-mode badge — the ↑↓ hint that arrow keys walk history right
-            now (armed in main via avatar:history-state) */}
+        {/* browse-mode badge — the ↑↓ hint that arrow keys walk history while
+            hovered (armed in main via avatar:history-state) */}
         {exchanges.length > 0 && (
           <button
             data-avctl
@@ -1097,15 +1110,15 @@ export function AvatarCompanion({ onOccupancyChange }: { onOccupancyChange?: (oc
                 {browseIdx! + 1}/{exchanges.length}
               </span>
               <button
-                data-avctl className="av-ctl" title="Older (↑)"
-                onClick={() => navBrowse('up')} disabled={browseIdx === 0}
+                data-avctl className="av-ctl" title="Older (↑) — wraps to newest"
+                onClick={() => navBrowse('up')}
                 style={{
                   width: 18, height: 18, borderRadius: '50%', border: 'none', cursor: 'pointer',
                   background: 'rgba(255,255,255,.1)', color: '#94a3b8', fontSize: 10, lineHeight: '18px', padding: 0,
                 }}
               >↑</button>
               <button
-                data-avctl className="av-ctl" title="Newer (↓) — past newest returns to live"
+                data-avctl className="av-ctl" title="Newer (↓) — wraps to oldest"
                 onClick={() => navBrowse('down')}
                 style={{
                   width: 18, height: 18, borderRadius: '50%', border: 'none', cursor: 'pointer',

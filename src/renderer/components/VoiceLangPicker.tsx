@@ -53,9 +53,12 @@ interface Props {
   buttonStyle?: React.CSSProperties;          // match the host surface's chrome
   buttonClassName?: string;
   title?: string;
+  /** PTT active — amber ring so the dictation language reads as part of the
+   *  voice cluster (mirrors VoiceButton's pttColors). */
+  highlighted?: boolean;
 }
 
-export default function VoiceLangPicker({ lang, onPick, buttonStyle, buttonClassName, title }: Props) {
+export default function VoiceLangPicker({ lang, onPick, buttonStyle, buttonClassName, title, highlighted = false }: Props) {
   const [open, setOpen] = useState(false);
   const wrapRef = useRef<HTMLDivElement>(null);
   const entry = voiceLangEntry(lang);
@@ -87,10 +90,24 @@ export default function VoiceLangPicker({ lang, onPick, buttonStyle, buttonClass
           padding: 0,
           display: 'flex', alignItems: 'center', justifyContent: 'center',
           ...buttonStyle,
+          // Highlight wins over caller chrome (its `background: 'transparent'`
+          // would otherwise swallow the PTT amber).
+          ...(highlighted ? {
+            background: 'rgba(251,191,36,0.18)',
+            border: '1px solid rgba(251,191,36,0.45)',
+            animation: 'vlp-ptt-pulse 0.7s ease-in-out infinite',
+            transition: 'background-color 0.15s, border-color 0.15s',
+          } : null),
         }}
       >
         <span style={{ fontSize: buttonStyle?.fontSize || 15, lineHeight: 1 }}>{entry.flag}</span>
       </button>
+      <style>{`
+        @keyframes vlp-ptt-pulse {
+          0%, 100% { box-shadow: 0 0 0 0 rgba(251,191,36,0.35); }
+          50% { box-shadow: 0 0 0 3px rgba(251,191,36,0.12); }
+        }
+      `}</style>
       {open && (
         <div style={{
           position: 'absolute', bottom: 'calc(100% + 8px)', left: '50%',

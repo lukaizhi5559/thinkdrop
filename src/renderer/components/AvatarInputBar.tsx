@@ -165,7 +165,7 @@ export function AvatarInputBar() {
                 color: '#67e8f9',
               }}
             >
-              <svg {..._iconProps}><path d="M9 4L3 6v14l6-2 6 2 6-2V4l-6-2z"/><polyline points="9 4 9 18"/><polyline points="15 6 15 20"/></svg>
+              <svg {..._iconProps}><path d="M9 2L3 6v15l6-4 6 4 6-4V2l-6 4-6-4z"/><polyline points="9 2 9 17"/><polyline points="15 6 15 21"/></svg>
               <span className="truncate max-w-[150px]">{planName ? `Planning: ${planName}` : 'Planning mode'}</span>
               <button
                 onClick={() => {
