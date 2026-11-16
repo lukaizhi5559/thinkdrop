@@ -618,7 +618,6 @@ function PromptInputBarImpl(
               {[
                 { keys: <><RoptKeyIcon size={22} /><span>double-tap</span></>, desc: 'prompt · focus input' },
                 { keys: <><RoptKeyIcon size={22} /><span>hold</span></>, desc: 'talk (PTT)' },
-                { keys: <><RoptKeyIcon size={22} /><span>hold 3s</span></>, desc: 'cancel automation' },
                 { keys: <><RoptKeyIcon size={22} /><span>tap</span></>, desc: 'confirm · approve · run plan · mute' },
                 { keys: <><RoptKeyIcon size={22} /><span>tap (scrolled up)</span></>, desc: 'jump to latest' },
                 { keys: <><RoptKeyIcon size={22} mod="shift" /><span>hold +</span><RoptKeyIcon size={22} /><span>tap</span></>, desc: 'show / hide' },

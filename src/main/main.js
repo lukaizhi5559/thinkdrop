@@ -119,6 +119,13 @@ function safeSendUnified(channel, ...args) {
 // routed answers settle via task:complete (the feed does the same), and
 // web/image results travel as \x00ITEMS\x00/\x00SOURCES\x00 sentinel chunks.
 function _relayAvatarStream(channel, payload) {
+  // Pending-approval state can shift on any relayed event (plan:check emit,
+  // plan:review gate, task:complete statuses, gather questions). Deferred one
+  // tick — some maps mutate AFTER the emit in the same synchronous block
+  // (_pendingPlanReviews is set post plan:review emit; _pendingChoices inside
+  // the ipcBroadcast callback). The broadcast dedupes on payload so the extra
+  // evaluations are free.
+  setTimeout(_broadcastAvatarApproval, 0);
   // Raw passthrough — the embedded AutomationProgress inside the avatar
   // bubble subscribes to these channels itself, so it needs the verbatim
   // events, not the bubble-shaped translations below. unified:set-prompt and
@@ -159,10 +166,25 @@ function _relayAvatarStream(channel, payload) {
     return;
   }
   if (channel === 'plan:check') {
-    if (payload?.allClear) {
+    // "Ready" only when the run truly waits on a decision — autoStart patches
+    // (run already dispatched) and cancelled cards must not flash the gate.
+    if (payload?.allClear && !payload?.started && !payload?.cancelled && !_pendingPlanCheck?.autoStart) {
       _sendGhostChannel('avatar:stream', {
         type: 'question',
-        label: 'Plan ready — say "run it" or press ⌥R',
+        label: 'Plan ready — press ⌥R to run it or hold ⌥L + press ⌥R to cancel',
+      });
+    }
+    return;
+  }
+  if (channel === 'plan:review') {
+    // Mid-run task-approval gate — surface it like the plan-ready gate (the
+    // ✓/✕ pair + ⌥R tap resolve it; the 900ms plan:question fallback card
+    // still lands for option-picks).
+    if (payload && !payload.resolved && payload.taskNum != null) {
+      const title = typeof payload.title === 'string' && payload.title ? ` ${payload.title}` : '';
+      _sendGhostChannel('avatar:stream', {
+        type: 'question',
+        label: `Task ${payload.taskNum}${title.slice(0, 60)} — approve to run it?`,
       });
     }
     return;
@@ -242,6 +264,15 @@ function _relayAvatarStream(channel, payload) {
     // User-blocked statuses park the task on a question — surface it so the
     // avatar doesn't freeze on the last working label.
     if (status === 'waiting-for-input' || status === 'awaiting-approval' || status === 'auth-required') {
+      if (status === 'awaiting-approval') {
+        // Handoff plan-approval gate — same gate UI as the planning lane's
+        // plan:check allClear (the ✓/✕ pair + ⌥R tap approve, ⌥L+⌥R cancels).
+        _sendGhostChannel('avatar:stream', {
+          type: 'question',
+          label: 'Plan ready — press ⌥R to run it or hold ⌥L + press ⌥R to cancel',
+        });
+        return;
+      }
       // task:complete carries no question text — the specific question already
       // went out via gather:question_batch/ask_user. An empty label tells the
       // renderer "still parked" without overwriting that specific text.
@@ -5970,8 +6001,8 @@ let _synthKeyUntil = 0;              // uiohook sees our own synthetic keys — 
 
 // ── Option-key gesture state ────────────────────────────────────────────────
 // uiohook reports modifier press/release as keydown/keyup. ROpt = action key
-// (hold → PTT, double-tap → overlay, press-while-armed → confirm); LOpt =
-// cancel key (hold → ghost affordance, ROpt tap → cancel / during PTT → abort).
+// (hold → PTT, double-tap → overlay, tap → confirm); LOpt = cancel key
+// (hold → ghost affordance, LOpt+ROpt tap → cancel / during PTT → abort).
 let _roptDownAt = 0;
 let _loptDownAt = 0;
 let _roptHoldTimer = null;
@@ -5991,8 +6022,6 @@ let _roptOtherKey = false;           // non-modifier key seen while ROpt held �
 let _roptConsumed = false;           // this ROpt press already acted (confirm/cancel/chord)
 let _roptLastTapAt = 0;
 let _pttActive = false;              // ROpt-hold PTT in flight
-let _roptCancelTimer = null;         // ROpt-hold → "Cancelling in 3…2…1" countdown interval
-let _roptCancelLeft = 0;             // countdown seconds remaining while armed
 let _inflightCommsReq = null;        // live /comms.process request — a newer prompt destroys it
 
 // ── Avatar mode ("Optyons") ─────────────────────────────────────────────────
@@ -6879,6 +6908,7 @@ function _cancelableExists() {
  * lane → armed selection.
  */
 function _gestureCancel() {
+  setTimeout(_broadcastAvatarApproval, 0); // whatever gets cancelled clears a pending gate
   if (_automationCancelable()) {
     _cancelAutomationRun(); // covers handoff + planRunner + serial + comms tasks
     if (controlLock) _cancelLockedTask();
@@ -6910,44 +6940,6 @@ function _dismissCancelAffordance() {
   if (!_cancelAffordance) return;
   _cancelAffordance = false;
   _sendGhost({ type: 'cancel-affordance', armed: false });
-}
-
-/**
- * ROpt-hold during automation — a GhostLayer pill counts "Cancelling in
- * 3…2…1" while the key stays down; reaching zero fires _gestureCancel (the
- * same path as ⌥L+⌥R). Releasing early or pressing another key disarms.
- * Replaces PTT for this hold: mid-task the hold means "kill the run", not
- * dictation (a dictated prompt still preempts on submit via the lanes below).
- */
-function _stopRoptCancelCountdown(fired = false) {
-  if (_roptCancelTimer) { clearInterval(_roptCancelTimer); _roptCancelTimer = null; }
-  if (_roptCancelLeft) {
-    _roptCancelLeft = 0;
-    _sendGhost({ type: 'cancel-countdown', armed: false, fired });
-  }
-}
-
-function _startRoptCancelCountdown() {
-  clearInterval(_roptCancelTimer); // uiohook key-repeat can re-fire _onRoptDown mid-hold
-  _roptCancelLeft = 3;
-  if (!dropSessionActive) showGhostLayer();
-  _sendGhost({ type: 'cancel-countdown', armed: true, seconds: _roptCancelLeft });
-  _roptCancelTimer = setInterval(() => {
-    if (!_roptDownAt) { _stopRoptCancelCountdown(); return; }
-    _roptCancelLeft -= 1;
-    if (_roptCancelLeft <= 0) {
-      _stopRoptCancelCountdown(true);
-      _roptConsumed = true;
-      // Re-check — if the run finished mid-countdown the gesture is a no-op,
-      // never a fallthrough onto voice/planning/selection cancel targets.
-      if (_automationCancelable()) {
-        console.log('[Gesture] ROpt hold 3s — cancelling automation');
-        _gestureCancel();
-      }
-      return;
-    }
-    _sendGhost({ type: 'cancel-countdown', armed: true, seconds: _roptCancelLeft });
-  }, 1000);
 }
 
 /**
@@ -7063,7 +7055,7 @@ function _toggleHistoryView(force) {
 function _onRshiftDown() {
   _rshiftDownAt = Date.now();
   // ⇧R pressed while ⌥R held → it's a ⇧⌥ chord, not a bare-Option gesture.
-  if (_roptDownAt) { _roptOtherKey = true; clearTimeout(_roptHoldTimer); _stopRoptCancelCountdown(); }
+  if (_roptDownAt) { _roptOtherKey = true; clearTimeout(_roptHoldTimer); }
 }
 
 function _onRshiftUp() {
@@ -7123,11 +7115,6 @@ function _onRoptDown() {
   clearTimeout(_roptHoldTimer);
   _roptHoldTimer = setTimeout(() => {
     if (!_roptDownAt || _roptOtherKey) return;
-    if (_automationCancelable()) {
-      // Automation is running — the hold means cancel (3s countdown), not PTT.
-      _startRoptCancelCountdown();
-      return;
-    }
     if (_voiceSessionActive) {
       // PTT hold during Talk Mode — the mic is already live; the useful
       // meaning of the hold is "stop talking, let me speak" → interrupt the
@@ -7146,7 +7133,6 @@ function _onRoptUp() {
   const heldMs = _roptDownAt ? Date.now() - _roptDownAt : Infinity;
   _roptDownAt = 0;
   clearTimeout(_roptHoldTimer);
-  _stopRoptCancelCountdown(); // release before 3s disarms; after fire it's a no-op
   // Option used as a MODIFIER (Option+Delete/Arrow/accent in another app) rides
   // the 200ms hold threshold and starts PTT — but the other-key press marks it
   // as modifier use, not dictation. Discard the recording so ambient noise
@@ -7202,7 +7188,7 @@ function _onLoptDown() {
   // During ROpt-hold PTT, the other Option key aborts the recording.
   if (_pttActive) { pttAbort(); return; }
   // Squeezing both options isn't a PTT — kill any pending ROpt-hold intent.
-  if (_roptDownAt) { _roptOtherKey = true; clearTimeout(_roptHoldTimer); _stopRoptCancelCountdown(); }
+  if (_roptDownAt) { _roptOtherKey = true; clearTimeout(_roptHoldTimer); }
   if (_cancelableExists()) {
     clearTimeout(_loptArmTimer);
     _loptArmTimer = setTimeout(() => {
@@ -7247,7 +7233,7 @@ function startMouseSelectionMonitor() {
       else if (e.keycode === UiohookKey.Alt) _onLoptDown();
       else if (e.keycode === UiohookKey.ShiftRight) _onRshiftDown();
       else if (e.keycode === UiohookKey.Escape && _historyViewOpen) _toggleHistoryView(false);
-      else if (_roptDownAt) { _roptOtherKey = true; clearTimeout(_roptHoldTimer); _dismissCancelAffordance(); _stopRoptCancelCountdown(); }
+      else if (_roptDownAt) { _roptOtherKey = true; clearTimeout(_roptHoldTimer); _dismissCancelAffordance(); }
       else if (_loptDownAt) { clearTimeout(_loptArmTimer); _dismissCancelAffordance(); }
 
       if ((e.metaKey || e.ctrlKey) && outside) {
@@ -7585,10 +7571,40 @@ function _avatarStatePayload() {
   return { on: _avatarMode && _avatarVisible, pos: _avatarPos || _avatarDefaultPos(), color: _avatarColor, overlayWidth: w, planning: !!_planningMode?.active, voiceLang: _getVoiceLangPref() };
 }
 
+// Pending decision surfaced under Optyon's face — the ✓/✕ pair mirrors the
+// gestures: ✓ = resolved ⌥R tap (run/approve/answer), ✕ = ⌥L hold + ⌥R tap.
+// Priority mirrors _roptSingleTap/_approveOrFocusPending so the button and
+// the key never disagree about what's on top.
+function _avatarPendingApproval() {
+  const run = { pending: true, kind: 'plan', hint: '⌥R run · ⌥L hold + ⌥R cancel' };
+  if (_pendingPlanCheck) return run;
+  if (_pendingPlanReviews.size) return { pending: true, kind: 'review', hint: '⌥R approve · ⌥L hold + ⌥R cancel' };
+  try {
+    const hr = require('./handoffRunner');
+    if ((hr.getPendingPlanApprovals?.() || []).length) return run;
+    if (_pendingChoices || (hr.getPendingQuestionTaskIds?.() || []).length
+        || pausedAutomationState || _contextAskPending > 0 || gp.getLegacy() || gp.batches.size) {
+      return { pending: true, kind: 'question', hint: '⌥R answer · ⌥L hold + ⌥R cancel' };
+    }
+  } catch (_) {}
+  return { pending: false };
+}
+
+let _avatarApprovalSent = '';
+function _broadcastAvatarApproval() {
+  if (!_avatarMode) return;
+  const a = _avatarPendingApproval();
+  const k = JSON.stringify(a);
+  if (k === _avatarApprovalSent) return;
+  _avatarApprovalSent = k;
+  _sendGhostChannel('avatar:approval', a);
+}
+
 function _showAvatar() {
   _avatarVisible = true;
   showGhostLayer();
   _sendGhostChannel('avatar:state', _avatarStatePayload());
+  setTimeout(_broadcastAvatarApproval, 0);
 }
 
 function _hideAvatar() {
@@ -8453,7 +8469,31 @@ function _setAvatarHistoryArmed(on) {
 ipcMain.on('avatar:history-state', (_e, data) => {
   _setAvatarHistoryArmed(!!(data && data.armed));
 });
-ipcMain.on('avatar:query', () => { _sendGhostChannel('avatar:state', _avatarStatePayload()); });
+ipcMain.on('avatar:query', () => {
+  _sendGhostChannel('avatar:state', _avatarStatePayload());
+  // Unconditional resync — the renderer may have (re)mounted after the last
+  // broadcast, so the dedupe cache must not suppress a repeat send.
+  _sendGhostChannel('avatar:approval', _avatarPendingApproval());
+});
+
+// ✓/✕ pair under Optyon — the same resolution a ⌥R tap / ⌥L+⌥R chord would
+// take: confirm approves the top pending gate, cancel runs _gestureCancel.
+ipcMain.on('avatar:approval-action', (_e, data) => {
+  const action = data?.action;
+  console.log(`[Avatar] approval-action: ${action}`);
+  if (action === 'cancel') {
+    _gestureCancel();
+  } else if (_planningMode?.active) {
+    _handlePlanCheckAction({ action: 'run-ready', planId: _planningMode.planId, planFile: _planningMode.planFile })
+      .catch(err => console.warn('[Avatar] run-ready failed:', err.message));
+  } else {
+    _approveOrFocusPending();
+  }
+  // Re-broadcast on two horizons — the state settles synchronously for most
+  // paths, but handoff resume()/cancel() tears its maps down asynchronously.
+  setTimeout(_broadcastAvatarApproval, 0);
+  setTimeout(_broadcastAvatarApproval, 300);
+});
 // PTT/session dictation language — both surfaces (overlay VoiceButton flag +
 // avatar lang control) read this; changes fan out as voice:lang-state and go
 // to the voice-bridge worker.

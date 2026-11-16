@@ -167,6 +167,7 @@ contextBridge.exposeInMainWorld('electron', {
         'avatar:pick-files',
         'avatar:bubble-state',
         'avatar:history-state',
+        'avatar:approval-action',
       ];
       if (validChannels.includes(channel)) {
         ipcRenderer.send(channel, data);
@@ -319,6 +320,7 @@ contextBridge.exposeInMainWorld('electron', {
         'avatar:emotion',
         'avatar:face',
         'avatar:planning',
+        'avatar:approval',
       ];
       if (validChannels.includes(channel)) {
         const wrapped = (_event, ...args) => func(...args);
@@ -538,6 +540,7 @@ contextBridge.exposeInMainWorld('electron', {
         'avatar:emotion',
         'avatar:face',
         'avatar:planning',
+        'avatar:approval',
       ];
       if (validChannels.includes(channel)) {
         const chMap = _wiredListeners.get(channel);

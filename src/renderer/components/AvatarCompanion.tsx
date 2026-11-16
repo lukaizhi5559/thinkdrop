@@ -37,7 +37,6 @@ const PALETTE = ['#60a5fa', '#34d399', '#f472b6', '#fbbf24', '#a78bfa', '#f87171
 const LEGEND: [string, string][] = [
   ['⌥R ×2', 'prompt · focus input'],
   ['⌥R hold', 'talk (PTT)'],
-  ['⌥R hold 3s', 'cancel automation'],
   ['⌥R tap', 'confirm · dismiss'],
   ['⇧R + ⌥R tap', 'show / hide'],
   ['⇧R + ⌥R ×2', 'history'],
@@ -227,6 +226,10 @@ export function AvatarCompanion({ onOccupancyChange }: { onOccupancyChange?: (oc
   const [faceOverride, setFaceOverride] = useState<string | null>(null);
   const [planning, setPlanning] = useState(false);
   const [inputOpen, setInputOpen] = useState(false);
+  // Pending approval — main pushes {pending, kind:'plan'|'review'|'question',
+  // hint} while a gate waits on the user; the ✓/✕ pair under the face mirrors
+  // the ⌥R-confirm / ⌥L+⌥R-cancel gestures.
+  const [approval, setApproval] = useState<{ pending: boolean; kind?: string; hint?: string } | null>(null);
   const [searching, setSearching] = useState(false);
   const [sleepTick, setSleepTick] = useState(0);
   // Prompt/response scrollback — browseIdx null = live view; a number points
@@ -384,7 +387,7 @@ export function AvatarCompanion({ onOccupancyChange }: { onOccupancyChange?: (oc
     const onState = (d: any) => {
       if (typeof d?.pos?.x === 'number') setPos({ x: d.pos.x, y: d.pos.y });
       if (typeof d?.color === 'string') setColor(d.color);
-      if (typeof d?.on === 'boolean') { setOn(d.on); if (!d.on) { setEmotion(null); holdFace(null); exitBrowse(); } }
+      if (typeof d?.on === 'boolean') { setOn(d.on); if (!d.on) { setEmotion(null); holdFace(null); exitBrowse(); setApproval(null); } }
       if (typeof d?.overlayWidth === 'number') setBubbleW(Math.max(320, Math.min(800, d.overlayWidth)));
       if (typeof d?.planning === 'boolean') setPlanning(d.planning);
       if (d && 'voiceLang' in d) setVoiceLang(d.voiceLang ?? null);
@@ -405,6 +408,7 @@ export function AvatarCompanion({ onOccupancyChange }: { onOccupancyChange?: (oc
       setCtxExcerpt(held && typeof d?.excerpt === 'string' ? d.excerpt : '');
     };
     const onSession = (d: any) => setS2s(!!d?.active);
+    const onApproval = (d: any) => setApproval(d?.pending ? { pending: true, kind: d.kind, hint: d.hint } : null);
     const onVoice = (d: any) => {
       const st = d?.state;
       if (st === 'speaking') setMode('speaking');
@@ -582,6 +586,7 @@ export function AvatarCompanion({ onOccupancyChange }: { onOccupancyChange?: (oc
     ipcRenderer.on('avatar:ptt-interim', onInterim, TOKEN);
     ipcRenderer.on('avatar:context', onContext, TOKEN);
     ipcRenderer.on('avatar:session-state', onSession, TOKEN);
+    ipcRenderer.on('avatar:approval', onApproval, TOKEN);
     ipcRenderer.on('avatar:stream', onStream, TOKEN);
     ipcRenderer.on('voice:state', onVoice, TOKEN);
     ipcRenderer.on('voice:mute-state', onMute, TOKEN);
@@ -592,7 +597,7 @@ export function AvatarCompanion({ onOccupancyChange }: { onOccupancyChange?: (oc
     try { ipcRenderer.send('avatar:query'); } catch (_) {}
     return () => {
       for (const ch of ['avatar:state', 'avatar:ptt-start', 'avatar:ptt-stop', 'avatar:ptt-interim',
-        'avatar:context', 'avatar:session-state', 'avatar:stream', 'avatar:emotion', 'avatar:face', 'avatar:planning', 'voice:state', 'voice:mute-state', 'voice:lang-state']) {
+        'avatar:context', 'avatar:session-state', 'avatar:stream', 'avatar:emotion', 'avatar:face', 'avatar:planning', 'avatar:approval', 'voice:state', 'voice:mute-state', 'voice:lang-state']) {
         try { ipcRenderer.removeListenerByToken(ch, TOKEN); } catch (_) {}
       }
     };
@@ -931,6 +936,53 @@ export function AvatarCompanion({ onOccupancyChange }: { onOccupancyChange?: (oc
           />
         </div>
 
+        {/* pending-approval ✓/✕ — mirrors the gestures: ✓ = ⌥R confirm of the
+            top gate, ✕ = ⌥L+⌥R cancel. Fixed-positioned but a DOM child of the
+            zone, so hover-lift + watchdog containment + data-avctl drag
+            suppression all apply (mouseleave doesn't fire when crossing into a
+            child outside the parent's box). Flips above the face when the tray
+            owns the space below — same rule as the hover controls. */}
+        {approval?.pending && !inputOpen && (
+          <div
+            data-avctl
+            onPointerDown={e => e.stopPropagation()}
+            style={{
+              position: 'fixed',
+              left: pos.x + SIZE / 2,
+              top: (showTray && !bubbleAbove) ? Math.max(4, pos.y - 44) : pos.y + SIZE + 4,
+              transform: 'translateX(-50%)',
+              display: 'flex', alignItems: 'center', gap: 8,
+              padding: '5px 7px', borderRadius: 999,
+              background: 'rgba(10,14,24,.94)',
+              border: `1px solid ${hexToRgba(accent, .5)}`,
+              boxShadow: '0 6px 18px rgba(0,0,0,.45)',
+              pointerEvents: 'auto',
+              animation: 'av-fade .2s',
+            }}
+          >
+            <button
+              data-avctl className="av-ctl"
+              title={approval.kind === 'question' ? 'Answer (⌥R)' : 'Approve · run (⌥R)'}
+              onClick={() => { try { ipcRenderer?.send('avatar:approval-action', { action: 'confirm' }); } catch (_) {} }}
+              style={{
+                width: 26, height: 26, borderRadius: '50%', border: 'none', cursor: 'pointer',
+                background: 'rgba(52,211,153,.9)', color: '#0f172a',
+                fontSize: 14, fontWeight: 700, lineHeight: '26px', padding: 0,
+              }}
+            >✓</button>
+            <button
+              data-avctl className="av-ctl"
+              title="Cancel (⌥L + ⌥R)"
+              onClick={() => { try { ipcRenderer?.send('avatar:approval-action', { action: 'cancel' }); } catch (_) {} }}
+              style={{
+                width: 26, height: 26, borderRadius: '50%', border: 'none', cursor: 'pointer',
+                background: 'rgba(239,68,68,.9)', color: '#fff',
+                fontSize: 12, fontWeight: 700, lineHeight: '26px', padding: 0,
+              }}
+            >✕</button>
+          </div>
+        )}
+
         {/* browse-mode badge — the ↑↓ hint that arrow keys walk history while
             hovered (armed in main via avatar:history-state) */}
         {exchanges.length > 0 && (
@@ -955,10 +1007,11 @@ export function AvatarCompanion({ onOccupancyChange }: { onOccupancyChange?: (oc
           </button>
         )}
 
-        {/* interim transcript pill */}
+        {/* interim transcript pill — drops below the approval pill when both
+            are up (they share the under-face slot) */}
         {mode === 'listening' && (
           <div style={{
-            position: 'absolute', top: SIZE + PAD + 10, left: '50%', transform: 'translateX(-50%)',
+            position: 'absolute', top: SIZE + PAD + 10 + (approval?.pending ? 42 : 0), left: '50%', transform: 'translateX(-50%)',
             width: 230, maxHeight: 60, overflow: 'hidden',
             background: 'rgba(10,14,24,.85)', border: '1px solid rgba(251,191,36,.35)',
             borderRadius: 12, padding: '6px 10px',
@@ -974,7 +1027,7 @@ export function AvatarCompanion({ onOccupancyChange }: { onOccupancyChange?: (oc
             consumes it (main clears avatar:context on consume) */}
         {ctxHeld && ctxExcerpt && mode !== 'listening' && (
           <div style={{
-            position: 'absolute', top: SIZE + PAD + 10, left: '50%', transform: 'translateX(-50%)',
+            position: 'absolute', top: SIZE + PAD + 10 + (approval?.pending ? 42 : 0), left: '50%', transform: 'translateX(-50%)',
             width: 230, maxHeight: 60, overflow: 'hidden',
             background: 'rgba(10,14,24,.85)', border: '1px solid rgba(251,191,36,.35)',
             borderRadius: 12, padding: '6px 10px',
@@ -993,7 +1046,7 @@ export function AvatarCompanion({ onOccupancyChange }: { onOccupancyChange?: (oc
           <div data-avctl style={{
             position: 'absolute', left: '50%', transform: 'translateX(-50%)',
             ...(showTray && bubbleAbove
-              ? { top: SIZE + PAD + 10 + (mode === 'listening' ? 66 : 0) }
+              ? { top: SIZE + PAD + 10 + (mode === 'listening' ? 66 : 0) + (approval?.pending ? 42 : 0) }
               : { bottom: SIZE + PAD + 8 }),
             display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6,
             animation: 'av-fade .18s',
@@ -1177,9 +1230,11 @@ export function AvatarCompanion({ onOccupancyChange }: { onOccupancyChange?: (oc
               }}>
                 {bodyBubble.text}
               </div>
-              <div style={{ marginTop: 6, fontSize: 10, color: 'rgba(148,163,184,.75)', fontFamily: 'system-ui' }}>
-                ⌥R tap → reply in the prompt input
-              </div>
+              {(approval?.pending ? approval.kind === 'question' : true) && (
+                <div style={{ marginTop: 6, fontSize: 10, color: 'rgba(148,163,184,.75)', fontFamily: 'system-ui' }}>
+                  {approval?.pending ? approval.hint : '⌥R tap → reply in the prompt input'}
+                </div>
+              )}
             </div>
           ) : (
             <div>
