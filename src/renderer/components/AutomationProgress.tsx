@@ -195,6 +195,9 @@ interface AskUserPrompt {
   kind?: string | null;
   infra?: InfraFailureDetail | null;
   skill?: string | null;
+  // 'viaGather' — the question is owned by a gather:question_batch card; kept
+  // on the prompt for step marking but renders nothing here (no mirror card).
+  viaGather?: boolean;
 }
 
 interface ParallelLoginService {
@@ -2666,7 +2669,10 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
           // When no stepIndex is provided (global pause), pause running steps as needs_input — never 'failed'.
           const askIdx = data.stepIndex != null ? data.stepIndex + stepOffsetRef.current : null;
           setAskUserCorrectionMode(false);
-          setAskUserPrompt({ question: data.question, options: data.options || [], agentId: data.agentId || null, freeText: data.freeText || (data.options || []).length === 0, stepIndex: askIdx, currentUrl: data.currentUrl || null, keepSession: data.keepSession === true, originalTask: data.originalTask || null, partialProgress: data.partialProgress || null, _isAgentAskUser: data._isAgentAskUser === true, kind: data.kind || null, infra: data.infra || null, skill: data.skill || null });
+          // viaGather asks are owned by the gather:question_batch card — keep
+          // the prompt for step marking but flag it so no mirror card/banner
+          // renders (observed: file-disambiguation questions on two surfaces).
+          setAskUserPrompt({ question: data.question, options: data.options || [], agentId: data.agentId || null, freeText: data.freeText || (data.options || []).length === 0, stepIndex: askIdx, currentUrl: data.currentUrl || null, keepSession: data.keepSession === true, originalTask: data.originalTask || null, partialProgress: data.partialProgress || null, _isAgentAskUser: data._isAgentAskUser === true, kind: data.kind || null, infra: data.infra || null, skill: data.skill || null, viaGather: data.viaGather === true });
           setSteps(prev => prev.map(s => {
             if (askIdx != null) {
               return s.index === askIdx && s.status !== 'done' && s.status !== 'failed' && s.status !== 'skipped'
@@ -4132,7 +4138,7 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
       {/* Hidden for agent failures (_isAgentAskUser) and infra failures
           (kind:'infra_failure') — the PartialFailureCard / SystemFailureCard
           below have their own headers. Showing both is redundant. */}
-      {phase === 'ask_user' && !askUserPrompt?._isAgentAskUser && askUserPrompt?.kind !== 'infra_failure' && (
+      {phase === 'ask_user' && !askUserPrompt?._isAgentAskUser && !askUserPrompt?.viaGather && askUserPrompt?.kind !== 'infra_failure' && (
         <div style={{ padding: '10px 14px', borderRadius: 10, backgroundColor: '#1a120a', border: '1px solid #d97706', position: 'sticky', top: 0, zIndex: 10 }}>
           <div className="flex items-center gap-2.5">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#f59e0b" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
@@ -4299,6 +4305,7 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
       {gatherCredential && gatherCredential.purpose === 'context' && (
         <div className="mt-2">
           <QuestionCard
+            readOnly={acceptAllTasks}
             batch={{
               batchId: `gather_ctx_${gatherCredential.credentialKey}`,
               questions: [{
@@ -4435,6 +4442,7 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
       {/* ── Grill-Me Phase D: Batched question card + processing indicator ─── */}
       {questionBatch && (
         <QuestionCard
+          readOnly={acceptAllTasks}
           batch={questionBatch}
           onSubmit={(answers) => {
             ipcRenderer?.send('gather:answer_batch', { batchId: questionBatch.batchId, taskId: taskId || undefined, answers });
@@ -6310,7 +6318,7 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
       )}
 
       {/* ── ASK_USER: clickable option buttons ───────────────────────────── */}
-      {askUserPrompt && (
+      {askUserPrompt && !askUserPrompt.viaGather && (
         <div className="mt-2 space-y-2">
         {askUserPrompt.kind === 'infra_failure' ? (
           /* ── Infrastructure failure — SystemFailureCard (no text input) ── */
@@ -6346,6 +6354,7 @@ export default function AutomationProgress({ onHeightChange, onActiveChange, onO
         ) : (
           <>
           <QuestionCard
+            readOnly={acceptAllTasks}
             batch={{
               batchId: `ask_user_${askUserPrompt.stepIndex ?? 'global'}`,
               questions: [{

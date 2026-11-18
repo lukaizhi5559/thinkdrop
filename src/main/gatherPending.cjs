@@ -143,10 +143,20 @@ function drainAll() {
 
 // Free-text answers (typed prompt or voice transcript) resolve a pending
 // batch instead of spawning a new task — single-question batches only; free
-// text can't attribute answers to multiple slots.
-function tryResolveFreeText(text) {
-  if (!text || batches.size !== 1) return false;
-  const [key, entry] = [...batches.entries()][0];
+// text can't attribute answers to multiple slots. With MULTIPLE pending
+// batches a taskId can still attribute: the card's queue-card submit carries
+// it, so resolving its single-question batch is unambiguous.
+function tryResolveFreeText(text, taskId = null) {
+  if (!text || batches.size === 0) return false;
+  let key = null;
+  let entry = null;
+  if (batches.size === 1) {
+    [key, entry] = [...batches.entries()][0];
+  } else if (taskId) {
+    key = findBatchKey({ taskId });
+    entry = key ? batches.get(key) : null;
+  }
+  if (!entry) return false;
   const qs = entry.data?.questions || [];
   if (qs.length !== 1) return false;
   const qid = qs[0].id || 'q1';

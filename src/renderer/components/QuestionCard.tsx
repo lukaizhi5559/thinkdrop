@@ -54,6 +54,11 @@ interface QuestionCardProps {
   batch: QuestionBatch;
   onSubmit: (answers: Record<string, string>) => void;
   onCancel: () => void;
+  // readOnly mirrors the batch without owning it — used by surfaces that can
+  // never submit (GhostLayer/avatar embeds can't hold focus). Controls render
+  // dimmed and disabled; a "Answer in the task queue" affordance deep-links to
+  // the real card via gather:focus instead of pretending to be answerable.
+  readOnly?: boolean;
 }
 
 // ── Partial-failure summary (from playwright.agent's _summarizePartialProgress) ──
@@ -134,7 +139,8 @@ const _cardKeyNav = (e: React.KeyboardEvent<HTMLElement>) => {
   items[next]?.focus();
 };
 
-export function QuestionCard({ batch, onSubmit, onCancel }: QuestionCardProps) {
+export function QuestionCard({ batch, onSubmit, onCancel, readOnly }: QuestionCardProps) {
+  const ro = !!readOnly;
   const { questions, routeConfirmation } = batch;
   // Build the full question list: route confirmation first (if present), then questions
   const allQuestions: (Question & { isRoute?: boolean })[] = [];
@@ -334,6 +340,7 @@ export function QuestionCard({ batch, onSubmit, onCancel }: QuestionCardProps) {
                 key={i}
                 data-qc-option
                 tabIndex={-1}
+                disabled={ro}
                 onClick={() => _selectOption(currentQ.id, opt.value, opt.label || `opt-${i}`)}
                 onFocus={_onOptionFocus}
                 onBlur={_onOptionBlur}
@@ -405,10 +412,11 @@ export function QuestionCard({ batch, onSubmit, onCancel }: QuestionCardProps) {
                     type="text"
                     data-qc-input
                     value={otherText}
+                    disabled={ro}
                     onChange={e => setOtherText(e.target.value)}
                     onKeyDown={e => { if (e.key === 'Enter') _submitOther(currentQ.id); }}
                     placeholder="Type your answer…"
-                    autoFocus
+                    autoFocus={!ro}
                     style={{
                       flex: 1,
                       padding: '6px 10px',
@@ -440,6 +448,7 @@ export function QuestionCard({ batch, onSubmit, onCancel }: QuestionCardProps) {
                 <button
                   data-qc-option
                   tabIndex={-1}
+                  disabled={ro}
                   onClick={() => setShowOther(true)}
                   onFocus={_onOptionFocus}
                   onBlur={_onOptionBlur}
@@ -493,13 +502,14 @@ export function QuestionCard({ batch, onSubmit, onCancel }: QuestionCardProps) {
             type="text"
             data-qc-input
             value={answers[currentQ.id] || otherText}
+            disabled={ro}
             onChange={e => {
               setOtherText(e.target.value);
               setAnswers(prev => ({ ...prev, [currentQ.id]: e.target.value }));
             }}
             onKeyDown={e => { if (e.key === 'Enter' && hasAnswer) _handleNext(); }}
             placeholder="Type your answer…"
-            autoFocus
+            autoFocus={!ro}
             style={{
               width: '100%',
               padding: '7px 10px',
@@ -514,7 +524,32 @@ export function QuestionCard({ batch, onSubmit, onCancel }: QuestionCardProps) {
         </div>
       )}
 
-      {/* Footer: Next / Cancel */}
+      {/* Footer: readOnly mirror deep-links to the owning card; otherwise Next / Cancel */}
+      {ro ? (
+        <div className="flex items-center justify-between" style={{ marginTop: 10 }}>
+          <span style={{ color: COLORS.secondaryText, fontSize: '0.66rem', fontStyle: 'italic' }}>
+            Mirrored question — answer in the queue
+          </span>
+          <button
+            data-qc-option
+            onClick={() => { try { ipcRenderer?.send('gather:focus', { batchId: batch.batchId }); } catch (_) {} }}
+            onFocus={_onOptionFocus}
+            onBlur={_onOptionBlur}
+            style={{
+              padding: '6px 14px',
+              borderRadius: 6,
+              fontSize: '0.72rem',
+              fontWeight: 600,
+              cursor: 'pointer',
+              backgroundColor: COLORS.nextBtnBg,
+              border: COLORS.nextBtnBorder,
+              color: COLORS.nextBtnText,
+            }}
+          >
+            Answer in the task queue →
+          </button>
+        </div>
+      ) : (
       <div className="flex items-center justify-between" style={{ marginTop: 10 }}>
         <button
           data-qc-option
@@ -555,6 +590,7 @@ export function QuestionCard({ batch, onSubmit, onCancel }: QuestionCardProps) {
           {isLast ? 'Start task →' : 'Next →'}
         </button>
       </div>
+      )}
     </div>
   );
 }

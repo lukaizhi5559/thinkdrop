@@ -985,7 +985,7 @@ async function driveProgressDrop(evt) {
     // The input-driving step finished — release the lock. If the next step is
     // also lockable, its step_start re-arms immediately.
     _releaseControlLock('step-end');
-  } else if (t === 'all_done' || t === 'failed' || t === 'ask_user' || t === 'plan:complete' || t === 'error') {
+  } else if (t === 'all_done' || t === 'failed' || t === 'ask_user' || t === 'gather_wait' || t === 'plan:complete' || t === 'error') {
     // Any terminal / user-input event → clear the drop and bring the panel back.
     _taskInFlight = false;
     _releaseControlLock('terminal');
@@ -2695,6 +2695,7 @@ function startOverlayControlServer() {
             let commsRaw = '';
             commsRes.on('data', c => { commsRaw += c; });
             commsRes.on('end', () => {
+              if (res.headersSent) return;
               try {
                 const commsData = JSON.parse(commsRaw);
                 res.writeHead(200).end(JSON.stringify(commsData));
@@ -2704,9 +2705,12 @@ function startOverlayControlServer() {
             });
           });
           commsReq.on('error', () => {
-            res.writeHead(503).end(JSON.stringify({ error: 'comms-graph unavailable' }));
+            if (!res.headersSent) res.writeHead(503).end(JSON.stringify({ error: 'comms-graph unavailable' }));
           });
-          commsReq.on('timeout', () => { commsReq.destroy(); res.writeHead(504).end(JSON.stringify({ error: 'comms-graph timeout' })); });
+          commsReq.on('timeout', () => {
+            commsReq.destroy();
+            if (!res.headersSent) res.writeHead(504).end(JSON.stringify({ error: 'comms-graph timeout' }));
+          });
           commsReq.write(commsBody);
           commsReq.end();
         } catch (err) {
@@ -4241,6 +4245,9 @@ const _normalizeCredentialKey = (credentialKey) => {
 function _makeGatherCredentialCallback(progressCallback) {
   return (credentialKey, _opts = {}) => {
     return new Promise((resolve) => {
+      // Same focus release as gather questions — the masked credential card
+      // must accept input even while a step armed _taskInFlight.
+      _releaseForUserWait(null, credentialKey);
       _contextAskPending++;
       // Emit credential prompt to Queue tab via progressCallback
       // The UI shows a CLI-style masked input — user submits via gather:credential IPC
@@ -4291,12 +4298,27 @@ function _makeGatherCredentialCallback(progressCallback) {
   };
 }
 
+// A gather wait IS user-input time, not automation — release overlay key-focus
+// suppression so the question card accepts clicks/typing. _guardOverlayWindowFocus
+// otherwise force-blurs every overlay window while a step/armed flag lives
+// (observed: batch gather cards force-blurred on click — "wouldn't let me").
+function _releaseForUserWait(taskId, question) {
+  _taskInFlight = false;
+  _releaseControlLock('gather');
+  safeSendUnified('automation:progress', {
+    type: 'gather_wait',
+    taskId: taskId || null,
+    question: String(question || '').slice(0, 300),
+  });
+}
+
 function gatherAnswerCallback(questionOrBatch) {
   // ── Batch mode (Grill-Me Phase C) ──────────────────────────────────────
   if (questionOrBatch && typeof questionOrBatch === 'object' && questionOrBatch.batch) {
     const { batchId, questions, routeConfirmation } = questionOrBatch;
     const batchTaskId = questionOrBatch.taskId || null;
     return new Promise((resolve) => {
+      _releaseForUserWait(batchTaskId, questions?.[0]?.question || questions?.[0]?.text);
       const key = batchId || `batch_${Date.now()}`;
       // A re-asked batchId (or a collision) must not orphan the earlier wait —
       // resolve it empty so its task resumes instead of hanging.
@@ -4353,6 +4375,7 @@ function gatherAnswerCallback(questionOrBatch) {
   // ── Legacy single-string mode ──────────────────────────────────────────
   const question = questionOrBatch;
   return new Promise((resolve) => {
+    _releaseForUserWait(null, question);
     // taskId: serial-run waits are untagged (null); handoff asks arrive
     // through _taskGatherCallback which normalizes strings into tagged
     // batches, so this path never runs for handoff tasks.
@@ -9846,7 +9869,7 @@ app.whenReady().then(async () => {
     // ── Intercept: typed answer to a pending gather BATCH ───────────────────
     // Batch waits (clarify/grill) only resolved via the card's answer_batch
     // IPC — a typed "the second one" fell through and spawned a new task.
-    if (gp.tryResolveFreeText(trimmedPrompt)) return 'answered-batch';
+    if (gp.tryResolveFreeText(trimmedPrompt, taskId)) return 'answered-batch';
 
     // ── Intercept: ask_user answer for a paused HANDOFF task ──────────────────
     // Queue-card ask_user cards (PartialFailureCard) submit answers here with the
@@ -10906,7 +10929,9 @@ app.whenReady().then(async () => {
   // ─── gather:answer — registered ONCE (not per stategraph:process run) ────
   ipcMain.on('gather:answer', (_event, { answer }) => {
     console.log(`[GatherContext] IPC received: gather:answer — "${(answer || '').slice(0, 60)}"`);
-    if (!gp.resolveLegacy(answer || '', { thought: true })) {
+    // Handoff asks are always batches — a gather:answer that misses the legacy
+    // singleton may still belong to the single pending single-question batch.
+    if (!gp.resolveLegacy(answer || '', { thought: true }) && !gp.tryResolveFreeText(answer || '')) {
       console.warn('[GatherContext] Received gather:answer but no pending resolve — ignoring');
     }
   });
@@ -10975,8 +11000,55 @@ app.whenReady().then(async () => {
     promptQueue.enqueue(prompt.trim(), { selectedText: selectedText || '', responseLanguage: responseLanguage || null, sessionId: sessionId || currentSessionId });
   });
 
+  // ── UI-step normalizer — the single ingest chokepoint ────────────────────
+  // Whatever path produced a step list (handoff compile, stepgen, plan-file
+  // draft, template, cache), the executor only understands canonical vocab:
+  // every UI-driving step collapses to screen.task.agent carrying the
+  // verbatim prompt; "open/launch/install app" steps fold into screen.task's
+  // own destination setup instead of spawning cli.agent filesystem hunts.
+  function normalizeUiSteps(steps, prompt) {
+    if (!Array.isArray(steps) || !steps.length) return steps;
+    const RETIRED_UI = new Set(['dom.act', 'url.first.agent', 'turn.loop.agent', 'browser.agent', 'guide.step', 'screen.act.agent', 'app.agent']);
+    const SHELLISH = new Set(['cli.agent', 'terminal.agent', 'shell.run']);
+    const OPEN_PURPOSE = /\b(open|launch|install|start|find|locate)\b[\s\S]{0,60}\b(app|application|program|\.app\b|player|browser)\b|open\s+-?a\b|navigate to/i;
+    const stepSkill = s => String(s?.skill || s?.action || s?.type || '');
+    const stepText = s => `${s?.description || ''} ${s?.args?.prompt || s?.args?.text || s?.args?.command || s?.args?.goal || ''}`;
+    const hasScreenTask = steps.some(s => stepSkill(s) === 'screen.task.agent');
+    const out = []; const dropped = [];
+    for (const s of steps) {
+      const sk = stepSkill(s);
+      if (RETIRED_UI.has(sk)) {
+        dropped.push(sk);
+        if (!hasScreenTask && !out.some(o => stepSkill(o) === 'screen.task.agent')) {
+          out.push({ skill: 'screen.task.agent', args: { prompt }, description: `Drive the UI: ${String(prompt).slice(0, 80)}` });
+        }
+        continue;
+      }
+      if (SHELLISH.has(sk) && OPEN_PURPOSE.test(stepText(s))) {
+        dropped.push(`${sk}:"${(s.description || sk).slice(0, 40)}"`);
+        if (!hasScreenTask && !out.some(o => stepSkill(o) === 'screen.task.agent' || stepSkill(o) === 'shell.run')) {
+          // Bare open-app goal → deterministic `open -a` — never a cli.agent
+          // filesystem crawl for a binary that may not exist.
+          const m = stepText(s).match(/(?:open|launch|start)(?:\s+the)?\s+([A-Za-z0-9 ._'-]{1,30}?)(?:\s+(?:desktop\s+)?(?:app|application|program|for|to)\b|\.app\b|$)/i);
+          const app = (m?.[1] || '').trim() || 'the application';
+          out.push({ skill: 'shell.run', args: { command: `open -a "${app}"` }, description: `Open ${app}` });
+        }
+        continue;
+      }
+      out.push(s);
+    }
+    if (out.length !== steps.length || dropped.length) {
+      console.log(`[normalize] in:${steps.length} → out:${out.length}${dropped.length ? ` dropped:[${dropped.join(', ')}]` : ''}`);
+    }
+    return out;
+  }
+
   // ─── StateGraph: Core execution — called by promptQueue serially ─────────
   async function runPromptThroughStateGraph(prompt, { selectedText = '', sessionId = null, userId = 'local_user', responseLanguage = null, promptQueueId = null, _planFile = null, _forceNewPlan = false, _skillPlan = null, _skillPlanFile = null, _planCorrectionMode = false, _planCorrectionText = null, _basePlanFile = null, _skillPlanJson = null, _planCorrectionSourcePrompt = null, _resumeMultiIntent = false, _resumeIntentQueue = [], _resumeIntentResults = [], _resumeDataContext = {}, isAskUserAnswer = false, _preflightAuthBypass = null } = {}) {
+    // Ingest chokepoint — canonicalize whatever step list arrived (handoff
+    // compiledPlan, plan-file draft, stepgen, template) before any consumer
+    // sees it. Retired UI vocab can never reach the executor from here.
+    if (_skillPlan) _skillPlan = normalizeUiSteps(_skillPlan, prompt);
     const isPlanExecute = !!_planFile;
     console.log('🧠 [StateGraph] Processing prompt:', prompt.substring(0, 80), responseLanguage ? `(responseLanguage: ${responseLanguage})` : '', isPlanExecute ? `[plan:${require('path').basename(_planFile)}]` : '');
     _currentAutomationPrompt = prompt;

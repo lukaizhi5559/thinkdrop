@@ -142,6 +142,20 @@ async function computePlanCheck(tasks, opts = {}) {
 
       // ── Unregistered / phantom name ──────────────────────────────────
       if (!desc) {
+        // Retired browser descriptors (type:browser) are intentionally out of
+        // the registry — the universal screen lane drives them. The pin is a
+        // service hint, not a blocker, so it must not hold the run hostage.
+        const retired = serviceMap.retiredBrowserAgent ? serviceMap.retiredBrowserAgent(canon) : null;
+        if (retired) {
+          items.push({
+            id: `t${n}-${canon}`,
+            taskNum: n, agentId: canon,
+            label: `${canon} — runs via the screen lane`,
+            detail: retired.startUrl ? `opens ${retired.startUrl}` : 'on-screen automation',
+            status: 'pass',
+          });
+          continue;
+        }
         items.push({
           id: `t${n}-${canon}`,
           taskNum: n, agentId: canon,

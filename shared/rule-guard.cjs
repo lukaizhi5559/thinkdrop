@@ -15,7 +15,7 @@
  *   - command-service browser.act diagnose/examine auto-writes
  */
 
-const ROUTING_RX = /npm\s+i(?:nstall)?\b|brew\s+install\b|pip3?\s+install\b|apt(?:-get)?\s+install\b|\b(?:shell\.run|cli\.agent|browser\.agent|browser\.act|app\.agent|web\.agent|web\.crawl|turn\.loop\.agent|dom\.act|url\.first\.agent|tab\.map\.agent|form\.fill\.agent|playwright\.agent|video\.agent|edit\.agent|doc\.read|fs\.(?:read|search|stat)|dir\.list|mcp\.agent|build_agent)\b|\b(?:scan_page|navigate_url|read_url|nav_task|print_page|save_rule|ask_user)\b|\b(?:run|execute|invoke)\s+(?:open|curl|wget|osascript|node|python3?|bash|zsh|sh)\b|\bwaitForStableText\b|\bgetPageText\b|\bplaywright-cli\b|(?:use|prefer|try|switch\s+to)\s+[\w.-]*\.(?:agent|act|crawl)\b|do\s+not\s+use\s+(?:a\s+)?[\w.-]*\.?(?:agent|act|run|crawl)\b/i;
+const ROUTING_RX = /npm\s+i(?:nstall)?\b|brew\s+install\b|pip3?\s+install\b|apt(?:-get)?\s+install\b|\b(?:shell\.run|cli\.agent|browser\.agent|browser\.act|app\.agent|web\.agent|web\.crawl|turn\.loop\.agent|dom\.act|url\.first\.agent|tab\.map\.agent|form\.fill\.agent|playwright\.agent|video\.agent|edit\.agent|doc\.read|fs\.(?:read|search|stat)|dir\.list|mcp\.agent|build_agent)\b|\b(?:scan_page|navigate_url|read_url|nav_task|print_page|save_rule|ask_user)\b|\b(?:shell\.run|cli\.agent|screen\.task\.agent|screen\.act\.agent)\b|\b(?:run|execute|invoke)\s+(?:open|curl|wget|osascript|node|python3?|bash|zsh|sh)\b|\bwaitForStableText\b|\bgetPageText\b|\bplaywright-cli\b|(?:use|prefer|try|switch\s+to)\s+[\w.-]*\.?(?:agent|act|crawl)\b|do\s+not\s+(?:use|rely|depend|count)\s+(?:on\s+|solely\s+on\s+)?(?:the\s+|a\s+)?[\w.-]*\.?(?:agent|act|run|crawl)\b|(?:rely|depend|count)\s+(?:solely\s+)?on\s+[\w.-]*\.?(?:agent|act|run|crawl)\b/i;
 
 /**
  * @param {string} ruleText

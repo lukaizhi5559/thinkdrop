@@ -298,6 +298,27 @@ function describeAgent(agentId) {
     : null;
 }
 
+/**
+ * Retired browser descriptors — the file exists on disk but `type: browser`
+ * keeps it out of the registry (universal screen lane owns UI work now).
+ * These names are NOT phantoms: a plan task pinned to `spotify.agent` should
+ * run through screen.task, not block readiness on a registration that can
+ * never exist. Returns the parsed descriptor fields, or null.
+ */
+function retiredBrowserAgent(agentId) {
+  if (!agentId) return null;
+  const stem = String(agentId).replace(/\.agent$/, '');
+  try {
+    const src = fs.readFileSync(path.join(_agentsDir(), `${stem}.agent.md`), 'utf8');
+    const typeM = src.match(/^type:\s*(\S+)\s*$/m);
+    if (!typeM || typeM[1].trim() !== 'browser') return null;
+    const urlM = src.match(/^start_url:\s*(https?:\/\/\S+)\s*$/m);
+    const signM = src.match(/^sign_in_url:\s*(https?:\/\/\S+)\s*$/m);
+    const svcM = src.match(/^service:\s*(\S+)\s*$/m);
+    return { agentId: `${stem}.agent`, service: svcM ? svcM[1].trim() : stem, startUrl: urlM ? urlM[1] : null, signInUrl: signM ? signM[1] : null };
+  } catch (_) { return null; }
+}
+
 // ── Async discovery ──────────────────────────────────────────────────────────
 
 function _discoveryEnabled() {
@@ -417,4 +438,4 @@ async function serviceForUrlAsync(url) {
   return p;
 }
 
-module.exports = { serviceForUrl, serviceForUrlAsync, isServiceAgent, listAgentNames, suggestAgent, describeAgent, _agentsDir };
+module.exports = { serviceForUrl, serviceForUrlAsync, isServiceAgent, listAgentNames, suggestAgent, describeAgent, retiredBrowserAgent, _agentsDir };

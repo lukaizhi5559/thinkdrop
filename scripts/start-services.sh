@@ -140,16 +140,49 @@ start_python_service() {
 # Use this for stdio MCP servers where npm start exits immediately after spawning node
 # Optional 5th arg: extra_env — a KEY=VALUE pair injected only into this process
 # e.g. start_node_direct_service "user-memory" "$PATH" "src/server.js" 512 "DB_PATH=/abs/path"
+# Service → port table (LISTEN ports each service owns). Used to kill stale
+# holders before spawn and to verify the NEW pid actually claims the port —
+# an EADDRINUSE crash exits after the old 1s kill -0 check, so a dead spawn
+# used to report ✅ while a stale service silently kept serving old code.
+svc_port() {
+    case "$1" in
+        user-memory)            echo 3001 ;;
+        web-search)             echo 3002 ;;
+        conversation)           echo 3004 ;;
+        coreference)            echo 3005 ;;
+        voice-service)          echo 3006 ;;
+        command)                echo 3007 ;;
+        screen-intelligence)    echo 3008 ;;
+        phi4)                   echo 3009 ;;
+        personality-service)    echo 3012 ;;
+        comms-graph)            echo 3015 ;;
+        *)                      echo "" ;;
+    esac
+}
+
 start_node_direct_service() {
     local service_name=$1
     local service_path=$2
     local entry_file=$3
     local memory_limit=$4
     local extra_env=${5:-""}
+    local port=$(svc_port "$service_name")
 
     echo "📦 Starting $service_name..."
 
     cd "$service_path"
+
+    # Kill stale LISTEN holders — a surviving old build serving health:200
+    # masks the fact that new code never took the port.
+    if [ -n "$port" ]; then
+        local stale=$(lsof -ti :$port -sTCP:LISTEN 2>/dev/null)
+        if [ -n "$stale" ]; then
+            echo "   🧹 stale holder(s) on :$port ($stale) — killing"
+            echo "$stale" | xargs kill -9 2>/dev/null || true
+            sleep 1
+        fi
+    fi
+
     export NODE_OPTIONS="--max-old-space-size=$memory_limit"
     if [ -n "$extra_env" ]; then
         env "$extra_env" node "$entry_file" > "$PROJECT_ROOT/logs/$service_name.log" 2>&1 &
@@ -158,12 +191,28 @@ start_node_direct_service() {
     fi
     local pid=$!
     echo "$service_name:$pid" >> "$PIDS_FILE"
-    sleep 1
 
-    if kill -0 $pid 2>/dev/null; then
-        echo "   ✅ PID $pid"
+    # Verify THIS pid actually owns the port (up to 15s), not just survives
+    # past the naive kill -0 — catches EADDRINUSE and init crashes.
+    if [ -n "$port" ]; then
+        local ok=""
+        for _ in $(seq 1 15); do
+            sleep 1
+            if lsof -ti :$port -sTCP:LISTEN 2>/dev/null | grep -qx "$pid"; then ok=1; break; fi
+            kill -0 $pid 2>/dev/null || break
+        done
+        if [ -n "$ok" ]; then
+            echo "   ✅ PID $pid (port :$port)"
+        else
+            echo "   ❌ Failed to start — check logs/$service_name.log"
+        fi
     else
-        echo "   ❌ Failed to start — check logs/$service_name.log"
+        sleep 1
+        if kill -0 $pid 2>/dev/null; then
+            echo "   ✅ PID $pid"
+        else
+            echo "   ❌ Failed to start — check logs/$service_name.log"
+        fi
     fi
 
     echo ""
@@ -256,14 +305,25 @@ fi
 #     Logs to $PROJECT_ROOT/logs like other services.
 echo "📦 Starting comms-graph..."
 cd "$PROJECT_ROOT/comms-graph"
+_stale=$(lsof -ti :3015 -sTCP:LISTEN 2>/dev/null)
+if [ -n "$_stale" ]; then
+    echo "   🧹 stale holder(s) on :3015 ($_stale) — killing"
+    echo "$_stale" | xargs kill -9 2>/dev/null || true
+    sleep 1
+fi
 export NODE_OPTIONS="--max-old-space-size=1024"
 export THINKDROP_PROJECT_ROOT="$PROJECT_ROOT"
 node src/server.cjs > "$PROJECT_ROOT/logs/comms-graph.log" 2>&1 &
 comms_pid=$!
 echo "comms-graph:$comms_pid" >> "$PIDS_FILE"
-sleep 1
-if kill -0 $comms_pid 2>/dev/null; then
-    echo "   ✅ PID $comms_pid"
+_ok=""
+for _ in $(seq 1 15); do
+    sleep 1
+    if lsof -ti :3015 -sTCP:LISTEN 2>/dev/null | grep -qx "$comms_pid"; then _ok=1; break; fi
+    kill -0 $comms_pid 2>/dev/null || break
+done
+if [ -n "$_ok" ]; then
+    echo "   ✅ PID $comms_pid (port :3015)"
 else
     echo "   ❌ Failed to start — check logs/comms-graph.log"
 fi
